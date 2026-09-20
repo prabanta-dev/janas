@@ -1,0 +1,72 @@
+name: Something went wrong
+description: A crash, an answer that makes no sense, a build that fails.
+title: "[bug] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Janas is in early development: formats, interfaces and the command line
+        change without notice, so say which version you are on - the commit, or
+        the date you cloned it.
+
+        If the machine itself is the news (a CPU or a disk nobody here has),
+        the hardware report asks the right questions instead.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you expected, and what came out instead.
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: The command
+      description: Exactly as you ran it, with the arguments.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: What Janas printed
+      description: >
+        The first lines above all: the banner names the model, the context, the
+        expert cache, the threads, and how many bits the experts are read with.
+        With a crash, the whole output.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: build
+    attributes:
+      label: The build
+      description: Which variant, and which commit.
+      placeholder: ./build.sh release, commit 9b949ec
+    validations:
+      required: true
+  - type: input
+    id: machine
+    attributes:
+      label: The machine
+      description: CPU, memory, disk, distribution and kernel.
+      placeholder: Ryzen 7 5800X, 16 GB, SATA SSD, Fedora 42, Linux 6.14
+    validations:
+      required: true
+  - type: dropdown
+    id: often
+    attributes:
+      label: How often
+      options:
+        - Every time
+        - Often, not always
+        - Once, and not since
+    validations:
+      required: true
+  - type: checkboxes
+    id: sanitizers
+    attributes:
+      label: If it crashed
+      description: Not required, but a sanitizer usually names the line.
+      options:
+        - label: It also crashes under `./build.sh asan` (the `-asan` binaries), and the output is above.

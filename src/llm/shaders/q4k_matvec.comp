@@ -1,0 +1,90 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+   Copyright (C) 2026 Maurizio Cammalleri */
+#version 450
+// Q4_K weights times up to NV Q8_K vectors per workgroup, one row per
+// invocation, in the per-block integer-sum scheme of src/llm/quant_dotn.h:
+// the same float operations as the CPU kernels, so the results agree bit for
+// bit. The activations of a block (19 uvec4 per vector: 16 of quants, 2 of
+// pair sums, 1 with the scale) are read by the 8 lanes of a subgroup together
+// and shared with subgroupBroadcast, which the compiler turns into a scalar
+// operand of the dot-product instruction. The subgroup size SG is a
+// specialization constant (8 on Intel, 32 on NVIDIA, 32 or 64 on AMD):
+// subgroups must be full and of that size.
+#extension GL_EXT_integer_dot_product : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_ballot : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+
+layout(local_size_x = 64) in;
+layout(constant_id = 0) const uint NV = 8;
+layout(constant_id = 1) const uint SG = 8;
+const uint NX = (19u + SG - 1u) / SG;
+
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer U4 { uvec4 v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer F { float v[]; };
+
+// w: the first row; x: vector v, block b at uvec4 (v * xs + b) * 20;
+// y: row r of vector v at y[v * ys + r]
+layout(push_constant) uniform P { uvec2 w, x, y; uint rows, nb, nv, xs, ys; } p;
+
+int dp(uint a, uint b) { return dotPacked4x8EXT(int(a), int(b)); }
+int dp4(uvec4 a, uvec4 b) { return dp(a.x, b.x) + dp(a.y, b.y) + dp(a.z, b.z) + dp(a.w, b.w); }
+uvec4 bc(uvec4 xr[NX], uint k) { return subgroupBroadcast(xr[k / SG], k % SG); }
+
+void main()
+{
+    U4 W = U4(p.w), X = U4(p.x);
+    F Y = F(p.y);
+    uint lane = gl_SubgroupInvocationID;
+    uint row = min(gl_GlobalInvocationID.x, p.rows - 1u);
+    uint v0 = gl_WorkGroupID.y * NV;
+    uint xo[NV];
+    for (uint v = 0; v < NV; v++)
+        xo[v] = min(v0 + v, p.nv - 1u) * p.xs * 20u;
+    float acc[NV], accm[NV];
+    for (uint v = 0; v < NV; v++) { acc[v] = 0.0; accm[v] = 0.0; }
+    uint wo = row * p.nb * 9u;
+    for (uint b = 0; b < p.nb; b++, wo += 9u) {
+        uvec4 hd = W.v[wo];
+        vec2 dd = unpackHalf2x16(hd.x);
+        int sc[8], mn[8];
+        for (uint j = 0; j < 4u; j++) {
+            sc[j] = int(bitfieldExtract(hd.y, int(8u * j), 6));
+            mn[j] = int(bitfieldExtract(hd.z, int(8u * j), 6));
+            sc[j + 4u] = int(bitfieldExtract(hd.w, int(8u * j), 4) |
+                             (bitfieldExtract(hd.y, int(8u * j + 6u), 2) << 4));
+            mn[j + 4u] = int(bitfieldExtract(hd.w, int(8u * j + 4u), 4) |
+                             (bitfieldExtract(hd.z, int(8u * j + 6u), 2) << 4));
+        }
+        uvec4 q[8];
+        for (uint j = 0; j < 8u; j++)
+            q[j] = W.v[wo + 1u + j];
+        for (uint v = 0; v < NV; v++) {
+            uvec4 xr[NX];
+            for (uint j = 0; j < NX; j++)
+                xr[j] = X.v[xo[v] + min(j * SG + lane, 19u)];
+            int isum = 0;
+            for (uint c = 0; c < 4u; c++) {
+                uvec4 q0 = q[2u * c], q1 = q[2u * c + 1u];
+                isum += (dp4(q0 & 0x0f0f0f0fu, bc(xr, 4u * c)) +
+                         dp4(q1 & 0x0f0f0f0fu, bc(xr, 4u * c + 1u))) * sc[2u * c] +
+                        (dp4((q0 >> 4) & 0x0f0f0f0fu, bc(xr, 4u * c + 2u)) +
+                         dp4((q1 >> 4) & 0x0f0f0f0fu, bc(xr, 4u * c + 3u))) * sc[2u * c + 1u];
+            }
+            uvec4 bs0 = bc(xr, 16u), bs1 = bc(xr, 17u);
+            float d8 = uintBitsToFloat(bc(xr, 18u).x);
+            uint bw[8] = uint[8](bs0.x, bs0.y, bs0.z, bs0.w, bs1.x, bs1.y, bs1.z, bs1.w);
+            int imin = 0;
+            for (uint s = 0; s < 8u; s++)
+                imin += mn[s] * (bitfieldExtract(int(bw[s]), 0, 16) + bitfieldExtract(int(bw[s]), 16, 16));
+            acc[v] = fma(dd.x * d8, float(isum), acc[v]);
+            accm[v] = fma(dd.y * d8, float(imin), accm[v]);
+            xo[v] += 20u;
+        }
+    }
+    if (gl_GlobalInvocationID.x < p.rows)
+        for (uint v = 0; v < NV; v++)
+            if (v0 + v < p.nv)
+                Y.v[(v0 + v) * p.ys + row] = acc[v] - accm[v];
+}

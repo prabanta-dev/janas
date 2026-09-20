@@ -1,0 +1,103 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+   Copyright (C) 2026 Maurizio Cammalleri */
+#version 450
+// Q6_K weights times up to NV Q8_K vectors, one row per invocation, in the
+// per-block integer-sum scheme of src/llm/quant_dotn.h (the -32 offset of
+// the weights folded into the exact block sum): the same float operations
+// as the CPU kernels. Activations shared across the subgroup as in
+// q4k_matvec.comp. A Q6_K block is 210 bytes (ql 128, qh 64, scales 16,
+// d 2), so blocks start 2 bytes off a 4-byte boundary every other time:
+// 32-bit words are read from the boundary below and realigned.
+#extension GL_EXT_integer_dot_product : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_ballot : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+
+layout(local_size_x = 64) in;
+layout(constant_id = 0) const uint NV = 8;
+layout(constant_id = 1) const uint SG = 8;
+const uint NX = (19u + SG - 1u) / SG;
+
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer U1 { uint v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer U4 { uvec4 v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer F { float v[]; };
+
+layout(push_constant) uniform P { uvec2 w, x, y; uint rows, nb, nv, xs, ys; } p;
+
+int dp(uint a, uint b) { return dotPacked4x8EXT(int(a), int(b)); }
+uvec4 bc(uvec4 xr[NX], uint k) { return subgroupBroadcast(xr[k / SG], k % SG); }
+
+void main()
+{
+    U1 W = U1(p.w);
+    U4 X = U4(p.x);
+    F Y = F(p.y);
+    uint lane = gl_SubgroupInvocationID;
+    uint row = min(gl_GlobalInvocationID.x, p.rows - 1u);
+    uint v0 = gl_WorkGroupID.y * NV;
+    uint xo[NV];
+    for (uint v = 0; v < NV; v++)
+        xo[v] = min(v0 + v, p.nv - 1u) * p.xs * 20u;
+    float acc[NV];
+    for (uint v = 0; v < NV; v++)
+        acc[v] = 0.0;
+    uint off = row * p.nb * 210u; /* bytes */
+    for (uint b = 0; b < p.nb; b++, off += 210u) {
+        /* the block's 52 words (208 bytes) and d, realigned */
+        uint base = off >> 2, sh = (off & 3u) * 8u;
+        uint wd[53];
+        for (uint k = 0; k < 53u; k++)
+            wd[k] = W.v[base + k];
+        if (sh != 0u)
+            for (uint k = 0; k < 52u; k++)
+                wd[k] = (wd[k] >> 16) | (wd[k + 1u] << 16);
+        float d = unpackHalf2x16(sh != 0u ? wd[52] >> 16 : wd[52] & 0xffffu).x;
+        int sc[16];
+        for (uint k = 0; k < 4u; k++)
+            for (uint j = 0; j < 4u; j++)
+                sc[4u * k + j] = bitfieldExtract(int(wd[48u + k]), int(8u * j), 8);
+        for (uint v = 0; v < NV; v++) {
+            uvec4 xr[NX];
+            for (uint j = 0; j < NX; j++)
+                xr[j] = X.v[xo[v] + min(j * SG + lane, 19u)];
+            int isum = 0;
+            for (uint n = 0; n < 2u; n++)
+                for (uint part = 0; part < 4u; part++) {
+                    /* 32 values: 2 groups of 16, each with its scale */
+                    uint qlw = 16u * n + (part & 1u) * 8u; /* ql word */
+                    uint qhw = 32u + 8u * n;               /* qh word */
+                    uint lsh = (part >> 1) * 4u, hsh = part * 2u;
+                    uvec4 a0 = bc(xr, 8u * n + 2u * part);
+                    uvec4 a1 = bc(xr, 8u * n + 2u * part + 1u);
+                    uint a[8] = uint[8](a0.x, a0.y, a0.z, a0.w, a1.x, a1.y, a1.z, a1.w);
+                    int dot0 = 0, dot1 = 0;
+                    for (uint k = 0; k < 8u; k++) {
+                        uint q = ((wd[qlw + k] >> lsh) & 0x0f0f0f0fu) |
+                                 (((wd[qhw + k] >> hsh) & 0x03030303u) << 4);
+                        if (k < 4u)
+                            dot0 += dp(q, a[k]);
+                        else
+                            dot1 += dp(q, a[k]);
+                    }
+                    uint g = 8u * n + 2u * part;
+                    isum += sc[g] * dot0 + sc[g + 1u] * dot1;
+                }
+            /* the -32 offset: 32 x scale x (sum of the 16 activations) */
+            uvec4 bs0 = bc(xr, 16u), bs1 = bc(xr, 17u);
+            uint bw[8] = uint[8](bs0.x, bs0.y, bs0.z, bs0.w, bs1.x, bs1.y, bs1.z, bs1.w);
+            int off32 = 0;
+            for (uint s = 0; s < 8u; s++)
+                off32 += sc[2u * s] * bitfieldExtract(int(bw[s]), 0, 16) +
+                         sc[2u * s + 1u] * bitfieldExtract(int(bw[s]), 16, 16);
+            isum -= 32 * off32;
+            float d8 = uintBitsToFloat(bc(xr, 18u).x);
+            acc[v] = fma(d * d8, float(isum), acc[v]);
+            xo[v] += 20u;
+        }
+    }
+    if (gl_GlobalInvocationID.x < p.rows)
+        for (uint v = 0; v < NV; v++)
+            if (v0 + v < p.nv)
+                Y.v[(v0 + v) * p.ys + row] = acc[v];
+}

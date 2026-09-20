@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: What to run, and what to attach
+    url: https://github.com/prabanta-dev/janas#helping-it-run-on-more-hardware
+    about: The README says which machines are wanted most and what a report needs.
+  - name: Converted models and their licence
+    url: https://github.com/prabanta-dev/janas/blob/main/MODELS.md
+    about: What may be done with a converted model, and the fingerprints of the ones measured here.
+  - name: Before writing code
+    url: https://github.com/prabanta-dev/janas/blob/main/CONTRIBUTING.md
+    about: How to build, what the tests promise, and the sign-off every commit needs.

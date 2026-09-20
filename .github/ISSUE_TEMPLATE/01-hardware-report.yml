@@ -1,0 +1,84 @@
+name: Hardware report
+description: A measurement from a machine this engine has never seen.
+title: "[hardware] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Janas decides everything from what it measures, and it has only ever
+        measured one machine: a Core Ultra 9 185H, 32 GB of RAM, an NVMe disk,
+        Debian 13. A report from yours is worth more than most patches.
+
+        Run the benchmark **with the machine to itself** — close the browser
+        and the editor first, or the numbers are partly about them:
+
+        ```sh
+        bin/x86_64-linux/janas-bench <model.jns>
+        ```
+
+        It leaves a `janas-bench-<date>.txt` in the current directory. That
+        file already carries the CPU, the core layout, the GPU if there is one,
+        and the speed of every configuration tried; the questions below are the
+        things it cannot know.
+  - type: textarea
+    id: report
+    attributes:
+      label: The benchmark report
+      description: Drag the `janas-bench-<date>.txt` into this box, or paste it whole.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: Distribution and kernel
+      description: The distribution, and what `uname -a` prints.
+      placeholder: Debian 13, Linux 6.12.43+deb13-amd64 x86_64
+    validations:
+      required: true
+  - type: input
+    id: memory
+    attributes:
+      label: Memory
+      description: How much the machine has, and how much was free when the benchmark ran (`free -g`).
+      placeholder: 32 GB, 21 GB free
+    validations:
+      required: true
+  - type: dropdown
+    id: disk
+    attributes:
+      label: The disk the model sits on
+      description: The engine reads experts from it while it answers, so this decides a good part of the speed.
+      options:
+        - NVMe SSD
+        - SATA SSD
+        - Spinning disk
+        - External, over USB
+        - Network filesystem
+        - Something else - said below
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: The model
+      description: Which `.jns` file, and how big.
+      placeholder: qwen3-30b-a3b-q4km.jns, 18.6 GB
+    validations:
+      required: true
+  - type: textarea
+    id: seen
+    attributes:
+      label: What you saw
+      description: >
+        Numbers that look wrong, a reply that made no sense, a crash, a machine
+        that stopped answering - and what you were doing at the time. If it
+        simply worked, say that: it is the same measurement.
+  - type: checkboxes
+    id: before
+    attributes:
+      label: Before sending
+      description: Neither is required, but each makes the numbers worth more.
+      options:
+        - label: The machine was otherwise idle while the benchmark ran.
+        - label: The model file passes `bin/x86_64-linux/jns_check <model.jns> --verify`.

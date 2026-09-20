@@ -1,0 +1,44 @@
+name: Test report
+description: What tools/janas-try.sh found on your machine.
+title: "Test report: "
+labels: ["test-report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for trying Janas. `tools/janas-try.sh` builds it,
+        downloads and converts a model, checks its answers against the ones
+        every machine should give, measures the speed and tries the server,
+        and writes `janas-try/janas-try-report.md`. If you have the GitHub
+        CLI (`gh`) logged in, it can open this issue for you; otherwise
+        paste that file below.
+
+        ```sh
+        ./tools/janas-try.sh
+        ```
+
+        **Measure on an idle machine**: close the browser, builds and other
+        models first. The script checks, and says in the report how idle the
+        CPU was before measuring (a load average and a percentage, nothing
+        about which programs ran); speeds taken on a busy machine are not
+        that machine's.
+
+        The report holds the CPU, memory, disk, distribution, compiler and
+        the results - no host name, user name or paths.
+  - type: textarea
+    id: report
+    attributes:
+      label: The report
+      description: The whole of `janas-try/janas-try-report.md`.
+      render: markdown
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: >
+        What else was running, anything odd you saw, or what you would like
+        Janas to do on a machine like yours. Optional.
+    validations:
+      required: false

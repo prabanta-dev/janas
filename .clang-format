@@ -1,0 +1,17 @@
+# Classic K&R: 4-space indent, opening brace on its own line only for function
+# bodies, "} else {" cuddled, pointer star bound to the name, 80 columns.
+BasedOnStyle: LLVM
+IndentWidth: 4
+UseTab: Never
+ColumnLimit: 80
+BreakBeforeBraces: Linux
+IndentCaseLabels: false
+PointerAlignment: Right
+SpaceBeforeParens: ControlStatements
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortBlocksOnASingleLine: Never
+SortIncludes: Never
+# Keep string literals whole so an error message can be found with grep.
+BreakStringLiterals: false

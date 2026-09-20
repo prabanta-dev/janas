@@ -1,0 +1,93 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+   Copyright (C) 2026 Maurizio Cammalleri */
+#version 450
+// The experts' activation on the GPU, bit for bit as the CPU does it
+// (src/llm/vmath.h janas_silu_mul_det, src/llm/quant.c
+// janas_q8k_quantize_det): h = SiLU(gate) * up with the deterministic e^x
+// and reciprocal, then Q8_K quantization of h, written in the layout the
+// product shaders read (320 bytes a block: 256 quants, 16 pair sums, d).
+// One workgroup per 256-value block; gate and up of block b of item i at
+// g[(i * nb + b) * 256 ...], u likewise; the output block at x.
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+
+layout(local_size_x = 256) in;
+
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer F { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer U { uint v[]; };
+
+layout(push_constant) uniform P { uvec2 g, u, x; uint blocks; } p;
+
+shared float amax_s[256];
+shared int q_s[256];
+
+float exp_det(float x)
+{
+    precise float xc = clamp(x, -88.0, 88.0);
+    precise float n = roundEven(xc * 1.44269504088896341);
+    precise float r = fma(-n, 0.693359375, xc);
+    r = fma(-n, -2.12194440e-4, r);
+    precise float y = 1.9875691500e-4;
+    y = fma(y, r, 1.3981999507e-3);
+    y = fma(y, r, 8.3334519073e-3);
+    y = fma(y, r, 4.1665795894e-2);
+    y = fma(y, r, 1.6666665459e-1);
+    y = fma(y, r, 5.0000001201e-1);
+    precise float rr = r * r;
+    y = fma(y, rr, r);
+    y = y + 1.0;
+    return y * uintBitsToFloat(uint(int(n) + 127) << 23);
+}
+
+float recip_det(float d)
+{
+    precise float y = uintBitsToFloat(0x7EF311C3u - floatBitsToUint(d));
+    for (int i = 0; i < 3; i++) {
+        precise float e = fma(-d, y, 1.0);
+        y = fma(y, e, y);
+    }
+    return y;
+}
+
+void main()
+{
+    uint blk = gl_WorkGroupID.x, t = gl_LocalInvocationID.x;
+    if (blk >= p.blocks)
+        return;
+    F G = F(p.g), Uu = F(p.u);
+    U X = U(p.x);
+    float gv = G.v[blk * 256u + t], uv = Uu.v[blk * 256u + t];
+    precise float e = exp_det(clamp(-gv, -88.0, 30.0));
+    precise float s = recip_det(1.0 + e);
+    precise float gs = gv * s;
+    precise float h = gs * uv;
+    /* the block's largest magnitude (max is exact in any order) */
+    amax_s[t] = abs(h);
+    barrier();
+    for (uint w = 128u; w > 0u; w >>= 1) {
+        if (t < w)
+            amax_s[t] = max(amax_s[t], amax_s[t + w]);
+        barrier();
+    }
+    precise float d = amax_s[0] * 0.007874015718698502;
+    precise float id = d > 0.0 ? recip_det(d) : 0.0;
+    precise float qf = roundEven(h * id);
+    q_s[t] = int(clamp(qf, -127.0, 127.0));
+    barrier();
+    uint o = blk * 80u; /* 320 bytes = 80 words */
+    if (t < 64u)
+        X.v[o + t] = uint(q_s[4u * t] & 0xff) | (uint(q_s[4u * t + 1u] & 0xff) << 8) |
+                     (uint(q_s[4u * t + 2u] & 0xff) << 16) |
+                     (uint(q_s[4u * t + 3u] & 0xff) << 24);
+    else if (t < 72u) {
+        /* two pair sums per word: the sums of 16 quants */
+        uint k = t - 64u;
+        int s0 = 0, s1 = 0;
+        for (uint i = 0; i < 16u; i++) {
+            s0 += q_s[32u * k + i];
+            s1 += q_s[32u * k + 16u + i];
+        }
+        X.v[o + t] = uint(s0 & 0xffff) | (uint(s1 & 0xffff) << 16);
+    } else if (t == 72u)
+        X.v[o + t] = floatBitsToUint(d);
+}

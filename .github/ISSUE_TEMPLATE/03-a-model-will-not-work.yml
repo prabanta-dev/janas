@@ -1,0 +1,51 @@
+name: A model will not convert, or answers nonsense
+description: A GGUF the converter refuses, or a converted file that comes out wrong.
+title: "[model] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Janas reads the Qwen3 mixture-of-experts families, from a **Q4_K_M**
+        GGUF. Anything else is refused on purpose, with a message. A file that
+        should work and does not is a useful bug; so is one that converts and
+        then answers nonsense.
+
+        The fingerprints of the models measured here are in
+        [MODELS.md](https://github.com/prabanta-dev/janas/blob/main/MODELS.md).
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where it goes wrong
+      options:
+        - The converter refuses the file
+        - The conversion ends, but jns_check complains
+        - It loads and answers nonsense
+        - It crashes while loading or answering
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: The model
+      description: Its page on Hugging Face, and the exact file name.
+      placeholder: https://huggingface.co/Qwen/Qwen3-30B-A3B-GGUF - Qwen3-30B-A3B-Q4_K_M.gguf
+    validations:
+      required: true
+  - type: input
+    id: sha
+    attributes:
+      label: Its SHA-256
+      description: What `sha256sum` says about the GGUF you downloaded. It says which file this is about, and whether it arrived whole.
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: What the tools printed
+      description: >
+        `bin/x86_64-linux/gguf2jns` first. If it got through, what
+        `bin/x86_64-linux/jns_check <model.jns>` says about the file it wrote,
+        and, for an answer that makes no sense, the prompt and the reply.
+      render: text
+    validations:
+      required: true

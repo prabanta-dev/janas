@@ -1,0 +1,693 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later
+     Copyright (C) 2026 Maurizio Cammalleri
+     janas-server --test: a chat page on the server itself, to see that the
+     API works from a browser. It talks to /v1/chat/completions like any
+     client: it keeps the conversation and sends it whole each time, and the
+     server reads again only what is new. Nothing is loaded from elsewhere. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Janas-Chat Web</title>
+<style>
+:root {
+  color-scheme: dark;
+  --bg: #000; --panel: #121212; --line: #303030; --fg: #d0d0d0;
+  --amber: #d7af5f; --grey: #8a8a8a; --red: #ff5f5f; --green: #87af87;
+  --cmd: #87afaf;
+  --mono: ui-monospace, "DejaVu Sans Mono", "Cascadia Mono", Menlo, Consolas,
+          monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--fg); }
+body { font: 15px/1.5 var(--mono); display: flex; flex-direction: column;
+       height: 100vh; height: 100dvh; }
+header { display: flex; gap: 16px; align-items: center; flex-wrap: wrap;
+         padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.mascot { color: var(--amber); margin: 0; font: 9px/1 var(--mono);
+          white-space: pre; }
+.title { min-width: 0; }
+.title h1 { margin: 0; font-size: 18px; color: var(--amber); }
+.title p { margin: 2px 0 0; color: var(--grey); font-size: 12px;
+           overflow-wrap: anywhere; }
+details.settings { padding: 0 16px; border-bottom: 1px solid var(--line); }
+details.settings summary { cursor: pointer; color: var(--cmd); padding: 8px 0; }
+.field { margin: 0 0 10px; }
+.field label { display: block; color: var(--amber); font-size: 13px; }
+textarea, input, select, button { font: inherit; color: var(--fg);
+  background: var(--panel); border: 1px solid var(--line); border-radius: 4px; }
+textarea, input[type=password], input[type=number] { width: 100%;
+  padding: 6px 8px; }
+input[type=number] { max-width: 8em; }
+main { flex: 1; overflow-y: auto; padding: 12px 16px; }
+html, main, textarea, pre { scrollbar-color: #444 var(--bg); }
+.msg { margin: 0 0 16px; }
+.who { font-size: 13px; }
+.who.user { color: var(--amber); }
+.who.assistant { color: var(--cmd); }
+.text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.text pre { background: var(--panel); padding: 8px; overflow-x: auto;
+            white-space: pre; border-radius: 4px; margin: 6px 0; }
+.text .b { font-weight: bold; }
+.text .s { text-decoration: line-through; }
+.text a.link { color: var(--cmd); text-decoration: underline; cursor: pointer; }
+.text .quote { border-left: 3px solid #444; padding-left: 10px; margin: 8px 0;
+               color: #b0b0b0; }
+.text .table { overflow-x: auto; margin: 8px 0; }
+.text table { border-collapse: collapse; white-space: normal; }
+.text th, .text td { border: 1px solid #444; padding: 3px 8px;
+                     text-align: left; vertical-align: top; }
+.text th { font-weight: bold; }
+.text .h1 { font-weight: bold; font-size: 1.5em; color: var(--amber); }
+.text .h2 { font-weight: bold; font-size: 1.3em; }
+.text .h3 { font-weight: bold; font-size: 1.15em; }
+.text .h4 { font-weight: bold; }
+.text .h5 { font-weight: bold; font-style: italic; }
+.text .h6 { font-weight: bold; color: var(--grey); }
+.text .i { font-style: italic; }
+.text .m { color: var(--cmd); background: #262626; padding: 0 4px;
+           border-radius: 3px; }
+.text pre { color: var(--cmd); }
+details.think { color: var(--grey); margin: 4px 0; }
+details.think summary { cursor: pointer; font-size: 13px; }
+details.think .text { border-left: 2px solid var(--line); padding-left: 8px; }
+.stats { color: var(--grey); font-size: 12px; margin-top: 4px; }
+.error { color: var(--red); white-space: pre-wrap; }
+footer { border-top: 1px solid var(--line); padding: 10px 16px; }
+#input { resize: vertical; min-height: 3em; max-height: 40vh; }
+.buttons { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+button { cursor: pointer; padding: 6px 14px; }
+button.go { color: var(--bg); background: var(--amber); border-color: var(--amber); }
+button:disabled { opacity: 0.5; cursor: default; }
+.hint { color: var(--grey); font-size: 12px; align-self: center; }
+</style>
+</head>
+<body>
+<header>
+<pre class="mascot" aria-hidden="true">  ▄███████████▄
+▄███████████████▄
+███ ▄ █████ ▄ ███ ▄
+███▄▄▄█████▄▄▄████
+▀█████▄▀▀▀▄█████▀ ▀
+  █████████████
+ █ █ █ █ █ █ █ █
+▀ ▀ ▀ ▀ ▀ ▀ ▀ ▀</pre>
+<div class="title">
+<h1>Janas-Chat Web</h1>
+<p id="model">connecting…</p>
+</div>
+</header>
+
+<details class="settings">
+<summary>Settings</summary>
+<div class="field"><label for="system">System message</label>
+<textarea id="system" rows="2" placeholder="none"></textarea></div>
+<div class="field"><label for="temp">Temperature</label>
+<input id="temp" type="number" min="0" max="2" step="0.1" value="0.7"></div>
+<div class="field"><label for="think">Reasoning</label>
+<select id="think">
+<option value="">the server's default</option>
+<option value="on">on</option>
+<option value="off">off</option>
+</select></div>
+<div class="field"><label for="key">API key, if the server asks for one</label>
+<input id="key" type="password" autocomplete="off"></div>
+</details>
+
+<main id="chat" aria-live="polite"></main>
+
+<footer>
+<textarea id="input" rows="2" placeholder="Write a message"></textarea>
+<div class="buttons">
+<button id="send" class="go">Send</button>
+<button id="stop" disabled>Stop</button>
+<button id="new">New conversation</button>
+<button id="sample" title="Show a text of ours with every mark this page knows, without asking the model">Markdown sample</button>
+<span class="hint">Enter sends, Shift+Enter starts a new line</span>
+</div>
+</footer>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const chat = $("chat"), input = $("input");
+let history = [], busy = null;
+/* the conversation's writing so far, for its average speed */
+let wrote = 0, wroteSecs = 0, fastest = 0, slowest = 0;
+
+try { $("key").value = sessionStorage.getItem("janas-key") || ""; } catch (e) {}
+$("key").addEventListener("change", () => {
+  try { sessionStorage.setItem("janas-key", $("key").value); } catch (e) {}
+});
+
+function headers() {
+  const h = { "Content-Type": "application/json" };
+  if ($("key").value) h.Authorization = "Bearer " + $("key").value;
+  return h;
+}
+
+/*
+ * The marks a model writes, shown instead of printed, with janas-chat's own
+ * rules (src/chat/markdown.h), ported here character for character:
+ * **bold**, *italic*, _italic_, `code`, fenced blocks, headings, bullets.
+ * A star opens only when something follows it and closes only when
+ * something came before, and never inside a word: 2*3 is a product. An
+ * underscore counts only alone and at the edge of a word, so snake_case and
+ * __init__ stay as they are. At the end of the text a mark still held is
+ * decided, not printed. Whatever the model writes goes in as text, never as
+ * markup.
+ */
+/* A link's click: asked about first, then opened in a tab of its own that
+   is not told where it came from. */
+function openLink(e) {
+  e.preventDefault();
+  const url = this.href;
+  if (confirm("This link was written by the AI model, not by a person.\n\n" +
+              "Links generated by an AI must be used with great care: the " +
+              "address may be wrong, made up, or lead somewhere unsafe. " +
+              "Check it before you trust it.\n\nOpen " + url + " ?"))
+    window.open(url, "_blank", "noopener,noreferrer");
+}
+
+/* [text](http…) and addresses written out: only http and https, never a
+   javascript: or data: address. */
+const LINKS = /\[([^\]\n]+)\]\((https?:\/\/[^\s()<>]+)\)|(https?:\/\/[^\s<>()\[\]"']*[^\s<>()\[\]"'.,;:!?])/g;
+
+function renderInline(el, text) {
+  let fence = false, info = false, bold = false, ital = false, mono = false,
+      strike = false, heading = 0, bol = true, last = "", pend = "",
+      pendBol = false,
+      indent = "", run = "", pre = null, afterFence = false;
+  const flushRun = () => {
+    if (!run) return;
+    if (pre) {
+      pre.appendChild(document.createTextNode(run));
+    } else if (bold || ital || mono || heading || strike) {
+      /* a heading keeps its level: the terminal can only make it bold, a
+         page can make # larger than ## and ## larger than the rest */
+      const sp = document.createElement("span");
+      sp.className = (bold ? "b " : "") + (ital ? "i " : "") +
+                     (mono ? "m " : "") + (strike ? "s " : "") +
+                     (heading ? "h" + Math.min(heading, 6) : "");
+      sp.textContent = run;
+      el.appendChild(sp);
+    } else {
+      el.appendChild(document.createTextNode(run));
+    }
+    run = "";
+  };
+  const write = (t) => { run += t; };
+  const style = (f) => { flushRun(); f(); };
+  const flushIndent = () => { write(indent); indent = ""; };
+  const flushPend = () => { flushIndent(); write(pend); pend = ""; };
+  const endLine = () => style(() => {
+    heading = 0;
+    ital = bold = mono = strike = false;
+  });
+  /* a link: its own element, in the style of the text around it */
+  const link = (label, url) => {
+    flushRun();
+    const a = document.createElement("a");
+    a.className = "link";
+    a.textContent = label;
+    a.href = url;
+    a.title = url;
+    a.rel = "noopener noreferrer nofollow";
+    a.addEventListener("click", openLink);
+    if (bold || ital || heading || strike) {
+      const sp = document.createElement("span");
+      sp.className = (bold ? "b " : "") + (ital ? "i " : "") +
+                     (strike ? "s " : "") +
+                     (heading ? "h" + Math.min(heading, 6) : "");
+      sp.appendChild(a);
+      el.appendChild(sp);
+    } else {
+      el.appendChild(a);
+    }
+    last = label.slice(-1);
+    bol = false;
+  };
+  const isAlnum = (c) => /[0-9A-Za-z]/.test(c);
+
+  function byte(c) {
+    if (afterFence) {
+      afterFence = false;
+      if (c === "\n") { bol = true; last = ""; return; }
+    }
+    if (c === "\n" && info) { info = false; bol = true; last = ""; return; }
+    if (info) return;
+    if (pend) {
+      pend += c || "\u0000"; /* the end counts, as the 0 does in C */
+      if (pend[0] === "~") { /* ~~struck~~, attached as the stars are */
+        if (pend.length === 2 && c === "~") return;
+        const tildes = pend.length - 1;
+        pend = "";
+        if (tildes === 2) {
+          const opens = !strike && c && c !== " " && c !== "\t";
+          const closes = strike && last && last !== " " && last !== "\t";
+          if (opens || closes) style(() => { strike = opens; });
+          else { write("~~"); last = "~"; }
+        } else {
+          write("~");
+          last = "~";
+        }
+        if (c) byte(c);
+        return;
+      }
+      if (pend[0] === "_") {
+        pend = "";
+        if (c === "_") { write("__"); last = "_"; return; } /* a run: text */
+        const opens = !ital && c && c !== " " && c !== "\t" && c !== "\n" &&
+                      !isAlnum(last);
+        const closes = ital && last && last !== " " && last !== "\t" &&
+                       !isAlnum(c);
+        if (opens || closes) {
+          style(() => { ital = opens; });
+        } else {
+          write("_");
+          last = "_";
+        }
+        if (c) byte(c);
+        return;
+      }
+      if (pend[0] === "`") {
+        if (pend.length === 2 && c === "`") return;
+        if (pend.length === 3 && c === "`") { /* a fence */
+          pend = "";
+          indent = "";
+          flushRun();
+          fence = !fence;
+          if (fence) {
+            pre = document.createElement("pre");
+            el.appendChild(pre);
+            info = true; /* the language named after it */
+          } else {
+            /* a block is a box of its own on a page: the line break that
+               ends its last line, and the one after the closing fence,
+               would only add an empty line */
+            const t = pre.lastChild;
+            if (t && t.nodeValue.endsWith("\n"))
+              t.nodeValue = t.nodeValue.slice(0, -1);
+            pre = null;
+            afterFence = true;
+          }
+          return;
+        }
+        const ticks = pend.length - 1;
+        pend = "";
+        for (let k = 0; k < ticks; k++) style(() => { mono = !mono; });
+        if (c) byte(c);
+        return;
+      }
+      if (pend[0] === "*") {
+        if (pendBol && pend.length === 2 && c === " ") {
+          pend = "";
+          write("\u2022 ");
+          return;
+        }
+        if (pend.length === 2 && c === "*") return;
+        const stars = pend.length - 1;
+        const opens = c && c !== " " && c !== "\t" && !isAlnum(last);
+        const closes = last && last !== " " && last !== "\t";
+        pend = "";
+        const on = stars === 2 ? bold : ital;
+        if (!on && opens) {
+          style(() => { if (stars === 2) bold = true; else ital = true; });
+        } else if (on && closes) {
+          style(() => { if (stars === 2) bold = false; else ital = false; });
+        } else {
+          write("*".repeat(stars));
+          last = "*";
+        }
+        if (c) byte(c);
+        return;
+      }
+      if (pend[0] === "#") {
+        if (c === "#" && pend.length < 7) return;
+        const hashes = pend.length - 1;
+        pend = "";
+        if (c === " ") { style(() => { heading = hashes; }); return; }
+        write("#".repeat(hashes)); /* all of them */
+        if (c) byte(c);
+        return;
+      }
+      if (pend[0] === "-" || pend[0] === "+") {
+        const lead = pend[0];
+        pend = "";
+        if (c === " ") { write("\u2022 "); return; }
+        write(lead);
+        if (c) byte(c);
+        return;
+      }
+      pend = pend.slice(0, -1);
+      flushPend();
+      if (!c) return;
+    }
+    if (c === "\n") {
+      endLine();
+      indent = "";
+      write("\n");
+      bol = true;
+      last = "";
+      return;
+    }
+    if (fence) { /* inside a block only the closing fence is a mark */
+      if (bol && c === "`") { pend = c; pendBol = true; bol = false; return; }
+      if (c === " " || c === "\t") {
+        if (bol && indent.length < 16) { indent += c; last = c; return; }
+      } else {
+        bol = false;
+      }
+      flushIndent();
+      last = c;
+      write(c);
+      return;
+    }
+    if (bol && (c === "#" || c === "-" || c === "+" || c === "*")) {
+      flushIndent();
+      pend = c;
+      pendBol = true;
+      bol = false;
+      return;
+    }
+    if (c === "*" || c === "`" || c === "~" || (c === "_" && last !== "_")) {
+      if (c !== "`") flushIndent();
+      pend = c;
+      pendBol = false;
+      bol = false;
+      return;
+    }
+    if (c === " " || c === "\t") {
+      if (bol && indent.length < 16) { indent += c; last = c; return; }
+    } else {
+      bol = false;
+    }
+    flushIndent();
+    last = c;
+    write(c);
+  }
+
+  const at = new Map();
+  for (const m of text.matchAll(LINKS))
+    at.set(m.index, { end: m.index + m[0].length, label: m[1] || m[3],
+                      url: m[2] || m[3] });
+  for (let i = 0; i < text.length; i++) {
+    const k = at.get(i);
+    if (k && !fence && !mono && !pend && !info) {
+      flushIndent();
+      link(k.label, k.url);
+      i = k.end - 1;
+      continue;
+    }
+    byte(text[i]);
+  }
+  if (pend) byte(""); /* the end: what is held back is decided, not printed */
+  flushIndent();
+  endLine();
+  flushRun();
+}
+
+/* A table's row: its cells, without the outer bars. */
+function cells(line) {
+  let t = line.trim();
+  if (t.startsWith("|")) t = t.slice(1);
+  if (t.endsWith("|")) t = t.slice(0, -1);
+  return t.split("|").map((c) => c.trim());
+}
+
+/*
+ * A reply: its blocks first - quotes (> ...) and tables (| ... |), which
+ * the terminal cannot draw but a page can - and the rest through the
+ * machine above. Nothing inside a fenced block is a quote or a table.
+ */
+function render(el, text) {
+  el.textContent = "";
+  const blocks = [];
+  let fence = false, cur = null;
+  const put = (type, line) => {
+    if (!cur || cur.type !== type) blocks.push(cur = { type, lines: [] });
+    cur.lines.push(line);
+  };
+  for (const line of text.split("\n")) {
+    if (line.trim().startsWith("```")) {
+      put("text", line);
+      fence = !fence;
+    } else if (!fence && /^\s*>/.test(line)) {
+      put("quote", line.replace(/^\s*>\s?/, ""));
+    } else if (!fence && /^\s*\|.*\|\s*$/.test(line)) {
+      put("table", line);
+    } else {
+      put("text", line);
+    }
+  }
+  for (const b of blocks) {
+    if (b.type === "quote") {
+      const q = document.createElement("div");
+      q.className = "quote";
+      render(q, b.lines.join("\n"));
+      el.appendChild(q);
+    } else if (b.type === "table") {
+      const rows = b.lines.map(cells);
+      const sep = rows.length > 1 &&
+        rows[1].every((c) => /^:?-+:?$/.test(c));
+      const align = sep ? rows[1].map((c) => c.endsWith(":")
+        ? (c.startsWith(":") ? "center" : "right") : "") : [];
+      const wrap = document.createElement("div");
+      wrap.className = "table";
+      const table = document.createElement("table");
+      rows.forEach((r, i) => {
+        if (sep && i === 1) return;
+        const tr = document.createElement("tr");
+        r.forEach((c, j) => {
+          const td = document.createElement(sep && i === 0 ? "th" : "td");
+          if (align[j]) td.style.textAlign = align[j];
+          renderInline(td, c);
+          tr.appendChild(td);
+        });
+        table.appendChild(tr);
+      });
+      wrap.appendChild(table);
+      el.appendChild(wrap);
+    } else {
+      /* quotes and tables are boxes with margins of their own: the empty
+         lines around them would only add to one side */
+      const t = blocks.length > 1
+        ? b.lines.join("\n").replace(/^\n+|\n+$/g, "")
+        : b.lines.join("\n");
+      if (t) renderInline(el, t);
+    }
+  }
+}
+
+function add(role) {
+  const m = document.createElement("div");
+  m.className = "msg";
+  const who = document.createElement("div");
+  who.className = "who " + role;
+  who.textContent = role === "user" ? "you" : "Janas";
+  m.appendChild(who);
+  chat.appendChild(m);
+  return m;
+}
+
+function scroll() { chat.scrollTop = chat.scrollHeight; }
+
+async function send() {
+  const text = input.value.trim();
+  if (!text || busy) return;
+  input.value = "";
+  const um = add("user"), ut = document.createElement("div");
+  ut.className = "text";
+  ut.textContent = text;
+  um.appendChild(ut);
+  history.push({ role: "user", content: text });
+
+  const am = add("assistant");
+  const think = document.createElement("details");
+  think.className = "think";
+  think.open = true;
+  think.innerHTML = "<summary>reasoning</summary>";
+  const tt = document.createElement("div");
+  tt.className = "text";
+  think.appendChild(tt);
+  const at = document.createElement("div");
+  at.className = "text";
+  const st = document.createElement("div");
+  st.className = "stats";
+  am.appendChild(at);
+  am.appendChild(st);
+  scroll();
+
+  const msgs = [];
+  if ($("system").value.trim())
+    msgs.push({ role: "system", content: $("system").value.trim() });
+  const body = { model: "janas", messages: msgs.concat(history), stream: true,
+                 stream_options: { include_usage: true },
+                 temperature: Number($("temp").value) };
+  if ($("think").value)
+    body.reasoning_effort = $("think").value === "on" ? "medium" : "none";
+
+  busy = new AbortController();
+  $("send").disabled = true;
+  $("stop").disabled = false;
+  let reasoning = "", answer = "", usage = null, finish = "";
+  const t0 = performance.now();
+  let tFirst = 0;
+  try {
+    const r = await fetch("/v1/chat/completions", { method: "POST",
+      headers: headers(), body: JSON.stringify(body), signal: busy.signal });
+    if (!r.ok) {
+      let msg = r.status + " " + r.statusText;
+      try { msg = (await r.json()).error.message; } catch (e) {}
+      throw new Error(msg);
+    }
+    const reader = r.body.getReader(), dec = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let cut;
+      while ((cut = buf.indexOf("\n\n")) >= 0) {
+        const ev = buf.slice(0, cut);
+        buf = buf.slice(cut + 2);
+        for (const line of ev.split("\n")) {
+          /* the server says where the request waits while others run */
+          if (line.startsWith(": queue ") && !answer && !reasoning)
+            at.textContent = "Waiting: number " + line.slice(8) +
+              " in the queue.";
+          if (!line.startsWith("data: ")) continue;
+          const data = line.slice(6);
+          if (data === "[DONE]") continue;
+          const d = JSON.parse(data);
+          if (d.error) throw new Error(d.error.message);
+          if (d.usage) usage = d.usage;
+          const c = d.choices && d.choices[0];
+          if (!c) continue;
+          if (c.finish_reason) finish = c.finish_reason;
+          const dl = c.delta || {};
+          if (dl.reasoning_content) {
+            if (!reasoning) am.insertBefore(think, at);
+            reasoning += dl.reasoning_content;
+            render(tt, reasoning);
+          }
+          if (dl.content) {
+            if (!tFirst) tFirst = performance.now();
+            answer += dl.content;
+            render(at, answer);
+          }
+          scroll();
+        }
+      }
+    }
+    history.push({ role: "assistant", content: answer });
+    if (usage) {
+      const j = usage.janas || {};
+      const read = usage.prompt_tokens -
+        ((usage.prompt_tokens_details || {}).cached_tokens || 0);
+      const out = usage.completion_tokens;
+      /* the engine's own time for the writing, without the reading */
+      const secs = j.output_seconds || (performance.now() - t0) / 1000;
+      wrote += out;
+      wroteSecs += secs;
+      /* a reply of a few tokens says more about the fixed costs than about
+         the speed: min and max count the longer ones */
+      const speed = out / secs;
+      if (out >= 16) {
+        fastest = Math.max(fastest, speed);
+        slowest = slowest ? Math.min(slowest, speed) : speed;
+      }
+      const parts = [];
+      if (j.context_size)
+        parts.push("context " + j.context_used + " / " + j.context_size);
+      parts.push("read " + read + (j.input_seconds !== undefined
+        ? " in " + j.input_seconds.toFixed(2) + " s" : ""));
+      parts.push("wrote " + out);
+      /* this reply, then the conversation: min and max over the replies
+         long enough to count, avg as all the tokens over all the time */
+      const f = (x) => x.toFixed(1);
+      parts.push("tok/s: last " + f(speed) +
+        (slowest ? ", min " + f(slowest) + ", max " + f(fastest) : "") +
+        ", avg " + f(wrote / wroteSecs));
+      if (finish === "length") parts.push("cut at the length limit");
+      st.textContent = parts.join(" · ");
+    }
+  } catch (e) {
+    const err = document.createElement("div");
+    err.className = "error";
+    err.textContent = e.name === "AbortError" ? "stopped" : e.message;
+    am.appendChild(err);
+    if (answer) history.push({ role: "assistant", content: answer });
+    else history.pop(); /* the message goes with its failed reply */
+  }
+  busy = null;
+  $("send").disabled = false;
+  $("stop").disabled = true;
+  scroll();
+  input.focus();
+}
+
+/* A text of our own with every mark render() knows: what a model writes
+   cannot be trusted to show them all, or to write them right. It is shown,
+   never sent: the model does not see it. */
+const SAMPLE = [
+  "# Heading 1", "## Heading 2", "### Heading 3", "#### Heading 4",
+  "##### Heading 5", "###### Heading 6", "",
+  "Plain text, **bold**, *italic*, _italic too_, ***bold italic***, " +
+  "**_bold italic too_**, ~~struck~~ and `inline code`.",
+  "Left alone: snake_case_name, __init__, 2*3, a lone * and ~ too.", "",
+  "- a bullet", "+ another", "* and a third, with **bold** in it",
+  "1. a numbered line", "2. and the next", "",
+  "> A quote, with *italic* in it,", "> over two lines.", "",
+  "| Left | Right | Centre |", "|:-----|------:|:------:|",
+  "| alpha | 10 | *yes* |", "| beta | 200 | `no` |", "",
+  "A [link written as Markdown](https://www.gnu.org/licenses/gpl-3.0.html) " +
+  "and one written out: https://github.com/prabanta-dev/janas - both ask " +
+  "before they open.", "",
+  "```c", "/* a fenced block: nothing in it is a mark */",
+  "int main(void) { return 2*3; } // | not a table |", "> not a quote",
+  "```", "The end, in **bold**"
+].join("\n");
+
+$("sample").addEventListener("click", () => {
+  const m = add("assistant");
+  m.firstChild.textContent = "Markdown sample (not from the model)";
+  const t = document.createElement("div");
+  t.className = "text";
+  m.appendChild(t);
+  render(t, SAMPLE);
+  scroll();
+});
+$("send").addEventListener("click", send);
+$("stop").addEventListener("click", () => busy && busy.abort());
+$("new").addEventListener("click", () => {
+  if (busy) busy.abort();
+  history = [];
+  wrote = wroteSecs = fastest = slowest = 0;
+  chat.textContent = "";
+  input.focus();
+});
+input.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+    e.preventDefault();
+    send();
+  }
+});
+
+fetch("/v1/models", { headers: headers() })
+  .then((r) => r.json())
+  .then((d) => {
+    const m = d.data && d.data[0];
+    $("model").textContent = m ? m.description || m.id
+                               : (d.error ? d.error.message : "no model");
+    /* Janas presents itself, as janas-chat does: the text is in Settings,
+       to read and to change */
+    if (m && m.janas && m.janas.system && !$("system").value)
+      $("system").value = m.janas.system;
+  })
+  .catch(() => { $("model").textContent = "the server does not answer"; });
+input.focus();
+</script>
+</body>
+</html>
