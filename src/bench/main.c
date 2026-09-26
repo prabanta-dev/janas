@@ -241,8 +241,11 @@ int main(int argc, char **argv)
     char desc[256];
     int32_t dl;
     janas_llm_describe(llm, desc, sizeof(desc), &dl);
-    out("GPU:     %s\nmodel:   %s\n", gpu ? janas_gpu_name(gpu) : "none usable",
-        desc);
+    if (gpu)
+        out("GPU:     %s\n", janas_gpu_name(gpu));
+    else
+        out("GPU:     none usable: %s\n", janas_llm_model_gpu_why(m));
+    out("model:   %s\n", desc);
 
     /* the prompt: the text once, repeated only when more is asked for */
     struct janas_tokenizer *tok = janas_llm_internal_tokenizer(llm);

@@ -22,7 +22,7 @@ sudo apt install libvulkan-dev glslang-tools vulkan-tools
 
 On Fedora: `sudo dnf install gcc make` and, for the GPU, `vulkan-loader-devel glslang vulkan-tools`. On Arch: `sudo pacman -S base-devel` and `vulkan-headers vulkan-icd-loader glslang vulkan-tools`.
 
-The GPU also needs its Vulkan driver: Mesa (`mesa-vulkan-drivers` on Debian/Ubuntu) for Intel and AMD, the proprietary driver for NVIDIA. `vulkaninfo --summary` should list your GPU.
+The GPU also needs its Vulkan driver: Mesa (`mesa-vulkan-drivers` on Debian/Ubuntu) for Intel and AMD, the proprietary driver for NVIDIA. `vulkaninfo --summary` should list your GPU with Vulkan 1.3 or later. When the engine takes none, `janas-bench` and the model's description say why: a build without GPU support (`glslangValidator` was missing: install it and build again), no Vulkan loader, a GPU whose driver lacks something (named), or the GPU turned off.
 
 Then, in the source directory:
 

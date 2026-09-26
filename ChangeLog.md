@@ -2,6 +2,19 @@
 
 > Curated, user-facing summary of completed work, newest first.
 
+## [2026-09-26] - Why there is no GPU
+
+- **"GPU: none usable" now says why**: built without GPU support
+  (`glslangValidator` missing at build time), no Vulkan loader, Vulkan
+  seeing no GPU, the GPU turned down with its name and what its driver
+  lacks (Vulkan below 1.3, a feature, the subgroup size), or turned off
+  (eco mode, `JANAS_GPU=0`). The same reason is in the model's description
+  (`janas_llm_describe`). A tester's RTX 5080 was reported as "none
+  usable" with nothing more to go on.
+- **`janas-try` reports what Vulkan sees** (each device's name, kind and
+  version), whether Janas will be built with GPU support, and whether it
+  runs under WSL, before building and in the report.
+
 ## [2026-09-26] - Gemma 4, first part (not yet usable)
 
 - **Gemma 4 (`gemma4`) runs its forward pass**, on Gemma-4-12B-it: layers

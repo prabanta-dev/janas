@@ -169,6 +169,24 @@ machine()
     esac
     KERNEL=$(uname -r)
     DISTRO=$( . /etc/os-release 2>/dev/null && echo "${PRETTY_NAME:-unknown}")
+    grep -qi microsoft /proc/version 2>/dev/null && DISTRO="$DISTRO (WSL)"
+    # the GPU: whether the build can have it (the shaders need
+    # glslangValidator) and what Vulkan sees - name, kind, version
+    if command -v glslangValidator >/dev/null; then
+        GPU_BUILD="with GPU support"
+    else
+        GPU_BUILD="without GPU support (glslangValidator not installed)"
+    fi
+    if command -v vulkaninfo >/dev/null; then
+        GPU_VK=$(vulkaninfo --summary 2>/dev/null | awk '
+            /apiVersion/ { v = $3 }
+            /deviceType/ { t = $3; sub("PHYSICAL_DEVICE_TYPE_", "", t) }
+            /deviceName/ { sub(/^[^=]*= */, ""); printf "%s%s (%s, Vulkan %s)",
+                           n++ ? "; " : "", $0, tolower(t), v }')
+        [ -n "$GPU_VK" ] || GPU_VK="Vulkan sees no device"
+    else
+        GPU_VK="vulkaninfo not installed"
+    fi
     CC_VER=$( (${CC:-gcc} --version 2>/dev/null || clang --version 2>/dev/null) |
         head -1)
     # mains when an adapter (or a USB-C source) is plugged in, battery when
@@ -204,6 +222,7 @@ preflight()
     note "memory: $(gib "$MEM_TOTAL") GiB, $(gib "$MEM_AVAIL") GiB free now"
     note "disk:   $DISK, $(gib "$DISK_FREE") GiB free for the models"
     note "system: $DISTRO, Linux $KERNEL, $CC_VER"
+    note "GPU:    $GPU_VK; Janas will be built $GPU_BUILD"
     note "power:  $POWER; load now $LOAD"
     case " $FLAGS " in *" avx2 "*) ;; *)
         note "no AVX2: Janas runs on its portable path, much slower";;
@@ -450,6 +469,7 @@ report()
         echo "- Disk: $DISK"
         echo "- System: $DISTRO, Linux $KERNEL"
         echo "- Compiler: $CC_VER"
+        echo "- GPU seen by Vulkan: $GPU_VK; Janas built $GPU_BUILD"
         echo "- Power: $POWER"
         echo "- Load when it started: $LOAD_START over $THREADS threads (the speed lines below say how idle the CPU was before each measurement)"
         echo

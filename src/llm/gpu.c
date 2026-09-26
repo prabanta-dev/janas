@@ -290,6 +290,15 @@ static int pick_device(struct janas_gpu *g, uint32_t *family, char *err,
     /* a discrete GPU first (memory and power of its own), then an
        integrated one; JANAS_GPU_DEVICE=integrated|discrete restricts */
     const char *want_dev = getenv("JANAS_GPU_DEVICE");
+    /* the first device turned down and why, for the message: a tester
+       with a GPU the engine does not take has to be able to tell why */
+    char why[160] = "";
+#define REJECT(what)                                                           \
+    {                                                                          \
+        if (!why[0])                                                           \
+            snprintf(why, sizeof(why), "%.80s: %s", pp.deviceName, what);      \
+        continue;                                                              \
+    }
     for (int pass = 0; pass < 2; pass++)
         for (uint32_t i = 0; i < n; i++) {
             g->pd = pds[i];
@@ -298,10 +307,12 @@ static int pick_device(struct janas_gpu *g, uint32_t *family, char *err,
             VkPhysicalDeviceType type =
                 pass == 0 ? VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU
                           : VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU;
-            if (pp.deviceType != type || pp.apiVersion < VK_API_VERSION_1_3 ||
+            if (pp.deviceType != type ||
                 (want_dev &&
                  strcmp(want_dev, pass == 0 ? "discrete" : "integrated") != 0))
                 continue;
+            if (pp.apiVersion < VK_API_VERSION_1_3)
+                REJECT("its driver offers Vulkan below 1.3")
             VkPhysicalDeviceVulkan13Properties p13 = {
                 .sType =
                     VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_PROPERTIES};
@@ -325,7 +336,7 @@ static int pick_device(struct janas_gpu *g, uint32_t *family, char *err,
             if (!f12.bufferDeviceAddress || !f13.shaderIntegerDotProduct ||
                 !(p11.subgroupSupportedOperations &
                   VK_SUBGROUP_FEATURE_BALLOT_BIT))
-                continue;
+                REJECT("no buffer addresses, integer dot product or ballot")
             /* sharing host memory: needed by an integrated GPU (it reads the
                weights where they are), optional for a discrete one (it gets a
                copy in its own memory) */
@@ -333,7 +344,7 @@ static int pick_device(struct janas_gpu *g, uint32_t *family, char *err,
                 has_extension(g, VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
             g->discrete = type == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
             if (!g->discrete && !g->host_import)
-                continue;
+                REJECT("integrated, without VK_EXT_external_memory_host")
             /* the subgroup size the shader is built for: 8 where the size can
                be chosen (Intel: fewer registers per lane), else the device's
                own if it never varies (NVIDIA: 32); JANAS_GPU_SG forces one */
@@ -350,9 +361,9 @@ static int pick_device(struct janas_gpu *g, uint32_t *family, char *err,
             else if (p13.minSubgroupSize == p13.maxSubgroupSize)
                 sg = p11.subgroupSize;
             else
-                continue; /* varying and not selectable */
+                REJECT("subgroup size varying and not selectable")
             if (sg < 4 || sg > ROWS_PER_GROUP || (sg & (sg - 1)) != 0)
-                continue;
+                REJECT("subgroup size not usable")
             g->sg = sg;
             g->sg_control = control;
             uint32_t nf = 0;
@@ -367,8 +378,18 @@ static int pick_device(struct janas_gpu *g, uint32_t *family, char *err,
                     snprintf(g->name, sizeof(g->name), "%s", pp.deviceName);
                     return 0;
                 }
+            REJECT("no compute queue")
         }
-    snprintf(err, err_len, "no GPU with the needed features");
+#undef REJECT
+    if (why[0])
+        snprintf(err, err_len, "%s", why);
+    else if (n == 0)
+        snprintf(err, err_len, "Vulkan sees no GPU");
+    else if (want_dev)
+        snprintf(err, err_len, "no %.20s GPU, as JANAS_GPU_DEVICE asks",
+                 want_dev);
+    else
+        snprintf(err, err_len, "Vulkan sees no integrated or discrete GPU");
     return -1;
 }
 

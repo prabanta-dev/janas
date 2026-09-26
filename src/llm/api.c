@@ -566,8 +566,10 @@ int32_t janas_llm_describe(const janas_llm *llm, char *buf, int32_t cap,
      * runs. The same goes for the attention, which the context decides.
      */
     janas_llm *w = (janas_llm *)llm;
-    char gpubuf[96];
-    const char *gpu = ", GPU not present";
+    char gpubuf[224];
+    snprintf(gpubuf, sizeof(gpubuf), ", no GPU (%s)",
+             janas_llm_model_gpu_why(llm->m));
+    const char *gpu = gpubuf;
     if (janas_llm_model_gpu(llm->m)) {
         /* which passes it is given, in the words /mode uses for them */
         int use = janas_llm_model_gpu_used(llm->m);

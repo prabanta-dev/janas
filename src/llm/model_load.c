@@ -475,9 +475,15 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
     /* resident region into RAM; with the GPU, memory from its driver
        (JANAS_GPU_ALLOC) or imported at the end */
     const char *ge = getenv("JANAS_GPU");
+    snprintf(m->gpu_why, sizeof(m->gpu_why), "%s",
+             ge ? "turned off by JANAS_GPU=0" : "turned off (eco mode)");
     if (ge ? atoi(ge) > 0 : o->use_gpu) {
-        char gerr[256];
+        /* the reason is kept: a tester with a GPU the engine does not take
+           has to be able to tell a build without GPU support from a driver
+           without Vulkan 1.3 */
+        char gerr[256] = "";
         m->gpu = janas_gpu_create(gerr, sizeof(gerr));
+        snprintf(m->gpu_why, sizeof(m->gpu_why), "%.150s", m->gpu ? "" : gerr);
         if (m->gpu && getenv("JANAS_GPU_ALLOC") &&
             (m->resident = janas_gpu_alloc(m->gpu, m->j.h.resident_bytes)))
             m->resident_gpu = 1;
@@ -963,6 +969,11 @@ int janas_llm_model_set_experts(struct janas_llm_model *m, uint32_t n)
 struct janas_gpu *janas_llm_model_gpu(struct janas_llm_model *m)
 {
     return m->gpu;
+}
+
+const char *janas_llm_model_gpu_why(const struct janas_llm_model *m)
+{
+    return m->gpu ? "" : m->gpu_why;
 }
 
 uint32_t janas_llm_model_n_ctx(const struct janas_llm_model *m)

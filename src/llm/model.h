@@ -268,6 +268,9 @@ int janas_llm_model_set_experts(struct janas_llm_model *m, uint32_t n);
 
 /* The GPU in use, or NULL. */
 struct janas_gpu *janas_llm_model_gpu(struct janas_llm_model *m);
+/* Without one, why: the driver's or the build's reason, or that it was
+   turned off ("" when there is a GPU). */
+const char *janas_llm_model_gpu_why(const struct janas_llm_model *m);
 
 /* The expert cache, for statistics and warm-up. */
 struct janas_expert_cache *janas_llm_model_cache(struct janas_llm_model *m);

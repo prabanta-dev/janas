@@ -74,6 +74,7 @@ struct janas_llm_model {
     struct janas_gpu *gpu; /* optional, for products over blocks */
     int resident_gpu;      /* the resident region belongs to the GPU */
     int gpu_off;           /* weights not shared with it: CPU only */
+    char gpu_why[160];     /* no GPU: why (janas_llm_model_gpu_why) */
     struct janas_expert_cache *cache;
 
     const struct janas_arch *a; /* what this architecture has (arch.h) */
