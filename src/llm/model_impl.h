@@ -40,6 +40,16 @@ struct layer {
        output scale (1 if none) */
     const struct janas_jns_tensor *post_attn, *post_ffn;
     float out_scale;
+    /* Gemma 4's mixture: the dense feed-forward (the shared expert, weight
+       1, no gate) and the experts are two branches, each normalized on the
+       way in and out; the router reads its own input, scaled per dimension,
+       and each expert's output has a scale of its own */
+    const struct janas_jns_tensor *pre_norm2, *post_norm1, *post_norm2;
+    const float *router_scale, *exp_scale;
+    /* Gemma 4's per-layer embeddings (E2B, E4B): after the FFN, the layer's
+       own input of ple_dim numbers per token gates a branch of the
+       residual, gelu(gate x) * input, projected back, normalized, added */
+    const struct janas_jns_tensor *ple_gate, *ple_proj, *ple_post;
     /* Gated DeltaNet */
     const struct janas_jns_tensor *ssm_in, *ssm_ba, *conv, *dt_bias, *ssm_a,
         *ssm_norm, *ssm_out;
@@ -80,6 +90,8 @@ struct janas_llm_model {
     const struct janas_arch *a; /* what this architecture has (arch.h) */
     uint32_t n_layer, d_model, n_head, n_head_kv, head_dim, n_rot, n_expert, k,
         n_vocab, n_ctx, d_ff, n_attn, n_rec;
+    uint32_t ff_buf; /* rows of a pair's buffers: d_ff, or a wider shared
+                        feed-forward's (Gemma 4's 26B) */
     float eps, rope_base;
     /* Gemma 4: the sliding-window layers' geometry (head size and RoPE in
        head_swa, n_rot_swa, rope_base_swa; n_head_kv, head_dim and n_rot
@@ -89,11 +101,32 @@ struct janas_llm_model {
     uint32_t head_swa, n_rot_swa, n_kv_swa, window, hd_max, kvd_max;
     float rope_base_swa, softcap;
     const float *rope_freqs;
+    /* Gemma 4's per-layer embeddings (0: none): ple_dim numbers per layer
+       and token, from a table of their own read a row at a time from the
+       file (ple_tok, never in memory) and a projection of the embedding
+       (ple_model, bf16), normalized by ple_norm; ple holds the block's,
+       token after token, layer after layer, ple_g a branch's rows,
+       ple_row a row of the table as floats, then as read (room for twice
+       its numbers in floats) */
+    uint32_t ple_dim;
+    const struct janas_jns_tensor *ple_tok, *ple_model, *ple_norm;
+    float *ple, *ple_g, *ple_row;
+    struct janas_block_q8k *ple_q;
+    /* layers from n_kv_layers on keep no keys and values of their own:
+       they read those of the last earlier layer of their kind */
+    uint32_t n_kv_layers;
     /* the KV cache of slot s (attention layer, then the MTP block's) starts
        at kv_off[s] bytes and its scales at ks_off[s] floats; kv_hd and
        kv_heads its geometry. Uniform unless the layers differ (Gemma 4) */
     size_t *kv_off, *ks_off;
     uint32_t *kv_hd, *kv_heads;
+    int kv16; /* keys and values of 16 bits (arch, or JANAS_KV=8|16) */
+    /* positions a slot holds per KV head: n_ctx, or for a sliding-window
+       layer a ring of fewer (kv_ring), position p in row p mod kv_cap;
+       ring_hi: one past the last position written */
+    uint32_t *kv_cap;
+    uint8_t *kv_ring, *kv_swa; /* and whether its layer is a sliding one */
+    uint32_t ring_hi;
     /* Gated DeltaNet geometry: ds = head size (keys and values), n_kh key
        heads, n_vh value heads (n_vh / n_kh per key head), conv over the
        q|k|v channels */
@@ -157,7 +190,7 @@ struct janas_llm_model {
     struct janas_attn *attn;
     /* Gemma 4: the sliding-window layers' RoPE table and attention, and the
        residual kept aside while the FFN's output is normalized */
-    float *rope_cos_swa, *rope_sin_swa, *xres;
+    float *rope_cos_swa, *rope_sin_swa, *xres, *xbr; /* xbr: a branch */
     struct janas_attn *attn_swa;
 
     /*
@@ -199,6 +232,7 @@ struct janas_llm_model {
        then one pair per token for the shared expert */
     uint32_t *pair_tok, *pair_exp, *order, *count, *glist;
     float *pair_w, *gate, *up, *h, *dout;
+    uint32_t *hlen; /* per pair row: the rows of its expert's gate */
     struct janas_block_q8k *xg, *hq;
     uint32_t k_use; /* experts used per token, at most k (see set_experts) */
     int exp_level;  /* planes of the experts' down matrix read: 1, 2 or 3 */
@@ -282,7 +316,8 @@ struct tok_job {
     uint32_t first, n, pos0;
     float *kc_scale, *vc_scale;
     int8_t *kc, *vc;
-    float *out; /* rows the job rewrites (the soft-capped logits) */
+    uint32_t cap, ring; /* the slot's positions per head, and whether a ring */
+    float *out;         /* rows the job rewrites (the soft-capped logits) */
 };
 
 void janas_m_init_tuner(struct janas_llm_model *m);
@@ -297,10 +332,17 @@ void janas_m_attn_layer(struct janas_llm_model *m, const struct layer *ly,
                         uint32_t n, uint32_t pos0);
 void janas_m_rec_layer(struct janas_llm_model *m, const struct layer *ly,
                        uint32_t n);
+int janas_m_ple_inputs(struct janas_llm_model *m, const int32_t *tokens,
+                       uint32_t n);
+void janas_m_ple_layer(struct janas_llm_model *m, const struct layer *ly,
+                       uint32_t l, uint32_t n);
 int janas_m_exp_tracing(void);
 void janas_m_exp_report(void);
+/* which experts a moe_block call runs */
+enum { MOE_ALL, MOE_SHARED, MOE_ROUTED };
 int janas_m_moe_block(struct janas_llm_model *m, const struct layer *ly,
                       struct janas_expert_cache *cache,
-                      const struct janas_jns_layer *jl, uint32_t l, uint32_t n);
+                      const struct janas_jns_layer *jl, uint32_t l, uint32_t n,
+                      int part);
 
 #endif

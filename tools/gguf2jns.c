@@ -10,6 +10,13 @@
  * resident region. A dense model has no experts to route: its feed-forward
  * becomes the single slot of the layer, written in the same way.
  *
+ * A feed-forward whose width is not a multiple of 256 (Gemma 4's 26B: 704
+ * and 2112) is widened with zeros to the next one - rows of zero bytes in
+ * gate and up, a zero tail on each row of down: every weight type reads zero
+ * bytes as zero weights, so the products are the same, and the engine's
+ * activations, quantized 256 at a time, fit. Gate and up fused in one
+ * tensor (ffn_gate_up_exps) are split into the two matrices of the slot.
+ *
  * A model split into several GGUF files (name-00001-of-0000N.gguf) is read
  * from all of them: give the first. Data is copied in streaming; the model
  * is never held in memory.
@@ -54,6 +61,16 @@ struct tensor {
     uint64_t base; /* the part's data start */
     int expert;    /* one of the experts' matrices */
     uint64_t new_offset;
+    /* a resident matrix widened with zeros: its rows, then as written */
+    uint64_t rows, rb, new_rows, new_rb, new_dims[2], new_bytes;
+};
+
+/* A matrix of a slot: from which tensor, where in an expert's part of it,
+   its rows and row bytes, and as written. */
+struct src_matrix {
+    struct tensor *t;
+    uint64_t off, per; /* in an expert's bytes of t, and those bytes */
+    uint64_t rows, rb, new_rows, new_rb;
 };
 
 struct part {
@@ -162,6 +179,49 @@ static uint32_t crc_zeros(uint32_t crc, uint64_t n)
     return crc;
 }
 
+static uint8_t *obuf; /* rows widened, before they are written */
+
+/*
+ * rows rows of rb bytes at src of t, to dst as new_rows rows of new_rb
+ * bytes: each row's tail and the extra rows zero (the output is created
+ * zero-filled, so only the CRC has to count them).
+ */
+static uint32_t copy_rows(const struct tensor *t, uint64_t src, uint64_t rows,
+                          uint64_t rb, uint64_t new_rows, uint64_t new_rb,
+                          uint64_t dst, uint32_t crc, int with_crc)
+{
+    if (new_rb == rb) {
+        crc = copy(t, src, rows * rb, dst, crc, with_crc);
+    } else {
+        uint64_t per = COPY_CHUNK / new_rb ? COPY_CHUNK / new_rb : 1;
+        int fd = parts[t->part].fd;
+        for (uint64_t r0 = 0; r0 < rows; r0 += per) {
+            uint64_t k = rows - r0 < per ? rows - r0 : per;
+            if (pread(fd, buf, k * rb, (off_t)(t->base + src + r0 * rb)) !=
+                (ssize_t)(k * rb))
+                die("%s", "unexpected end of the GGUF file");
+            memset(obuf, 0, k * new_rb);
+            for (uint64_t r = 0; r < k; r++)
+                memcpy(obuf + r * new_rb, buf + r * rb, rb);
+            if (with_crc)
+                crc = janas_crc32(crc, obuf, k * new_rb);
+            if (pwrite(out_fd, obuf, k * new_rb, (off_t)(dst + r0 * new_rb)) !=
+                (ssize_t)(k * new_rb))
+                die("write failed: %s", strerror(errno));
+            copied += k * rb;
+        }
+    }
+    if (with_crc)
+        crc = crc_zeros(crc, (new_rows - rows) * new_rb);
+    return crc;
+}
+
+/* A width rounded up to a multiple of 256 (the engine's activations). */
+static uint64_t wide(uint64_t n)
+{
+    return (n + 255) / 256 * 256;
+}
+
 static int by_place(const void *a, const void *b)
 {
     const struct tensor *x = *(const struct tensor *const *)a;
@@ -232,7 +292,7 @@ int main(int argc, char **argv)
 
     /* expert geometry per layer */
     struct janas_jns_layer_v2 *layers = calloc(n_layer, sizeof(*layers));
-    struct tensor *(*mats)[3] = calloc(n_layer, sizeof(*mats));
+    struct src_matrix(*mats)[3] = calloc(n_layer, sizeof(*mats));
     if (!layers || !mats)
         die("%s", "out of memory");
     static const char *const part_name[3] = {"gate", "up", "down"};
@@ -244,6 +304,13 @@ int main(int argc, char **argv)
                            : "blk.%llu.ffn_%s_exps.weight",
                      (unsigned long long)l, part_name[p]);
             struct tensor *t = find(key);
+            int half = 0; /* gate and up fused: this one's half of the rows */
+            if (!t && !dense && p < 2) {
+                snprintf(key, sizeof(key), "blk.%llu.ffn_gate_up_exps.weight",
+                         (unsigned long long)l);
+                t = find(key);
+                half = 1;
+            }
             if (!t)
                 die("%s missing: only models with routed experts in every "
                     "layer, or dense ones, are supported",
@@ -251,19 +318,38 @@ int main(int argc, char **argv)
             uint64_t ne = t->t->n_dims > 2 ? t->t->dims[2] : 1;
             if (ne != n_expert || t->t->bytes % n_expert ||
                 t->t->dims[0] > UINT32_MAX || t->t->dims[1] > UINT32_MAX ||
-                t->t->dims[3] != 1)
+                t->t->dims[3] != 1 || (half && t->t->dims[1] % 2))
                 die("%s: unexpected shape", key);
             uint64_t per = t->t->bytes / n_expert;
+            uint64_t rows = t->t->dims[1] / (half ? 2 : 1);
+            uint64_t cols = t->t->dims[0];
+            if (per % t->t->dims[1])
+                die("%s: rows of unequal size", key);
+            uint64_t rb = per / t->t->dims[1];
+            /* widened to a multiple of 256: the rows of gate and up, the
+               row of down */
+            uint64_t new_rows = p < 2 ? wide(rows) : rows;
+            uint64_t new_cols = p < 2 ? cols : wide(cols);
+            if (new_cols != cols && (rb * new_cols) % cols)
+                die("%s: cannot widen this type", key);
+            uint64_t new_rb = rb * new_cols / cols;
             off = align_up(off, MATRIX_ALIGN);
             layers[l].m[p] =
                 (struct janas_jns_matrix){.type = t->t->type,
-                                          .rows = (uint32_t)t->t->dims[1],
-                                          .cols = (uint32_t)t->t->dims[0],
+                                          .rows = (uint32_t)new_rows,
+                                          .cols = (uint32_t)new_cols,
                                           .offset = off,
-                                          .bytes = per};
-            off += per;
+                                          .bytes = new_rows * new_rb};
+            off += new_rows * new_rb;
             t->expert = 1;
-            mats[l][p] = t;
+            mats[l][p] =
+                (struct src_matrix){.t = t,
+                                    .off = p == 1 && half ? rows * rb : 0,
+                                    .per = per,
+                                    .rows = rows,
+                                    .rb = rb,
+                                    .new_rows = new_rows,
+                                    .new_rb = new_rb};
         }
         layers[l].slot_bytes = align_up(off, ALIGN);
     }
@@ -283,6 +369,34 @@ int main(int argc, char **argv)
             resident[n_res++] = &tensors[i];
     }
     qsort(resident, n_res, sizeof(*resident), by_place);
+    /* a dense feed-forward beside the experts (Gemma 4's 26B), widened as
+       theirs */
+    for (size_t i = 0; i < n_res; i++) {
+        struct tensor *t = resident[i];
+        char *name = str_dup(&t->t->name);
+        size_t nl = strlen(name);
+        int gu = nl > 16 && (!strcmp(name + nl - 16, ".ffn_gate.weight") ||
+                             !strcmp(name + nl - 14, ".ffn_up.weight"));
+        int dn = nl > 16 && !strcmp(name + nl - 16, ".ffn_down.weight");
+        free(name);
+        t->new_bytes = t->t->bytes;
+        t->new_dims[0] = t->t->dims[0];
+        t->new_dims[1] = t->t->dims[1];
+        if (t->t->n_dims != 2 || !(gu || dn))
+            continue;
+        uint64_t rows = t->t->dims[1], cols = t->t->dims[0];
+        if (t->t->bytes % rows)
+            die("%s", "a feed-forward matrix with rows of unequal size");
+        t->rows = rows;
+        t->rb = t->t->bytes / rows;
+        t->new_rows = gu ? wide(rows) : rows;
+        t->new_dims[1] = t->new_rows;
+        t->new_dims[0] = gu ? cols : wide(cols);
+        if ((t->rb * t->new_dims[0]) % cols)
+            die("%s", "a feed-forward matrix whose type cannot be widened");
+        t->new_rb = t->rb * t->new_dims[0] / cols;
+        t->new_bytes = t->new_rows * t->new_rb;
+    }
 
     /* layout */
     uint64_t metadata_bytes = 8 + (g0->kv_end - g0->kv_start);
@@ -298,7 +412,7 @@ int main(int argc, char **argv)
     uint64_t pos = resident_offset;
     for (size_t i = 0; i < n_res; i++) {
         resident[i]->new_offset = pos;
-        pos = align_up(pos + resident[i]->t->bytes, ALIGN);
+        pos = align_up(pos + resident[i]->new_bytes, ALIGN);
     }
     uint64_t resident_bytes = pos - resident_offset;
     uint64_t experts_offset = pos;
@@ -329,12 +443,18 @@ int main(int argc, char **argv)
     if (out_fd < 0 || ftruncate(out_fd, (off_t)file_bytes) != 0)
         die("%s: cannot write", dst);
     buf = malloc(COPY_CHUNK);
-    if (!buf)
+    obuf = malloc(COPY_CHUNK * 2);
+    if (!buf || !obuf)
         die("%s", "out of memory");
 
-    for (size_t i = 0; i < n_res; i++)
-        copy(resident[i], resident[i]->t->offset, resident[i]->t->bytes,
-             resident[i]->new_offset, 0, 0);
+    for (size_t i = 0; i < n_res; i++) {
+        const struct tensor *t = resident[i];
+        if (t->new_bytes != t->t->bytes)
+            copy_rows(t, t->t->offset, t->rows, t->rb, t->new_rows, t->new_rb,
+                      t->new_offset, 0, 0);
+        else
+            copy(t, t->t->offset, t->t->bytes, t->new_offset, 0, 0);
+    }
 
     for (uint64_t l = 0; l < n_layer; l++) {
         for (uint64_t e = 0; e < n_expert; e++) {
@@ -345,8 +465,10 @@ int main(int argc, char **argv)
                 const struct janas_jns_matrix *m = &layers[l].m[p];
                 if (m->offset > end) /* padding inside the slot is zero */
                     crc = crc_zeros(crc, m->offset - end);
-                crc = copy(mats[l][p], mats[l][p]->t->offset + e * m->bytes,
-                           m->bytes, slot + m->offset, crc, 1);
+                const struct src_matrix *s = &mats[l][p];
+                crc = copy_rows(s->t, s->t->t->offset + e * s->per + s->off,
+                                s->rows, s->rb, s->new_rows, s->new_rb,
+                                slot + m->offset, crc, 1);
                 end = m->offset + m->bytes;
             }
             crc = crc_zeros(crc, layers[l].slot_bytes - end);
@@ -379,8 +501,10 @@ int main(int argc, char **argv)
         d.type = t->type;
         d.n_dims = t->n_dims;
         memcpy(d.dims, t->dims, sizeof(d.dims));
+        d.dims[0] = resident[i]->new_dims[0];
+        d.dims[1] = resident[i]->new_dims[1];
         d.offset = resident[i]->new_offset;
-        d.bytes = t->bytes;
+        d.bytes = resident[i]->new_bytes;
         memcpy(tbl + (tensor_dir - layer_table) + i * sizeof(d), &d, sizeof(d));
     }
     uint8_t *meta = malloc(metadata_bytes);
@@ -425,6 +549,7 @@ int main(int argc, char **argv)
     free(meta);
     free(tbl);
     free(buf);
+    free(obuf);
     free(slot_off);
     free(sums);
     free(resident);

@@ -31,6 +31,11 @@ enum janas_tool_dialect {
     JANAS_TOOLS_JSON,
     JANAS_TOOLS_XML,
     JANAS_TOOLS_XML_CODER,
+    /* Gemma 4: <|tool>declaration:f{...}<tool|> in the system turn, calls
+       <|tool_call>call:f{key:value,...}<tool_call|>, strings between <|"|>
+       tokens, answers <|tool_response>response:f{value:...}<tool_response|>
+       inside the model's own turn */
+    JANAS_TOOLS_GEMMA,
 };
 
 /* The dialect of a chat template (NONE when it has no tools). */
@@ -80,6 +85,19 @@ int janas_tools_parse(enum janas_tool_dialect d, const struct janas_toolset *t,
  * functions (only < 0) or function `only`, with arguments valid against its
  * parameters.
  */
+/* Gemma 4's call rule: the quote token <|"|> too. */
+uint32_t janas_tools_rule_gemma(struct janas_gbuild *b,
+                                const struct janas_toolset *t, int only,
+                                int32_t close, int32_t quote);
+
+/* Gemma 4: a tool's answer as its template writes it, without the opening
+   <|tool_response> (the model's stop token, already in the sequence, or
+   written by the caller): response:name{value:<|"|>text<|"|>}<tool_response|>
+   - the text as it is, JSON or not, as the template quotes a message's
+   content. */
+void janas_tools_gemma_response(struct janas_buf *out, const char *name,
+                                size_t name_n, const char *text, size_t n);
+
 uint32_t janas_tools_rule(struct janas_gbuild *b, struct janas_jsg *j,
                           enum janas_tool_dialect d,
                           const struct janas_toolset *t, int only,

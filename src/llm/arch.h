@@ -35,6 +35,7 @@ struct janas_arch {
                      its head size, KV heads and RoPE; V normalized without
                      weights, V = K where attn_v is missing, scores not
                      scaled (the q and k norms do it) */
+    int kv16;     /* keys and values kept at sixteen bits, not eight */
 };
 
 /* The architecture called name, or NULL if Janas does not know it. */

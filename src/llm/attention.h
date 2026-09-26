@@ -67,6 +67,21 @@ void janas_attn_set_scale(struct janas_attn *a, float scale);
 /* A sliding window: token p sees positions p - window + 1 .. p only; 0 (the
    default) for all. The cache still holds every position. */
 void janas_attn_set_window(struct janas_attn *a, uint32_t window);
+/* Keys and values of sixteen bits (int16 with the same scale per position
+   and KV head) instead of eight; the scores are then computed over the float
+   query (FLOAT). Twice the bytes, some 250 times finer: Gemma 4 needs it. */
+void janas_attn_set_kv16(struct janas_attn *a, int on);
+/*
+ * A ring (with a window): the cache holds n_ctx positions, n_ctx a multiple
+ * of 256, position p in row p mod n_ctx; a call must fit in it, window and
+ * the call's tokens together with room for the chunk boundaries
+ * (janas_attn_ring_positions). The partial results are kept for that many
+ * positions only.
+ */
+void janas_attn_set_ring(struct janas_attn *a, int on);
+/* The positions a ring needs for a window and calls of up to n tokens
+   whose keys and values are written before any of them is attended. */
+uint32_t janas_attn_ring_positions(uint32_t window, uint32_t n);
 
 /* What the scores are actually computed with: FLOAT or INT16. */
 int janas_attn_scores_mode(const struct janas_attn *a);

@@ -2,6 +2,98 @@
 
 > Curated, user-facing summary of completed work, newest first.
 
+## [2026-09-27] - Why a build has no GPU
+
+- **A build without GPU support says what was missing.** The GPU needs
+  both `glslangValidator` and the Vulkan headers when Janas is built; with
+  the first and not the second (CachyOS without `vulkan-headers`) the build
+  left the GPU out without a word, and `janas-try.sh` reported "built with
+  GPU support". Now `build.sh` prints which piece is missing, the engine's
+  "GPU: none usable" names it, `janas-try.sh` checks for the headers too,
+  and the README gives the Arch packages.
+
+## [2026-09-27] - Gemma 4: E2B and E4B
+
+- **Gemma-4-E2B-it and E4B-it run and chat**, tools included. Each token
+  brings a few numbers for every layer (per-layer embeddings): a row of a
+  table of their own plus a projection of the embedding (bf16), which open
+  a branch of the residual after each feed-forward. The table, half of
+  E2B's file, is never loaded: a token's row, a few kilobytes, is read from
+  the file when it is needed, so E2B runs in 1.5 GB of memory from a 3.1 GB
+  file, E4B in 3.1 GB from 5.0 GB.
+- **The last layers share keys and values**: E2B's last 20 layers and
+  E4B's last 18 compute queries only, and read the cache of the last
+  earlier layer of their kind. E2B's feed-forward widens from 6,144 to
+  12,288 halfway; the engine takes a width per layer.
+- Against llama.cpp, 200 tokens of text: E2B agrees on the most likely
+  token at 191 positions, E4B at 195; prompt blocks give the same bits as
+  token by token.
+- **Without reasoning, E2B and E4B are no longer handed an empty thought
+  channel**: their template does not write one (the 12B's and 26B's do),
+  and given one they reasoned inside the reply. The chat template is now
+  read whole: Gemma 4's is 19 KB, and the part after 16 KB was lost.
+
+## [2026-09-27] - Gemma 4: tools
+
+- **Gemma 4 calls tools**, in its own notation: the functions declared in
+  the system turn (`<|tool>declaration:name{...}<tool|>`, parameters written
+  as its template writes them, keys sorted), calls `call:name{key:value}`
+  read into JSON, held by a grammar to a declared name and a well-formed
+  value, and the tools' answers written inside the model's own turn, which
+  it then continues. Checked token for token against the template rendered
+  with Jinja: the first prompt with its declarations, a conversation loaded
+  with a call and its answer (as `janas-server` gives it), and the answer
+  appended live. Gemma-4-12B-it called a weather function with the right
+  argument and used its answer.
+
+## [2026-09-27] - Gemma 4: the 26B mixture, a sliding context, rings
+
+- **Gemma-4-26B-A4B-it runs and chats**: 128 experts (eight a token)
+  beside a dense feed-forward, the two as branches of their own - each
+  normalized on the way in and out, then summed - a router reading its own
+  input, and a scale per expert, folded into its weight. `gguf2jns` splits
+  gate and up, which the file keeps fused, and widens with zeros the
+  feed-forwards that are not a multiple of 256 wide (704 and 2,112 here):
+  every weight type reads zero bytes as zero weights, so the products are
+  unchanged. Files that need no widening convert to the same bytes as
+  before.
+- **The sliding-window layers keep a ring** of the positions they can see
+  - the window and a prefill block, 1,536 for Gemma 4 - instead of the whole
+  context, and attention skips the chunks before the window without reading
+  them. The logits are the same to the bit with and without the ring
+  (`JANAS_SWA_RING=0`), 1,500 tokens past the window; kept conversations,
+  on disk too, come back with the same replies.
+- **A full context slides on Gemma 4 too**: each layer's keys turned back
+  with its own RoPE (two kinds, the full layers with their frequency
+  factors), sixteen-bit keys, the rings. Qwen models slide as before, to
+  the bit.
+
+## [2026-09-26] - Gemma 4 in the chat
+
+- **Gemma-4-12B-it chats**: Gemma's format - `<bos>`, turns opened by
+  `<|turn>` and closed by `<turn|>`, the assistant called "model" - with
+  its reasoning on or off: on, `<|think|>` heads the system turn and the
+  model writes its thought channel, shown as reasoning; off, the channel is
+  written empty, as the template does. The prompts were checked token for
+  token against the model's own template rendered with Jinja and tokenized
+  by llama.cpp, with and without reasoning. No tools yet, and a full
+  context stops the chat instead of sliding.
+
+## [2026-09-26] - Gemma 4: keys and values at sixteen bits
+
+- **Gemma 4 keeps its keys and values at sixteen bits** (integers with the
+  same scale per position and head, some 250 times finer than eight bits);
+  the attention reads them through kernels of their own, the scores over
+  the float query. Qwen models stay at eight bits, bit for bit as before;
+  `JANAS_KV=8` or `16` overrides the choice. Against llama.cpp on 200
+  tokens of prose: 160 most likely tokens in agreement and a mean logit
+  difference of 0.84, against 143 and 1.53 at eight bits.
+- **A trap in the reference**: llama.cpp's logits of Gemma 4 depend on its
+  batch size - with batches of 64 tokens or more, the early positions see
+  later tokens. The comparisons above use batches of 8, which agree with a
+  prompt of two tokens run alone. The earlier figures (175 of 200) were
+  measured against the larger batches.
+
 ## [2026-09-26] - Why there is no GPU
 
 - **"GPU: none usable" now says why**: built without GPU support

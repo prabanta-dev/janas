@@ -92,17 +92,57 @@ static uint64_t file_size(const char *path)
     return stat(path, &st) == 0 ? (uint64_t)st.st_size : 0;
 }
 
-/* Recognizes the chat format; returns 0 or an error code. */
-static int32_t find_format(janas_llm *llm, const struct janas_jns *j)
+/* Recognizes the chat format from the template in tmpl; returns 0 or an
+   error code. */
+static int32_t find_format_in(janas_llm *llm, const struct janas_jns *j,
+                              const char *tmpl)
 {
-    char tmpl[16384];
-    if (janas_jns_meta_str(j, "tokenizer.chat_template", tmpl, sizeof(tmpl)) !=
-        0)
-        tmpl[0] = 0;
     llm->im_start = janas_tokenizer_find(llm->tok, "<|im_start|>");
     llm->im_end = janas_tokenizer_find(llm->tok, "<|im_end|>");
-    if (llm->im_start >= 0 && llm->im_end >= 0 &&
-        (tmpl[0] == 0 || strstr(tmpl, "<|im_start|>"))) {
+    llm->asst_role = "assistant";
+    llm->bos = llm->think_on = -1;
+    llm->quote = llm->decl_open = llm->decl_close = -1;
+    int32_t turn_open = janas_tokenizer_find(llm->tok, "<|turn>");
+    int32_t turn_close = janas_tokenizer_find(llm->tok, "<turn|>");
+    if (turn_open >= 0 && turn_close >= 0 && strstr(tmpl, "<|turn>")) {
+        /* Gemma 4: no tools yet (its calls have a syntax of their own) */
+        llm->format = FORMAT_GEMMA;
+        llm->im_start = turn_open;
+        llm->im_end = turn_close;
+        llm->asst_role = "model";
+        llm->bos = janas_tokenizer_find(llm->tok, "<bos>");
+        llm->stop[llm->n_stop++] = turn_close;
+        int32_t eos = janas_tokenizer_find(llm->tok, "<eos>");
+        if (eos >= 0)
+            llm->stop[llm->n_stop++] = eos;
+        llm->think_open = janas_tokenizer_find(llm->tok, "<|channel>");
+        llm->think_close = janas_tokenizer_find(llm->tok, "<channel|>");
+        llm->think_on = janas_tokenizer_find(llm->tok, "<|think|>");
+        llm->thinker = strstr(tmpl, "enable_thinking") &&
+                       llm->think_open >= 0 && llm->think_close >= 0 &&
+                       llm->think_on >= 0;
+        /* without reasoning the 12B and 26B are given an empty channel;
+           E2B and E4B are not, and given one they reason in the reply */
+        llm->empty_thought =
+            strstr(tmpl, "'<|channel>thought\\n<channel|>'") != NULL;
+        /* tools: its own notation (tools.c); a call ends the reply at
+           <|tool_response>, which the tools' answers then follow */
+        llm->call_open = janas_tokenizer_find(llm->tok, "<|tool_call>");
+        llm->call_close = janas_tokenizer_find(llm->tok, "<tool_call|>");
+        llm->resp_open = janas_tokenizer_find(llm->tok, "<|tool_response>");
+        llm->resp_close = janas_tokenizer_find(llm->tok, "<tool_response|>");
+        llm->quote = janas_tokenizer_find(llm->tok, "<|\"|>");
+        llm->decl_open = janas_tokenizer_find(llm->tok, "<|tool>");
+        llm->decl_close = janas_tokenizer_find(llm->tok, "<tool|>");
+        llm->tools = janas_tools_dialect(tmpl);
+        if (llm->call_open < 0 || llm->call_close < 0 || llm->resp_open < 0 ||
+            llm->resp_close < 0 || llm->quote < 0 || llm->decl_open < 0 ||
+            llm->decl_close < 0)
+            llm->tools = JANAS_TOOLS_NONE;
+        if (llm->tools != JANAS_TOOLS_NONE)
+            llm->stop[llm->n_stop++] = llm->resp_open;
+    } else if (llm->im_start >= 0 && llm->im_end >= 0 &&
+               (tmpl[0] == 0 || strstr(tmpl, "<|im_start|>"))) {
         llm->format = FORMAT_CHATML;
         llm->stop[llm->n_stop++] = llm->im_end;
         llm->think_open = janas_tokenizer_find(llm->tok, "<think>");
@@ -136,13 +176,27 @@ static int32_t find_format(janas_llm *llm, const struct janas_jns *j)
     if (janas_jns_meta_u32(j, "tokenizer.ggml.eos_token_id", &eos) == 0)
         llm->eos_id = (int32_t)eos;
     if (janas_jns_meta_u32(j, "tokenizer.ggml.eos_token_id", &eos) == 0 &&
-        (int32_t)eos != llm->stop[0])
+        !janas_api_is_stop(llm, (int32_t)eos))
         llm->stop[llm->n_stop++] = (int32_t)eos;
     int32_t eot = janas_tokenizer_find(llm->tok, "<|endoftext|>");
     if (eot >= 0 && eot != llm->stop[0] &&
         (llm->n_stop < 2 || eot != llm->stop[1]))
         llm->stop[llm->n_stop++] = eot;
     return 0;
+}
+
+/* The same, reading the template (Gemma 4's: 19 KB) */
+static int32_t find_format(janas_llm *llm, const struct janas_jns *j)
+{
+    size_t cap = (size_t)1 << 17;
+    char *tmpl = malloc(cap);
+    if (!tmpl)
+        return janas_api_fail(JANAS_LLM_ENOMEM, "out of memory");
+    if (janas_jns_meta_str(j, "tokenizer.chat_template", tmpl, cap) != 0)
+        tmpl[0] = 0;
+    int32_t rc = find_format_in(llm, j, tmpl);
+    free(tmpl);
+    return rc;
 }
 
 int32_t janas_llm_open(const char *path, const struct janas_llm_params *pp,
@@ -180,8 +234,11 @@ int32_t janas_llm_open(const char *path, const struct janas_llm_params *pp,
     janas_jns_meta_str(&j, "general.name", name, sizeof(name));
     janas_jns_meta_str(&j, "general.architecture", arch, sizeof(arch));
     int32_t rc = 0;
-    if (strcmp(kind, "gpt2") != 0 ||
-        (strcmp(pre, "qwen2") != 0 && strcmp(pre, "qwen35") != 0))
+    /* byte-level BPE with Qwen's pre-tokenizers, or Gemma 4's */
+    int known = (strcmp(kind, "gpt2") == 0 &&
+                 (strcmp(pre, "qwen2") == 0 || strcmp(pre, "qwen35") == 0)) ||
+                strcmp(kind, "gemma4") == 0;
+    if (!known)
         rc = janas_api_fail(JANAS_LLM_EMODEL, "tokenizer %s/%s not supported",
                             kind, pre);
     else if (!(llm->tok = janas_tokenizer_create(&j, err, sizeof(err))))
@@ -189,6 +246,12 @@ int32_t janas_llm_open(const char *path, const struct janas_llm_params *pp,
     else
         rc = find_format(llm, &j);
     uint64_t resident = j.h.resident_bytes;
+    /* less Gemma 4's per-layer embeddings, read from the file a row at a
+       time (model_ple.c) */
+    const struct janas_jns_tensor *ple =
+        janas_jns_tensor(&j, "per_layer_token_embd.weight");
+    if (ple && ple->bytes < resident)
+        resident -= ple->bytes;
     /* what the cache would need to hold every slot at once. Not the size of
        the expert region: the cache's slots are all as big as the largest, so
        where the layers differ (a down matrix in Q6_K in one and Q4_K in the
@@ -236,22 +299,50 @@ int32_t janas_llm_open(const char *path, const struct janas_llm_params *pp,
     /* Gemma 4: sliding-window layers with a head size of their own, and an
        attention (its partial results) for each kind of layer */
     const uint8_t *pat = NULL;
-    uint32_t len_swa = 0, kv_swa = 0;
+    uint32_t len_swa = 0, kv_swa = 0, window = 0;
+    /* a sliding-window layer keeps a ring of positions (model_load.c): a
+       fixed amount, counted apart from the tokens */
+    uint64_t ring_bytes = 0;
+    uint32_t ring = 0;
+    snprintf(key, sizeof(key), "%.32s.attention.sliding_window", arch);
+    if (janas_jns_meta_u32(&j, key, &window) == 0 && window) {
+        const char *pb = getenv("JANAS_PREFILL_BLOCK"),
+                   *rg = getenv("JANAS_SWA_RING");
+        long blk = pb ? atol(pb) : 256;
+        ring = janas_attn_ring_positions(window, blk < 64     ? 64
+                                                 : blk > 4096 ? 4096
+                                                              : (uint32_t)blk);
+        if (ring >= p.n_ctx || (rg && atoi(rg) == 0))
+            ring = 0;
+    }
     snprintf(key, sizeof(key), "%.32s.attention.sliding_window_pattern", arch);
     if (janas_jns_meta_bytes(&j, key, &n_pat, &pat) != 0 || n_pat != n_layer)
         pat = NULL;
     snprintf(key, sizeof(key), "%.32s.attention.key_length_swa", arch);
     janas_jns_meta_u32(&j, key, &len_swa);
+    /* E2B and E4B: one count of KV heads for both kinds, and the last
+       shared_kv_layers layers reading earlier layers' keys and values */
+    uint32_t shared = 0;
+    snprintf(key, sizeof(key), "%.32s.attention.shared_kv_layers", arch);
+    janas_jns_meta_u32(&j, key, &shared);
     snprintf(key, sizeof(key), "%.32s.attention.head_count_kv", arch);
-    if (janas_jns_meta_ints(&j, key, &n_arr, &per_layer) == 0 && per_layer &&
-        n_arr == n_layer) {
+    int arr = janas_jns_meta_ints(&j, key, &n_arr, &per_layer) == 0 &&
+              per_layer && n_arr == n_layer;
+    if (arr || (pat && kv_heads)) {
+        uint32_t one = kv_heads;
         kv_token = 0;
-        for (uint64_t i = 0; i < n_arr; i++) {
-            int32_t h;
-            memcpy(&h, per_layer + i, sizeof(h));
+        for (uint64_t i = 0; i + shared < n_layer; i++) {
+            int32_t h = (int32_t)one;
+            if (arr)
+                memcpy(&h, per_layer + i, sizeof(h));
             uint32_t len = pat && pat[i] && len_swa ? len_swa : kv_len;
-            if (h > 0)
-                kv_token += (uint64_t)h * (len * 2 + 8);
+            /* keys and values of one byte a number, or two (Gemma 4) */
+            uint64_t per =
+                h > 0 ? (uint64_t)h * (len * (a && a->kv16 ? 4 : 2) + 8) : 0;
+            if (pat && pat[i] && ring)
+                ring_bytes += per * ring;
+            else
+                kv_token += per;
             if (h > 0 && pat && pat[i])
                 kv_swa = (uint32_t)h;
             else if (h > 0 && pat)
@@ -271,7 +362,9 @@ int32_t janas_llm_open(const char *path, const struct janas_llm_params *pp,
             ? janas_attn_part_bytes(n_head, kv_heads, kv_len, p.n_ctx)
             : 0;
     if (pat && n_head && kv_swa && len_swa)
-        attn_part += janas_attn_part_bytes(n_head, kv_swa, len_swa, p.n_ctx);
+        attn_part += janas_attn_part_bytes(n_head, kv_swa, len_swa,
+                                           ring ? ring : p.n_ctx) +
+                     ring_bytes;
     /* and the scratch of a pass, which grows with the prefill block
        (janas_llm_model_max_block): per token, the rows of its experts (gate,
        up, their product, down) and a few rows of the model's width. An
@@ -282,7 +375,16 @@ int32_t janas_llm_open(const char *path, const struct janas_llm_params *pp,
     snprintf(key, sizeof(key), "%.32s.expert_feed_forward_length", arch);
     if (janas_jns_meta_u32(&j, key, &ff) != 0) {
         snprintf(key, sizeof(key), "%.32s.feed_forward_length", arch);
-        janas_jns_meta_u32(&j, key, &ff);
+        const int32_t *ffs = NULL;
+        uint64_t n_ff = 0;
+        if (janas_jns_meta_u32(&j, key, &ff) != 0 &&
+            janas_jns_meta_ints(&j, key, &n_ff, &ffs) == 0 && ffs)
+            for (uint64_t i = 0; i < n_ff; i++) { /* E2B: the widest */
+                int32_t v;
+                memcpy(&v, ffs + i, sizeof(v));
+                if (v > 0 && (uint32_t)v > ff)
+                    ff = (uint32_t)v;
+            }
     }
     snprintf(key, sizeof(key), "%.32s.expert_used_count", arch);
     janas_jns_meta_u32(&j, key, &k_used);
@@ -406,6 +508,8 @@ int32_t janas_llm_open(const char *path, const struct janas_llm_params *pp,
     llm->cache_bytes = cache;
     llm->reserve_bytes = reserve;
     llm->kv_token = kv_token;
+    llm->kv_ring = ring;
+    llm->kv_ring_token = ring ? ring_bytes / ring : 0;
     llm->n_compute = mo.n_compute;
     snprintf(llm->arch, sizeof(llm->arch), "%s", arch);
     snprintf(llm->bits, sizeof(llm->bits), "%s", bits);

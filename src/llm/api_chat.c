@@ -256,10 +256,35 @@ int janas_api_add_message(janas_llm_chat *c, const char *role, const char *text,
     }
 }
 
+/* The start of the sequence: Gemma's <bos>, nothing for ChatML. */
+int janas_api_begin_sequence(janas_llm_chat *c)
+{
+    return c->llm->bos >= 0 ? janas_api_add_special(c, c->llm->bos) : 0;
+}
+
 int janas_api_start_reply(janas_llm_chat *c)
 {
     const janas_llm *llm = c->llm;
     switch (llm->format) {
+    case FORMAT_GEMMA:
+        if (c->in_turn) { /* after the tools' answers: the model goes on */
+            c->in_turn = 0;
+            c->in_think = c->chan_label = 0;
+            return janas_api_flush_text(c);
+        }
+        if (janas_api_add_special(c, llm->im_start) ||
+            janas_api_add_text(c, "model\n", 6))
+            return -1;
+        /* reasoning asked for (<|think|> in the system turn): the model
+           opens its channel itself; otherwise the channel is written empty
+           where the template does (not E2B and E4B's) */
+        c->in_think = c->chan_label = 0;
+        if ((llm->thinker && c->p.thinking != 0) || !llm->empty_thought)
+            return janas_api_flush_text(c);
+        return janas_api_add_special(c, llm->think_open) ||
+               janas_api_add_text(c, "thought\n", 8) ||
+               janas_api_add_special(c, llm->think_close) ||
+               janas_api_flush_text(c);
     case FORMAT_CHATML:
     default:
         if (janas_api_add_special(c, llm->im_start) ||
@@ -292,6 +317,7 @@ int janas_api_start_reply(janas_llm_chat *c)
 int janas_api_add_markup(janas_llm_chat *c, const char *s, size_t n)
 {
     const janas_llm *llm = c->llm;
+    int gemma = llm->format == FORMAT_GEMMA;
     const struct {
         const char *text;
         int32_t id;
@@ -300,7 +326,15 @@ int janas_api_add_markup(janas_llm_chat *c, const char *s, size_t n)
                  {"<tool_response>", llm->resp_open},
                  {"</tool_response>", llm->resp_close},
                  {"<think>", llm->think_open},
-                 {"</think>", llm->think_close}};
+                 {"</think>", llm->think_close},
+                 /* Gemma 4 */
+                 {"<|tool_call>", gemma ? llm->call_open : -1},
+                 {"<tool_call|>", gemma ? llm->call_close : -1},
+                 {"<|tool_response>", gemma ? llm->resp_open : -1},
+                 {"<tool_response|>", gemma ? llm->resp_close : -1},
+                 {"<|\"|>", llm->quote},
+                 {"<|tool>", llm->decl_open},
+                 {"<tool|>", llm->decl_close}};
     size_t from = 0;
     for (size_t i = 0; i < n; i++) {
         if (s[i] != '<')
@@ -326,6 +360,26 @@ int janas_api_add_system(janas_llm_chat *c, const char *sys, size_t n)
 {
     const janas_llm *llm = c->llm;
     c->tools_tokens = 0;
+    if (llm->format == FORMAT_GEMMA) {
+        /* a system turn only when there is something to say: the message,
+           or <|think|> at its top when reasoning is asked for */
+        int think = llm->thinker && c->p.thinking != 0;
+        int tools = c->tools && llm->tools == JANAS_TOOLS_GEMMA;
+        if (!think && !tools && (!sys || n == 0))
+            return 0;
+        struct janas_buf b = {0};
+        janas_tools_system(&b, tools ? JANAS_TOOLS_GEMMA : JANAS_TOOLS_NONE,
+                           c->tools, sys, n);
+        int err = b.oom || janas_api_add_special(c, llm->im_start) ||
+                  janas_api_add_text(c, "system\n", 7) ||
+                  (think && (janas_api_add_special(c, llm->think_on) ||
+                             janas_api_add_text(c, "\n", 1))) ||
+                  janas_api_add_markup(c, b.p, b.n) ||
+                  janas_api_add_special(c, llm->im_end) ||
+                  janas_api_add_text(c, "\n", 1);
+        janas_buf_free(&b);
+        return err ? -1 : 0;
+    }
     if (!c->tools || llm->tools == JANAS_TOOLS_NONE)
         return janas_api_add_message(c, "system", sys ? sys : "", n);
     /* how many of its tokens the tools take: the message without them is
@@ -626,22 +680,46 @@ static int32_t send_turn(janas_llm_chat *c, const char *text, size_t n,
                          const int32_t *lens)
 {
     janas_api_prep_start(c);
+    /* Gemma: the tools answer inside the model's turn, each answer named
+       after its call, which the reply's calls say (cleared next) */
+    int gemma_answers = texts && c->llm->format == FORMAT_GEMMA &&
+                        c->llm->tools == JANAS_TOOLS_GEMMA &&
+                        janas_llm_session_length(c->s) > 0;
+    struct janas_buf ans = {0};
+    for (int32_t i = 0; gemma_answers && i < n_res; i++) {
+        const char *nm = i < (int32_t)c->n_calls ? c->calls[i].name : "tool";
+        if (i > 0 || !c->closed)
+            janas_buf_puts(&ans, "<|tool_response>");
+        janas_tools_gemma_response(
+            &ans, nm, strlen(nm), texts[i],
+            janas_api_text_len(texts[i], lens ? lens[i] : -1));
+    }
     janas_api_reply_clear(c);
     c->n_ids = c->n_text = 0;
-    int err = 0;
-    if (janas_llm_session_length(c->s) > 0) {
+    int err = ans.oom;
+    /* (ans is freed once written, below) */
+    if (gemma_answers) {
+        err |= janas_api_add_markup(c, ans.p, ans.n);
+        c->in_turn = 1;
+    } else if (janas_llm_session_length(c->s) > 0) {
         /* close the previous reply: its stop token is in the sequence, or
            it was cut and gets one now; then the newline after it */
         if (!c->closed)
             err |= janas_api_add_special(c, c->llm->im_end);
         err |= janas_api_add_text(c, "\n", 1);
-    } else if (c->system || c->tools) {
-        err |= janas_api_add_system(c, c->system,
-                                    c->system ? strlen(c->system) : 0);
+    } else {
+        /* the start: <bos> where the format has one, the system message */
+        err |= janas_api_begin_sequence(c);
+        if (c->system || c->tools || c->llm->format == FORMAT_GEMMA)
+            err |= janas_api_add_system(c, c->system,
+                                        c->system ? strlen(c->system) : 0);
         c->sys_tokens = (uint32_t)c->n_ids;
     }
     err |= janas_api_note_turn(c, (uint32_t)janas_llm_session_length(c->s));
-    if (texts) {
+    janas_buf_free(&ans);
+    if (gemma_answers) {
+        /* written above */
+    } else if (texts) {
         err |= janas_api_add_special(c, c->llm->im_start) ||
                janas_api_add_text(c, "user", 4);
         for (int32_t i = 0; i < n_res; i++) {

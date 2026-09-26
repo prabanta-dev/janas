@@ -145,8 +145,9 @@ static int add_assistant(janas_llm_chat *c, const struct cmsg *m, int after_q)
     int err = janas_api_add_special(c, llm->im_start);
     /* Qwen3-Coder writes the calls right after the role */
     int bare = d == JANAS_TOOLS_XML_CODER && m->n_calls;
-    err |= janas_api_add_text(c, bare ? "assistant" : "assistant\n",
-                              bare ? 9 : 10);
+    err |= janas_api_add_text(c, llm->asst_role, strlen(llm->asst_role));
+    if (!bare)
+        err |= janas_api_add_text(c, "\n", 1);
     if (d == JANAS_TOOLS_XML && llm->thinker && after_q)
         err |= janas_api_add_markup(c, "<think>\n\n</think>\n\n", 19);
     if (m->n_calls && d != JANAS_TOOLS_NONE) {
@@ -162,6 +163,43 @@ static int add_assistant(janas_llm_chat *c, const struct cmsg *m, int after_q)
     return err ? -1 : 0;
 }
 
+/*
+ * Gemma 4's model turn with tools: its calls, the answers of the tool
+ * messages after it (they belong to the turn), then its text; the turn
+ * stays open when the model speaks next (the next message is its own, or
+ * the reply is to follow the answers). Returns the index of the last
+ * message used; *open whether the turn was left open.
+ */
+static size_t add_gemma_turn(janas_llm_chat *c, size_t i, int reopen, int *open)
+{
+    const janas_llm *llm = c->llm;
+    const struct cmsg *m = &c->msgs[i];
+    int err = 0;
+    if (!reopen)
+        err |= janas_api_add_special(c, llm->im_start) ||
+               janas_api_add_text(c, "model\n", 6);
+    struct janas_buf b = {0};
+    janas_tools_assistant(&b, JANAS_TOOLS_GEMMA, NULL, 0, m->calls, m->n_calls);
+    size_t j = i + 1, k = 0;
+    for (; j < c->n_msgs && c->msgs[j].role == JANAS_LLM_ROLE_TOOL; j++, k++) {
+        const char *nm = k < m->n_calls ? m->calls[k].name : "tool";
+        size_t nn = k < m->n_calls ? m->calls[k].name_n : 4;
+        janas_buf_puts(&b, "<|tool_response>");
+        janas_tools_gemma_response(&b, nm, nn, c->msgs[j].text, c->msgs[j].n);
+    }
+    if (m->text)
+        janas_buf_put(&b, m->text, m->n);
+    err |= b.oom || janas_api_add_markup(c, b.p, b.n);
+    janas_buf_free(&b);
+    int next_model =
+        j < c->n_msgs && c->msgs[j].role == JANAS_LLM_ROLE_ASSISTANT;
+    *open = next_model || (j == c->n_msgs && k > 0);
+    if (!*open)
+        err |= janas_api_add_special(c, llm->im_end) ||
+               janas_api_add_text(c, "\n", 1);
+    return err ? (size_t)-1 : j - 1;
+}
+
 /* The messages built, in the model's format, into c->ids; the reply's turn
    started. *reply_off gets where it starts. */
 static int render(janas_llm_chat *c, uint32_t *reply_off)
@@ -171,13 +209,17 @@ static int render(janas_llm_chat *c, uint32_t *reply_off)
     for (size_t i = 0; i < c->n_msgs; i++)
         if (c->msgs[i].role == JANAS_LLM_ROLE_USER)
             last_q = i;
-    int err = 0;
+    int err = janas_api_begin_sequence(c);
+    if (llm->format == FORMAT_GEMMA && !c->tools &&
+        c->msgs[0].role != JANAS_LLM_ROLE_SYSTEM)
+        err |= janas_api_add_system(c, NULL, 0); /* <|think|>, if asked */
     if (c->tools && c->msgs[0].role != JANAS_LLM_ROLE_SYSTEM) {
         /* with tools there is a system message whatever the caller says */
         err |= janas_api_add_system(c, NULL, 0);
         err |= janas_api_flush_text(c);
         c->sys_tokens = (uint32_t)c->n_ids;
     }
+    int gemma_open = 0; /* Gemma: the model's turn left open */
     for (size_t i = 0; i < c->n_msgs && !err; i++) {
         const struct cmsg *m = &c->msgs[i];
         switch (m->role) {
@@ -193,6 +235,19 @@ static int render(janas_llm_chat *c, uint32_t *reply_off)
             err |= janas_api_add_message(c, "user", m->text, m->n);
             break;
         case JANAS_LLM_ROLE_ASSISTANT: {
+            if (llm->tools == JANAS_TOOLS_GEMMA && (m->n_calls || gemma_open)) {
+                int open = 0;
+                size_t last = add_gemma_turn(c, i, gemma_open, &open);
+                if (last == (size_t)-1) {
+                    err = 1;
+                    break;
+                }
+                i = last;
+                gemma_open = open;
+                if (open && i + 1 == c->n_msgs)
+                    c->in_turn = 1; /* the reply follows the answers */
+                break;
+            }
             const struct memo *mm = memo_find(c, m);
             if (mm) { /* one of the last replies: as the model wrote it */
                 err |= add_ids(c, mm->ids, mm->n);

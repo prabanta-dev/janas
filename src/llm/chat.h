@@ -22,6 +22,10 @@
 
 enum chat_format {
     FORMAT_CHATML, /* <|im_start|>role\ntext<|im_end|>\n */
+    /* <bos> once, then <|turn>role\ntext<turn|>\n, the assistant called
+       "model", the reasoning in <|channel>thought\n...<channel|>:
+       ChatML's shape, so im_start and im_end hold <|turn> and <turn|> */
+    FORMAT_GEMMA,
 };
 
 struct janas_llm {
@@ -29,11 +33,16 @@ struct janas_llm {
     struct janas_tokenizer *tok;
     int format;
     int32_t im_start, im_end;
-    int32_t think_open, think_close; /* reasoning markers, or -1 */
-    int thinker;                     /* the template knows enable_thinking */
-    enum janas_tool_dialect tools;   /* how its template writes tool calls */
-    int32_t call_open, call_close;   /* <tool_call>, </tool_call>, or -1 */
-    int32_t resp_open, resp_close;   /* <tool_response>, </tool_response> */
+    const char *asst_role; /* "assistant", or Gemma's "model" */
+    int32_t bos;           /* written once at the start, or -1 */
+    int32_t think_on;      /* Gemma's <|think|>: reasoning asked for, or -1 */
+    int32_t quote, decl_open, decl_close; /* Gemma's <|"|>, <|tool>, <tool|> */
+    int32_t think_open, think_close;      /* reasoning markers, or -1 */
+    int thinker;       /* the template knows enable_thinking */
+    int empty_thought; /* Gemma 4: an empty channel when not reasoning */
+    enum janas_tool_dialect tools; /* how its template writes tool calls */
+    int32_t call_open, call_close; /* <tool_call>, </tool_call>, or -1 */
+    int32_t resp_open, resp_close; /* <tool_response>, </tool_response> */
     uint32_t pooling; /* embeddings: 1 mean, 2 first, 3 last; 0 none */
     int add_eos;      /* the tokenizer ends every text with eos_id */
     int32_t eos_id;
@@ -53,6 +62,10 @@ struct janas_llm {
     int32_t mode;
     int gpu_wanted;    /* the caller's say, on top of what the mode decides */
     uint64_t kv_token; /* bytes of attention's keys and values per token */
+    /* and of the sliding-window layers' rings, per position up to ring
+       positions (Gemma 4) */
+    uint64_t kv_ring_token;
+    uint32_t kv_ring;
 };
 
 struct janas_llm_chat {
@@ -60,10 +73,13 @@ struct janas_llm_chat {
     struct janas_llm_session *s;
     struct janas_llm_chat_params p;
     char *system;
-    int replying; /* a reply is being read */
-    int closed;   /* the last reply ended with a stop token */
-    int ended;    /* the reply is over: the next call says DONE */
-    int in_think; /* the reply is in its reasoning part */
+    int replying;   /* a reply is being read */
+    int closed;     /* the last reply ended with a stop token */
+    int ended;      /* the reply is over: the next call says DONE */
+    int in_think;   /* the reply is in its reasoning part */
+    int in_turn;    /* Gemma: the reply continues the model's turn (after the
+                       tools' answers), no new turn to open */
+    int chan_label; /* Gemma: the channel's name ("thought\n") to skip */
     uint32_t reply_tokens;
     uint32_t answer_tokens; /* of them, outside the reasoning */
     char pend[1024];        /* reply bytes not yet returned */
@@ -217,6 +233,7 @@ int janas_api_add_message(janas_llm_chat *c, const char *role, const char *text,
                           size_t n);
 int janas_api_add_system(janas_llm_chat *c, const char *sys, size_t n);
 int janas_api_start_reply(janas_llm_chat *c);
+int janas_api_begin_sequence(janas_llm_chat *c);
 int janas_api_note_turn(janas_llm_chat *c, uint32_t at);
 /* The reply starts: reply_at is where its turn begins in the sequence
    (UINT32_MAX for raw text), total the prompt's length, cached how much of

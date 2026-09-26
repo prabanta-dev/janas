@@ -20,6 +20,8 @@ struct janas_toolset {
 
 enum janas_tool_dialect janas_tools_dialect(const char *tmpl)
 {
+    if (tmpl && strstr(tmpl, "<|tool_call>"))
+        return JANAS_TOOLS_GEMMA;
     if (!tmpl || !strstr(tmpl, "<tool_call>"))
         return JANAS_TOOLS_NONE;
     if (!strstr(tmpl, "<function="))
@@ -172,6 +174,360 @@ static void extra_keys(struct janas_buf *out, const struct janas_json *obj,
     }
 }
 
+/* ---- Gemma 4's notation ---- */
+
+#define GQ "<|\"|>" /* its string quote, a token of its own */
+
+/* Jinja's dictsort: an object's members by key, case-insensitive. */
+static size_t sorted(const struct janas_json *obj,
+                     const struct janas_json **out, size_t cap)
+{
+    size_t n = 0;
+    for (const struct janas_json *k = obj ? obj->child : NULL; k && n < cap;
+         k = k->next) {
+        size_t i = n++;
+        for (; i > 0; i--) {
+            const struct janas_json *p = out[i - 1];
+            size_t m = p->key_n < k->key_n ? p->key_n : k->key_n;
+            int c = 0;
+            for (size_t x = 0; x < m && !c; x++) {
+                int a = (unsigned char)p->key[x], b = (unsigned char)k->key[x];
+                a = a >= 'A' && a <= 'Z' ? a + 32 : a;
+                b = b >= 'A' && b <= 'Z' ? b + 32 : b;
+                c = a - b;
+            }
+            if (c < 0 || (c == 0 && p->key_n <= k->key_n))
+                break;
+            out[i] = p;
+        }
+        out[i] = k;
+    }
+    return n;
+}
+
+/* The template's format_argument: strings quoted, keys quoted or not. */
+static void g_arg(struct janas_buf *out, const struct janas_json *v, int ek)
+{
+    switch (v->type) {
+    case JANAS_JSON_NULL:
+        janas_buf_puts(out, "null");
+        break;
+    case JANAS_JSON_TRUE:
+        janas_buf_puts(out, "true");
+        break;
+    case JANAS_JSON_FALSE:
+        janas_buf_puts(out, "false");
+        break;
+    case JANAS_JSON_STRING:
+        janas_buf_puts(out, GQ);
+        janas_buf_put(out, v->s, v->n);
+        janas_buf_puts(out, GQ);
+        break;
+    case JANAS_JSON_OBJECT: {
+        const struct janas_json *k[256];
+        size_t n = sorted(v, k, 256);
+        janas_buf_puts(out, "{");
+        for (size_t i = 0; i < n; i++) {
+            if (i)
+                janas_buf_puts(out, ",");
+            if (ek)
+                janas_buf_puts(out, GQ);
+            janas_buf_put(out, k[i]->key, k[i]->key_n);
+            if (ek)
+                janas_buf_puts(out, GQ);
+            janas_buf_puts(out, ":");
+            g_arg(out, k[i], ek);
+        }
+        janas_buf_puts(out, "}");
+        break;
+    }
+    case JANAS_JSON_ARRAY:
+        janas_buf_puts(out, "[");
+        for (const struct janas_json *e = v->child; e; e = e->next) {
+            g_arg(out, e, ek);
+            if (e->next)
+                janas_buf_puts(out, ",");
+        }
+        janas_buf_puts(out, "]");
+        break;
+    default:
+        janas_buf_put(out, v->s, v->n);
+    }
+}
+
+/* A JSON string upper-cased, as Jinja's "| upper". */
+static void g_upper(struct janas_buf *out, const struct janas_json *v)
+{
+    for (size_t i = 0; v && v->type == JANAS_JSON_STRING && i < v->n; i++) {
+        char c = v->s[i];
+        janas_buf_put(out, &(char){c >= 'a' && c <= 'z' ? c - 32 : c}, 1);
+    }
+}
+
+static int g_type_is(const struct janas_json *v, const char *up)
+{
+    struct janas_buf b = {0};
+    g_upper(&b, janas_json_get(v, "type"));
+    int r = b.n == strlen(up) && b.p && memcmp(b.p, up, b.n) == 0;
+    janas_buf_free(&b);
+    return r;
+}
+
+static void g_required(struct janas_buf *out, const struct janas_json *req)
+{
+    janas_buf_puts(out, "required:[");
+    for (const struct janas_json *e = req ? req->child : NULL; e; e = e->next) {
+        janas_buf_puts(out, GQ);
+        janas_buf_put(out, e->s, e->n);
+        janas_buf_puts(out, GQ);
+        if (e->next)
+            janas_buf_puts(out, ",");
+    }
+    janas_buf_puts(out, "]");
+}
+
+/* The template's format_parameters. */
+static void g_params(struct janas_buf *out, const struct janas_json *props,
+                     int filter)
+{
+    static const char *const std[] = {"description", "type", "properties",
+                                      "required", "nullable"};
+    const struct janas_json *k[256];
+    size_t n = sorted(props, k, 256);
+    int first = 1;
+    for (size_t i = 0; i < n; i++) {
+        const struct janas_json *v = k[i];
+        int skip = 0;
+        for (size_t s = 0; filter && s < 5; s++)
+            skip |=
+                strlen(std[s]) == v->key_n && !memcmp(std[s], v->key, v->key_n);
+        if (skip)
+            continue;
+        if (!first)
+            janas_buf_puts(out, ",");
+        first = 0;
+        janas_buf_put(out, v->key, v->key_n);
+        janas_buf_puts(out, ":{");
+        int comma = 0;
+        const struct janas_json *d = janas_json_get(v, "description");
+        if (d && d->type == JANAS_JSON_STRING && d->n) {
+            janas_buf_puts(out, "description:" GQ);
+            janas_buf_put(out, d->s, d->n);
+            janas_buf_puts(out, GQ);
+            comma = 1;
+        }
+        const struct janas_json *en = janas_json_get(v, "enum");
+        const struct janas_json *it = janas_json_get(v, "items");
+        if (g_type_is(v, "STRING") && en && en->n) {
+            janas_buf_puts(out, comma ? ",enum:" : "enum:");
+            comma = 1;
+            g_arg(out, en, 1);
+        } else if (g_type_is(v, "ARRAY") && it &&
+                   it->type == JANAS_JSON_OBJECT && it->n) {
+            janas_buf_puts(out, comma ? ",items:{" : "items:{");
+            comma = 1;
+            const struct janas_json *ik[64];
+            size_t in = sorted(it, ik, 64);
+            int f2 = 1;
+            for (size_t x = 0; x < in; x++) {
+                const struct janas_json *iv = ik[x];
+                if (iv->type == JANAS_JSON_NULL)
+                    continue;
+                if (!f2)
+                    janas_buf_puts(out, ",");
+                f2 = 0;
+                if (iv->key_n == 10 && !memcmp(iv->key, "properties", 10)) {
+                    janas_buf_puts(out, "properties:{");
+                    if (iv->type == JANAS_JSON_OBJECT)
+                        g_params(out, iv, 0);
+                    janas_buf_puts(out, "}");
+                } else if (iv->key_n == 8 && !memcmp(iv->key, "required", 8)) {
+                    g_required(out, iv);
+                } else if (iv->key_n == 4 && !memcmp(iv->key, "type", 4)) {
+                    janas_buf_puts(out, "type:");
+                    if (iv->type == JANAS_JSON_STRING) {
+                        janas_buf_puts(out, GQ);
+                        g_upper(out, iv);
+                        janas_buf_puts(out, GQ);
+                    } else {
+                        janas_buf_puts(out, "[");
+                        for (const struct janas_json *e = iv->child; e;
+                             e = e->next) {
+                            janas_buf_puts(out, GQ);
+                            g_upper(out, e);
+                            janas_buf_puts(out, GQ);
+                            if (e->next)
+                                janas_buf_puts(out, ",");
+                        }
+                        janas_buf_puts(out, "]");
+                    }
+                } else {
+                    janas_buf_put(out, iv->key, iv->key_n);
+                    janas_buf_puts(out, ":");
+                    g_arg(out, iv, 1);
+                }
+            }
+            janas_buf_puts(out, "}");
+        }
+        const struct janas_json *nl = janas_json_get(v, "nullable");
+        if (nl && nl->type == JANAS_JSON_TRUE) {
+            janas_buf_puts(out, comma ? ",nullable:true" : "nullable:true");
+            comma = 1;
+        }
+        if (g_type_is(v, "OBJECT")) {
+            const struct janas_json *pp = janas_json_get(v, "properties");
+            janas_buf_puts(out, comma ? ",properties:{" : "properties:{");
+            comma = 1;
+            if (pp && pp->type == JANAS_JSON_OBJECT)
+                g_params(out, pp, 0);
+            else
+                g_params(out, v, 1);
+            janas_buf_puts(out, "}");
+            const struct janas_json *rq = janas_json_get(v, "required");
+            if (rq && rq->n) {
+                janas_buf_puts(out, ",");
+                g_required(out, rq);
+            }
+        }
+        janas_buf_puts(out, comma ? ",type:" GQ : "type:" GQ);
+        g_upper(out, janas_json_get(v, "type"));
+        janas_buf_puts(out, GQ "}");
+    }
+}
+
+/* The template's format_function_declaration, trimmed. */
+static void g_function(struct janas_buf *out, const struct janas_json *f)
+{
+    const struct janas_json *nm = janas_json_get(f, "name");
+    const struct janas_json *ds = janas_json_get(f, "description");
+    const struct janas_json *pa = janas_json_get(f, "parameters");
+    janas_buf_puts(out, "declaration:");
+    if (nm)
+        janas_buf_put(out, nm->s, nm->n);
+    janas_buf_puts(out, "{description:" GQ);
+    if (ds && ds->type == JANAS_JSON_STRING)
+        janas_buf_put(out, ds->s, ds->n);
+    janas_buf_puts(out, GQ);
+    if (pa && pa->type == JANAS_JSON_OBJECT && pa->n) {
+        janas_buf_puts(out, ",parameters:{");
+        const struct janas_json *pp = janas_json_get(pa, "properties");
+        if (pp && pp->type == JANAS_JSON_OBJECT && pp->n) {
+            janas_buf_puts(out, "properties:{");
+            g_params(out, pp, 0);
+            janas_buf_puts(out, "},");
+        }
+        const struct janas_json *rq = janas_json_get(pa, "required");
+        if (rq && rq->n) {
+            g_required(out, rq);
+            janas_buf_puts(out, ",");
+        }
+        if (janas_json_get(pa, "type")) {
+            janas_buf_puts(out, "type:" GQ);
+            g_upper(out, janas_json_get(pa, "type"));
+            janas_buf_puts(out, GQ "}");
+        }
+    }
+    janas_buf_puts(out, "}");
+}
+
+void janas_tools_gemma_response(struct janas_buf *out, const char *name,
+                                size_t name_n, const char *text, size_t n)
+{
+    /* a message's content is text, JSON or not: the template quotes it */
+    janas_buf_puts(out, "response:");
+    janas_buf_put(out, name, name_n);
+    janas_buf_puts(out, "{value:" GQ);
+    janas_buf_put(out, text, n);
+    janas_buf_puts(out, GQ "}<tool_response|>");
+}
+
+/* Gemma's notation to JSON, one value from *p; 0, or -1 when it is not. */
+static int g_to_json(const char **p, const char *end, struct janas_buf *out)
+{
+    const char *s = *p;
+    size_t ql = strlen(GQ);
+    while (s < end && (*s == ' ' || *s == '\n'))
+        s++;
+    if (s >= end)
+        return -1;
+    if ((size_t)(end - s) >= ql && !memcmp(s, GQ, ql)) {
+        const char *b = s + ql, *e = b;
+        while (e + ql <= end && memcmp(e, GQ, ql))
+            e++;
+        if (e + ql > end)
+            return -1;
+        janas_json_write_str(out, b, (size_t)(e - b));
+        *p = e + ql;
+        return 0;
+    }
+    if (*s == '{' || *s == '[') {
+        char close = *s == '{' ? '}' : ']';
+        int obj = *s == '{';
+        janas_buf_put(out, s, 1);
+        s++;
+        for (int first = 1;; first = 0) {
+            while (s < end && (*s == ' ' || *s == '\n'))
+                s++;
+            if (s < end && *s == close)
+                break;
+            if (!first) {
+                if (s >= end || *s != ',')
+                    return -1;
+                janas_buf_puts(out, ",");
+                s++;
+            }
+            if (obj) { /* a key, bare or quoted, then ':' */
+                while (s < end && *s == ' ')
+                    s++;
+                const char *k = s;
+                if ((size_t)(end - s) >= ql && !memcmp(s, GQ, ql)) {
+                    k = s += ql;
+                    while (s + ql <= end && memcmp(s, GQ, ql))
+                        s++;
+                    janas_json_write_str(out, k, (size_t)(s - k));
+                    s += ql;
+                } else {
+                    while (s < end && *s != ':')
+                        s++;
+                    janas_json_write_str(out, k, (size_t)(s - k));
+                }
+                if (s >= end || *s != ':')
+                    return -1;
+                janas_buf_puts(out, ":");
+                s++;
+            }
+            if (g_to_json(&s, end, out))
+                return -1;
+        }
+        janas_buf_put(out, &close, 1);
+        *p = s + 1;
+        return 0;
+    }
+    const char *b = s;
+    while (s < end && *s != ',' && *s != '}' && *s != ']')
+        s++;
+    size_t n = (size_t)(s - b);
+    while (n && b[n - 1] == ' ')
+        n--;
+    if (!n)
+        return -1;
+    int bare = (n == 4 && (!memcmp(b, "true", 4) || !memcmp(b, "null", 4))) ||
+               (n == 5 && !memcmp(b, "false", 5));
+    char *x = NULL;
+    char tmp[64];
+    if (!bare && n < sizeof(tmp)) {
+        memcpy(tmp, b, n);
+        tmp[n] = 0;
+        strtod(tmp, &x);
+    }
+    if (bare || (x && *x == 0))
+        janas_buf_put(out, b, n);
+    else /* a bare word: taken as a string */
+        janas_json_write_str(out, b, n);
+    *p = s;
+    return 0;
+}
+
 /* One function, as Qwen3-Coder's template describes it. */
 static void coder_function(struct janas_buf *out, const struct janas_json *f)
 {
@@ -263,6 +619,18 @@ void janas_tools_system(struct janas_buf *out, enum janas_tool_dialect d,
         }
         break;
     }
+    case JANAS_TOOLS_GEMMA: {
+        size_t n = sys_n;
+        const char *s = sys ? trim(sys, &n) : NULL;
+        if (s && n)
+            janas_buf_put(out, s, n);
+        for (uint32_t i = 0; i < t->n; i++) {
+            janas_buf_puts(out, "<|tool>");
+            g_function(out, t->fn[i]);
+            janas_buf_puts(out, "<tool|>");
+        }
+        break;
+    }
     case JANAS_TOOLS_XML_CODER:
         if (sys)
             janas_buf_put(out, sys, sys_n);
@@ -282,6 +650,30 @@ void janas_tools_system(struct janas_buf *out, enum janas_tool_dialect d,
             janas_buf_put(out, sys, sys_n);
         break;
     }
+}
+
+static uint32_t g_value_rule(struct janas_gbuild *b, int32_t quote);
+
+/* The rule of a Gemma call: call:name{members} then the closing token. */
+uint32_t janas_tools_rule_gemma(struct janas_gbuild *b,
+                                const struct janas_toolset *t, int only,
+                                int32_t close, int32_t quote)
+{
+    uint32_t fns = janas_gb_rule(b);
+    for (uint32_t i = 0; i < t->n; i++) {
+        if (only >= 0 && (uint32_t)only != i)
+            continue;
+        const struct janas_json *nm = janas_json_get(t->fn[i], "name");
+        janas_gb_lit(b, janas_gb_alt(b, fns), nm->s, nm->n);
+    }
+    uint32_t val = g_value_rule(b, quote);
+    uint32_t r = janas_gb_rule(b);
+    uint32_t a = janas_gb_alt(b, r);
+    janas_gb_lit(b, a, "call:", 5);
+    janas_gb_ref(b, a, fns);
+    janas_gb_ref(b, a, val);
+    janas_gb_token(b, a, close);
+    return r;
 }
 
 /* ---- calls of earlier turns ---- */
@@ -308,6 +700,31 @@ void janas_tools_assistant(struct janas_buf *out, enum janas_tool_dialect d,
 {
     size_t tn = n;
     const char *tc = content ? trim(content, &tn) : "";
+    if (d == JANAS_TOOLS_GEMMA) { /* the calls first, then the text */
+        for (size_t i = 0; i < n_calls; i++) {
+            janas_buf_puts(out, "<|tool_call>call:");
+            janas_buf_put(out, calls[i].name, calls[i].name_n);
+            struct janas_json_doc *doc =
+                janas_json_parse(calls[i].args, calls[i].args_n, NULL, 0);
+            const struct janas_json *r = janas_json_root(doc);
+            const struct janas_json *k[256];
+            size_t m =
+                r && r->type == JANAS_JSON_OBJECT ? sorted(r, k, 256) : 0;
+            janas_buf_puts(out, "{");
+            for (size_t x = 0; x < m; x++) {
+                if (x)
+                    janas_buf_puts(out, ",");
+                janas_buf_put(out, k[x]->key, k[x]->key_n);
+                janas_buf_puts(out, ":");
+                g_arg(out, k[x], 0);
+            }
+            janas_buf_puts(out, "}<tool_call|>");
+            janas_json_free(doc);
+        }
+        if (content)
+            janas_buf_put(out, content, n);
+        return;
+    }
     if (d == JANAS_TOOLS_XML_CODER) {
         if (tn) {
             janas_buf_puts(out, "\n");
@@ -442,6 +859,21 @@ int janas_tools_parse(enum janas_tool_dialect d, const struct janas_toolset *t,
                       const char *body, size_t n, struct janas_buf *name,
                       struct janas_buf *args)
 {
+    if (d == JANAS_TOOLS_GEMMA) { /* call:name{...} */
+        const char *s = body, *end = body + n;
+        while (s < end && (*s == ' ' || *s == '\n'))
+            s++;
+        if ((size_t)(end - s) < 5 || memcmp(s, "call:", 5))
+            return -1;
+        s += 5;
+        const char *nm = s;
+        while (s < end && *s != '{')
+            s++;
+        if (s == end || janas_toolset_find(t, nm, (size_t)(s - nm)) < 0)
+            return -1;
+        janas_buf_put(name, nm, (size_t)(s - nm));
+        return g_to_json(&s, end, args);
+    }
     if (d != JANAS_TOOLS_JSON)
         return parse_xml(t, body, n, name, args);
     struct janas_json_doc *doc = janas_json_parse(body, n, NULL, 0);
@@ -522,6 +954,83 @@ static uint32_t xml_params_rule(struct janas_gbuild *b, struct janas_jsg *j,
     uint32_t first = r[0];
     free(r);
     return first;
+}
+
+/*
+ * Gemma's notation, any value: strings between quote tokens, numbers and
+ * words, objects of bare keys, lists. Not held to the function's schema -
+ * the name is - but always a value the parser reads.
+ */
+static uint32_t g_value_rule(struct janas_gbuild *b, int32_t quote)
+{
+    uint8_t any[32], key[32], word[32];
+    memset(any, 0xff, sizeof(any));
+    memset(key, 0, sizeof(key));
+    memset(word, 0, sizeof(word));
+    for (int c = 0; c < 256; c++) {
+        int k = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                (c >= '0' && c <= '9') || c == '_';
+        int w = k || c == '-' || c == '+' || c == '.';
+        if (k)
+            key[c / 8] |= (uint8_t)(1 << (c % 8));
+        if (w)
+            word[c / 8] |= (uint8_t)(1 << (c % 8));
+    }
+    uint32_t text = janas_gb_rule(b); /* any bytes */
+    janas_gb_alt(b, text);
+    uint32_t a = janas_gb_alt(b, text);
+    janas_gb_set(b, a, any);
+    janas_gb_ref(b, a, text);
+    uint32_t keyr = janas_gb_rule(b), wordr = janas_gb_rule(b);
+    a = janas_gb_alt(b, keyr);
+    janas_gb_set(b, a, key);
+    a = janas_gb_alt(b, keyr);
+    janas_gb_set(b, a, key);
+    janas_gb_ref(b, a, keyr);
+    a = janas_gb_alt(b, wordr);
+    janas_gb_set(b, a, word);
+    a = janas_gb_alt(b, wordr);
+    janas_gb_set(b, a, word);
+    janas_gb_ref(b, a, wordr);
+    uint32_t val = janas_gb_rule(b), members = janas_gb_rule(b),
+             elems = janas_gb_rule(b);
+    a = janas_gb_alt(b, val); /* a string */
+    janas_gb_token(b, a, quote);
+    janas_gb_ref(b, a, text);
+    janas_gb_token(b, a, quote);
+    a = janas_gb_alt(b, val); /* a number or a word */
+    janas_gb_ref(b, a, wordr);
+    a = janas_gb_alt(b, val); /* an object */
+    janas_gb_byte(b, a, '{');
+    janas_gb_byte(b, a, '}');
+    a = janas_gb_alt(b, val);
+    janas_gb_byte(b, a, '{');
+    janas_gb_ref(b, a, members);
+    janas_gb_byte(b, a, '}');
+    a = janas_gb_alt(b, val); /* a list */
+    janas_gb_byte(b, a, '[');
+    janas_gb_byte(b, a, ']');
+    a = janas_gb_alt(b, val);
+    janas_gb_byte(b, a, '[');
+    janas_gb_ref(b, a, elems);
+    janas_gb_byte(b, a, ']');
+    for (int more = 0; more < 2; more++) {
+        a = janas_gb_alt(b, members);
+        janas_gb_ref(b, a, keyr);
+        janas_gb_byte(b, a, ':');
+        janas_gb_ref(b, a, val);
+        if (more) {
+            janas_gb_byte(b, a, ',');
+            janas_gb_ref(b, a, members);
+        }
+        a = janas_gb_alt(b, elems);
+        janas_gb_ref(b, a, val);
+        if (more) {
+            janas_gb_byte(b, a, ',');
+            janas_gb_ref(b, a, elems);
+        }
+    }
+    return val;
 }
 
 uint32_t janas_tools_rule(struct janas_gbuild *b, struct janas_jsg *j,

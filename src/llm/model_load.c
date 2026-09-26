@@ -101,12 +101,18 @@ static int load_swa_params(struct janas_llm_model *m, const uint8_t **pat)
     if (janas_jns_meta_bytes(&m->j, key, &np, pat) || np < m->n_layer)
         return -1;
     snprintf(key, sizeof(key), "%.32s.attention.head_count_kv", m->j.h.arch);
-    if (janas_jns_meta_ints(&m->j, key, &nk, &kv) || nk < m->n_layer)
-        return -1;
+    /* E2B and E4B give one count for both kinds */
+    uint32_t one = 0;
+    if (janas_jns_meta_ints(&m->j, key, &nk, &kv) || nk < m->n_layer) {
+        if (janas_jns_meta_u32(&m->j, key, &one) || one == 0)
+            return -1;
+        kv = NULL;
+    }
     m->n_head_kv = m->n_kv_swa = 0;
     for (uint32_t l = 0; l < m->n_layer; l++) {
-        int32_t h;
-        memcpy(&h, kv + l, 4);
+        int32_t h = (int32_t)one;
+        if (kv)
+            memcpy(&h, kv + l, 4);
         uint32_t *want = (*pat)[l] ? &m->n_kv_swa : &m->n_head_kv;
         if (h <= 0 || (*want && *want != (uint32_t)h))
             return -1;
@@ -182,6 +188,10 @@ static int load_layer(struct janas_llm_model *m, const struct janas_jns *j,
     snprintf(name, sizeof(name), "blk.%u." suffix, l);                         \
     if (!(ly->field = need(j, name, kind, d0, d1, err, err_len)))              \
         return -1;
+#define NEED_T(var, suffix, d0)                                                \
+    snprintf(name, sizeof(name), "blk.%u." suffix, l);                         \
+    if (!(var = need(j, name, T_F32, d0, 0, err, err_len)))                    \
+        return -1;
     NEED(attn_norm, "attn_norm.weight", T_F32, dm, 0)
     if (ly->rec) {
         uint32_t s = m->ds;
@@ -211,14 +221,36 @@ static int load_layer(struct janas_llm_model *m, const struct janas_jns *j,
         NEED(ssm_out, "ssm_out.weight", T_QUANT, m->d_inner, dm)
     } else {
         NEED(wq, "attn_q.weight", T_QUANT, dm, qd * (m->a->attn_gate ? 2 : 1))
-        NEED(wk, "attn_k.weight", T_QUANT, dm, kvd)
-        snprintf(name, sizeof(name), "blk.%u.attn_v.weight", l);
-        if (!m->a->swa || janas_jns_tensor(j, name)) {
-            NEED(wv, "attn_v.weight", T_QUANT, dm, kvd)
-        }
         NEED(wo, "attn_output.weight", T_QUANT, qd, dm)
         NEED(q_norm, "attn_q_norm.weight", T_F32, ly->hd, 0)
-        NEED(k_norm, "attn_k_norm.weight", T_F32, ly->hd, 0)
+        /* a layer reading an earlier one's keys and values has no use for
+           its k and v, even where the file has them */
+        if (!m->n_kv_layers || l < m->n_kv_layers) {
+            NEED(wk, "attn_k.weight", T_QUANT, dm, kvd)
+            snprintf(name, sizeof(name), "blk.%u.attn_v.weight", l);
+            if (!m->a->swa || janas_jns_tensor(j, name)) {
+                NEED(wv, "attn_v.weight", T_QUANT, dm, kvd)
+            }
+            NEED(k_norm, "attn_k_norm.weight", T_F32, ly->hd, 0)
+        }
+    }
+    if (m->ple_dim) {
+        const struct janas_jns_tensor *pt[2];
+        static const char *const pn[2] = {"inp_gate.weight", "proj.weight"};
+        for (int p = 0; p < 2; p++) {
+            snprintf(name, sizeof(name), "blk.%u.%s", l, pn[p]);
+            pt[p] = janas_jns_tensor(j, name);
+            uint64_t d0 = p ? m->ple_dim : dm, d1 = p ? dm : m->ple_dim;
+            if (!pt[p] || pt[p]->dims[0] != d0 || pt[p]->dims[1] != d1 ||
+                (pt[p]->type != 0 &&
+                 janas_qtype_block_size((int)pt[p]->type) == 0)) {
+                snprintf(err, err_len, "tensor %s missing or unexpected", name);
+                return -1;
+            }
+        }
+        ly->ple_gate = pt[0];
+        ly->ple_proj = pt[1];
+        NEED(ple_post, "post_norm.weight", T_F32, dm, 0)
     }
     ly->out_scale = 1.0f;
     if (m->a->sandwich) {
@@ -264,6 +296,41 @@ static int load_layer(struct janas_llm_model *m, const struct janas_jns *j,
         }
         ly->router16 = h16;
     }
+    if (m->a->sandwich && ly->gate_inp) {
+        /* Gemma 4's mixture: the dense feed-forward beside the experts (as
+           wide as its file says, widened by gguf2jns), its norms, and the
+           router's and the experts' scales */
+        static const char *const dn[3] = {"ffn_gate.weight", "ffn_up.weight",
+                                          "ffn_down.weight"};
+        const struct janas_jns_tensor *sw[3];
+        for (int p = 0; p < 3; p++) {
+            snprintf(name, sizeof(name), "blk.%u.%s", l, dn[p]);
+            if (!(sw[p] = need(j, name, T_QUANT, p == 2 ? sw[0]->dims[1] : dm,
+                               p == 2 ? dm : 0, err, err_len)))
+                return -1;
+        }
+        if (sw[0]->dims[1] != sw[1]->dims[1] || sw[0]->dims[1] % JANAS_QK ||
+            sw[2]->dims[0] != sw[0]->dims[1] || sw[2]->dims[1] != dm) {
+            snprintf(err, err_len, "layer %u: dense feed-forward shapes", l);
+            return -1;
+        }
+        for (int p = 0; p < 3; p++) {
+            ly->sh_w[p] = data(m, sw[p]);
+            ly->sh_mx[p] =
+                (struct janas_jns_matrix){.type = sw[p]->type,
+                                          .rows = (uint32_t)sw[p]->dims[1],
+                                          .cols = (uint32_t)sw[p]->dims[0],
+                                          .bytes = sw[p]->bytes};
+        }
+        NEED(pre_norm2, "pre_ffw_norm_2.weight", T_F32, dm, 0)
+        NEED(post_norm1, "post_ffw_norm_1.weight", T_F32, dm, 0)
+        NEED(post_norm2, "post_ffw_norm_2.weight", T_F32, dm, 0)
+        const struct janas_jns_tensor *rs, *es;
+        NEED_T(rs, "ffn_gate_inp.scale", dm)
+        NEED_T(es, "ffn_down_exps.scale", m->n_expert)
+        ly->router_scale = f32(m, rs);
+        ly->exp_scale = f32(m, es);
+    }
     if (m->a->shared_expert) {
         const struct janas_jns_tensor *sg, *sw[3];
         static const char *const sh_names[3] = {"ffn_gate_shexp.weight",
@@ -306,6 +373,7 @@ static int load_layer(struct janas_llm_model *m, const struct janas_jns *j,
         }
     }
 #undef NEED
+#undef NEED_T
     return 0;
 }
 
@@ -465,12 +533,48 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
     m->kvd_max = m->n_head_kv * m->head_dim;
     if (m->n_kv_swa * m->head_swa > m->kvd_max)
         m->kvd_max = m->n_kv_swa * m->head_swa;
-    for (uint32_t l = 0; l < m->n_layer; l++)
-        if (m->j.layers[l].m[JANAS_JNS_GATE].rows != m->d_ff ||
+    /* the experts of a mixture are alike; a dense model's feed-forward
+       may widen from one layer to the next (Gemma 4's E2B: 6144, then
+       12288): the buffers take the widest */
+    for (uint32_t l = 0; l < m->n_layer; l++) {
+        uint32_t r = m->j.layers[l].m[JANAS_JNS_GATE].rows;
+        if ((r != m->d_ff && m->n_expert > 1) || r % JANAS_QK ||
             m->j.layers[l].m[JANAS_JNS_DOWN].rows != m->d_model) {
             snprintf(err, err_len, "layer %u: expert shapes differ", l);
             goto fail;
         }
+        if (r > m->d_ff)
+            m->d_ff = r;
+    }
+    /* Gemma 4's E2B and E4B: per-layer embeddings, and the last layers
+       reading the keys and values of earlier ones */
+    if (m->a->swa) {
+        uint32_t shared = 0;
+        meta_u32(m, "embedding_length_per_layer_input", &m->ple_dim);
+        meta_u32(m, "attention.shared_kv_layers", &shared);
+        if (shared && (shared + 2 > m->n_layer || !swa_pat)) {
+            snprintf(err, err_len, "inconsistent shared_kv_layers");
+            goto fail;
+        }
+        m->n_kv_layers = shared ? m->n_layer - shared : 0;
+        if (m->ple_dim &&
+            (m->ple_dim % JANAS_QK ||
+             !(m->ple_tok =
+                   janas_jns_tensor(&m->j, "per_layer_token_embd.weight")) ||
+             m->ple_tok->dims[0] != (uint64_t)m->n_layer * m->ple_dim ||
+             janas_qtype_block_size((int)m->ple_tok->type) == 0 ||
+             !(m->ple_model =
+                   janas_jns_tensor(&m->j, "per_layer_model_proj.weight")) ||
+             m->ple_model->type != 30 || m->ple_model->dims[0] != m->d_model ||
+             m->ple_model->dims[1] != (uint64_t)m->n_layer * m->ple_dim ||
+             !(m->ple_norm =
+                   janas_jns_tensor(&m->j, "per_layer_proj_norm.weight")) ||
+             m->ple_norm->type != 0 || m->ple_norm->dims[0] != m->ple_dim)) {
+            snprintf(err, err_len,
+                     "per-layer embeddings missing or unexpected");
+            goto fail;
+        }
+    }
 
     /* resident region into RAM; with the GPU, memory from its driver
        (JANAS_GPU_ALLOC) or imported at the end */
@@ -494,10 +598,25 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
         snprintf(err, err_len, "out of memory for the resident region");
         goto fail;
     }
+    /* all of it but the per-layer embeddings' table, read a row at a time
+       where it is (model_ple.c): its pages, never touched, take no memory */
+    uint64_t skip_a = m->j.h.resident_bytes, skip_b = skip_a;
+    if (m->ple_tok && m->ple_tok->offset >= m->j.h.resident_offset) {
+        skip_a = (m->ple_tok->offset - m->j.h.resident_offset) & ~4095ull;
+        skip_b =
+            (m->ple_tok->offset - m->j.h.resident_offset + m->ple_tok->bytes) &
+            ~4095ull;
+        if (skip_b < skip_a)
+            skip_b = skip_a;
+    }
     for (uint64_t done = 0; done < m->j.h.resident_bytes;) {
-        ssize_t r =
-            pread(m->j.fd, m->resident + done, m->j.h.resident_bytes - done,
-                  (off_t)(m->j.h.resident_offset + done));
+        if (done == skip_a && skip_b > skip_a) {
+            done = skip_b;
+            continue;
+        }
+        uint64_t end = done < skip_a ? skip_a : m->j.h.resident_bytes;
+        ssize_t r = pread(m->j.fd, m->resident + done, end - done,
+                          (off_t)(m->j.h.resident_offset + done));
         if (r <= 0) {
             snprintf(err, err_len, "cannot read the resident region");
             goto fail;
@@ -529,12 +648,24 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
     for (uint32_t l = 0; l < m->n_layer; l++) {
         struct layer *ly = &m->layers[l];
         ly->rec = m->a->rec && (l + 1) % interval != 0;
-        ly->slot = ly->rec ? m->n_rec++ : m->n_attn++;
         if (swa_pat) {
             ly->swa = swa_pat[l] != 0;
             ly->hd = ly->swa ? m->head_swa : m->head_dim;
             ly->n_kv = ly->swa ? m->n_kv_swa : m->n_head_kv;
             ly->n_rot = ly->swa ? m->n_rot_swa : m->n_rot;
+        }
+        if (m->n_kv_layers && l >= m->n_kv_layers) {
+            /* the slot of the last layer of its kind that has one, as
+               llama.cpp takes it: the one before last, or the last */
+            uint32_t src = m->n_kv_layers - (ly->swa ? 2 : 1);
+            if (m->layers[src].swa != ly->swa) {
+                snprintf(err, err_len, "layer %u: no keys and values to share",
+                         l);
+                goto fail;
+            }
+            ly->slot = m->layers[src].slot;
+        } else {
+            ly->slot = ly->rec ? m->n_rec++ : m->n_attn++;
         }
         if (load_layer(m, &m->j, l, ly, err, err_len) != 0)
             goto fail;
@@ -564,13 +695,39 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
         }
         m->rope_freqs = rf ? f32(m, rf) : NULL;
     }
-    /* the KV cache, slot after slot, each with its own geometry */
+    /* the KV cache, slot after slot, each with its own geometry, at eight
+       bits a number or sixteen */
+    {
+        const char *kv = getenv("JANAS_KV");
+        m->kv16 = kv ? atoi(kv) == 16 : m->a->kv16;
+    }
+    {
+        const char *pb = getenv("JANAS_PREFILL_BLOCK");
+        long v = pb ? atol(pb) : 256;
+        m->blk = v < JANAS_LLM_MAX_BLOCK ? JANAS_LLM_MAX_BLOCK
+                 : v > 4096              ? 4096
+                                         : (uint32_t)v;
+    }
+    /* the sliding-window layers keep a ring of positions, not the whole
+       context: the window and a prefill block (JANAS_SWA_RING=0 keeps
+       every position, as the full layers do) */
+    uint32_t ring_cap = 0;
+    if (m->a->swa) {
+        const char *rg = getenv("JANAS_SWA_RING");
+        ring_cap = janas_attn_ring_positions(m->window, m->blk);
+        if ((rg && atoi(rg) == 0) || ring_cap >= m->n_ctx)
+            ring_cap = 0;
+    }
     uint32_t n_slots = m->n_attn + (m->mtp ? 1 : 0);
+    m->kv_cap = calloc(n_slots + 1, sizeof(uint32_t));
+    m->kv_ring = calloc(n_slots + 1, 1);
+    m->kv_swa = calloc(n_slots + 1, 1);
     m->kv_off = malloc((n_slots + 1) * sizeof(size_t));
     m->ks_off = malloc((n_slots + 1) * sizeof(size_t));
     m->kv_hd = calloc(n_slots + 1, sizeof(uint32_t));
     m->kv_heads = calloc(n_slots + 1, sizeof(uint32_t));
-    if (!m->kv_off || !m->ks_off || !m->kv_hd || !m->kv_heads) {
+    if (!m->kv_off || !m->ks_off || !m->kv_hd || !m->kv_heads || !m->kv_cap ||
+        !m->kv_ring || !m->kv_swa) {
         snprintf(err, err_len, "out of memory");
         goto fail;
     }
@@ -580,13 +737,17 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
             continue;
         m->kv_hd[ly->slot] = ly->hd;
         m->kv_heads[ly->slot] = ly->n_kv;
+        m->kv_swa[ly->slot] = (uint8_t)ly->swa;
+        m->kv_ring[ly->slot] = ly->swa && ring_cap;
+        m->kv_cap[ly->slot] = m->kv_ring[ly->slot] ? ring_cap : m->n_ctx;
     }
     size_t kv_len = 0, ks_len = 0;
     for (uint32_t s = 0; s < n_slots; s++) {
         m->kv_off[s] = kv_len;
         m->ks_off[s] = ks_len;
-        kv_len += (size_t)m->n_ctx * m->kv_heads[s] * m->kv_hd[s];
-        ks_len += (size_t)m->n_ctx * m->kv_heads[s];
+        kv_len += ((size_t)m->kv_cap[s] * m->kv_heads[s] * m->kv_hd[s])
+                  << m->kv16;
+        ks_len += (size_t)m->kv_cap[s] * m->kv_heads[s];
     }
     m->kv_off[n_slots] = kv_len;
     m->ks_off[n_slots] = ks_len;
@@ -594,13 +755,12 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
     m->vcache = malloc(kv_len ? kv_len : 1);
     m->kscale = malloc((ks_len ? ks_len : 1) * sizeof(float));
     m->vscale = malloc((ks_len ? ks_len : 1) * sizeof(float));
-    {
-        const char *pb = getenv("JANAS_PREFILL_BLOCK");
-        long v = pb ? atol(pb) : 256;
-        m->blk = v < JANAS_LLM_MAX_BLOCK ? JANAS_LLM_MAX_BLOCK
-                 : v > 4096              ? 4096
-                                         : (uint32_t)v;
-    }
+    /* a pair's rows: the experts', or a wider shared feed-forward's */
+    m->ff_buf = m->d_ff;
+    for (uint32_t l = 0; l < m->n_layer; l++)
+        if (m->layers[l].sh_w[0] && m->layers[l].sh_mx[0].rows > m->ff_buf)
+            m->ff_buf = m->layers[l].sh_mx[0].rows;
+    ff = m->ff_buf;
     size_t B = m->blk, P = B * (m->k + 1);
     size_t inner = m->d_inner > qd ? m->d_inner : qd;
     size_t bigw = m->qkvz_dim > 2 * qd ? m->qkvz_dim : 2 * qd;
@@ -617,7 +777,19 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
         m->rope_cos_swa = malloc(B * m->n_rot_swa / 2 * sizeof(float));
         m->rope_sin_swa = malloc(B * m->n_rot_swa / 2 * sizeof(float));
         m->xres = malloc(B * dm * sizeof(float));
-        if (!m->rope_cos_swa || !m->rope_sin_swa || !m->xres) {
+        m->xbr = malloc(B * dm * sizeof(float));
+        if (!m->rope_cos_swa || !m->rope_sin_swa || !m->xres || !m->xbr) {
+            snprintf(err, err_len, "out of memory");
+            goto fail;
+        }
+    }
+    if (m->ple_dim) {
+        size_t W = (size_t)m->n_layer * m->ple_dim;
+        m->ple = malloc(B * W * sizeof(float));
+        m->ple_g = malloc(B * m->ple_dim * sizeof(float));
+        m->ple_row = malloc(2 * W * sizeof(float));
+        m->ple_q = malloc(B * m->ple_dim / JANAS_QK * sizeof(*m->ple_q));
+        if (!m->ple || !m->ple_g || !m->ple_row || !m->ple_q) {
             snprintf(err, err_len, "out of memory");
             goto fail;
         }
@@ -636,6 +808,7 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
     m->dout = malloc(P * dm * sizeof(float));
     m->xg = malloc(P * dm / JANAS_QK * sizeof(*m->xg));
     m->hq = malloc(P * ff / JANAS_QK * sizeof(*m->hq));
+    m->hlen = malloc(P * sizeof(uint32_t));
     m->tok_first = malloc((B + 1) * sizeof(uint32_t));
     m->tok_fill = malloc(B * sizeof(uint32_t));
     m->tok_list = malloc(P * sizeof(uint32_t));
@@ -644,7 +817,8 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
         !m->kk || !m->vv || !m->att || !m->router || !m->rope_cos ||
         !m->rope_sin || !m->xq || !m->attq || !m->pair_tok || !m->pair_exp ||
         !m->order || !m->glist || !m->count || !m->pair_w || !m->gate ||
-        !m->up || !m->h || !m->dout || !m->xg || !m->hq || m->n_expert > 4096) {
+        !m->up || !m->h || !m->dout || !m->xg || !m->hq || !m->hlen ||
+        m->n_expert > 4096) {
         snprintf(err, err_len, "out of memory");
         goto fail;
     }
@@ -769,14 +943,18 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
     janas_pool_set_spin(m->io, 0);
     m->attn = janas_attn_create(m->n_head, m->n_head_kv, m->head_dim, m->n_ctx,
                                 janas_pool_size(m->compute), o->attn_scores);
+    if (m->attn)
+        janas_attn_set_kv16(m->attn, m->kv16);
     if (m->attn && m->a->swa) {
         /* Gemma 4: the q and k norms scale the scores; the sliding-window
            layers have an attention of their own */
         janas_attn_set_scale(m->attn, 1.0f);
-        m->attn_swa =
-            janas_attn_create(m->n_head, m->n_kv_swa, m->head_swa, m->n_ctx,
-                              janas_pool_size(m->compute), o->attn_scores);
+        m->attn_swa = janas_attn_create(
+            m->n_head, m->n_kv_swa, m->head_swa, ring_cap ? ring_cap : m->n_ctx,
+            janas_pool_size(m->compute), o->attn_scores);
         if (m->attn_swa) {
+            janas_attn_set_ring(m->attn_swa, ring_cap != 0);
+            janas_attn_set_kv16(m->attn_swa, m->kv16);
             janas_attn_set_scale(m->attn_swa, 1.0f);
             janas_attn_set_window(m->attn_swa, m->window);
         }
@@ -902,11 +1080,20 @@ void janas_llm_model_free(struct janas_llm_model *m)
     free(m->vscale);
     free(m->kv_off);
     free(m->ks_off);
+    free(m->kv_cap);
+    free(m->kv_ring);
+    free(m->kv_swa);
     free(m->kv_hd);
     free(m->kv_heads);
     free(m->rope_cos_swa);
+    free(m->ple);
+    free(m->ple_g);
+    free(m->ple_row);
+    free(m->ple_q);
     free(m->rope_sin_swa);
     free(m->xres);
+    free(m->xbr);
+    free(m->hlen);
     free(m->kcache);
     free(m->vcache);
     free(m->ssm_buf);

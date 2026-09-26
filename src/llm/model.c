@@ -120,9 +120,72 @@ static void sandwich_worker(void *arg, int tid, int n_threads)
         float *x = m->x + (size_t)j * dm;
         const float *r = m->xres + (size_t)j * dm;
         rms_norm(x, x, t->w, dm, m->eps);
+        /* with per-layer embeddings the scale comes after their branch */
+        float s = m->ple_dim ? 1.0f : t->ly->out_scale;
         for (uint32_t i = 0; i < dm; i++)
-            x[i] = (r[i] + x[i]) * t->ly->out_scale;
+            x[i] = (r[i] + x[i]) * s;
     }
+}
+
+/* Gemma 4's mixture, token by token: the dense branch's output normalized
+   aside (xbr), then the experts' input and the router's from the residual,
+   then the experts' output normalized and the two summed */
+static void branch1_worker(void *arg, int tid, int n_threads)
+{
+    struct tok_job *t = arg;
+    struct janas_llm_model *m = t->m;
+    uint32_t dm = m->d_model;
+    for (uint32_t j = (uint32_t)tid; j < t->n; j += (uint32_t)n_threads)
+        rms_norm(m->xbr + (size_t)j * dm, m->x + (size_t)j * dm,
+                 f32(m, t->ly->post_norm1), dm, m->eps);
+}
+
+static void prep2_worker(void *arg, int tid, int n_threads)
+{
+    struct tok_job *t = arg;
+    struct janas_llm_model *m = t->m;
+    uint32_t dm = m->d_model;
+    const float *rs = t->ly->router_scale;
+    float sd = 1.0f / sqrtf((float)dm);
+    for (uint32_t j = (uint32_t)tid; j < t->n; j += (uint32_t)n_threads) {
+        const float *r = m->xres + (size_t)j * dm;
+        float *xn = m->xn + (size_t)j * dm;
+        /* the experts' input, to Q8_K through xn */
+        rms_norm(xn, r, f32(m, t->ly->pre_norm2), dm, m->eps);
+        janas_q8k_quantize(xn, m->xq + j * (dm / JANAS_QK), dm);
+        /* the router's: the residual normalized without weights, scaled
+           by 1 / sqrt(d_model) and per dimension */
+        double ss = 0.0;
+        for (uint32_t i = 0; i < dm; i++)
+            ss += (double)r[i] * r[i];
+        float sc = 1.0f / sqrtf((float)(ss / dm) + m->eps);
+        for (uint32_t i = 0; i < dm; i++)
+            xn[i] = r[i] * sc * sd * rs[i];
+    }
+}
+
+static void branch2_worker(void *arg, int tid, int n_threads)
+{
+    struct tok_job *t = arg;
+    struct janas_llm_model *m = t->m;
+    uint32_t dm = m->d_model;
+    for (uint32_t j = (uint32_t)tid; j < t->n; j += (uint32_t)n_threads) {
+        float *x = m->x + (size_t)j * dm;
+        const float *b = m->xbr + (size_t)j * dm;
+        rms_norm(x, x, f32(m, t->ly->post_norm2), dm, m->eps);
+        for (uint32_t i = 0; i < dm; i++)
+            x[i] += b[i];
+    }
+}
+
+static void run_tok(struct janas_llm_model *m, const struct layer *ly,
+                    uint32_t n, void (*fn)(void *, int, int))
+{
+    struct tok_job t = {.m = m, .ly = ly, .n = n};
+    if (n < 2)
+        fn(&t, 0, 1);
+    else
+        janas_pool_run(m->compute, fn, &t);
 }
 
 /* logits soft-capped: c * tanh(l / c) */
@@ -137,6 +200,35 @@ static void softcap_worker(void *arg, int tid, int n_threads)
         l[i] = c * tanhf(l[i] / c);
 }
 
+/* A key row turned back by the angles in cs, sn (half pairs, NeoX) and put
+   in its bits again: a rotation can take a pair past the largest number of
+   the row, so the scale is found anew. row: int8 or int16 (wide). */
+static void unrotate_row(void *row, float *scale, uint32_t hd, uint32_t half,
+                         const float *cs, const float *sn, int wide)
+{
+    float tmp[512], mx = 0.0f, z = *scale;
+    int8_t *r8 = row;
+    int16_t *r16 = row;
+    for (uint32_t i = 0; i < hd; i++)
+        tmp[i] = (wide ? (float)r16[i] : (float)r8[i]) * z;
+    for (uint32_t i = 0; i < half; i++) {
+        float a = tmp[i], b = tmp[i + half];
+        tmp[i] = a * cs[i] + b * sn[i];
+        tmp[i + half] = b * cs[i] - a * sn[i];
+    }
+    for (uint32_t i = 0; i < hd; i++)
+        if (fabsf(tmp[i]) > mx)
+            mx = fabsf(tmp[i]);
+    float top = wide ? 32767.0f : 127.0f, inv = mx > 0 ? top / mx : 0.0f;
+    for (uint32_t i = 0; i < hd; i++) {
+        if (wide)
+            r16[i] = (int16_t)lrintf(tmp[i] * inv);
+        else
+            r8[i] = (int8_t)lrintf(tmp[i] * inv);
+    }
+    *scale = mx / top;
+}
+
 /*
  * Forgets the positions keep .. keep + drop of the attention layers: what
  * follows them moves down and its keys are turned back by drop positions,
@@ -144,66 +236,83 @@ static void softcap_worker(void *arg, int tid, int n_threads)
  * state is left alone: it is a summary of everything seen, and in a hybrid
  * model that is what carries the older text once the window has passed it.
  * The first `keep` positions stay where they are, which keeps the system
- * message - and the anchor it gives attention - in place.
+ * message - and the anchor it gives attention - in place. Each slot with its
+ * own geometry and RoPE (Gemma 4: sliding-window layers and full ones); a
+ * ring (a sliding-window layer's) keeps only its last positions, and those
+ * are the ones that move.
  */
 int janas_llm_model_shift(struct janas_llm_model *m, uint32_t keep,
                           uint32_t drop, uint32_t n_kv)
 {
-    /* (Gemma 4: two RoPEs and a window, not done yet) */
-    if (!drop || n_kv > m->n_ctx || keep + drop > n_kv || m->head_dim > 512 ||
-        m->a->swa)
+    if (!drop || n_kv > m->n_ctx || keep + drop > n_kv || m->hd_max > 512)
         return -1;
-    uint32_t hd = m->head_dim, half = m->n_rot / 2;
-    uint32_t move = n_kv - keep - drop;
-    float *cs = malloc(2 * (size_t)half * sizeof(float));
-    if (!cs)
-        return -1;
-    float *sn = cs + half;
-    for (uint32_t i = 0; i < half; i++) {
-        float theta = (float)drop *
-                      powf(m->rope_base, -2.0f * (float)i / (float)m->n_rot);
-        cs[i] = cosf(theta);
-        sn[i] = sinf(theta);
-    }
-    uint32_t slots = m->n_attn + (m->mtp ? 1u : 0u);
-    for (uint32_t sl = 0; sl < slots; sl++)
-        for (uint32_t h = 0; h < m->n_head_kv; h++) {
-            size_t base = ((size_t)sl * m->n_head_kv + h) * m->n_ctx * hd;
-            size_t sbase = ((size_t)sl * m->n_head_kv + h) * m->n_ctx;
-            int8_t *k = m->kcache + base, *v = m->vcache + base;
-            float *kz = m->kscale + sbase, *vz = m->vscale + sbase;
-            if (move) {
-                memmove(k + (size_t)keep * hd, k + (size_t)(keep + drop) * hd,
-                        (size_t)move * hd);
-                memmove(v + (size_t)keep * hd, v + (size_t)(keep + drop) * hd,
-                        (size_t)move * hd);
-                memmove(kz + keep, kz + keep + drop, move * sizeof(float));
-                memmove(vz + keep, vz + keep + drop, move * sizeof(float));
-            }
-            for (uint32_t p = keep; p < keep + move; p++) {
-                int8_t *row = k + (size_t)p * hd;
-                /* turned back and put in eight bits again: a rotation can
-                   take a pair past the largest number of the head, so the
-                   scale is found anew */
-                float tmp[512], mx = 0.0f;
-                for (uint32_t i = 0; i < half; i++) {
-                    float a = (float)row[i] * kz[p];
-                    float b = (float)row[i + half] * kz[p];
-                    tmp[i] = a * cs[i] + b * sn[i];
-                    tmp[i + half] = b * cs[i] - a * sn[i];
+    uint32_t move = n_kv - keep - drop, slots = m->n_attn + (m->mtp ? 1u : 0u);
+    size_t elt = (size_t)1 << m->kv16;
+    float cs[256], sn[256];
+    uint8_t *ring_tmp = NULL;
+    for (uint32_t sl = 0; sl < slots; sl++) {
+        uint32_t hd = m->kv_hd[sl], cap = m->kv_cap[sl];
+        int swa = m->kv_swa[sl];
+        uint32_t n_rot = swa ? m->n_rot_swa : m->n_rot, half = n_rot / 2;
+        float base = swa ? m->rope_base_swa : m->rope_base;
+        const float *ff = swa ? NULL : m->rope_freqs;
+        for (uint32_t i = 0; i < half; i++) {
+            float theta =
+                (float)drop * powf(base, -2.0f * (float)i / (float)n_rot);
+            if (ff)
+                theta /= ff[i];
+            cs[i] = cosf(theta);
+            sn[i] = sinf(theta);
+        }
+        size_t row = hd * elt;
+        for (uint32_t h = 0; h < m->kv_heads[sl]; h++) {
+            uint8_t *k = (uint8_t *)m->kcache + m->kv_off[sl] + h * cap * row;
+            uint8_t *v = (uint8_t *)m->vcache + m->kv_off[sl] + h * cap * row;
+            float *kz = m->kscale + m->ks_off[sl] + (size_t)h * cap;
+            float *vz = m->vscale + m->ks_off[sl] + (size_t)h * cap;
+            if (!m->kv_ring[sl]) {
+                if (move) {
+                    memmove(k + keep * row, k + (keep + drop) * row,
+                            move * row);
+                    memmove(v + keep * row, v + (keep + drop) * row,
+                            move * row);
+                    memmove(kz + keep, kz + keep + drop, move * sizeof(float));
+                    memmove(vz + keep, vz + keep + drop, move * sizeof(float));
                 }
-                for (uint32_t i = 2 * half; i < hd; i++)
-                    tmp[i] = (float)row[i] * kz[p];
-                for (uint32_t i = 0; i < hd; i++)
-                    if (fabsf(tmp[i]) > mx)
-                        mx = fabsf(tmp[i]);
-                float inv = mx > 0 ? 127.0f / mx : 0.0f;
-                for (uint32_t i = 0; i < hd; i++)
-                    row[i] = (int8_t)lrintf(tmp[i] * inv);
-                kz[p] = mx / 127.0f;
+                for (uint32_t p = keep; p < keep + move; p++)
+                    unrotate_row(k + p * row, kz + p, hd, half, cs, sn,
+                                 m->kv16);
+                continue;
+            }
+            /* a ring: the positions it still has, from a copy of it, each
+               to its new row (they cannot land on a kept one: see the
+               bound on lo) */
+            if (!ring_tmp &&
+                !(ring_tmp = malloc(2 * (size_t)cap * (row + sizeof(float)))))
+                return -1;
+            uint8_t *tk = ring_tmp, *tv = tk + cap * row;
+            float *tkz = (float *)(void *)(tv + cap * row), *tvz = tkz + cap;
+            memcpy(tk, k, cap * row);
+            memcpy(tv, v, cap * row);
+            memcpy(tkz, kz, cap * sizeof(float));
+            memcpy(tvz, vz, cap * sizeof(float));
+            uint32_t lo = keep + drop;
+            if (n_kv > cap && n_kv - cap > lo)
+                lo = n_kv - cap;
+            for (uint32_t p = lo; p < n_kv; p++) {
+                uint32_t src = p % cap, dst = (p - drop) % cap;
+                memcpy(k + dst * row, tk + src * row, row);
+                memcpy(v + dst * row, tv + src * row, row);
+                kz[dst] = tkz[src];
+                vz[dst] = tvz[src];
+                unrotate_row(k + dst * row, kz + dst, hd, half, cs, sn,
+                             m->kv16);
             }
         }
-    free(cs);
+    }
+    free(ring_tmp);
+    if (m->ring_hi > keep + drop)
+        m->ring_hi -= drop;
     /* the recurrent state holds what it has seen, dropped tokens included -
        that is what carries the older text - but the position it stands at
        moves with everything else */
@@ -284,6 +393,8 @@ static int forward(struct janas_llm_model *m, const int32_t *tokens, uint32_t n,
         fprintf(stderr, "\n");
         trace_row(m, "embed", m->x + (size_t)(n - 1) * dm, dm);
     }
+    if (m->ple_dim && janas_m_ple_inputs(m, tokens, n) != 0)
+        return -1;
     set_rope(m, n, pos0);
     for (uint32_t l = 0; l < m->n_layer; l++) {
         const struct layer *ly = &m->layers[l];
@@ -301,8 +412,26 @@ static int forward(struct janas_llm_model *m, const int32_t *tokens, uint32_t n,
             memcpy(m->xres, m->x, (size_t)n * dm * sizeof(float));
             memset(m->x, 0, (size_t)n * dm * sizeof(float));
         }
-        if (janas_m_moe_block(m, ly, m->cache, &m->j.layers[l], l, n) != 0)
+        if (ly->pre_norm2) {
+            /* Gemma 4's mixture: the dense branch on xn / xq as normed
+               above, then the experts' branch */
+            size_t bytes = (size_t)n * dm * sizeof(float);
+            if (janas_m_moe_block(m, ly, m->cache, &m->j.layers[l], l, n,
+                                  MOE_SHARED) != 0)
+                return -1;
+            run_tok(m, ly, n, branch1_worker);
+            trace_row(m, "ffn_mlp", m->xbr + (size_t)(n - 1) * dm, dm);
+            run_tok(m, ly, n, prep2_worker);
+            memset(m->x, 0, bytes);
+            if (janas_m_moe_block(m, ly, m->cache, &m->j.layers[l], l, n,
+                                  MOE_ROUTED) != 0)
+                return -1;
+            run_tok(m, ly, n, branch2_worker);
+            trace_row(m, "ffn_moe_comb", m->x + (size_t)(n - 1) * dm, dm);
+        } else if (janas_m_moe_block(m, ly, m->cache, &m->j.layers[l], l, n,
+                                     MOE_ALL) != 0) {
             return -1;
+        }
         if (ly->post_ffn) {
             struct tok_job st = {
                 .m = m, .ly = ly, .w = f32(m, ly->post_ffn), .n = n};
@@ -311,6 +440,8 @@ static int forward(struct janas_llm_model *m, const int32_t *tokens, uint32_t n,
             else
                 janas_pool_run(m->compute, sandwich_worker, &st);
         }
+        if (m->ple_dim)
+            janas_m_ple_layer(m, ly, l, n);
         if (m->trace) {
             /* JANAS_TRACE=1: the state after each layer, last token of the
                block, to compare with another implementation */
@@ -322,6 +453,7 @@ static int forward(struct janas_llm_model *m, const int32_t *tokens, uint32_t n,
                     l, sqrt(nn), v[0], v[1], v[2], v[3]);
         }
     }
+    m->ring_hi = pos0 + n; /* the rings hold up to here */
     double td = now();
     uint32_t first = all_logits ? 0 : n - 1;
     /* with an MTP block, every token's final hidden state is kept for it */
@@ -511,7 +643,8 @@ int janas_llm_mtp_forward(struct janas_llm_model *m, const int32_t *tokens,
                  f32(m, ly->ffn_norm), dm, m->eps);
         janas_q8k_quantize(m->xn + (size_t)j * dm, m->xq + j * nbd, dm);
     }
-    if (janas_m_moe_block(m, ly, m->mtp_cache, m->mtp_jl, m->mtp_cl, n) != 0)
+    if (janas_m_moe_block(m, ly, m->mtp_cache, m->mtp_jl, m->mtp_cl, n,
+                          MOE_ALL) != 0)
         return -1;
     double td = now();
     uint32_t first = all_logits ? 0 : n - 1;

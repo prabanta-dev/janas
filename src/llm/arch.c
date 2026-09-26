@@ -29,11 +29,15 @@ static const struct janas_arch archs[] = {
      .post_attn_norm = 1,
      .vmap_mod = 1,
      .nextn_in_file = 1},
+    /* its scores are not scaled down, and an eight-bit key moves them: at
+       eight bits llama.cpp agrees with its own f16 cache at 169 of 200 most
+       likely tokens */
     {.name = "gemma4",
      .rec = JANAS_REC_NONE,
      .gelu = 1,
      .sandwich = 1,
-     .swa = 1},
+     .swa = 1,
+     .kv16 = 1},
 };
 
 const struct janas_arch *janas_arch_find(const char *name, unsigned len)

@@ -177,9 +177,17 @@ esac
 mkdir -p "$OBJ" "$BIN"
 
 # GPU shaders (src/*/shaders/*.comp) as SPIR-V in C arrays; without
-# glslangValidator the library is built without GPU support
+# glslangValidator, or without the Vulkan headers, the library is built
+# without GPU support - and says which is missing, here and at run time
 SPV="$OBJ/spv"
 mkdir -p "$SPV"
+GPU_MISSING=""
+command -v glslangValidator >/dev/null 2>&1 ||
+    GPU_MISSING="glslangValidator (glslang-tools, glslang)"
+echo '#include <vulkan/vulkan.h>' | "$CC" -E -x c - >/dev/null 2>&1 ||
+    GPU_MISSING="${GPU_MISSING:+$GPU_MISSING and }the Vulkan headers (libvulkan-dev, vulkan-headers)"
+[ -z "$GPU_MISSING" ] ||
+    echo "note: building without GPU support: $GPU_MISSING not found"
 if command -v glslangValidator >/dev/null 2>&1; then
     for comp in src/*/shaders/*.comp; do
         [ -f "$comp" ] || continue

@@ -40,6 +40,8 @@ struct janas_attn {
     int scores;      /* JANAS_ATTN_FLOAT or JANAS_ATTN_INT16, resolved */
     int scores_auto; /* 1: the engine chose it */
     float scale;     /* of the scores: 1 / sqrt(head_dim) unless set */
+    int kv16;        /* keys and values of sixteen bits, not eight */
+    int ring;        /* position p in row p mod n_ctx (with a window) */
     uint32_t window; /* a token sees the last window positions; 0: all */
 };
 
@@ -52,6 +54,7 @@ struct attn_job {
     const float *ks, *vs; /* one scale per position and KV head */
     float *out;
     uint32_t n, pos0, n_chunks, split;
+    uint32_t c0;      /* the first chunk any token of the call sees */
     atomic_uint next; /* next item to claim */
 };
 
@@ -62,7 +65,9 @@ static float *att_partial(const struct janas_attn *A, uint32_t kvh, uint32_t c,
 {
     uint32_t group = A->n_head / A->n_kv;
     return A->part +
-           ((((size_t)kvh * A->chunks + c) * JANAS_ATTN_MAX_BLOCK + j) * group +
+           ((((size_t)kvh * A->chunks + c % A->chunks) * JANAS_ATTN_MAX_BLOCK +
+             j) *
+                group +
             g) *
                (A->hd + 2);
 }
@@ -108,6 +113,33 @@ static void att_scores_i16_ref(const int16_t *const *q, const int8_t *K,
 
 static void att_values_ref(const float *const *w, const int8_t *V, uint32_t nt,
                            uint32_t hd, float *const *out, int ns)
+{
+    for (int s = 0; s < ns; s++)
+        for (uint32_t i = 0; i < hd; i++) {
+            float acc = 0.0f;
+            for (uint32_t t = 0; t < nt; t++)
+                acc += w[s][t] * (float)V[(size_t)t * hd + i];
+            out[s][i] = acc;
+        }
+}
+
+/* The same over keys and values of sixteen bits. */
+static void att_scores_f32_ref16(const float *const *q, const int16_t *K,
+                                 const float *ks, uint32_t nt, uint32_t hd,
+                                 float scale, float *const *sc, int ns)
+{
+    for (uint32_t t = 0; t < nt; t++)
+        for (int s = 0; s < ns; s++) {
+            float sum = 0.0f;
+            for (uint32_t i = 0; i < hd; i++)
+                sum += q[s][i] * (float)K[(size_t)t * hd + i];
+            sc[s][t] = sum * scale * ks[t];
+        }
+}
+
+static void att_values_ref16(const float *const *w, const int16_t *V,
+                             uint32_t nt, uint32_t hd, float *const *out,
+                             int ns)
 {
     for (int s = 0; s < ns; s++)
         for (uint32_t i = 0; i < hd; i++) {
@@ -232,6 +264,103 @@ static AVX2 void att_values_avx2(const float *const *w, const int8_t *V,
         values_body(w, V, nt, hd, out, 1);
     }
 }
+
+/*
+ * Keys and values of sixteen bits (Gemma 4, whose unscaled scores feel an
+ * eight-bit key: llama.cpp itself, its cache taken from f16 to q8_0, agreed
+ * with itself at 169 of 200 most likely tokens). The same kernels, the rows
+ * read as int16; the scores always over the float query, since an integer
+ * sum of sixteen-bit products would not fit in 32 bits.
+ */
+static inline AVX2 __attribute__((always_inline)) void
+f32_body16(const float *const *q, const int16_t *K, const float *ks,
+           uint32_t nt, uint32_t hd, float scale, float *const *sc,
+           const int16_t *pf, const int ns)
+{
+    for (uint32_t t = 0; t < nt; t++) {
+        const int16_t *k = K + (size_t)t * hd;
+        if (pf)
+            for (uint32_t i = 0; i < hd; i += 32)
+                _mm_prefetch((const char *)(pf + (size_t)t * hd + i),
+                             _MM_HINT_T1);
+        __m256 acc[8];
+        _Pragma("GCC unroll 8") for (int s = 0; s < ns; s++) acc[s] =
+            _mm256_setzero_ps();
+        for (uint32_t i = 0; i < hd; i += 8) {
+            __m256 kv = _mm256_cvtepi32_ps(_mm256_cvtepi16_epi32(
+                _mm_loadu_si128((const __m128i *)(k + i))));
+            _Pragma("GCC unroll 8") for (int s = 0; s < ns; s++) acc[s] =
+                _mm256_fmadd_ps(_mm256_loadu_ps(q[s] + i), kv, acc[s]);
+        }
+        _Pragma("GCC unroll 8") for (int s = 0; s < ns; s++)
+        {
+            __m128 r = _mm_add_ps(_mm256_castps256_ps128(acc[s]),
+                                  _mm256_extractf128_ps(acc[s], 1));
+            r = _mm_add_ps(r, _mm_movehl_ps(r, r));
+            r = _mm_add_ss(r, _mm_movehdup_ps(r));
+            sc[s][t] = _mm_cvtss_f32(r) * scale * ks[t];
+        }
+    }
+}
+
+static AVX2 void att_scores_f32_avx2_16(const float *const *q, const int16_t *K,
+                                        const float *ks, uint32_t nt,
+                                        uint32_t hd, float scale,
+                                        float *const *sc, const int16_t *pf,
+                                        int ns)
+{
+    switch (ns) {
+    case 8:
+        f32_body16(q, K, ks, nt, hd, scale, sc, pf, 8);
+        break;
+    case 4:
+        f32_body16(q, K, ks, nt, hd, scale, sc, pf, 4);
+        break;
+    case 2:
+        f32_body16(q, K, ks, nt, hd, scale, sc, pf, 2);
+        break;
+    default:
+        f32_body16(q, K, ks, nt, hd, scale, sc, pf, 1);
+    }
+}
+
+static inline AVX2 __attribute__((always_inline)) void
+values_body16(const float *const *w, const int16_t *V, uint32_t nt, uint32_t hd,
+              float *const *out, const int ns)
+{
+    for (uint32_t i = 0; i < hd; i += 8) {
+        __m256 acc[8];
+        _Pragma("GCC unroll 8") for (int s = 0; s < ns; s++) acc[s] =
+            _mm256_setzero_ps();
+        for (uint32_t t = 0; t < nt; t++) {
+            __m256 v = _mm256_cvtepi32_ps(_mm256_cvtepi16_epi32(
+                _mm_loadu_si128((const __m128i *)(V + (size_t)t * hd + i))));
+            _Pragma("GCC unroll 8") for (int s = 0; s < ns; s++) acc[s] =
+                _mm256_fmadd_ps(_mm256_broadcast_ss(w[s] + t), v, acc[s]);
+        }
+        _Pragma("GCC unroll 8") for (int s = 0; s < ns; s++)
+            _mm256_storeu_ps(out[s] + i, acc[s]);
+    }
+}
+
+static AVX2 void att_values_avx2_16(const float *const *w, const int16_t *V,
+                                    uint32_t nt, uint32_t hd, float *const *out,
+                                    int ns)
+{
+    switch (ns) {
+    case 8:
+        values_body16(w, V, nt, hd, out, 8);
+        break;
+    case 4:
+        values_body16(w, V, nt, hd, out, 4);
+        break;
+    case 2:
+        values_body16(w, V, nt, hd, out, 2);
+        break;
+    default:
+        values_body16(w, V, nt, hd, out, 1);
+    }
+}
 #endif
 
 /*
@@ -305,7 +434,8 @@ static void attn_worker(void *arg, int tid, int n_threads)
     struct janas_attn *A = a->A;
     uint32_t hd = A->hd;
     uint32_t group = A->n_head / A->n_kv, gs = group / a->split;
-    uint32_t items = A->n_kv * a->n_chunks * a->split;
+    uint32_t span = a->n_chunks - a->c0; /* chunks c0 .. n_chunks - 1 */
+    uint32_t items = A->n_kv * span * a->split;
     float scale = A->scale;
     float *sc = A->scr + (size_t)tid * JANAS_ATTN_MAX_BLOCK * group * ATT_CHUNK;
 #if defined(__x86_64__)
@@ -319,16 +449,20 @@ static void attn_worker(void *arg, int tid, int n_threads)
             atomic_fetch_add_explicit(&a->next, 1, memory_order_relaxed);
         if (it >= items)
             break;
-        uint32_t sub = it % a->split, c = it / a->split % a->n_chunks;
-        uint32_t kvh = it / a->split / a->n_chunks, g0 = sub * gs;
+        uint32_t sub = it % a->split, c = a->c0 + it / a->split % span;
+        uint32_t kvh = it / a->split / span, g0 = sub * gs;
         uint32_t t0 = c * ATT_CHUNK, t1 = t0 + ATT_CHUNK;
         if (t1 > a->pos0 + a->n)
             t1 = a->pos0 + a->n;
         uint32_t nt = t1 - t0;
-        const int8_t *K = a->k + ((size_t)kvh * A->n_ctx + t0) * hd;
-        const int8_t *V = a->v + ((size_t)kvh * A->n_ctx + t0) * hd;
-        const float *ks = a->ks + (size_t)kvh * A->n_ctx + t0;
-        const float *vs = a->vs + (size_t)kvh * A->n_ctx + t0;
+        /* rows of one or two bytes a number; in a ring, the chunk's rows
+           are contiguous all the same (n_ctx is a multiple of a chunk) */
+        size_t r0 = (size_t)kvh * A->n_ctx + (A->ring ? t0 % A->n_ctx : t0);
+        size_t row0 = (r0 * hd) << A->kv16;
+        const int8_t *K = a->k + row0;
+        const int8_t *V = a->v + row0;
+        const float *ks = a->ks + r0;
+        const float *vs = a->vs + r0;
         /* token j sees positions up to pos0 + j: tokens before jlo see
            nothing of this chunk */
         uint32_t jlo = t0 > a->pos0 ? t0 - a->pos0 : 0;
@@ -348,7 +482,7 @@ static void attn_worker(void *arg, int tid, int n_threads)
             const int16_t *qi[8];
             const float *qf[8];
             float qsc[8], *srow[8];
-            int fast = A->scores == JANAS_ATTN_INT16;
+            int fast = A->scores == JANAS_ATTN_INT16 && !A->kv16;
             for (uint32_t s = 0; s < step; s++) {
                 uint32_t sl = s0 + s, j = jlo + sl / gs, g = g0 + sl % gs;
                 size_t h = (size_t)j * A->n_head + kvh * group + g;
@@ -361,7 +495,17 @@ static void attn_worker(void *arg, int tid, int n_threads)
                 srow[s] = sc + (size_t)sl * ATT_CHUNK;
             }
             const int8_t *pf = s0 ? NULL : V;
-            if (fast) {
+            if (A->kv16) {
+#if defined(__x86_64__)
+                if (avx)
+                    att_scores_f32_avx2_16(qf, (const int16_t *)K, ks, nt, hd,
+                                           scale, srow, (const int16_t *)pf,
+                                           (int)step);
+                else
+#endif
+                    att_scores_f32_ref16(qf, (const int16_t *)K, ks, nt, hd,
+                                         scale, srow, (int)step);
+            } else if (fast) {
 #if defined(__x86_64__)
                 if (vnni)
                     att_scores_i16_vnni(qi, K, ks, nt, hd, qsc, scale, srow, pf,
@@ -429,10 +573,16 @@ static void attn_worker(void *arg, int tid, int n_threads)
                     att_partial(A, kvh, c, jlo + sl / gs, g0 + sl % gs) + 2;
             }
 #if defined(__x86_64__)
-            if (avx)
+            if (avx && A->kv16)
+                att_values_avx2_16(w, (const int16_t *)V, nt, hd, out,
+                                   (int)step);
+            else if (avx)
                 att_values_avx2(w, V, nt, hd, out, (int)step);
             else
 #endif
+                if (A->kv16)
+                att_values_ref16(w, (const int16_t *)V, nt, hd, out, (int)step);
+            else
                 att_values_ref(w, V, nt, hd, out, (int)step);
         }
     }
@@ -507,14 +657,14 @@ static void merge_worker(void *arg, int tid, int n_threads)
         uint32_t kvh = h / group, g = h % group;
         uint32_t nc = (a->pos0 + j + ATT_CHUNK) / ATT_CHUNK;
         float mx = -INFINITY, sum = 0.0f;
-        for (uint32_t c = 0; c < nc; c++) {
+        for (uint32_t c = a->c0; c < nc; c++) {
             float v = att_partial(A, kvh, c, j, g)[0];
             if (v > mx)
                 mx = v;
         }
         if (skip_stat > 0) {
             uint64_t k[3] = {0};
-            for (uint32_t c = 0; c < nc; c++) {
+            for (uint32_t c = a->c0; c < nc; c++) {
                 float v = att_partial(A, kvh, c, j, g)[0];
                 k[0] += v < mx - 8.0f;
                 k[1] += v < mx - 16.0f;
@@ -530,7 +680,7 @@ static void merge_worker(void *arg, int tid, int n_threads)
         }
         float *out = a->out + (size_t)j * qd + (size_t)h * hd;
         memset(out, 0, hd * sizeof(float));
-        for (uint32_t c = 0; c < nc; c++) {
+        for (uint32_t c = a->c0; c < nc; c++) {
             const float *pm = att_partial(A, kvh, c, j, g);
             float w = expf(pm[0] - mx);
             sum += w * pm[1];
@@ -625,6 +775,26 @@ void janas_attn_set_window(struct janas_attn *a, uint32_t window)
     a->window = window;
 }
 
+uint32_t janas_attn_ring_positions(uint32_t window, uint32_t n)
+{
+    /* the window before the first token, the tokens, and a chunk more for
+       the first one's partial alignment, in whole chunks */
+    uint32_t need = window + n + ATT_CHUNK;
+    return (need + ATT_CHUNK - 1) / ATT_CHUNK * ATT_CHUNK;
+}
+
+void janas_attn_set_ring(struct janas_attn *a, int on)
+{
+    a->ring = on != 0;
+}
+
+void janas_attn_set_kv16(struct janas_attn *a, int on)
+{
+    a->kv16 = on != 0;
+    if (a->kv16 && a->scores == JANAS_ATTN_INT16)
+        a->scores = JANAS_ATTN_FLOAT; /* no integer path over 16-bit keys */
+}
+
 int janas_attn_scores_mode(const struct janas_attn *a)
 {
     return a ? a->scores : JANAS_ATTN_FLOAT;
@@ -654,7 +824,18 @@ void janas_attn_run(struct janas_attn *A, struct janas_pool *pool,
     /* enough items for every thread: split the query heads of a group */
     uint32_t n_chunks = (pos0 + n + ATT_CHUNK - 1) / ATT_CHUNK, split = 1;
     uint32_t group = A->n_head / A->n_kv;
-    while (A->n_kv * n_chunks * split < 2 * (uint32_t)A->n_threads &&
+    /* with a window, the chunks wholly before the first token's are never
+       read: at a long context most of them */
+    uint32_t c0 = A->window && pos0 + 1 > A->window
+                      ? (pos0 + 1 - A->window) / ATT_CHUNK
+                      : 0;
+    if (A->ring && n_chunks - c0 > A->chunks) {
+        /* the ring is too small for this call: a caller's error */
+        fprintf(stderr, "janas_attn_run: %u chunks for a ring of %u\n",
+                n_chunks - c0, A->chunks);
+        abort();
+    }
+    while (A->n_kv * (n_chunks - c0) * split < 2 * (uint32_t)A->n_threads &&
            group % (split * 2) == 0)
         split *= 2;
     struct attn_job job = {.A = A,
@@ -667,6 +848,7 @@ void janas_attn_run(struct janas_attn *A, struct janas_pool *pool,
                            .n = n,
                            .pos0 = pos0,
                            .n_chunks = n_chunks,
+                           .c0 = c0,
                            .split = split};
     job.qi = A->qi;
     job.qs = A->qs;
@@ -677,7 +859,7 @@ void janas_attn_run(struct janas_attn *A, struct janas_pool *pool,
         if (skip_stat)
             atexit(skip_report);
     }
-    if (A->scores == JANAS_ATTN_INT16)
+    if (A->scores == JANAS_ATTN_INT16 && !A->kv16)
         janas_pool_run(pool, quant_worker, &job);
     janas_pool_run(pool, attn_worker, &job);
     janas_pool_run(pool, merge_worker, &job);

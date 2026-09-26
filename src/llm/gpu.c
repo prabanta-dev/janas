@@ -1438,7 +1438,16 @@ struct janas_gpu {
 
 struct janas_gpu *janas_gpu_create(char *err, size_t err_len)
 {
-    snprintf(err, err_len, "built without GPU support");
+#if !defined(JANAS_GPU_SPV)
+    snprintf(err, err_len,
+             "built without GPU support: glslangValidator was "
+             "not installed when Janas was built");
+#else
+    snprintf(err, err_len,
+             "built without GPU support: the Vulkan headers "
+             "(vulkan/vulkan.h) were not installed when Janas "
+             "was built");
+#endif
     return NULL;
 }
 

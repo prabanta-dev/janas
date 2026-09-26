@@ -74,13 +74,31 @@ report from `janas-bench` is the single most useful thing you can send back**
   the one the engine was shaped around, and the one whose numbers are quoted
   below. The others have been converted, checked against a reference and used,
   but far less.
-- **In progress, not yet usable: Gemma 4** (`gemma4`). Gemma-4-12B-it
-  converts, its tokenizer gives llama.cpp's tokens on a mixed text, and
-  its forward pass runs; but the chat does not know Gemma's format yet, and
-  with the engine's eight-bit KV cache its logits drift from llama.cpp's
-  (the most likely token agrees at 175 of 200 positions; llama.cpp itself
-  agrees at 169 when its own cache goes from f16 to eight bits). A finer
-  cache for Gemma comes first.
+- **Gemma 4** (`gemma4`): **Gemma-4-12B-it** (dense) and
+  **Gemma-4-26B-A4B-it** (a mixture of 128 experts beside a dense
+  feed-forward) convert and chat, with their reasoning on or off
+  (`--think`); the prompts are, token for token, the ones the model's own
+  chat template writes, and a full context slides as it does for the other
+  models. Its sliding-window layers keep only the last positions they can
+  see, so a long context costs mostly the full layers: for the 12B about 16
+  KB a token and half a gigabyte fixed, instead of 175 KB a token. Keys and
+  values are kept at sixteen bits (Gemma is far more sensitive to them than
+  Qwen). Tools work in Gemma's own notation - declarations, calls and the
+  tools' answers inside the model's turn, token for token as its template
+  writes them. The small **Gemma-4-E2B-it** and **E4B-it** run too, with
+  chat and tools: their per-layer embeddings - a table as large as half of
+  E2B's file - are read from the file a row at a time and never loaded, so
+  E2B ran here in 1.5 GB of memory (a 3.1 GB file) and E4B in 3.1 GB (5.0
+  GB). Against llama.cpp on 200 tokens of prose the most likely token
+  agrees at 160 positions on the 12B (mean logit difference 0.84) and at
+  145 on the 26B (1.43); on another 200-token text at 191 on E2B (0.45) and
+  195 on E4B (0.28). The larger two turn small numerical differences into
+  large ones, and llama.cpp is not a steady reference for them: against
+  itself with an eight-bit cache it agrees at 153 positions on the 12B, and
+  with a 32-bit cache and no flash attention, at 112. The
+  reference has to be computed in batches of at most 32 tokens: with larger
+  ones llama.cpp's logits for the early positions change (it looks ahead),
+  for a reason not yet found.
 - **Reasoning models:** the reasoning is shown apart, in grey, and can be turned off.
 - **`janas-chat`:** a terminal chat with a line editor of its own, history,
   colours, a status line and a context that slides instead of ending.
@@ -175,6 +193,7 @@ the machine to itself.
 ```sh
 sudo apt install build-essential          # Debian/Ubuntu
 sudo apt install libvulkan-dev glslang-tools vulkan-tools   # optional, GPU
+sudo pacman -S vulkan-headers glslang vulkan-tools           # the same, Arch
 
 ./build.sh                                # everything into bin/x86_64-linux/
 ./build.sh release test                   # and run the tests

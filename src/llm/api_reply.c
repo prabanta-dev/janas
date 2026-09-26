@@ -121,7 +121,11 @@ void janas_api_update_stats(janas_llm_chat *c)
     s->input_cpu_seconds = c->input_cpu;
     s->input_threads = janas_llm_model_threads(c->llm->m, 2);
     s->output_threads = janas_llm_model_threads(c->llm->m, 0);
-    s->context_bytes = c->llm->kv_token * s->context_used;
+    s->context_bytes =
+        c->llm->kv_token * s->context_used +
+        c->llm->kv_ring_token * (s->context_used < c->llm->kv_ring
+                                     ? s->context_used
+                                     : c->llm->kv_ring);
     struct rusage ru;
     if (getrusage(RUSAGE_SELF, &ru) == 0)
         s->peak_rss_bytes = (uint64_t)ru.ru_maxrss * 1024;
@@ -194,8 +198,21 @@ static void take(janas_llm_chat *c, int32_t t)
         c->answer_tokens++; /* text or a call: what max_answer counts */
     if (t == llm->think_open || t == llm->think_close) {
         c->in_think = t == llm->think_open;
+        /* Gemma names its channel before the reasoning: "thought\n" */
+        c->chan_label = c->in_think && llm->format == FORMAT_GEMMA;
         janas_api_record(c, t, JANAS_LLM_PART_MARK, "", 0);
         return;
+    }
+    if (c->chan_label) {
+        char lab[32];
+        size_t ln = janas_tokenizer_decode(llm->tok, t, lab, sizeof(lab));
+        if (ln < sizeof(lab) && ((ln == 7 && !memcmp(lab, "thought", 7)) ||
+                                 (ln == 1 && *lab == '\n'))) {
+            c->chan_label = lab[0] != '\n';
+            janas_api_record(c, t, JANAS_LLM_PART_MARK, "", 0);
+            return;
+        }
+        c->chan_label = 0;
     }
     if (c->tools && t == llm->call_open && !c->in_think && !c->in_call) {
         c->in_call = 1;

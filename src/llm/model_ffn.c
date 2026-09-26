@@ -99,11 +99,12 @@ static void act_worker(void *arg, int tid, int n_threads)
 {
     struct act_job *a = arg;
     struct janas_llm_model *m = a->m;
-    uint32_t ff = m->d_ff;
+    uint32_t stride = m->ff_buf;
     for (uint32_t i = (uint32_t)tid; i < a->n; i += (uint32_t)n_threads) {
         size_t g = m->glist[i];
-        const float *gt = m->gate + g * ff, *u = m->up + g * ff;
-        float *h = m->h + g * ff;
+        uint32_t ff = m->hlen[g];
+        const float *gt = m->gate + g * stride, *u = m->up + g * stride;
+        float *h = m->h + g * stride;
         /* deterministic operations only, so that a GPU computing an
            expert gives the same bits */
         uint32_t r = 0;
@@ -122,7 +123,7 @@ static void act_worker(void *arg, int tid, int n_threads)
             for (; r < ff; r++)
                 h[r] = janas_silu_mul_det(gt[r], u[r]);
         }
-        janas_q8k_quantize_det(h, m->hq + g * ff / JANAS_QK, ff);
+        janas_q8k_quantize_det(h, m->hq + g * stride / JANAS_QK, ff);
     }
 }
 
@@ -170,8 +171,8 @@ static void router_worker(void *arg, int tid, int n_threads)
     uint32_t ne = m->n_expert, dm = m->d_model;
     for (uint32_t e = (uint32_t)tid; e < ne; e += (uint32_t)n_threads)
         for (uint32_t j = 0; j < r->n; j++) {
-            const uint16_t *w = r->w + (size_t)e * dm;
             const float *x = m->xn + (size_t)j * dm;
+            const uint16_t *w = r->w + (size_t)e * dm;
 #if defined(__x86_64__)
             if (m->avx2 && m->f16c) {
                 m->router[(size_t)j * ne + e] = dot_f16_avx2(w, x, dm);
@@ -211,7 +212,7 @@ static void run_experts(struct janas_llm_model *m,
                         const struct expert_run *runs, uint32_t n_runs)
 {
     double t_enter = janas_m_exp_tracing() ? now() : 0;
-    uint32_t dm = m->d_model, ff = m->d_ff;
+    uint32_t dm = m->d_model, ff = m->ff_buf;
     size_t nbd = dm / JANAS_QK, nbf = ff / JANAS_QK;
     struct janas_matvec_task t1[2 * MAX_RUNS], t2[MAX_RUNS];
     uint32_t ng = 0;
@@ -222,6 +223,7 @@ static void run_experts(struct janas_llm_model *m,
                    m->xq + (size_t)m->pair_tok[m->order[g]] * nbd,
                    nbd * sizeof(*m->xg));
             m->glist[ng++] = g;
+            m->hlen[g] = runs[r].mx[0].rows;
         }
         for (int p = 0; p < 2; p++) {
             const struct janas_jns_matrix *mx = &runs[r].mx[p];
@@ -326,19 +328,27 @@ static void axpy_worker(void *arg, int tid, int n_threads)
    are layer l of the file behind the cache (the main model or the MTP). */
 int janas_m_moe_block(struct janas_llm_model *m, const struct layer *ly,
                       struct janas_expert_cache *cache,
-                      const struct janas_jns_layer *jl, uint32_t l, uint32_t n)
+                      const struct janas_jns_layer *jl, uint32_t l, uint32_t n,
+                      int part)
 {
     double t0 = now();
-    uint32_t dm = m->d_model, ne = m->n_expert, k = m->k_use;
-    struct router_job rj = {m, ly->router16, n};
-    janas_pool_run(m->compute, router_worker, &rj);
+    uint32_t dm = m->d_model, ne = m->n_expert;
+    uint32_t k = part == MOE_SHARED ? 0 : m->k_use;
+    if (k) {
+        struct router_job rj = {m, ly->router16, n};
+        janas_pool_run(m->compute, router_worker, &rj);
 
-    /* per token: softmax, top-k, normalized weights */
-    struct tok_job tj = {.m = m, .n = n};
-    if (n < 2)
-        route_tok(m, 0);
-    else
-        janas_pool_run(m->compute, route_worker, &tj);
+        /* per token: softmax, top-k, normalized weights */
+        struct tok_job tj = {.m = m, .n = n};
+        if (n < 2)
+            route_tok(m, 0);
+        else
+            janas_pool_run(m->compute, route_worker, &tj);
+        /* an expert's own output scale, folded into its weight (Gemma 4) */
+        if (ly->exp_scale)
+            for (uint32_t p = 0; p < n * k; p++)
+                m->pair_w[p] *= ly->exp_scale[m->pair_exp[p]];
+    }
     /* counting sort of the pairs by expert */
     uint32_t np = n * k;
     memset(m->count, 0, (ne + 1) * sizeof(uint32_t));
@@ -359,11 +369,14 @@ int janas_m_moe_block(struct janas_llm_model *m, const struct layer *ly,
     }
     /* the shared expert: one more pair per token, after the routed ones */
     uint32_t nt = np;
-    if (m->a->shared_expert) {
+    if (ly->sh_w[0] && part != MOE_ROUTED) {
         for (uint32_t j = 0; j < n; j++, nt++) {
             m->pair_tok[nt] = j;
+            /* its gate, or none: a branch of its own (Gemma 4) */
             m->pair_w[nt] =
-                sigmoid(janas_dot_f32(ly->sh_gate, m->xn + (size_t)j * dm, dm));
+                ly->sh_gate ? sigmoid(janas_dot_f32(ly->sh_gate,
+                                                    m->xn + (size_t)j * dm, dm))
+                            : 1.0f;
             m->order[nt] = nt;
         }
     }

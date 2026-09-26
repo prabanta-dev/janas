@@ -98,8 +98,9 @@ static void qkv_item(const struct tok_job *t, uint32_t j, uint32_t h)
     float *kv = m->kk + (size_t)j * kvd + (size_t)h * hd;
     rms_norm(kv, kv, f32(m, ly->k_norm), hd, m->eps);
     rope_neox(kv, ly->n_rot, cs, sn);
-    size_t at = ((size_t)h * m->n_ctx + t->pos0 + j) * hd;
-    size_t as = (size_t)h * m->n_ctx + t->pos0 + j;
+    uint32_t p = t->pos0 + j, row = t->ring ? p % t->cap : p;
+    size_t at = ((size_t)h * t->cap + row) * hd;
+    size_t as = (size_t)h * t->cap + row;
     float *vr = m->vv + (size_t)j * kvd + (size_t)h * hd;
     if (m->a->swa) { /* Gemma 4: V normalized, without weights */
         double ss = 0.0;
@@ -120,6 +121,18 @@ static void qkv_item(const struct tok_job *t, uint32_t j, uint32_t h)
         if (b > mv)
             mv = b;
     }
+    if (m->kv16) { /* sixteen bits: the largest becomes 32767 */
+        t->kc_scale[as] = mk / 32767.0f;
+        t->vc_scale[as] = mv / 32767.0f;
+        float ik = mk > 0 ? 32767.0f / mk : 0.0f;
+        float iv = mv > 0 ? 32767.0f / mv : 0.0f;
+        int16_t *kc = (int16_t *)(void *)t->kc, *vc = (int16_t *)(void *)t->vc;
+        for (uint32_t i = 0; i < hd; i++) {
+            kc[at + i] = (int16_t)lrintf(kv[i] * ik);
+            vc[at + i] = (int16_t)lrintf(vr[i] * iv);
+        }
+        return;
+    }
     t->kc_scale[as] = mk / 127.0f;
     t->vc_scale[as] = mv / 127.0f;
     float ik = mk > 0 ? 127.0f / mk : 0.0f;
@@ -133,7 +146,8 @@ static void qkv_item(const struct tok_job *t, uint32_t j, uint32_t h)
 static void qkv_worker(void *arg, int tid, int n_threads)
 {
     struct tok_job *t = arg;
-    uint32_t nh = t->m->n_head + t->ly->n_kv;
+    /* a layer without keys and values of its own: its queries alone */
+    uint32_t nh = t->m->n_head + (t->ly->wk ? t->ly->n_kv : 0);
     for (uint32_t i = (uint32_t)tid; i < t->n * nh; i += (uint32_t)n_threads)
         qkv_item(t, i / nh, i % nh);
 }
@@ -212,6 +226,8 @@ void janas_m_attn_layer(struct janas_llm_model *m, const struct layer *ly,
     double ta = now();
     /* qwen3next: each query head is followed by its output gate */
     float *qout = m->a->attn_gate ? m->big : m->q;
+    /* no k: the keys and values of an earlier layer, already cached */
+    int nt = !ly->wk ? 1 : ly->wv ? 3 : 2;
     struct janas_matvec_task t[3] = {{.type = (int)ly->wq->type,
                                       .w = data(m, ly->wq),
                                       .x = m->xq,
@@ -219,8 +235,8 @@ void janas_m_attn_layer(struct janas_llm_model *m, const struct layer *ly,
                                       .rows = m->a->attn_gate ? 2 * qd : qd,
                                       .cols = dm,
                                       .n_vec = n},
-                                     {.type = (int)ly->wk->type,
-                                      .w = data(m, ly->wk),
+                                     {.type = ly->wk ? (int)ly->wk->type : 0,
+                                      .w = ly->wk ? data(m, ly->wk) : NULL,
                                       .x = m->xq,
                                       .y = m->kk,
                                       .rows = kvd,
@@ -234,8 +250,8 @@ void janas_m_attn_layer(struct janas_llm_model *m, const struct layer *ly,
                                       .cols = dm,
                                       .n_vec = n}};
     janas_gpu_matvec_group(m->gpu_off || !m->gpu_use ? NULL : m->gpu,
-                           m->compute, t, ly->wv ? 3 : 2);
-    if (!ly->wv) /* Gemma 4's full layers: V is K, before K's norm */
+                           m->compute, t, (size_t)nt);
+    if (nt == 2) /* Gemma 4's full layers: V is K, before K's norm */
         memcpy(m->vv, m->kk, (size_t)n * kvd * sizeof(float));
     int8_t *kc = m->kcache + m->kv_off[ly->slot];
     int8_t *vc = m->vcache + m->kv_off[ly->slot];
@@ -248,7 +264,9 @@ void janas_m_attn_layer(struct janas_llm_model *m, const struct layer *ly,
                          .kc_scale = kcs,
                          .vc_scale = vcs,
                          .kc = kc,
-                         .vc = vc};
+                         .vc = vc,
+                         .cap = m->kv_cap[ly->slot],
+                         .ring = m->kv_ring[ly->slot]};
     janas_pool_run(m->compute, qkv_worker, &tj);
     /* the last token's last head of each, as llama.cpp's graph names them */
     trace_row(m, "Qcur_pos", m->q + (size_t)(n - 1) * qd + (m->n_head - 1) * hd,

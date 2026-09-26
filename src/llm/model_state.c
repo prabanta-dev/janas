@@ -74,6 +74,13 @@ size_t janas_llm_state_bytes(const struct janas_llm_state *st)
     return st->bytes;
 }
 
+/* The positions a slot keeps of a state of n: all, or for a ring the last
+   window of them - all that the next token can see. */
+static size_t slot_rows(const struct janas_llm_model *m, uint32_t sl, size_t n)
+{
+    return m->kv_ring[sl] && n > m->window ? m->window : n;
+}
+
 /* The bytes of keys (or values) and the number of scales of n positions
    of the first n_slots slots. */
 static void kv_lengths(const struct janas_llm_model *m, uint32_t n_slots,
@@ -81,8 +88,9 @@ static void kv_lengths(const struct janas_llm_model *m, uint32_t n_slots,
 {
     *kv = *rows = 0;
     for (uint32_t sl = 0; sl < n_slots; sl++) {
-        *rows += (size_t)m->kv_heads[sl] * n;
-        *kv += (size_t)m->kv_heads[sl] * n * m->kv_hd[sl];
+        size_t r = slot_rows(m, sl, n);
+        *rows += (size_t)m->kv_heads[sl] * r;
+        *kv += ((size_t)m->kv_heads[sl] * r * m->kv_hd[sl]) << m->kv16;
     }
 }
 
@@ -90,13 +98,34 @@ static void kv_lengths(const struct janas_llm_model *m, uint32_t n_slots,
 static void copy_kv(struct janas_llm_model *m, struct janas_llm_state *st,
                     int out)
 {
-    size_t n = st->n, sb = 0, ss = 0;
-    for (uint32_t sl = 0; sl < st->n_slots; sl++)
-        for (uint32_t h = 0; h < m->kv_heads[sl];
-             h++, sb += n * m->kv_hd[sl], ss += n) {
-            size_t hd = m->kv_hd[sl];
-            size_t cb = m->kv_off[sl] + h * m->n_ctx * hd;
-            size_t cs = m->ks_off[sl] + h * m->n_ctx;
+    size_t sb = 0, ss = 0;
+    for (uint32_t sl = 0; sl < st->n_slots; sl++) {
+        size_t n = slot_rows(m, sl, st->n), cap = m->kv_cap[sl];
+        size_t hd = (size_t)m->kv_hd[sl] << m->kv16; /* bytes a row */
+        if (m->kv_ring[sl]) {
+            /* the last n positions, wherever the ring has them */
+            for (uint32_t h = 0; h < m->kv_heads[sl]; h++)
+                for (size_t p = st->n - n; p < st->n; p++, sb += hd, ss++) {
+                    size_t r = (size_t)h * cap + p % cap;
+                    size_t cb = m->kv_off[sl] + r * hd;
+                    size_t cs = m->ks_off[sl] + r;
+                    if (out) {
+                        memcpy(st->k + sb, m->kcache + cb, hd);
+                        memcpy(st->v + sb, m->vcache + cb, hd);
+                        st->ks[ss] = m->kscale[cs];
+                        st->vs[ss] = m->vscale[cs];
+                    } else {
+                        memcpy(m->kcache + cb, st->k + sb, hd);
+                        memcpy(m->vcache + cb, st->v + sb, hd);
+                        m->kscale[cs] = st->ks[ss];
+                        m->vscale[cs] = st->vs[ss];
+                    }
+                }
+            continue;
+        }
+        for (uint32_t h = 0; h < m->kv_heads[sl]; h++, sb += n * hd, ss += n) {
+            size_t cb = m->kv_off[sl] + h * cap * hd;
+            size_t cs = m->ks_off[sl] + h * cap;
             if (out) {
                 memcpy(st->k + sb, m->kcache + cb, n * hd);
                 memcpy(st->v + sb, m->vcache + cb, n * hd);
@@ -109,6 +138,7 @@ static void copy_kv(struct janas_llm_model *m, struct janas_llm_state *st,
                 memcpy(m->vscale + cs, st->vs + ss, n * sizeof(float));
             }
         }
+    }
 }
 
 static void *dup_mem(const void *p, size_t len)
@@ -124,6 +154,11 @@ struct janas_llm_state *janas_llm_model_state_save(struct janas_llm_model *m,
 {
     if (n > m->n_ctx)
         return NULL;
+    /* a ring keeps the window before n only while nothing past n + (its
+       capacity - the window) has been written over it */
+    for (uint32_t sl = 0; sl < m->n_attn; sl++)
+        if (m->kv_ring[sl] && m->ring_hi > n + m->kv_cap[sl] - m->window)
+            return NULL;
     int nbuf = 0;
     if (m->a->rec) {
         /* the state must stand at n, or be able to get there by replay */
@@ -195,6 +230,7 @@ int janas_llm_model_state_load(struct janas_llm_model *m,
         (m->a->rec != 0) != (st->nbuf != 0))
         return -1;
     copy_kv(m, (struct janas_llm_state *)st, 0);
+    m->ring_hi = st->n;
     if (st->nbuf == 1) {
         /* into the base, standing at n with nothing logged: the next call
            starts from it */
@@ -256,7 +292,9 @@ static void shape(const struct janas_llm_model *m, uint32_t *h)
     h[H_VERSION] = STATE_VERSION;
     h[H_SLOTS] = m->n_attn + (m->mtp ? 1u : 0u);
     h[H_HEADS] = m->n_head_kv;
-    h[H_HD] = m->head_dim;
+    /* the bytes of a row: a state kept at eight bits does not load into a
+       cache of sixteen (JANAS_KV) */
+    h[H_HD] = m->head_dim << m->kv16;
     h[H_REC] = m->n_rec;
     h[H_VH] = m->n_vh;
     h[H_DS] = m->ds;

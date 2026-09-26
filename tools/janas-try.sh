@@ -172,10 +172,13 @@ machine()
     grep -qi microsoft /proc/version 2>/dev/null && DISTRO="$DISTRO (WSL)"
     # the GPU: whether the build can have it (the shaders need
     # glslangValidator) and what Vulkan sees - name, kind, version
-    if command -v glslangValidator >/dev/null; then
-        GPU_BUILD="with GPU support"
-    else
+    if ! command -v glslangValidator >/dev/null; then
         GPU_BUILD="without GPU support (glslangValidator not installed)"
+    elif ! echo '#include <vulkan/vulkan.h>' |
+        ${CC:-gcc} -E -x c - >/dev/null 2>&1; then
+        GPU_BUILD="without GPU support (Vulkan headers not installed)"
+    else
+        GPU_BUILD="with GPU support"
     fi
     if command -v vulkaninfo >/dev/null; then
         GPU_VK=$(vulkaninfo --summary 2>/dev/null | awk '

@@ -178,11 +178,13 @@ int janas_api_reply_setup(janas_llm_chat *c)
         return -1;
     }
     uint32_t call = JANAS_NO_RULE, answer = JANAS_NO_RULE;
+    int only = choice == JANAS_LLM_TOOLS_FUNCTION ? c->tool_only : -1;
     if (tools && choice != JANAS_LLM_TOOLS_NONE)
-        call = janas_tools_rule(
-            b, j, llm->tools, c->tools,
-            choice == JANAS_LLM_TOOLS_FUNCTION ? c->tool_only : -1,
-            llm->call_close);
+        call = llm->tools == JANAS_TOOLS_GEMMA
+                   ? janas_tools_rule_gemma(b, c->tools, only, llm->call_close,
+                                            llm->quote)
+                   : janas_tools_rule(b, j, llm->tools, c->tools, only,
+                                      llm->call_close);
     if (must) {
         answer = calls_rule(b, llm, call, c->parallel);
     } else if (c->format != JANAS_LLM_FORMAT_TEXT) {
