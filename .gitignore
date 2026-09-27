@@ -1,0 +1,27 @@
+# What building Janas and using its tools leave in a clone
+/bin/
+/lib/
+*.o
+*.a
+*.d
+*.so
+*.exe
+*.dll
+*.dylib
+
+# Models and weights: never in the repository
+/models/
+
+# The work of tools/janas-try.sh, and janas-bench's reports
+/janas-try/
+janas-bench-*.txt
+
+# Editors and OS
+*~
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+__pycache__/
+*.pyc
+.venv/
