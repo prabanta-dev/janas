@@ -101,18 +101,51 @@ struct f32_job {
     uint32_t rows, cols, n;
 };
 
+#if defined(__x86_64__)
+__attribute__((target("avx2,fma"))) static float
+dot_f32_avx2(const float *w, const float *x, uint32_t n)
+{
+    __m256 a0 = _mm256_setzero_ps(), a1 = _mm256_setzero_ps();
+    uint32_t i = 0;
+    for (; i + 16 <= n; i += 16) {
+        a0 =
+            _mm256_fmadd_ps(_mm256_loadu_ps(w + i), _mm256_loadu_ps(x + i), a0);
+        a1 = _mm256_fmadd_ps(_mm256_loadu_ps(w + i + 8),
+                             _mm256_loadu_ps(x + i + 8), a1);
+    }
+    float r = janas_hsum8(_mm256_add_ps(a0, a1));
+    for (; i < n; i++)
+        r += w[i] * x[i];
+    return r;
+}
+#endif
+
+/* one dot product, the same for a row and a token whatever the pass */
+static float dot_f32(const float *w, const float *x, uint32_t n)
+{
+#if defined(__x86_64__)
+    if (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma"))
+        return dot_f32_avx2(w, x, n);
+#endif
+    float r = 0.0f;
+    for (uint32_t i = 0; i < n; i++)
+        r += w[i] * x[i];
+    return r;
+}
+
+/* rows in equal runs, each read once for all the tokens: the f32
+   matrices of E2B's and E4B's branches are 2.6 MB a layer */
 static void f32_worker(void *arg, int tid, int n_threads)
 {
     const struct f32_job *b = arg;
-    size_t total = (size_t)b->rows * b->n;
-    for (size_t i = (size_t)tid; i < total; i += (size_t)n_threads) {
-        uint32_t j = (uint32_t)(i / b->rows), r = (uint32_t)(i % b->rows);
+    uint32_t per = (b->rows + (uint32_t)n_threads - 1) / (uint32_t)n_threads;
+    uint32_t r0 = (uint32_t)tid * per;
+    uint32_t r1 = r0 + per < b->rows ? r0 + per : b->rows;
+    for (uint32_t r = r0; r < r1; r++) {
         const float *w = b->w + (size_t)r * b->cols;
-        const float *x = b->x + (size_t)j * b->cols;
-        float s = 0.0f;
-        for (uint32_t c = 0; c < b->cols; c++)
-            s += w[c] * x[c];
-        b->y[(size_t)j * b->rows + r] = s;
+        for (uint32_t j = 0; j < b->n; j++)
+            b->y[(size_t)j * b->rows + r] =
+                dot_f32(w, b->x + (size_t)j * b->cols, b->cols);
     }
 }
 

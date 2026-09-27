@@ -89,7 +89,12 @@ report from `janas-bench` is the single most useful thing you can send back**
   chat and tools: their per-layer embeddings - a table as large as half of
   E2B's file - are read from the file a row at a time and never loaded, so
   E2B ran here in 1.5 GB of memory (a 3.1 GB file) and E4B in 3.1 GB (5.0
-  GB). Against llama.cpp on 200 tokens of prose the most likely token
+  GB). Each of the four has an **assistant**, a small drafting model of
+  its own that reads the main model's keys and values, taken as its
+  `--mtp` file: on an Italian chat reply of 110 tokens, greedy, it took
+  E2B from 34.7 tokens/s to 51.0, E4B from 18.3 to 26.3, the 12B from 8.5
+  to 12.9 and the 26B from 16.9 to 24.5 on the development laptop, the
+  same tokens with and without it. Against llama.cpp on 200 tokens of prose the most likely token
   agrees at 160 positions on the 12B (mean logit difference 0.84) and at
   145 on the 26B (1.43); on another 200-token text at 191 on E2B (0.45) and
   195 on E4B (0.28). The larger two turn small numerical differences into
@@ -312,11 +317,33 @@ a minute. It also takes the shards themselves, when you have them on disk
 (`hf2jns_mtp <model.jns> <shard>... <out.jns>`). Qwen3.6-35B-A3B needs none of
 this: its GGUF keeps the block.
 
+**Gemma 4** comes from unsloth's GGUF files, converted in one step, and
+so does its assistant (the `mtp-gemma-4-*.gguf` file beside the model,
+under 0.5 GB), which serves as the multi-token prediction file:
+
+```sh
+huggingface-cli download unsloth/gemma-4-E4B-it-GGUF \
+    --include "gemma-4-E4B-it-Q4_K_M.gguf" "mtp-gemma-4-E4B-it.gguf" \
+    --local-dir models/gguf
+bin/x86_64-linux/gguf2jns models/gguf/gemma-4-E4B-it-Q4_K_M.gguf \
+    models/gemma-4-e4b.jns
+bin/x86_64-linux/gguf2jns models/gguf/mtp-gemma-4-E4B-it.gguf \
+    models/gemma-4-e4b-mtp.jns
+```
+
+The same for E2B, the 12B (`gemma-4-12b-it-Q4_K_M.gguf`) and the 26B
+(`gemma-4-26B-A4B-it-UD-Q4_K_M.gguf`); the fingerprints are in
+[MODELS.md](MODELS.md#the-fingerprints). E2B's per-layer table, half of its
+file, is read from the file a token at a time and never loaded: E2B ran
+here in 1.5 GB of memory, E4B in 3.1 GB.
+
 **And chat:**
 
 ```sh
 bin/x86_64-linux/janas-chat models/qwen3-next.jns \
     --mtp models/qwen3-next-mtp.jns --stats
+bin/x86_64-linux/janas-chat models/gemma-4-e4b.jns \
+    --mtp models/gemma-4-e4b-mtp.jns --stats
 ```
 
 The first start reads the model's resident weights (a couple of GB) and then
@@ -364,8 +391,11 @@ So no wrong guess can survive into the text, and with the same seed the reply
 is the one you would have got without any of it - checked on every run of the
 tests, 256 tokens with drafts and 256 without, from one seed, identical. On
 the development laptop `--mtp` takes Qwen3-Next-80B-A3B from 23 tok/s to 36
-and Qwen3.5-9B from 13 to 22 on an English explanation; how much it gives
-depends on the text, and on Italian prose a small model gains little.
+and Qwen3.5-9B from 13 to 22 on an English explanation, and Gemma 4's
+assistants take its four models about one and a half times faster on an
+Italian chat reply (E4B from 18 tok/s to 26, the 12B from 8.5 to 12.9);
+how much it gives depends on the text, and on Italian prose a small Qwen
+gains little.
 `--no-spec` and `/spec off` turn it off; they buy nothing but time, and are
 there to measure with.
 

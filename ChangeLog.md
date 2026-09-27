@@ -2,6 +2,29 @@
 
 > Curated, user-facing summary of completed work, newest first.
 
+## [2026-09-27] - Gemma 4's assistant drafts
+
+- **Gemma 4's assistant is taken as the MTP file** (`--mtp`, converted by
+  `gguf2jns` from `mtp-gemma-4-*.gguf`): a small model of its own - 256
+  wide, four layers with queries only - reading the main model's keys and
+  values, fed the main model's embedding of the last token and its final
+  state, drafting at that token's position and chaining further drafts at
+  the same one, as it was trained. A draft costs about a millisecond.
+- An Italian chat reply of 110 tokens, greedy, the same tokens with and
+  without it (Core Ultra 9 185H, tokens/s): **E2B 34.7 -> 51.0 (1.47x),
+  E4B 18.3 -> 26.3 (1.44x), 12B 8.5 -> 12.9 (1.51x), 26B 16.9 -> 24.5
+  (1.44x)**; 64-83% of the drafts the planner chose to verify were
+  accepted (on E4B llama.cpp with the same assistant accepts 50% of its
+  drafts). The 12B's and 26B's assistants, 1024 wide, give a KV head
+  count per layer, which is read as such.
+- Its drafts are picked, as the MTP blocks' are, from a head of 32768
+  token ids plus those met in the conversation, instead of all 262144: 8
+  MB read a draft instead of 67, for as many accepted.
+- E2B's and E4B's per-layer branch reads its f32 matrices (220 MB a token
+  on E4B) once for all the tokens of a pass, with a vector dot product:
+  passes over a few tokens 17% faster, single tokens 4%.
+  `JANAS_DRAFT_VOCAB` sets the draft head's size, to experiment.
+
 ## [2026-09-27] - janas-try reports only this run
 
 - **A test report carries only the speeds this run measured.** The

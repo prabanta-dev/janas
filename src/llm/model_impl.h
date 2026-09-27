@@ -203,6 +203,8 @@ struct janas_llm_model {
      * call, mtp_hid the MTP's own (to chain guesses).
      */
     struct janas_jns mtp_j;
+    /* Gemma 4's assistant, in place of an MTP block (model_assist.c) */
+    struct janas_assist *asst;
     uint8_t *mtp_res;
     struct layer mtp_layer;
     struct janas_expert_cache *mtp_cache;
@@ -222,6 +224,7 @@ struct janas_llm_model {
      * token seen in the context, at a fraction of the full head's reads.
      */
     uint8_t *dh_w, *dh_in; /* rows; per token id: 1 if in the head */
+    const uint8_t *dh_src; /* the full head the rows come from */
     int32_t *dh_ids;
     uint32_t dh_n, dh_cap;
     size_t dh_row;
@@ -332,6 +335,20 @@ void janas_m_attn_layer(struct janas_llm_model *m, const struct layer *ly,
                         uint32_t n, uint32_t pos0);
 void janas_m_rec_layer(struct janas_llm_model *m, const struct layer *ly,
                        uint32_t n);
+void janas_m_embed(struct janas_llm_model *m, int32_t token, float *x);
+/* sum of exp(l[i] - mx), i < n, vectorized where the CPU can */
+double janas_m_exp_sum(const float *l, uint32_t n, float mx);
+/* the draft head: the first base rows of the head src (rows of row_bytes) */
+int janas_m_init_draft_head(struct janas_llm_model *m, const uint8_t *src,
+                            size_t row_bytes, uint32_t base);
+int janas_m_assist_is(const char *path);
+int janas_m_assist_load(struct janas_llm_model *m, const char *path,
+                        int attn_scores, char *err, size_t err_len);
+void janas_m_assist_free(struct janas_llm_model *m);
+int janas_m_assist_head(struct janas_llm_model *m, uint32_t base);
+int janas_m_assist_draft(struct janas_llm_model *m, int32_t token,
+                         const float *h, uint32_t p, float *hnext, int32_t *out,
+                         float *conf);
 int janas_m_ple_inputs(struct janas_llm_model *m, const int32_t *tokens,
                        uint32_t n);
 void janas_m_ple_layer(struct janas_llm_model *m, const struct layer *ly,

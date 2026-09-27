@@ -461,10 +461,19 @@ static int load_mtp_internal(struct janas_llm_model *m, char *err,
 /* The draft head with the base lowest ids, room for 8192 more tokens. */
 static int init_draft_head(struct janas_llm_model *m, uint32_t base)
 {
+    return janas_m_init_draft_head(
+        m, data(m, m->output),
+        m->d_model / JANAS_QK * janas_qtype_block_size((int)m->output->type),
+        base);
+}
+
+int janas_m_init_draft_head(struct janas_llm_model *m, const uint8_t *src,
+                            size_t row_bytes, uint32_t base)
+{
     if (base > m->n_vocab)
         base = m->n_vocab;
-    m->dh_row =
-        m->d_model / JANAS_QK * janas_qtype_block_size((int)m->output->type);
+    m->dh_src = src;
+    m->dh_row = row_bytes;
     m->dh_cap = base + 8192 < m->n_vocab ? base + 8192 : m->n_vocab;
     m->dh_w = malloc((size_t)m->dh_cap * m->dh_row);
     m->dh_ids = malloc(m->dh_cap * sizeof(int32_t));
@@ -472,7 +481,7 @@ static int init_draft_head(struct janas_llm_model *m, uint32_t base)
     m->dh_logits = malloc(m->dh_cap * sizeof(float));
     if (!m->dh_w || !m->dh_ids || !m->dh_in || !m->dh_logits)
         return -1;
-    memcpy(m->dh_w, data(m, m->output), (size_t)base * m->dh_row);
+    memcpy(m->dh_w, src, (size_t)base * m->dh_row);
     for (uint32_t i = 0; i < base; i++) {
         m->dh_ids[i] = (int32_t)i;
         m->dh_in[i] = 1;
@@ -679,7 +688,14 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
     m->n_ctx = o->n_ctx;
     if (m->n_ctx_train && m->n_ctx > m->n_ctx_train)
         m->n_ctx = m->n_ctx_train;
-    if (o->mtp_path && load_mtp(m, o->mtp_path, err, err_len) != 0)
+    /* Gemma 4's assistant is opened last, over the caches it reads */
+    int assist = o->mtp_path && janas_m_assist_is(o->mtp_path);
+    /* the draft head's lowest token ids: the caller's, JANAS_DRAFT_VOCAB
+       (to experiment), or 32768 */
+    uint32_t dvocab = o->draft_vocab ? o->draft_vocab : 32768;
+    if (getenv("JANAS_DRAFT_VOCAB") && atol(getenv("JANAS_DRAFT_VOCAB")) > 0)
+        dvocab = (uint32_t)atol(getenv("JANAS_DRAFT_VOCAB"));
+    if (o->mtp_path && !assist && load_mtp(m, o->mtp_path, err, err_len) != 0)
         goto fail;
     if (!m->mtp && m->j.h.n_layer > m->n_layer &&
         load_mtp_internal(m, err, err_len) != 0)
@@ -963,6 +979,10 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
         snprintf(err, err_len, "out of memory");
         goto fail;
     }
+    if (assist && (janas_m_assist_load(m, o->mtp_path, o->attn_scores, err,
+                                       err_len) != 0 ||
+                   janas_m_assist_head(m, dvocab) != 0))
+        goto fail;
     if (pin >= 0)
         janas_pin_current_thread(pin);
     m->cache = janas_expert_cache_create(&m->j, o->cache_bytes, m->exp_level,
@@ -1009,7 +1029,7 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
                       m->exp_level, m->io, err, err_len)
                 : m->cache;
         if (!m->hid || !m->mtp_hid || !m->cat || !m->catq || !m->mtp_cache ||
-            init_draft_head(m, o->draft_vocab ? o->draft_vocab : 32768) != 0)
+            init_draft_head(m, dvocab) != 0)
             goto fail;
     }
     if (m->gpu) {
@@ -1109,6 +1129,7 @@ void janas_llm_model_free(struct janas_llm_model *m)
     free(m->tok_first);
     free(m->tok_fill);
     free(m->tok_list);
+    janas_m_assist_free(m);
     if (m->mtp_open)
         janas_jns_close(&m->mtp_j);
     free(m->mtp_res);

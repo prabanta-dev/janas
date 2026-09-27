@@ -46,9 +46,9 @@ fingerprint of what the recipe produces — not forty gigabytes. Convert your ow
 copy, compare, and you know you are running the file the numbers in this
 repository were measured on.
 
-Not a claim, a measurement: each of the four models below was converted again
-from its GGUF and compared, byte for byte, with the file this project runs.
-All four matched.
+Not a claim, a measurement: four of the Qwen models below were converted
+again from their GGUF and compared, byte for byte, with the files this
+project runs, and so were the eight Gemma 4 files. All of them matched.
 
 ### The recipe
 
@@ -147,6 +147,36 @@ cut. Two conversions give the same bytes.
 ```
 06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439  Qwen3-Embedding-0.6B-Q8_0.gguf
 1e8eb8cbeba7a1a657354d259c5730bb79f6087160a9ca8da901bd08bdbe943f  qwen3-embedding-0.6b-q8.jns   (gguf2jns)
+```
+
+**Gemma 4: E2B, E4B, 12B and 26B-A4B, and their assistants**, from
+[`unsloth/gemma-4-E2B-it-GGUF`](https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF),
+[`unsloth/gemma-4-E4B-it-GGUF`](https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF),
+[`unsloth/gemma-4-12b-it-GGUF`](https://huggingface.co/unsloth/gemma-4-12b-it-GGUF)
+and [`unsloth/gemma-4-26B-A4B-it-GGUF`](https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF).
+Each converted in one step, as it is kept here, and each converted twice on
+27 September 2026: the same bytes. The assistant, Gemma's drafting model
+(the `mtp-` file, given to the chat with `--mtp`), converts with
+`gguf2jns` like the model. The 26B's feed-forwards are widened with zeros
+to a multiple of 256, which is why its file is larger than its GGUF.
+
+```
+740185b21d22ceb83a11c3aa62ad5842ef32c70f6096d756bbee85a1e4ec34b8  gemma-4-E2B-it-Q4_K_M.gguf
+1f18e08878df41f377d563b38048d41841c7973ddea845cd9672fcf23cbd864b  gemma-4-e2b-it-q4km.jns   (gguf2jns)
+9eba819938efccfd6044f8af84e3bbfddc639a2bcf32ebc36420e6a649191919  mtp-gemma-4-E2B-it.gguf
+79df1f3c817542b3867a0940b1a5b7330d478bddb4102ec90ff817334877cd62  gemma-4-e2b-it-mtp.jns   (gguf2jns)
+85a896a047553e842f25297ee5b031d64ff30147d9c4af17b1e4b394cd1fab87  gemma-4-E4B-it-Q4_K_M.gguf
+7ec828e9bdc1ada2eda907e93b87072f3180f2e8cba5ccedcd360d1a53858675  gemma-4-e4b-it-q4km.jns   (gguf2jns)
+b6a723115efa510d3b3215db1e26790dae84cd08c2134a764f3d194f1f0c3376  mtp-gemma-4-E4B-it.gguf
+7c6fdb74ba1eb11f9d47b15097a09cce0142aea380a41f1986ba7b8ec4785b53  gemma-4-e4b-it-mtp.jns   (gguf2jns)
+0a270ec9fe6b34f4a0d33992b6135117b484ebc4766ab76b51d4ae8c457e4c42  gemma-4-12b-it-Q4_K_M.gguf
+cae09e04598891dea6e9cd93fb496fbde08d822ac35de4ff45dbfab1ea25c4dd  gemma-4-12b-it-q4km.jns   (gguf2jns)
+145db9094bc0f85f1701e255a2ed216dcc9800fc8bc8631ad00905b456bd451b  mtp-gemma-4-12b-it.gguf
+35e640f20dd74e862df9c1d949ad4edca9f58beef0cb29e99cccc6c99297826f  gemma-4-12b-it-mtp.jns   (gguf2jns)
+f2c28b3dc4776931ac6f879e11f203dec637ea0f14267a86ec8f6165f63f293f  gemma-4-26B-A4B-it-UD-Q4_K_M.gguf
+35c3845bbc21de52bf630d3c7455b4bb5379c34487b5925e020ec2e573931666  gemma-4-26b-a4b-it-udq4km.jns   (gguf2jns)
+6326fb9f5e487aa8dcdd313a091e3c67724cb2a666ec3b7d2895b5b26d93ed1b  mtp-gemma-4-26B-A4B-it.gguf
+6ba24ee91fe6fe904b29919acbb654a66d9caa0aba67db1df9f921a76e5bcedf  gemma-4-26b-it-mtp.jns   (gguf2jns)
 ```
 
 The multi-token prediction block is not converted from a GGUF — GGUF files

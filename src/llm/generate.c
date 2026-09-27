@@ -232,8 +232,9 @@ static int mtp_step(struct janas_llm_model *m, const int32_t *hist,
         if (pl && plan_drafts(pl, survs, got) < got)
             break;
         double tc = now();
-        if (janas_llm_mtp_draft(m, &draft[got - 1], hrow, 1,
-                                pos + acc + (uint32_t)got, &draft[got],
+        uint32_t at = janas_llm_mtp_chain_fixed(m) ? pos + acc
+                                                   : pos + acc + (uint32_t)got;
+        if (janas_llm_mtp_draft(m, &draft[got - 1], hrow, 1, at, &draft[got],
                                 &conf) != 0 ||
             (surv *= conf) < min_conf)
             break; /* past the context, or not sure enough */

@@ -184,6 +184,10 @@ int janas_llm_model_decode(struct janas_llm_model *m, int32_t token,
  * guesses are chained.
  */
 int janas_llm_model_has_mtp(const struct janas_llm_model *m);
+/* 1 when chained drafts keep the position of the first (Gemma 4's
+   assistant, which reads the main model's cache and has none of its
+   own); 0 when each is one position further (an MTP block) */
+int janas_llm_mtp_chain_fixed(const struct janas_llm_model *m);
 /* 1 when the model carries a recurrent state (qwen3next, qwen35moe): it can
    go back no further than the start of its last forward call. */
 int janas_llm_model_recurrent(const struct janas_llm_model *m);

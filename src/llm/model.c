@@ -83,6 +83,11 @@ static void embed(struct janas_llm_model *m, int32_t token, float *x)
     }
 }
 
+void janas_m_embed(struct janas_llm_model *m, int32_t token, float *x)
+{
+    embed(m, token, x);
+}
+
 /* RoPE angles of positions pos0 .. pos0 + n - 1 for n_rot dimensions, the
    same for every head; ff: a divisor of each pair's angle, or NULL. */
 static void rope_table(float *cs, float *sn, uint32_t n, uint32_t pos0,
@@ -457,8 +462,9 @@ static int forward(struct janas_llm_model *m, const int32_t *tokens, uint32_t n,
     double td = now();
     uint32_t first = all_logits ? 0 : n - 1;
     /* with an MTP block, every token's final hidden state is kept for it */
-    janas_m_norm_quant(m, f32(m, m->out_norm), m->mtp ? 0 : first, n);
-    if (m->mtp)
+    int keep = m->mtp || m->asst;
+    janas_m_norm_quant(m, f32(m, m->out_norm), keep ? 0 : first, n);
+    if (keep)
         memcpy(m->hid, m->xn, (size_t)n * dm * sizeof(float));
     struct janas_matvec_task to = {.type = (int)m->output->type,
                                    .w = data(m, m->output),
@@ -496,7 +502,12 @@ uint32_t janas_llm_model_max_block(const struct janas_llm_model *m)
 
 int janas_llm_model_has_mtp(const struct janas_llm_model *m)
 {
-    return m->mtp;
+    return m->mtp || m->asst;
+}
+
+int janas_llm_mtp_chain_fixed(const struct janas_llm_model *m)
+{
+    return m->asst != NULL;
 }
 
 int janas_llm_model_recurrent(const struct janas_llm_model *m)
@@ -534,6 +545,19 @@ exp_sum_avx2(const float *l, uint32_t n, float mx, uint32_t *done)
 }
 #endif
 
+double janas_m_exp_sum(const float *l, uint32_t n, float mx)
+{
+    double sum = 0;
+    uint32_t i = 0;
+#if defined(__x86_64__)
+    if (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma"))
+        sum = exp_sum_avx2(l, n, mx, &i);
+#endif
+    for (; i < n; i++)
+        sum += expf(l[i] - mx);
+    return sum;
+}
+
 void janas_llm_mtp_note_tokens(struct janas_llm_model *m, const int32_t *tokens,
                                uint32_t n)
 {
@@ -545,8 +569,7 @@ void janas_llm_mtp_note_tokens(struct janas_llm_model *m, const int32_t *tokens,
             m->dh_n == m->dh_cap)
             continue;
         memcpy(m->dh_w + (size_t)m->dh_n * m->dh_row,
-               (const uint8_t *)data(m, m->output) + (size_t)t * m->dh_row,
-               m->dh_row);
+               m->dh_src + (size_t)t * m->dh_row, m->dh_row);
         m->dh_ids[m->dh_n++] = t;
         m->dh_in[t] = 1;
     }
@@ -556,6 +579,14 @@ int janas_llm_mtp_draft(struct janas_llm_model *m, const int32_t *tokens,
                         const float *hidden, uint32_t n, uint32_t pos0,
                         int32_t *token, float *conf)
 {
+    if (m->asst) { /* Gemma 4's assistant: the last row alone */
+        uint32_t dm = m->d_model;
+        if (n < 1 || n > m->blk)
+            return -1;
+        return janas_m_assist_draft(
+            m, tokens[n - 1], hidden + (size_t)(n - 1) * dm, pos0 + n - 1,
+            m->mtp_hid + (size_t)(n - 1) * dm, token, conf);
+    }
     if (janas_llm_mtp_forward(m, tokens, hidden, n, pos0, NULL, 0) != 0)
         return -1;
     janas_m_apply_candidate(m,
@@ -596,6 +627,8 @@ int janas_llm_mtp_forward(struct janas_llm_model *m, const int32_t *tokens,
                           const float *hidden, uint32_t n, uint32_t pos0,
                           float *logits, int all_logits)
 {
+    if (m->asst) /* no keys and values of its own: nothing to fill */
+        return logits || n < 1 || n > m->blk ? -1 : 0;
     if (!m->mtp || n < 1 || n > m->blk || pos0 + n > m->n_ctx)
         return -1;
     for (uint32_t j = 0; j < n; j++)
