@@ -2,6 +2,13 @@
 
 > Curated, user-facing summary of completed work, newest first.
 
+## [2026-09-27] - janas-try reports only this run
+
+- **A test report carries only the speeds this run measured.** The
+  reports of issues #10 and #11 also showed the bench files earlier runs
+  had left behind - another level, an older commit - as if they were
+  new. They stay in the work directory, out of the report.
+
 ## [2026-09-27] - Why a build has no GPU
 
 - **A build without GPU support says what was missing.** The GPU needs

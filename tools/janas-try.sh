@@ -460,6 +460,7 @@ server_check()
 # ---------------------------------------------------------------- report
 report()
 {
+    local f lv
     machine
     {
         echo "## Janas test report"
@@ -489,8 +490,13 @@ report()
             cat "$WORK/results" 2>/dev/null
             echo '```'
         fi
+        # only what this run measured: the files of earlier runs, of other
+        # levels, stay in the directory but not in the report
         for f in "$WORK"/bench-*.txt; do
             [ -f "$f" ] || continue
+            lv=$(basename "$f" .txt)
+            lv=${lv#bench-}
+            grep -q "^$lv speed measured" "$WORK/results" || continue
             echo
             echo "### $(basename "$f" .txt)"
             echo
@@ -500,6 +506,10 @@ report()
         done
         for f in "$WORK"/answer-*.txt; do
             [ -f "$f" ] || continue
+            lv=$(basename "$f" .txt)
+            lv=${lv#answer-}
+            grep -q "^$lv answer fingerprint .*\(no reference\|DIFFERS\)" \
+                "$WORK/results" || continue
             echo
             echo "### $(basename "$f" .txt) (no reference, or not the reference)"
             echo
