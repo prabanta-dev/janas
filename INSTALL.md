@@ -87,4 +87,5 @@ It takes a few minutes: it measures prompt processing and generation speed for e
 - `JANAS_GPU=0` turns the GPU off; `JANAS_GPU_DEVICE=integrated` or `discrete` picks one when there are both.
 - `JANAS_KERNELS=avx2` uses the AVX2 kernels even where AVX-VNNI is available.
 - `JANAS_TUNE=0` turns self-tuning off (fixed defaults); delete `~/.cache/janas/tuning.txt` to start tuning from scratch.
+- `JANAS_TUNE_THREADS=0` keeps every usable thread instead of letting the first passes choose between every thread, one per performance core and the performance cores' threads; the choice, once made, is kept for that machine and model.
 - The expert cache takes the free memory, leaving a fifth of the machine's memory to the rest of the system; `--cache <GiB>` in `janas-chat` sets it.

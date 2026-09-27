@@ -45,7 +45,32 @@ void janas_tuner_init(struct janas_tuner *t, const struct janas_tune_cand *c,
    power its keep-alive costs) */
 static int usable(const struct janas_tuner *t, int cls, int i)
 {
-    return !t->cand[i].gpu || (t->allow_gpu && cls > 0);
+    return (!t->cand[i].gpu || (t->allow_gpu && cls > 0)) &&
+           (!t->cls[cls].threads || t->cand[i].threads == t->cls[cls].threads);
+}
+
+/* The default of a class: its own, or once the threads are settled the
+   candidate with those threads and no GPU */
+static int class_def(const struct janas_tuner *t, int cls)
+{
+    int def = t->cls[cls].def;
+    if (!t->cls[cls].threads || t->cand[def].threads == t->cls[cls].threads)
+        return def;
+    for (int i = 0; i < t->n_cand; i++)
+        if (!t->cand[i].gpu && t->cand[i].threads == t->cls[cls].threads)
+            return i;
+    return def;
+}
+
+/* Once every candidate has its tries, the threads of the best are kept */
+static void settle_threads(struct janas_tuner *t, int cls)
+{
+    if (t->cls[cls].threads)
+        return;
+    for (int i = 0; i < t->n_cand; i++)
+        if (usable(t, cls, i) && t->cls[cls].tried[i] < TRIES)
+            return;
+    t->cls[cls].threads = t->cand[janas_tuner_best(t, cls)].threads;
 }
 
 void janas_tuner_force(struct janas_tuner *t, int cand)
@@ -62,7 +87,7 @@ int janas_tuner_best(const struct janas_tuner *t, int cls)
 {
     /* the default unless an alternative is clearly faster: measurements
        are noisy, a near tie is not worth a change */
-    int def = t->cls[cls].def, best = def;
+    int def = class_def(t, cls), best = def;
     double bar =
         t->cls[cls].tried[def] >= TRIES ? t->cls[cls].cost[def] * MARGIN : 1e30;
     for (int i = 0; i < t->n_cand; i++)
@@ -84,7 +109,8 @@ int janas_tuner_pick(struct janas_tuner *t, int cls)
         return t->cls[cls].def;
     uint32_t p = t->cls[cls].passes++;
     if (p < WARM_PASSES)
-        return t->cls[cls].def;
+        return class_def(t, cls);
+    settle_threads(t, cls);
     /* explore: the least tried candidate until each has TRIES */
     int least = -1;
     for (int i = 0; i < t->n_cand; i++)
@@ -205,6 +231,23 @@ void janas_tuner_load(struct janas_tuner *t, const char *key)
         t->cls[cls].tried[cand] = tries;
     }
     fclose(f);
+    /* the threads settled: a line of their own, candidate -1 */
+    if (!(f = fopen(path, "r")))
+        return;
+    while (fgets(line, sizeof(line), f)) {
+        int cls, cand;
+        double threads;
+        unsigned zero;
+        if (strncmp(line, key, kl) != 0 || line[kl] != '\t' ||
+            sscanf(line + kl + 1, "%d\t%d\t%lf\t%u", &cls, &cand, &threads,
+                   &zero) != 4 ||
+            cls < 0 || cls >= JANAS_TUNE_CLASSES || cand != -1)
+            continue;
+        for (int i = 0; i < t->n_cand; i++)
+            if (t->cand[i].threads == (int)threads)
+                t->cls[cls].threads = (int)threads;
+    }
+    fclose(f);
 }
 
 void janas_tuner_save(const struct janas_tuner *t, const char *key)
@@ -229,6 +272,9 @@ void janas_tuner_save(const struct janas_tuner *t, const char *key)
             if (t->cls[k].tried[i] > 0)
                 fprintf(out, "%s\t%d\t%d\t%.9g\t%u\n", key, k, i,
                         t->cls[k].cost[i], t->cls[k].tried[i]);
+    for (int k = 0; k < JANAS_TUNE_CLASSES; k++)
+        if (t->cls[k].threads)
+            fprintf(out, "%s\t%d\t-1\t%d\t0\n", key, k, t->cls[k].threads);
     if (fclose(out) == 0)
         rename(tmp, path);
     else

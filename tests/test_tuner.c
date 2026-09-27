@@ -96,6 +96,8 @@ int main(void)
     janas_tuner_load(&u, "test|key");
     CHECK(janas_tuner_best(&u, 2) == 3, "loaded best %d, want 3",
           janas_tuner_best(&u, 2));
+    CHECK(u.cls[2].threads == 20 && u.cls[2].threads == t.cls[2].threads,
+          "loaded threads %d, want 20", u.cls[2].threads);
     struct janas_tuner v;
     janas_tuner_init(&v, cand, 4, def, 0);
     janas_tuner_load(&v, "other|key");
@@ -122,15 +124,33 @@ int main(void)
     }
     CHECK(tries >= 5 && tries <= 30, "%d tries in 20000 passes", tries);
     tries = 0;
-    for (int i = 0; i < 6000; i++) { /* the machine changes: 1 is best now */
+    for (int i = 0; i < 6000; i++) { /* the machine changes: the GPU wins */
         int c = janas_tuner_pick(&t, 2);
-        tries += c == 1;
-        janas_tuner_record(&t, 2, c, (const double[]){1.0, 0.3, 0.8, 0.9}[c]);
+        tries += c == 3;
+        janas_tuner_record(&t, 2, c, (const double[]){1.0, 1.2, 0.8, 0.3}[c]);
     }
-    CHECK(janas_tuner_best(&t, 2) == 1, "after the change best %d, want 1",
+    CHECK(janas_tuner_best(&t, 2) == 3, "after the change best %d, want 3",
           janas_tuner_best(&t, 2));
     CHECK(tries > 2000, "the new best taken %d times in 6000", tries);
 
+    /* the threads are settled by the first tries and kept: a pass costing
+       more as the context grows must not hand the choice to a candidate
+       whose cost was measured at short context (a chat drifting onto
+       fewer cores). 20 threads win the first tries; then every pass of
+       theirs costs more, the others are never measured again */
+    janas_tuner_init(&t, cand, 4, def, 0);
+    janas_tuner_allow_gpu(&t, 0);
+    run(&t, (const double[]){1.0, 1.2, 0.8, 0.9}, 40);
+    CHECK(janas_tuner_best(&t, 2) == 2, "settled best %d, want 2",
+          janas_tuner_best(&t, 2));
+    for (int i = 0; i < 5000; i++) {
+        int c = janas_tuner_pick(&t, 2);
+        CHECK(t.cand[c].threads == 20, "pass on %d threads after settling",
+              t.cand[c].threads);
+        janas_tuner_record(&t, 2, c, 0.8 + i * 0.001);
+    }
+    CHECK(janas_tuner_best(&t, 2) == 2, "drifted: best %d, want 2",
+          janas_tuner_best(&t, 2));
     /* forced: always that candidate */
     janas_tuner_force(&v, 1);
     for (int i = 0; i < 10; i++)

@@ -52,8 +52,12 @@ static double cpu_now(void)
  * 260,954-token prompt of Qwen3-Next-80B the elapsed time followed a n +
  * b n^2 to R^2 0.99999 (issue #9), where the latest speed promised 2.5
  * times too little at 32K. Never below what the last block's speed says:
- * the cost does not fall as the context grows.
+ * the cost does not fall as the context grows. A line through the first
+ * few blocks tilts with their noise (an ETA many times too long at 1,024
+ * tokens, issue #9), so the estimate moves from the last block's speed to
+ * the fitted line over the first ETA_BLOCKS blocks fitted.
  */
+#define ETA_BLOCKS 16
 static double input_eta(const janas_llm_chat *c, uint32_t left)
 {
     if (left == 0)
@@ -68,7 +72,10 @@ static double input_eta(const janas_llm_chat *c, uint32_t left)
     double a = (c->eta_sc - b * c->eta_sx) / w;
     double p0 = janas_llm_session_computed(c->s), p1 = p0 + left;
     double fit = a * (p1 - p0) + 0.5 * b * (p1 * p1 - p0 * p0);
-    return fit > flat ? fit : flat;
+    if (fit <= flat)
+        return flat;
+    double k = (double)(c->eta_steps - 2) / ETA_BLOCKS;
+    return flat + (k < 1 ? k : 1) * (fit - flat);
 }
 
 /* One block of the prompt read: n tokens from position p0, in dt seconds.

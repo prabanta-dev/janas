@@ -144,9 +144,13 @@ On the machine above, with nothing else running, `janas-bench` reports this:
 
 Every figure is the **mean of three rounds**, not a best round, of the
 configuration the engine itself chose for each kind of pass - the one a chat
-runs: all the usable cores (performance and efficiency cores, not the
-low-power ones), with the integrated GPU only where it helped, which was
-reading prompts on the two largest mixtures. The rounds run in alternating
+runs: here all the usable cores (performance and efficiency cores, not
+the low-power ones), with the integrated GPU only where it helped, which
+was reading prompts on the two largest mixtures. On another machine the
+engine may settle on fewer threads: the first passes of each kind try
+every core, one thread per performance core and the performance cores'
+threads, and keep the fastest (on an i9-14900HX every thread replied at
+less than half the speed of the performance cores' 16). The rounds run in alternating
 order so that the machine warming up and the cache filling weigh on each
 setting alike. Expect a few per cent either way between runs, and rather
 less than these on a first run, while the cache is still filling.

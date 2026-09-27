@@ -8,8 +8,12 @@
  * runs anyway: for each kind of pass (one token, a few, a block) it tries
  * each candidate a few times, keeps the fastest, and now and then tries the
  * others again to follow the machine's state (heat, power source). The
- * choices are saved per machine and model, so the next start begins from
- * them.
+ * number of threads is settled once, by the first tries, and then kept:
+ * a pass costs more as the context grows, so a candidate tried again at
+ * long context against costs measured at short context loses unfairly -
+ * which moved chats onto fewer cores than they could use. Only whether the
+ * GPU takes part keeps being tried. The choices are saved per machine and
+ * model, so the next start begins from them.
  */
 #ifndef JANAS_LLM_TUNER_H
 #define JANAS_LLM_TUNER_H
@@ -42,6 +46,7 @@ struct janas_tuner {
            pending): a try that changes nothing doubles the gap */
         uint32_t retry_at, retry_gap;
         int retry_best, retry_cand; /* and the candidate tried */
+        int threads; /* settled by the first tries (0: not yet) */
     } cls[JANAS_TUNE_CLASSES];
 };
 

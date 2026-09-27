@@ -2,6 +2,27 @@
 
 > Curated, user-facing summary of completed work, newest first.
 
+## [2026-09-27] - The threads chosen per machine
+
+- **The time left to read a long prompt no longer jumps at its start.**
+  The fitted line of issue #9 rested on two blocks when first used, and
+  their noise could tilt it: an estimate many times too long at 1,024
+  tokens. It now moves from the latest speed to the fitted line over the
+  first sixteen blocks.
+
+- **The engine chooses its threads again, once per machine and model.**
+  Since 26 September it always used every usable thread, which was the
+  fastest on the development laptop; on an i9-14900HX (issue #13) every
+  thread replied at 9.9 tokens/s where the performance cores' 16 gave
+  24.7, and on a 9950X3D one thread per core was 4-15% ahead (#15). The
+  first passes of each kind now try every thread, one per performance core
+  and the performance cores' threads; the threads of the fastest are kept
+  for good, saved with the machine's profile, and only whether the GPU
+  takes part keeps being tried. Tried again later, at a longer context,
+  the thread counts had lost unfairly to costs measured at a short one,
+  which is why they had been fixed. `JANAS_TUNE_THREADS=0` keeps every
+  thread.
+
 ## [2026-09-27] - Gemma 4's assistant drafts
 
 - **Gemma 4's assistant is taken as the MTP file** (`--mtp`, converted by

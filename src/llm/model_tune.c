@@ -29,18 +29,19 @@
 /*
  * The tuner's candidates: every usable core - the performance cores with
  * all their threads and the efficiency cores, not the low-power island,
- * which the layout leaves out - with and without the GPU if there is one.
- * Measured on 26 Sep 2026 on six models (Qwen3.5-2B to Qwen3-Next-80B),
- * that was the fastest or level in every kind of pass; one thread per
- * performance core, or their threads alone, lost 5-20% writing. Trying
- * them in use only made a chat run on fewer cores than janas-bench had
- * reported, whenever a stretch of long context had tipped the averages:
- * the same machine, two speeds. So the threads are fixed, and the tuner
- * only decides whether the GPU helps. JANAS_TUNE_THREADS=1 brings back
- * those candidates (one per performance core, all their threads), to
- * experiment with. JANAS_TUNE=0 turns tuning off; JANAS_BLOCK_THREADS fixes
- * the threads for blocks (and turns it off too); JANAS_GPU_ALWAYS=1 makes
- * the GPU variants the defaults for several tokens.
+ * which the layout leaves out - one thread per performance core, and the
+ * performance cores' threads alone; each with and without the GPU if there
+ * is one. On the development laptop (6 performance cores, 8 efficiency)
+ * every core was the fastest or level on six models; on an i9-14900HX (8
+ * and 16) every thread replied at 9.9 tokens/s where 16 gave 24.7 (issue
+ * #13), and on a 9950X3D one thread per core was 4-15% ahead (#15). So the
+ * first passes of each kind try them all and the tuner keeps the threads
+ * of the fastest (tuner.h: settled once, never tried again at a longer
+ * context, which had moved chats onto fewer cores than they could use).
+ * JANAS_TUNE_THREADS=0 keeps every core without trying the others;
+ * JANAS_TUNE=0 turns tuning off; JANAS_BLOCK_THREADS fixes the threads for
+ * blocks (and turns it off too); JANAS_GPU_ALWAYS=1 makes the GPU variants
+ * the defaults for several tokens.
  */
 void janas_m_init_tuner(struct janas_llm_model *m)
 {
@@ -48,7 +49,7 @@ void janas_m_init_tuner(struct janas_llm_model *m)
     int n = 0, opts[3] = {m->all_threads, m->p_cores, m->p_threads};
     const char *bt = getenv("JANAS_BLOCK_THREADS"), *tn = getenv("JANAS_TUNE"),
                *tt = getenv("JANAS_TUNE_THREADS");
-    int n_opts = tt && atoi(tt) > 0 ? 3 : 1;
+    int n_opts = tt && atoi(tt) == 0 ? 1 : 3;
     int block = bt && atoi(bt) > 0 ? atoi(bt) : m->all_threads;
     if (block > m->all_threads)
         block = m->all_threads;
