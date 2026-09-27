@@ -9,7 +9,7 @@
   the Licence one; the section also credits the models' authors, llama.cpp
   and ggml (the reference, and the IQ3_S grid), the Unicode Character
   Database, OpenAI's specification, the libraries compiled in, and the
-  testers.
+  testers. An `AUTHORS` file says the same in the GNU way.
 - The last two Python scripts are C programs, built with everything else:
   `tools/gen_unicode` writes the tokenizer's Unicode tables from the
   Unicode Character Database (`/usr/share/unicode` on Debian and its kin),

@@ -200,6 +200,7 @@ the machine to itself.
 - [ChangeLog.md](ChangeLog.md) — what changed, newest first
 - [MODELS.md](MODELS.md) — what a converted model's licence is, and what may be redistributed
 - [CONTRIBUTING.md](CONTRIBUTING.md) — how to help, and the sign-off
+- [AUTHORS](AUTHORS) — who wrote it, and what it owes to others
 - [LICENSE](LICENSE) — GNU GPL, version 3 or later
 
 ## Getting started

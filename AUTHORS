@@ -1,0 +1,52 @@
+Janas is designed and written by
+
+    Maurizio "camauri" Cammalleri
+    https://github.com/camauri
+
+Copyright (C) 2026 Maurizio Cammalleri. Janas is free software under the
+GNU General Public License, version 3 or later: see LICENSE.
+
+
+About the author
+----------------
+
+Maurizio Cammalleri is a system architect based in Italy. In more than
+thirty years of work, Maurizio has designed embedded systems, industrial
+control software and high-performance web platforms, and has led technical
+teams as CTO and CIO.
+
+Janas is part of Prabanta (https://github.com/prabanta-dev), a family of
+tools written in C with no dependencies beyond the C library:
+
+  - Limba, the front end of the compiler for Luxia, an extended Pascal
+    with the rigour of Ada (https://github.com/prabanta-dev/limba);
+  - Meri, the register-based virtual machine that runs it, with a
+    bytecode compiler, ahead-of-time and just-in-time compilation;
+  - Janas, tools for artificial intelligence, whose aim is to lower the
+    hardware that private AI needs (https://github.com/prabanta-dev/janas);
+  - Napa, for web infrastructure, and Prama, for high-performance
+    computing, both still being defined.
+
+Other public projects by the same author, in Free Pascal:
+
+  - SedaiBasic2, a BASIC interpreter with a virtual machine
+    (https://github.com/camauri/SedaiBasic2);
+  - Sedai Audio Foundation, an audio synthesis library with five engines:
+    subtractive, FM, wavetable, additive and SID
+    (https://github.com/camauri/SedaiAudio).
+
+Writing: https://cammalleri.substack.com/
+
+
+Others
+------
+
+The libraries of others compiled into some of the programs keep their
+authors and their licences, beside their sources in src/third_party/
+(GNU libmicrohttpd, yyjson, Mbed TLS). The one piece of data taken from
+ggml, the IQ3_S grid in src/llm/iq3s_grid.h, is the ggml authors' under
+the MIT licence.
+
+What else Janas owes, and to whom - the models' authors, the reference it
+is checked against, the people who tested it - is in the Credits section of
+README.md.
