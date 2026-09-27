@@ -77,6 +77,32 @@ uint16_t janas_fp32_to_fp16(float f)
 
 static int use_avx2_fma; /* set by float_helpers_init, further down */
 
+/* The eight blocks of 32 (d32, qs32, bsums32) of one block, as the 256
+   are made: det, the division-free scale of the _det variant */
+static void q8_32_ref(const float *x, struct janas_block_q8k *y, int det)
+{
+    for (int k = 0; k < 8; k++) {
+        const float *xk = x + 32 * k;
+        float amax = 0.0f;
+        for (int i = 0; i < 32; i++)
+            amax = fmaxf(amax, fabsf(xk[i]));
+        float d = det ? amax * 0.007874015718698502f : amax / 127.0f;
+        float id = d > 0.0f ? (det ? janas_recip_det(d) : 1.0f / d) : 0.0f;
+        y->d32[k] = d;
+        for (int i = 0; i < 32; i++) {
+            float q = nearbyintf(xk[i] * id);
+            y->qs32[32 * k + i] =
+                (int8_t)(q > 127.0f ? 127 : (q < -127.0f ? -127 : q));
+        }
+    }
+    for (int g = 0; g < JANAS_QK / 16; g++) {
+        int s = 0;
+        for (int i = 0; i < 16; i++)
+            s += y->qs32[g * 16 + i];
+        y->bsums32[g] = (int16_t)s;
+    }
+}
+
 static void q8k_quantize_ref(const float *x, struct janas_block_q8k *y,
                              size_t n)
 {
@@ -98,6 +124,7 @@ static void q8k_quantize_ref(const float *x, struct janas_block_q8k *y,
                 s += y[b].qs[g * 16 + i];
             y[b].bsums[g] = (int16_t)s;
         }
+        q8_32_ref(x, &y[b], 0);
     }
 }
 
@@ -122,6 +149,7 @@ static void q8k_quantize_det_ref(const float *x, struct janas_block_q8k *y,
                 s += y[b].qs[g * 16 + i];
             y[b].bsums[g] = (int16_t)s;
         }
+        q8_32_ref(x, &y[b], 1);
     }
 }
 
@@ -149,13 +177,14 @@ __attribute__((target("avx2,fma"))) static float q8k_amax(const float *x)
     return _mm_cvtss_f32(m);
 }
 
-/* One block, given the scale and its reciprocal already computed. */
+/* groups of 16 values to 8 bits with the reciprocal id of their scale,
+   and their sums */
 __attribute__((target("avx2,fma"))) static void
-q8k_block_avx2(const float *x, struct janas_block_q8k *y, float id)
+q8_groups_avx2(const float *x, int8_t *qs, int16_t *bsums, int groups, float id)
 {
     const __m256i lo = _mm256_set1_epi32(-127), hi = _mm256_set1_epi32(127);
     const __m256 vid = _mm256_set1_ps(id);
-    for (int g = 0; g < JANAS_QK / 16; g++) {
+    for (int g = 0; g < groups; g++) {
         __m256i i0 =
             _mm256_cvtps_epi32(_mm256_mul_ps(_mm256_loadu_ps(x + g * 16), vid));
         __m256i i1 = _mm256_cvtps_epi32(
@@ -167,12 +196,41 @@ q8k_block_avx2(const float *x, struct janas_block_q8k *y, float id)
                                   _mm256_extracti128_si256(s, 1));
         h = _mm_add_epi32(h, _mm_shuffle_epi32(h, 0x4e));
         h = _mm_add_epi32(h, _mm_shuffle_epi32(h, 0xb1));
-        y->bsums[g] = (int16_t)_mm_cvtsi128_si32(h);
+        bsums[g] = (int16_t)_mm_cvtsi128_si32(h);
         /* packs leaves the two halves lane by lane: 0,2,1,3 puts them back */
         __m256i p = _mm256_permute4x64_epi64(_mm256_packs_epi32(i0, i1), 0xd8);
-        _mm_storeu_si128((__m128i *)(y->qs + g * 16),
+        _mm_storeu_si128((__m128i *)(qs + g * 16),
                          _mm_packs_epi16(_mm256_castsi256_si128(p),
                                          _mm256_extracti128_si256(p, 1)));
+    }
+}
+
+/* the largest absolute value of 32 */
+__attribute__((target("avx2,fma"))) static float q8_amax32(const float *x)
+{
+    const __m256 mask = _mm256_castsi256_ps(_mm256_set1_epi32(0x7fffffff));
+    __m256 a = _mm256_and_ps(_mm256_loadu_ps(x), mask);
+    for (int i = 8; i < 32; i += 8)
+        a = _mm256_max_ps(a, _mm256_and_ps(_mm256_loadu_ps(x + i), mask));
+    __m128 m =
+        _mm_max_ps(_mm256_castps256_ps128(a), _mm256_extractf128_ps(a, 1));
+    m = _mm_max_ps(m, _mm_movehl_ps(m, m));
+    m = _mm_max_ss(m, _mm_shuffle_ps(m, m, 1));
+    return _mm_cvtss_f32(m);
+}
+
+/* One block: the 256 with the scale whose reciprocal is id, and the
+   eight blocks of 32, as q8_32_ref */
+__attribute__((target("avx2,fma"))) static void
+q8k_block_avx2(const float *x, struct janas_block_q8k *y, float id, int det)
+{
+    q8_groups_avx2(x, y->qs, y->bsums, JANAS_QK / 16, id);
+    for (int k = 0; k < 8; k++) {
+        float amax = q8_amax32(x + 32 * k);
+        float d = det ? amax * 0.007874015718698502f : amax / 127.0f;
+        y->d32[k] = d;
+        q8_groups_avx2(x + 32 * k, y->qs32 + 32 * k, y->bsums32 + 2 * k, 2,
+                       d > 0.0f ? (det ? janas_recip_det(d) : 1.0f / d) : 0.0f);
     }
 }
 
@@ -183,7 +241,7 @@ q8k_quantize_avx2(const float *x, struct janas_block_q8k *y, size_t n)
         float amax = q8k_amax(x);
         float d = amax / 127.0f;
         y[b].d = d;
-        q8k_block_avx2(x, &y[b], d > 0.0f ? 1.0f / d : 0.0f);
+        q8k_block_avx2(x, &y[b], d > 0.0f ? 1.0f / d : 0.0f, 0);
     }
 }
 
@@ -193,7 +251,7 @@ q8k_quantize_det_avx2(const float *x, struct janas_block_q8k *y, size_t n)
     for (size_t b = 0; b < n / JANAS_QK; b++, x += JANAS_QK) {
         float d = q8k_amax(x) * 0.007874015718698502f;
         y[b].d = d;
-        q8k_block_avx2(x, &y[b], d > 0.0f ? janas_recip_det(d) : 0.0f);
+        q8k_block_avx2(x, &y[b], d > 0.0f ? janas_recip_det(d) : 0.0f, 1);
     }
 }
 #endif
@@ -635,9 +693,9 @@ float janas_q8_0_dot_ref(const struct janas_block_q8_0 *w,
             const struct janas_block_q8_0 *wk = w + 8 * b + k;
             int32_t dot = 0;
             for (int l = 0; l < 32; l++)
-                dot += wk->qs[l] * x[b].qs[32 * k + l];
-            acc[k] =
-                fmaf(janas_fp16_to_fp32(wk->d) * x[b].d, (float)dot, acc[k]);
+                dot += wk->qs[l] * x[b].qs32[32 * k + l];
+            acc[k] = fmaf(janas_fp16_to_fp32(wk->d) * x[b].d32[k], (float)dot,
+                          acc[k]);
         }
     return ((acc[0] + acc[4]) + (acc[2] + acc[6])) +
            ((acc[1] + acc[5]) + (acc[3] + acc[7]));
@@ -686,9 +744,9 @@ static float nib_dot_ref(const struct janas_block_iq4nl *w,
     for (size_t b = 0; b < nb; b++)
         for (int k = 0; k < 8; k++) {
             const struct janas_block_iq4nl *wk = w + 8 * b + k;
-            int32_t dot = nib_sum32(wk->qs, x[b].qs + 32 * k, levels);
-            acc[k] =
-                fmaf(janas_fp16_to_fp32(wk->d) * x[b].d, (float)dot, acc[k]);
+            int32_t dot = nib_sum32(wk->qs, x[b].qs32 + 32 * k, levels);
+            acc[k] = fmaf(janas_fp16_to_fp32(wk->d) * x[b].d32[k], (float)dot,
+                          acc[k]);
         }
     return ((acc[0] + acc[4]) + (acc[2] + acc[6])) +
            ((acc[1] + acc[5]) + (acc[3] + acc[7]));
@@ -772,11 +830,11 @@ static float dm_dot_ref(const uint8_t *w, size_t size, int five,
             const uint8_t *wk = w + (8 * b + k) * size;
             int32_t dot = 0;
             for (int l = 0; l < 32; l++)
-                dot += dm_value(wk, five, l) * x[b].qs[32 * k + l];
-            int32_t asum = x[b].bsums[2 * k] + x[b].bsums[2 * k + 1];
-            acc[k] = fmaf(janas_fp16_to_fp32(dm_u16(wk, 0)) * x[b].d,
+                dot += dm_value(wk, five, l) * x[b].qs32[32 * k + l];
+            int32_t asum = x[b].bsums32[2 * k] + x[b].bsums32[2 * k + 1];
+            acc[k] = fmaf(janas_fp16_to_fp32(dm_u16(wk, 0)) * x[b].d32[k],
                           (float)dot, acc[k]);
-            accm[k] = fmaf(janas_fp16_to_fp32(dm_u16(wk, 2)) * x[b].d,
+            accm[k] = fmaf(janas_fp16_to_fp32(dm_u16(wk, 2)) * x[b].d32[k],
                            (float)asum, accm[k]);
         }
     return (((acc[0] + acc[4]) + (acc[2] + acc[6])) +

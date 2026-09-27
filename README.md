@@ -96,8 +96,11 @@ report from `janas-bench` is the single most useful thing you can send back**
   to 12.9 and the 26B from 16.9 to 24.5 on the development laptop, the
   same tokens with and without it. Against llama.cpp on 200 tokens of prose the most likely token
   agrees at 160 positions on the 12B (mean logit difference 0.84) and at
-  145 on the 26B (1.43); on another 200-token text at 191 on E2B (0.45) and
-  195 on E4B (0.28). The larger two turn small numerical differences into
+  160 on the 26B (0.97); on another 200-token text at 191 on E2B (0.45) and
+  195 on E4B (0.28). Against an exact float64 computation over the same
+  weights (a NumPy forward pass written to check them), on the prose: the 12B
+  agrees at 167 positions (llama.cpp 173), the 26B at 156 (llama.cpp
+  160), with mean errors of 0.75 and 0.87 (llama.cpp 0.67 and 0.90). The larger two turn small numerical differences into
   large ones, and llama.cpp is not a steady reference for them: against
   itself with an eight-bit cache it agrees at 153 positions on the 12B, and
   with a 32-bit cache and no flash attention, at 112. The

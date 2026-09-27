@@ -317,7 +317,7 @@ DOTN(q8_0_dotn_body)(const struct janas_block_q8_0 *w,
             {
                 __m256i q = _mm256_loadu_si256((const __m256i *)wb[k].qs);
                 __m256i a =
-                    _mm256_loadu_si256((const __m256i *)(xb->qs + 32 * k));
+                    _mm256_loadu_si256((const __m256i *)(xb->qs32 + 32 * k));
                 /* |w| . (a with the sign of w): maddubs wants unsigned */
                 __m256i p = _mm256_maddubs_epi16(_mm256_abs_epi8(q),
                                                  _mm256_sign_epi8(a, q));
@@ -332,8 +332,9 @@ DOTN(q8_0_dotn_body)(const struct janas_block_q8_0 *w,
             __m256i is8 =
                 _mm256_add_epi32(_mm256_permute2x128_si256(t0, t1, 0x20),
                                  _mm256_permute2x128_si256(t0, t1, 0x31));
-            acc[v] = _mm256_fmadd_ps(_mm256_mul_ps(dk, _mm256_set1_ps(xb->d)),
-                                     _mm256_cvtepi32_ps(is8), acc[v]);
+            acc[v] =
+                _mm256_fmadd_ps(_mm256_mul_ps(dk, _mm256_loadu_ps(xb->d32)),
+                                _mm256_cvtepi32_ps(is8), acc[v]);
         }
     }
     _Pragma("GCC unroll 8") for (int v = 0; v < nv; v++)
@@ -690,7 +691,7 @@ DOTN(nib_dotn_body)(const struct janas_block_iq4nl *w,
             _Pragma("GCC unroll 8") for (int k = 0; k < 8; k++)
             {
                 __m256i a =
-                    _mm256_loadu_si256((const __m256i *)(xb->qs + 32 * k));
+                    _mm256_loadu_si256((const __m256i *)(xb->qs32 + 32 * k));
                 __m256i p =
                     _mm256_maddubs_epi16(aq[k], _mm256_sign_epi8(a, q[k]));
                 s[k] = _mm256_madd_epi16(p, ones);
@@ -704,8 +705,9 @@ DOTN(nib_dotn_body)(const struct janas_block_iq4nl *w,
             __m256i is8 =
                 _mm256_add_epi32(_mm256_permute2x128_si256(t0, t1, 0x20),
                                  _mm256_permute2x128_si256(t0, t1, 0x31));
-            acc[v] = _mm256_fmadd_ps(_mm256_mul_ps(dk, _mm256_set1_ps(xb->d)),
-                                     _mm256_cvtepi32_ps(is8), acc[v]);
+            acc[v] =
+                _mm256_fmadd_ps(_mm256_mul_ps(dk, _mm256_loadu_ps(xb->d32)),
+                                _mm256_cvtepi32_ps(is8), acc[v]);
         }
     }
     _Pragma("GCC unroll 8") for (int v = 0; v < nv; v++)
@@ -1157,14 +1159,14 @@ DOTN(dm_dotn_body)(const uint8_t *w, const size_t size, const int five,
             _Pragma("GCC unroll 8") for (int k = 0; k < 8; k++)
             {
                 __m256i a =
-                    _mm256_loadu_si256((const __m256i *)(xb->qs + 32 * k));
+                    _mm256_loadu_si256((const __m256i *)(xb->qs32 + 32 * k));
                 s[k] = _mm256_madd_epi16(_mm256_maddubs_epi16(q[k], a), ones);
             }
             __m256i is8 = DOTN(sum8x8)(s);
             /* bsums 2k and 2k + 1 are block k's 32 activations */
             __m256i as8 = _mm256_madd_epi16(
-                _mm256_loadu_si256((const __m256i *)xb->bsums), ones);
-            __m256 dx = _mm256_set1_ps(xb->d);
+                _mm256_loadu_si256((const __m256i *)xb->bsums32), ones);
+            __m256 dx = _mm256_loadu_ps(xb->d32);
             acc[v] = _mm256_fmadd_ps(_mm256_mul_ps(dk, dx),
                                      _mm256_cvtepi32_ps(is8), acc[v]);
             accm[v] = _mm256_fmadd_ps(_mm256_mul_ps(mk, dx),

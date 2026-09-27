@@ -156,6 +156,16 @@ struct janas_block_q8k {
     float d;
     int8_t qs[JANAS_QK];
     int16_t bsums[JANAS_QK / 16];
+    /* the same 256 activations in eight blocks of 32, each with a scale of
+       its own, for the weights stored in blocks of 32 (Q8_0, Q4_0, Q4_1,
+       Q5_1, IQ4_NL), as llama.cpp gives them: one scale for 256 lost the
+       small activations beside a large one, and Gemma-4-26B, all Q8_0 and
+       Q5_1 where it is most sensitive, strayed from the exact result half
+       again as far as llama.cpp did (27 Sep 2026: the likeliest token at
+       147 of 200 positions against 160) */
+    float d32[8];
+    int8_t qs32[JANAS_QK];
+    int16_t bsums32[JANAS_QK / 16];
 };
 
 _Static_assert(sizeof(struct janas_block_q4k) == 144, "q4k block size");
@@ -170,7 +180,7 @@ _Static_assert(sizeof(struct janas_block_q5_1) == 24, "q5_1 block size");
 _Static_assert(sizeof(struct janas_block_q4_1) == 20, "q4_1 block size");
 _Static_assert(sizeof(struct janas_block_q3k) == 110, "q3k block size");
 _Static_assert(sizeof(struct janas_block_iq3s) == 110, "iq3_s block size");
-_Static_assert(sizeof(struct janas_block_q8k) == 292, "q8k block size");
+_Static_assert(sizeof(struct janas_block_q8k) == 612, "q8k block size");
 
 /* Quantization types, numbered as in GGUF (ggml_type). */
 enum janas_qtype {

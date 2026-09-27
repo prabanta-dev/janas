@@ -2,6 +2,20 @@
 
 > Curated, user-facing summary of completed work, newest first.
 
+## [2026-09-27] - Finer activations for weights in blocks of 32
+
+- **Weights stored in blocks of 32 (Q8_0, Q4_0, Q4_1, Q5_1, IQ4_NL) now
+  meet activations with a scale per 32 values**, as llama.cpp gives them,
+  instead of one per 256: a large activation no longer flattens the small
+  ones beside it. The activations are quantized once into both forms; the
+  K types keep theirs. Checked against an exact float64 forward pass of
+  Gemma-4-26B-A4B (all Q8_0 and Q5_1 where it is most sensitive), 200
+  tokens: the likeliest token at 156 positions instead of 147, mean logit
+  error 0.87 instead of 1.39 (llama.cpp: 160, 0.90). Against llama.cpp,
+  mean differences fall by 15-40% on Qwen3.5 in IQ4_NL, Q4_0, Q5_1 and
+  UD-Q4_K_XL (Q5_1: 376 -> 389 of 400). Models made only of K types give
+  the same bits as before.
+
 ## [2026-09-27] - The threads chosen per machine
 
 - **The time left to read a long prompt no longer jumps at its start.**

@@ -30,6 +30,17 @@ static int failures;
         }                                                                      \
     } while (0)
 
+/* An activation as the product of weight type t sees it: weights in
+   blocks of 32 take the eight blocks of 32 (d32, qs32), the others the
+   256 with one scale. */
+static double act(const struct janas_block_q8k *x, int b, int i, int t)
+{
+    int b32 = t == JANAS_Q8_0 || t == JANAS_Q4_0 || t == JANAS_Q4_1 ||
+              t == JANAS_Q5_1 || t == JANAS_IQ4_NL;
+    return b32 ? (double)x[b].d32[i / 32] * x[b].qs32[i]
+               : (double)x[b].d * x[b].qs[i];
+}
+
 static uint64_t rng_state = 0x9E3779B97F4A7C15ull;
 
 static uint32_t rnd(void)
@@ -540,8 +551,7 @@ static void test_dot_q5k_q8_0(void)
             double expect = 0.0, mag = 0.0;
             for (int b = 0; b < NB; b++)
                 for (int i = 0; i < JANAS_QK; i++) {
-                    double e =
-                        (double)wf[b * JANAS_QK + i] * x[b].d * x[b].qs[i];
+                    double e = (double)wf[b * JANAS_QK + i] * act(x, b, i, t);
                     expect += e;
                     mag += fabs(e);
                 }
@@ -607,8 +617,7 @@ static void test_dot_iq4(void)
             double expect = 0.0, mag = 0.0;
             for (int b = 0; b < NB; b++)
                 for (int i = 0; i < JANAS_QK; i++) {
-                    double e =
-                        (double)wf[b * JANAS_QK + i] * x[b].d * x[b].qs[i];
+                    double e = (double)wf[b * JANAS_QK + i] * act(x, b, i, t);
                     expect += e;
                     mag += fabs(e);
                 }
@@ -695,8 +704,7 @@ static void test_dot_q4_0_q5_1(void)
             double expect = 0.0, mag = 0.0;
             for (int b = 0; b < NB; b++)
                 for (int i = 0; i < JANAS_QK; i++) {
-                    double e =
-                        (double)wf[b * JANAS_QK + i] * x[b].d * x[b].qs[i];
+                    double e = (double)wf[b * JANAS_QK + i] * act(x, b, i, t);
                     expect += e;
                     mag += fabs(e);
                 }
@@ -894,6 +902,26 @@ static void q8k_ref(const float *x, struct janas_block_q8k *y, size_t n,
             for (int i = 0; i < 16; i++)
                 s += y[b].qs[g * 16 + i];
             y[b].bsums[g] = (int16_t)s;
+        }
+        for (int k = 0; k < 8; k++) {
+            float m = 0.0f;
+            for (int i = 0; i < 32; i++)
+                m = fmaxf(m, fabsf(x[32 * k + i]));
+            float dk = det ? m * 0.007874015718698502f : m / 127.0f;
+            float ik =
+                dk > 0.0f ? (det ? janas_recip_det(dk) : 1.0f / dk) : 0.0f;
+            y[b].d32[k] = dk;
+            for (int i = 0; i < 32; i++) {
+                float q = nearbyintf(x[32 * k + i] * ik);
+                y[b].qs32[32 * k + i] =
+                    (int8_t)(q > 127.0f ? 127 : (q < -127.0f ? -127 : q));
+            }
+        }
+        for (int g = 0; g < JANAS_QK / 16; g++) {
+            int s = 0;
+            for (int i = 0; i < 16; i++)
+                s += y[b].qs32[g * 16 + i];
+            y[b].bsums32[g] = (int16_t)s;
         }
     }
 }
