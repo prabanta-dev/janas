@@ -2,6 +2,25 @@
 
 > Curated, user-facing summary of completed work, newest first.
 
+## [2026-09-27] - janas-get: a model in one command
+
+- **`janas-get`** downloads a model of its catalog (the thirteen of
+  MODELS.md: Qwen3, Qwen3.5, Qwen3.6, Qwen3-Next, Coder-Next, the
+  embedding model, Gemma 4) from Hugging Face, checks the SHA-256 of
+  every file against MODELS.md, runs the converters of the same build
+  (gguf2jns, jns_planes) and makes the prediction file beside the model -
+  hf2jns_mtp over range requests, or Gemma 4's assistant - with its
+  fingerprint too. Downloads resume; files already there are checked, not
+  fetched again; the GGUF goes as soon as it is converted, so the disk
+  holds two copies at the most. `janas-get hf:<owner>/<repo>/<file>` takes
+  any GGUF, checked against the SHA-256 Hugging Face lists.
+- Its own HTTPS download in pieces (the client of hf2jns_mtp) and its own
+  SHA-256, on the x86 SHA extensions where the CPU has them (1.4 GB/s on
+  the development laptop): no curl, no sha256sum.
+- **`janas-try.sh` gets its models through it**: the catalog and the
+  fingerprints are in one place. A test checks the catalog against
+  MODELS.md, digit by digit.
+
 ## [2026-09-27] - janas-try tries Gemma
 
 - **`janas-try.sh --level gemma`**: Gemma-4-E4B and its assistant,

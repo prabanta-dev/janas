@@ -213,6 +213,25 @@ sudo pacman -S vulkan-headers glslang vulkan-tools           # the same, Arch
 
 ## Getting a model
 
+**The short way: `janas-get`.** One command downloads a model from
+Hugging Face, checks the SHA-256 of every file against [MODELS.md](MODELS.md),
+converts it and makes its prediction file beside it (an MTP block, or Gemma
+4's assistant), which the chat then finds by itself:
+
+```sh
+bin/x86_64-linux/janas-get list                  # the models it knows
+bin/x86_64-linux/janas-get gemma-4-e4b           # into models/
+bin/x86_64-linux/janas-chat models/gemma-4-e4b-it-q4km.jns
+```
+
+A download stopped halfway resumes where it stopped, a file already there
+is checked rather than fetched again, and the GGUF goes once converted
+(`--keep` keeps it). Any other GGUF: `janas-get
+hf:<owner>/<repo>/<file.gguf>`, checked against the SHA-256 Hugging Face
+lists for it. The memory column of `janas-get list` is the smallest
+machine each model is meant for. The rest of this section is the same by
+hand.
+
 Janas reads its own format, `.jns`, converted from a **Q4_K_M** GGUF (Q3_K,
 IQ3_S, IQ4_NL, IQ4_XS, Q4_0, Q4_1 and Q5_1 convert too, and so do unsloth's
 "UD" files made of them; IQ2 and IQ1 types, not yet). Keep both

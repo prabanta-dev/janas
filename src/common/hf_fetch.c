@@ -116,6 +116,13 @@ static int get_url(const char *url, const int64_t *from, const int64_t *to,
     return -1;
 }
 
+int janas_hf_get_url(const char *url, const int64_t *from, const int64_t *to,
+                     struct janas_buf *out, char *final, size_t final_len,
+                     char *err, size_t err_len)
+{
+    return get_url(url, from, to, out, final, final_len, err, err_len);
+}
+
 int janas_hf_get(const char *repo, const char *rev, const char *path,
                  const int64_t *from, const int64_t *to, struct janas_buf *out,
                  char *err, size_t err_len)

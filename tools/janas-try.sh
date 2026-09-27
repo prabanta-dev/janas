@@ -101,41 +101,27 @@ ask()
 gib() { awk -v b="$1" 'BEGIN { printf "%.1f", b / 1073741824 }'; }
 
 # ---------------------------------------------------------------- models
-# level: repository, file, GGUF sha256, converted (flat) sha256, with bit
-# planes sha256 - the fingerprints of MODELS.md; the conversion is
-# deterministic, so a different sum is a defect found
+# level: the model's name for janas-get (which downloads, checks and
+# converts it, with the fingerprints of MODELS.md), its repository and
+# GGUF (for the report), the file that runs and its prediction file ("-":
+# none, or inside it), the tools that made it, then download, disk while
+# converting and the memory of the smallest machine, in bytes and GB
 model_of()
 {
     case "$1" in
-    quick) echo "Qwen/Qwen3-4B-GGUF Qwen3-4B-Q4_K_M.gguf \
-7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5 \
-e8ed44bdd3c612ce3ec1204a4b9db671115efab4a2ada384c70cf6492d430291 \
-1cbd8ebfdf14aee05777f5278e655382f040cdedc21d282e93806fc8cf279fc5 \
-qwen3-4b-q4km 2684354560 5368709120 8" ;;
-    medium) echo "bartowski/Qwen_Qwen3.6-35B-A3B-GGUF Qwen_Qwen3.6-35B-A3B-Q4_K_M.gguf \
-b46fedd33e0bfb0cae308aa3c158d0a4b2c4a1d2185a1ed6f093cdaf39064772 \
-31772037300f332d712f4ef8dd5e7251c7cd76cf6b9dab33b089394b7c079fb2 \
-8feaeb66d93593b9876b564ca3878f2a9252e46b8d4e2d06caa4e19d43dc6464 \
-qwen3.6-35b-a3b-q4km 23622320128 48318382080 16" ;;
-    full) echo "Qwen/Qwen3-Next-80B-A3B-Instruct-GGUF Qwen3-Next-80B-A3B-Instruct-Q4_K_M.gguf \
-d103b2733ec1012a52d01edda66b7e5c24ae50508c9f99f5297ea459ef3c061a \
-fa9a50dd910de4e78064ecff17aef43286694277eea3a89a57e9921ca2bfd2da \
-fa3255c73106391e9cb5a97efd30f77a928fb4518d40060f795a8cff6656daed \
-qwen3-next-80b-a3b-q4km 55834574848 107374182400 16" ;;
-    gemma) echo "unsloth/gemma-4-E4B-it-GGUF gemma-4-E4B-it-Q4_K_M.gguf \
-85a896a047553e842f25297ee5b031d64ff30147d9c4af17b1e4b394cd1fab87 \
-7ec828e9bdc1ada2eda907e93b87072f3180f2e8cba5ccedcd360d1a53858675 \
-- gemma-4-e4b-it-q4km 5476083302 11811160064 8" ;;
+    quick) echo "qwen3-4b Qwen/Qwen3-4B-GGUF Qwen3-4B-Q4_K_M.gguf \
+qwen3-4b-q4km.jns - planes 2684354560 5368709120 8" ;;
+    medium) echo "qwen3.6-35b-a3b bartowski/Qwen_Qwen3.6-35B-A3B-GGUF \
+Qwen_Qwen3.6-35B-A3B-Q4_K_M.gguf qwen3.6-35b-a3b-q4km.jns - planes \
+23622320128 48318382080 16" ;;
+    full) echo "qwen3-next-80b-a3b Qwen/Qwen3-Next-80B-A3B-Instruct-GGUF \
+Qwen3-Next-80B-A3B-Instruct-Q4_K_M.gguf qwen3-next-80b-a3b-q4km.jns \
+qwen3-next-80b-a3b-mtp-q4k.jns planes 55834574848 107374182400 16" ;;
+    gemma) echo "gemma-4-e4b unsloth/gemma-4-E4B-it-GGUF \
+gemma-4-E4B-it-Q4_K_M.gguf gemma-4-e4b-it-q4km.jns gemma-4-e4b-it-mtp.jns \
+one 5476083302 11811160064 8" ;;
     esac
 }
-# Gemma 4's assistant (its MTP file), converted by gguf2jns as the model
-GEMMA_MTP_FILE=mtp-gemma-4-E4B-it.gguf
-GEMMA_MTP_SUM=b6a723115efa510d3b3215db1e26790dae84cd08c2134a764f3d194f1f0c3376
-GEMMA_MTP_OUT_SUM=7c6fdb74ba1eb11f9d47b15097a09cce0142aea380a41f1986ba7b8ec4785b53
-MTP_REPO=Qwen/Qwen3-Next-80B-A3B-Instruct
-MTP_FILE=model-00041-of-00041.safetensors
-MTP_SUM=1f3ac4d828f7e08dd14eb4dc6f282139ae1fa0d894e43f247da2539d2ef43826
-MTP_OUT_SUM=5c9bc4cb6f739193fac5e4daa30c922f73255acf41443ecfc0123ef084584559
 
 # The answer to a fixed prompt at temperature 0, cut at 64 tokens, as a
 # fingerprint of its text: the kernels give the same numbers bit for bit on
@@ -262,43 +248,12 @@ build()
     return 1
 }
 
-# ---------------------------------------------------------------- download
-download()
-{ # repository, file, sha256 -> $MODELS/file
-    local repo=$1 file=$2 sum=$3 dst=$MODELS/$2
-    if [ -f "$dst" ] && [ -f "$dst.ok" ]; then
-        note "$file: already here, checked"
-        return 0
-    fi
-    grep -qx "$dst" "$WORK/created" || echo "$dst" >> "$WORK/created"
-    note "$file: downloading (it resumes if interrupted)"
-    curl -fL -C - --retry 5 --retry-delay 5 -o "$dst" \
-        "https://huggingface.co/$repo/resolve/main/$file" || {
-        fail "the download of $file failed; run again to resume"
-        return 1
-    }
-    note "$file: checking its SHA-256"
-    if [ "$(sha256sum "$dst" | cut -d' ' -f1)" != "$sum" ]; then
-        fail "$file is not the file it should be (SHA-256 differs); deleted"
-        rm -f "$dst"
-        return 1
-    fi
-    touch "$dst.ok"
-}
-
-fingerprint_ok()
-{ # file, sha256: 0 when it matches; the result goes to the report
-    local got
-    got=$(sha256sum "$1" | cut -d' ' -f1)
-    [ "$got" = "$2" ]
-}
-
 # ---------------------------------------------------------------- a level
 level()
 {
     local lv=$1
-    read -r repo gguf gsum fsum psum name dl disk ram <<<"$(model_of "$lv")"
-    local flat=$MODELS/$name-flat.jns jns=$MODELS/$name.jns converted=0
+    read -r getname repo gguf jnsn mtpn steps dl disk ram <<<"$(model_of "$lv")"
+    local jns=$MODELS/$jnsn converted=0
     say "Level $lv: ${gguf%.gguf}"
     machine
     # a machine sold with 16 GB shows less (the kernel and an integrated GPU
@@ -318,67 +273,45 @@ level()
             echo "$lv declined" >> "$WORK/results"
             return 0
         }
-        printf '%s\n' "$flat" "$jns" >> "$WORK/created"
-        download "$repo" "$gguf" "$gsum" || return 1
-        # one step where there are no planes to cut (psum "-"): the file
-        # gguf2jns writes is the one that runs
-        local out=$flat
-        [ "$psum" = "-" ] && out=$jns
-        note "converting (gguf2jns)"
-        "$BIN/gguf2jns" "$MODELS/$gguf" "$out" >>"$LOG" 2>&1 || {
-            fail "gguf2jns failed: $LOG"; echo "$lv conversion FAILED" >> "$WORK/results"; return 1; }
-        fingerprint_ok "$out" "$fsum" && echo "$lv gguf2jns fingerprint ok" >> "$WORK/results" ||
-            echo "$lv gguf2jns fingerprint DIFFERS" >> "$WORK/results"
-        if [ "$KEEP" = 0 ] && ask "Delete the downloaded GGUF ($(gib "$(stat -c %s "$MODELS/$gguf")") GiB)? It is not needed any more"; then
-            rm -f "$MODELS/$gguf" "$MODELS/$gguf.ok"
-        fi
-        if [ "$psum" != "-" ]; then
-            note "cutting the experts into bit planes (jns_planes)"
-            "$BIN/jns_planes" "$flat" "$jns" >>"$LOG" 2>&1 || {
-                fail "jns_planes failed: $LOG"; echo "$lv planes FAILED" >> "$WORK/results"; return 1; }
-            fingerprint_ok "$jns" "$psum" && echo "$lv jns_planes fingerprint ok" >> "$WORK/results" ||
-                echo "$lv jns_planes fingerprint DIFFERS" >> "$WORK/results"
-            rm -f "$flat"
-        fi
         converted=1
     fi
+    # janas-get downloads, checks the SHA-256 of every file against
+    # MODELS.md, converts, and makes the prediction file beside the model;
+    # what it says goes to the screen and, for the report, to a file
+    [ -f "$jns" ] || echo "$jns" >> "$WORK/created"
+    [ "$mtpn" = - ] || [ -f "$MODELS/$mtpn" ] || echo "$MODELS/$mtpn" >> "$WORK/created"
+    local keep=()
+    [ "$KEEP" = 1 ] && keep=(--keep)
+    note "janas-get $getname: the GGUF goes once converted${keep:+ (kept: --keep)}"
+    "$BIN/janas-get" "$getname" --dir "$MODELS" "${keep[@]}" 2>&1 | tee "$WORK/get-$lv.txt"
+    local rc=${PIPESTATUS[0]} got=$WORK/get-$lv.txt
+    local t
+    for t in "gguf2jns" "jns_planes" "gguf2jns (assistant)" "hf2jns_mtp"; do
+        local key=${t%% *}
+        [ "$t" = "gguf2jns (assistant)" ] && key=assistant
+        grep -qF "   $t: fingerprint as in MODELS.md" "$got" &&
+            echo "$lv $key fingerprint ok" >> "$WORK/results"
+        grep -qF "$t wrote" "$got" &&
+            echo "$lv $key fingerprint DIFFERS" >> "$WORK/results"
+    done
+    if [ "$rc" != 0 ] || ! [ -f "$jns" ]; then
+        fail "janas-get failed: $got"
+        echo "$lv janas-get FAILED: $(grep -m1 'janas-get:' "$got")" >> "$WORK/results"
+        return 1
+    fi
+    cat "$got" >> "$LOG"
     local mtp=()
-    if [ "$lv" = full ]; then
-        local mjns=$MODELS/$name-mtp.jns
-        if ! [ -f "$mjns" ]; then
-            echo "$mjns" >> "$WORK/created"
-            download "$MTP_REPO" "$MTP_FILE" "$MTP_SUM" || return 1
-            "$BIN/hf2jns_mtp" "$jns" "$MODELS/$MTP_FILE" "$mjns" >>"$LOG" 2>&1 || {
-                fail "hf2jns_mtp failed: $LOG"; echo "$lv mtp FAILED" >> "$WORK/results"; return 1; }
-            fingerprint_ok "$mjns" "$MTP_OUT_SUM" && echo "$lv hf2jns_mtp fingerprint ok" >> "$WORK/results" ||
-                echo "$lv hf2jns_mtp fingerprint DIFFERS" >> "$WORK/results"
-            [ "$KEEP" = 1 ] || rm -f "$MODELS/$MTP_FILE" "$MODELS/$MTP_FILE.ok"
-        fi
-        mtp=(--mtp "$mjns")
-    fi
-    if [ "$lv" = gemma ]; then
-        local mjns=$MODELS/$name-mtp.jns
-        if ! [ -f "$mjns" ]; then
-            echo "$mjns" >> "$WORK/created"
-            download "${repo}" "$GEMMA_MTP_FILE" "$GEMMA_MTP_SUM" || return 1
-            "$BIN/gguf2jns" "$MODELS/$GEMMA_MTP_FILE" "$mjns" >>"$LOG" 2>&1 || {
-                fail "gguf2jns failed on the assistant: $LOG"; echo "$lv assistant FAILED" >> "$WORK/results"; return 1; }
-            fingerprint_ok "$mjns" "$GEMMA_MTP_OUT_SUM" && echo "$lv assistant fingerprint ok" >> "$WORK/results" ||
-                echo "$lv assistant fingerprint DIFFERS" >> "$WORK/results"
-            [ "$KEEP" = 1 ] || rm -f "$MODELS/$GEMMA_MTP_FILE" "$MODELS/$GEMMA_MTP_FILE.ok"
-        fi
-        mtp=(--mtp "$mjns")
-    fi
+    [ "$mtpn" = - ] || mtp=(--mtp "$MODELS/$mtpn")
 
     # what ran: Janas's own file, and where it came from
-    local shown=${gguf%%-Q4_K_M.gguf} how="the SHA-256 of both checked against MODELS.md"
+    local shown=${gguf%%-Q4_K_M.gguf} how="the SHA-256 of every file checked against MODELS.md by janas-get"
     shown=${shown#Qwen_}
-    [ "$converted" = 1 ] || how="converted in an earlier run of this script"
+    [ "$converted" = 1 ] || how="converted in an earlier run, checked again by janas-get"
     local tools="gguf2jns and jns_planes"
-    [ "$psum" = "-" ] && tools="gguf2jns"
-    local line="- Model ($lv): $shown, run as \`$(basename "$jns")\` - Janas's format (JNS), converted here by $tools from \`$gguf\` of \`$repo\`; $how"
-    [ "$lv" = gemma ] && line="$line; with its assistant \`$(basename "$MODELS/$name-mtp.jns")\`, converted by gguf2jns from \`$GEMMA_MTP_FILE\` of \`$repo\`"
-    [ "$lv" = full ] && line="$line; with the MTP block \`$(basename "$MODELS/$name-mtp.jns")\`, converted by hf2jns_mtp from \`$MTP_FILE\` of \`$MTP_REPO\`"
+    [ "$steps" = one ] && tools="gguf2jns"
+    local line="- Model ($lv): $shown, run as \`$jnsn\` - Janas's format (JNS), converted here by $tools from \`$gguf\` of \`$repo\`; $how"
+    [ "$lv" = gemma ] && line="$line; with its assistant \`$mtpn\`, converted by gguf2jns"
+    [ "$lv" = full ] && line="$line; with the MTP block \`$mtpn\`, made by hf2jns_mtp from the original checkpoint"
     grep -qF "$line" "$WORK/models" 2>/dev/null || echo "$line" >> "$WORK/models"
 
     # the answers: the same text as on every other machine
