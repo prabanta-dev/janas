@@ -347,11 +347,16 @@ here in 1.5 GB of memory, E4B in 3.1 GB.
 **And chat:**
 
 ```sh
-bin/x86_64-linux/janas-chat models/qwen3-next.jns \
-    --mtp models/qwen3-next-mtp.jns --stats
-bin/x86_64-linux/janas-chat models/gemma-4-e4b.jns \
-    --mtp models/gemma-4-e4b-mtp.jns --stats
+bin/x86_64-linux/janas-chat models/qwen3-next.jns --stats
+bin/x86_64-linux/janas-chat models/gemma-4-e4b.jns --stats
 ```
+
+The chat finds the multi-token prediction file by itself: of the `.jns`
+files beside the model, the one whose header fits it (an MTP block of the
+same architecture and width, or Gemma 4's assistant for a model that wide
+and with its vocabulary), and says which it took. `--mtp <file>` names
+one; `--no-mtp` goes without. `janas-server` does the same, and programs
+can ask for it with `janas_llm_find_mtp()`.
 
 The first start reads the model's resident weights (a couple of GB) and then
 fills the expert cache in the background, while you read and type. The second
@@ -368,7 +373,8 @@ janas-chat <model.jns> [options]
 
 | Option | What it does |
 |---|---|
-| `--mtp <file>` | the model's multi-token prediction block: faster replies, same text |
+| `--mtp <file>` | the model's multi-token prediction file (an MTP block, or Gemma 4's assistant): faster replies, same text; without it, the one beside the model that fits it |
+| `--no-mtp` | no prediction file, not even one found beside the model |
 | `--draft <file>` | a small model of the same family to guess the next tokens: faster replies, same text (see below) |
 | `--ctx <tokens>` | context length (default 16384, never more than the model was trained for) |
 | `--cache <GiB>` | memory for streamed experts (default: what the machine can spare) |

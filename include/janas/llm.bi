@@ -169,6 +169,11 @@ declare function janas_llm_open(byval path as const zstring ptr, _
                                 byval p as const janas_llm_params ptr, _
                                 byval out as janas_llm ptr ptr) as long
 declare sub janas_llm_close(byval llm as janas_llm ptr)
+'' The model's multi-token prediction file beside it (see llm.h), its path
+'' in out (cap bytes); JANAS_LLM_EOPEN when there is none.
+declare function janas_llm_find_mtp(byval model_path as const zstring ptr, _
+                                    byval out as zstring ptr, _
+                                    byval cap as long) as long
 
 '' Text out of the library: at most cap bytes, NUL-terminated, with *len the
 '' full length (JANAS_LLM_ESMALL when it did not fit).

@@ -27,6 +27,7 @@ struct srv_config {
     const char *model_path;
     struct janas_llm_params llm; /* how the model is opened */
     int no_gpu;
+    int no_mtp;           /* no MTP file, not even one found beside the model */
     const char *model_id; /* the name clients use; default: the file name */
     const char *host;     /* address to listen on (default 127.0.0.1) */
     uint16_t port;        /* default 8080 */

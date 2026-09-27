@@ -130,6 +130,18 @@ JANAS_LLM_API int32_t janas_llm_open(const char *path,
                                      janas_llm **out);
 JANAS_LLM_API void janas_llm_close(janas_llm *llm);
 
+/*
+ * The model's multi-token prediction file, looked for beside it: a .jns in
+ * the same directory that fits the model by its header - Gemma 4's
+ * assistant, or an MTP block made by hf2jns_mtp - the one sharing the
+ * longest start with the model's name if several do. Writes its path (at
+ * most cap bytes, NUL-terminated) for janas_llm_params.mtp_path; the model
+ * is not opened. JANAS_LLM_EOPEN when there is none. janas_llm_open never
+ * looks by itself: the caller decides.
+ */
+JANAS_LLM_API int32_t janas_llm_find_mtp(const char *model_path, char *out,
+                                         int32_t cap);
+
 /* The model's name from its metadata ("Qwen3 Next 80B A3B Instruct"; empty
    if the file has none). Writes at most cap bytes, NUL-terminated; *len gets
    the full length. */

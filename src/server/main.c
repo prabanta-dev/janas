@@ -36,6 +36,9 @@ static void usage(FILE *f)
         "  --reserve GIB     memory left to other programs when the cache\n"
         "                    is automatic (default: a fifth of the machine's)\n"
         "  --mtp FILE        the model's prediction block, for speed\n"
+        "                    (without it, the one beside the model that\n"
+        "                    fits it: an MTP block or Gemma 4's assistant)\n"
+        "  --no-mtp          none, not even one found beside the model\n"
         "  --draft FILE      a small model of the same family, for speed\n"
         "  --mode M          auto, eco or max (default auto)\n"
         "  --no-gpu          never give the GPU work\n"
@@ -167,6 +170,8 @@ int main(int argc, char **argv)
             c->thinking = strcmp(v, "off") ? 1 : 0;
         } else if (!strcmp(a, "--embedding-model")) {
             c->embed_path = arg(argc, argv, &i);
+        } else if (!strcmp(a, "--no-mtp")) {
+            c->no_mtp = 1;
         } else if (!strcmp(a, "--no-gpu")) {
             c->no_gpu = 1;
         } else if (!strcmp(a, "--keep")) {

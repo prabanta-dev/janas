@@ -2,6 +2,18 @@
 
 > Curated, user-facing summary of completed work, newest first.
 
+## [2026-09-27] - The prediction file found beside the model
+
+- **`janas-chat` and `janas-server` find the model's multi-token
+  prediction file by themselves**: of the `.jns` files beside the model,
+  the one whose header fits it - an MTP block of the same architecture,
+  width and experts, or Gemma 4's assistant as wide as the model's output
+  and with its vocabulary - the longest shared start of the name settling
+  a tie. Files over 2 GB (models) are not even opened. `--mtp` still names
+  one, and `--no-mtp` goes without. For programs,
+  `janas_llm_find_mtp()` (and its FreeBASIC declaration); opening a model
+  never looks by itself.
+
 ## [2026-09-27] - Finer activations for weights in blocks of 32
 
 - **Weights stored in blocks of 32 (Q8_0, Q4_0, Q4_1, Q5_1, IQ4_NL) now

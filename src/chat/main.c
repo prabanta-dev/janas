@@ -199,7 +199,10 @@ static void usage(void)
     fprintf(
         stderr,
         "usage: janas-chat <model.jns> [options]\n"
-        "  --mtp <file>     multi-token prediction block (faster replies)\n"
+        "  --mtp <file>     multi-token prediction file: an MTP block or\n"
+        "                   Gemma 4's assistant (faster replies); without\n"
+        "                   it, the one beside the model that fits it\n"
+        "  --no-mtp         none, not even one found beside the model\n"
         "  --draft <file>   a small model of the same family to guess the\n"
         "                   next tokens; worth it on a dense model, where\n"
         "                   several can be checked in one pass for little\n"
@@ -591,6 +594,8 @@ struct chat_opts { /* where the words land: main keeps them, this names them */
     int *stats, *markdown, *gpu;
     const char **mcp_config;
     int *mcp, *mcp_auto, *mcp_instructions;
+    int *no_mtp;
+    const char *mtp_found; /* the MTP file found, not asked for: unsaved */
 };
 
 static int take_options(int n, char **w, struct chat_opts *o)
@@ -619,6 +624,10 @@ static int take_options(int n, char **w, struct chat_opts *o)
         }
         if (strcmp(a, "--no-recap") == 0) {
             o->cp->recap = 0;
+            continue;
+        }
+        if (strcmp(a, "--no-mtp") == 0) {
+            *o->no_mtp = 1;
             continue;
         }
         if (strcmp(a, "--no-mcp") == 0) {
@@ -804,7 +813,7 @@ static void conf_write(const char *path, const struct chat_opts *o)
     fprintf(f, "# janas-chat: written by /save-config. The words are those of\n"
                "# the command line, one to a line; the command line wins over\n"
                "# this file, and /load-config reads it again.\n");
-    if (m->mtp_path)
+    if (m->mtp_path && m->mtp_path != o->mtp_found)
         fprintf(f, "--mtp %s\n", m->mtp_path);
     fprintf(f, "--ctx %u\n", m->n_ctx);
     if (m->cache_bytes)
@@ -1104,10 +1113,12 @@ int main(int argc, char **argv)
     int markdown = 1; /* the marks read, not printed; never on a pipe */
     int gpu = 1;      /* the GPU may be given work, if there is one */
     const char *mcp_config = NULL; /* NULL: the default file */
-    int mcp = 1, mcp_auto = 0, mcp_instructions = 0;
+    int mcp = 1, mcp_auto = 0, mcp_instructions = 0, no_mtp = 0;
+    static char mtp_found[4096];
     struct chat_opts o = {
-        &mp,  &cp,         &system_arg, &stats,    &markdown,
-        &gpu, &mcp_config, &mcp,        &mcp_auto, &mcp_instructions};
+        &mp,     &cp,         &system_arg, &stats,    &markdown,
+        &gpu,    &mcp_config, &mcp,        &mcp_auto, &mcp_instructions,
+        &no_mtp, mtp_found};
     /* the file first, the command line after it: what is typed wins */
     char cpath[1024];
     char *conf_text = NULL;
@@ -1132,6 +1143,18 @@ int main(int argc, char **argv)
     scroll_init(&conv);
     scroll_attach(&term, &conv); /* from here the conversation is kept */
     int tty = term.tty;
+    /* the model's MTP block or assistant, when not named: the one beside
+       it that fits (--no-mtp: none) */
+    if (!mp.mtp_path && !no_mtp &&
+        janas_llm_find_mtp(argv[1], mtp_found, sizeof(mtp_found)) ==
+            JANAS_LLM_OK) {
+        mp.mtp_path = mtp_found;
+        const char *b = strrchr(mtp_found, '/');
+        fprintf(stderr,
+                "multi-token prediction from %s, found beside the model "
+                "(--no-mtp: without)\n",
+                b ? b + 1 : mtp_found);
+    }
     fprintf(stderr, "loading %s ...\n", argv[1]);
     janas_llm *llm = NULL;
     janas_llm_chat *c = NULL; /* only written when the open succeeded, which

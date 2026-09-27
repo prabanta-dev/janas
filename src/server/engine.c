@@ -626,7 +626,18 @@ struct srv_engine *srv_engine_start(const struct srv_config *cfg, char *err,
     e->warn_input = cfg->warn_input;
     pthread_mutex_init(&e->mu, NULL);
     pthread_cond_init(&e->cv, NULL);
-    if (janas_llm_open(cfg->model_path, &cfg->llm, &e->llm) != JANAS_LLM_OK ||
+    /* the model's MTP block or assistant, when not named: the one beside
+       it that fits */
+    static char mtp_found[4096];
+    struct janas_llm_params lp = cfg->llm;
+    if (!lp.mtp_path && !cfg->no_mtp &&
+        janas_llm_find_mtp(cfg->model_path, mtp_found, sizeof(mtp_found)) ==
+            JANAS_LLM_OK) {
+        lp.mtp_path = mtp_found;
+        fprintf(stderr, "janas-server: multi-token prediction from %s\n",
+                mtp_found);
+    }
+    if (janas_llm_open(cfg->model_path, &lp, &e->llm) != JANAS_LLM_OK ||
         janas_llm_chat_create(e->llm, NULL, &e->chat) != JANAS_LLM_OK) {
         snprintf(err, err_len, "%s", janas_llm_last_error());
         janas_llm_close(e->llm);

@@ -15,6 +15,7 @@
  */
 #define _GNU_SOURCE
 #include <math.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -35,7 +36,13 @@ static float round_bf16(float f)
     return janas_u2f(u);
 }
 
+/* rows claimed a few at a time from a shared counter, as the quantized
+   products do: equal shares left the performance cores waiting for the
+   efficiency cores */
+#define PLE_CHUNK 16
+
 struct bf16_job {
+    atomic_uint next;
     const uint16_t *w;
     const float *x; /* n rows of cols, rounded to bf16 */
     float *y;       /* n rows of rows */
@@ -66,7 +73,44 @@ dot_bf16_avx2(const uint16_t *w, const float *x, uint32_t n)
         r += janas_u2f((uint32_t)w[i] << 16) * x[i];
     return r;
 }
+
+/* four tokens against one row, the row converted once: for each token the
+   same accumulator and the same order as dot_bf16_avx2, so the same bits */
+__attribute__((target("avx2,fma"))) static void
+dot4_bf16_avx2(const uint16_t *w, const float *const x[4], uint32_t n,
+               float out[4])
+{
+    __m256 acc[4] = {_mm256_setzero_ps(), _mm256_setzero_ps(),
+                     _mm256_setzero_ps(), _mm256_setzero_ps()};
+    uint32_t i = 0;
+    for (; i + 8 <= n; i += 8) {
+        __m128i h = _mm_loadu_si128((const __m128i *)(const void *)(w + i));
+        __m256 wf = _mm256_castsi256_ps(
+            _mm256_slli_epi32(_mm256_cvtepu16_epi32(h), 16));
+        for (int t = 0; t < 4; t++)
+            acc[t] = _mm256_fmadd_ps(wf, _mm256_loadu_ps(x[t] + i), acc[t]);
+    }
+    for (int t = 0; t < 4; t++) {
+        __m128 s = _mm_add_ps(_mm256_castps256_ps128(acc[t]),
+                              _mm256_extractf128_ps(acc[t], 1));
+        s = _mm_add_ps(s, _mm_movehl_ps(s, s));
+        s = _mm_add_ss(s, _mm_movehdup_ps(s));
+        float r = _mm_cvtss_f32(s);
+        for (uint32_t k = i; k < n; k++)
+            r += janas_u2f((uint32_t)w[k] << 16) * x[t][k];
+        out[t] = r;
+    }
+}
 #endif
+
+static int have_avx2(void)
+{
+#if defined(__x86_64__)
+    return __builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma");
+#else
+    return 0;
+#endif
+}
 
 static float dot_bf16(const uint16_t *w, const float *x, uint32_t n)
 {
@@ -83,19 +127,38 @@ static float dot_bf16(const uint16_t *w, const float *x, uint32_t n)
 /* rows split in equal runs, each row read once for all the tokens */
 static void bf16_worker(void *arg, int tid, int n_threads)
 {
-    const struct bf16_job *b = arg;
-    uint32_t per = (b->rows + (uint32_t)n_threads - 1) / (uint32_t)n_threads;
-    uint32_t r0 = (uint32_t)tid * per;
-    uint32_t r1 = r0 + per < b->rows ? r0 + per : b->rows;
-    for (uint32_t r = r0; r < r1; r++) {
-        const uint16_t *w = b->w + (size_t)r * b->cols;
-        for (uint32_t j = 0; j < b->n; j++)
-            b->y[(size_t)j * b->rows + r] =
-                dot_bf16(w, b->x + (size_t)j * b->cols, b->cols) * b->scale;
+    (void)tid;
+    (void)n_threads;
+    struct bf16_job *b = arg;
+    int v = have_avx2();
+    for (;;) {
+        uint32_t r0 = atomic_fetch_add(&b->next, PLE_CHUNK);
+        if (r0 >= b->rows)
+            break;
+        uint32_t r1 = r0 + PLE_CHUNK < b->rows ? r0 + PLE_CHUNK : b->rows;
+        for (uint32_t r = r0; r < r1; r++) {
+            const uint16_t *w = b->w + (size_t)r * b->cols;
+            uint32_t j = 0;
+#if defined(__x86_64__)
+            for (; v && j + 4 <= b->n; j += 4) {
+                const float *x[4];
+                float o[4];
+                for (int t = 0; t < 4; t++)
+                    x[t] = b->x + (size_t)(j + t) * b->cols;
+                dot4_bf16_avx2(w, x, b->cols, o);
+                for (int t = 0; t < 4; t++)
+                    b->y[(size_t)(j + t) * b->rows + r] = o[t] * b->scale;
+            }
+#endif
+            for (; j < b->n; j++)
+                b->y[(size_t)j * b->rows + r] =
+                    dot_bf16(w, b->x + (size_t)j * b->cols, b->cols) * b->scale;
+        }
     }
 }
 
 struct f32_job {
+    atomic_uint next;
     const float *w, *x;
     float *y;
     uint32_t rows, cols, n;
@@ -118,6 +181,29 @@ dot_f32_avx2(const float *w, const float *x, uint32_t n)
         r += w[i] * x[i];
     return r;
 }
+
+/* four tokens against one row, as dot_f32_avx2 for each: the same bits */
+__attribute__((target("avx2,fma"))) static void
+dot4_f32_avx2(const float *w, const float *const x[4], uint32_t n, float out[4])
+{
+    __m256 a0[4], a1[4];
+    for (int t = 0; t < 4; t++)
+        a0[t] = a1[t] = _mm256_setzero_ps();
+    uint32_t i = 0;
+    for (; i + 16 <= n; i += 16) {
+        __m256 w0 = _mm256_loadu_ps(w + i), w1 = _mm256_loadu_ps(w + i + 8);
+        for (int t = 0; t < 4; t++) {
+            a0[t] = _mm256_fmadd_ps(w0, _mm256_loadu_ps(x[t] + i), a0[t]);
+            a1[t] = _mm256_fmadd_ps(w1, _mm256_loadu_ps(x[t] + i + 8), a1[t]);
+        }
+    }
+    for (int t = 0; t < 4; t++) {
+        float r = janas_hsum8(_mm256_add_ps(a0[t], a1[t]));
+        for (uint32_t k = i; k < n; k++)
+            r += w[k] * x[t][k];
+        out[t] = r;
+    }
+}
 #endif
 
 /* one dot product, the same for a row and a token whatever the pass */
@@ -137,15 +223,33 @@ static float dot_f32(const float *w, const float *x, uint32_t n)
    matrices of E2B's and E4B's branches are 2.6 MB a layer */
 static void f32_worker(void *arg, int tid, int n_threads)
 {
-    const struct f32_job *b = arg;
-    uint32_t per = (b->rows + (uint32_t)n_threads - 1) / (uint32_t)n_threads;
-    uint32_t r0 = (uint32_t)tid * per;
-    uint32_t r1 = r0 + per < b->rows ? r0 + per : b->rows;
-    for (uint32_t r = r0; r < r1; r++) {
-        const float *w = b->w + (size_t)r * b->cols;
-        for (uint32_t j = 0; j < b->n; j++)
-            b->y[(size_t)j * b->rows + r] =
-                dot_f32(w, b->x + (size_t)j * b->cols, b->cols);
+    (void)tid;
+    (void)n_threads;
+    struct f32_job *b = arg;
+    int v = have_avx2();
+    for (;;) {
+        uint32_t r0 = atomic_fetch_add(&b->next, PLE_CHUNK);
+        if (r0 >= b->rows)
+            break;
+        uint32_t r1 = r0 + PLE_CHUNK < b->rows ? r0 + PLE_CHUNK : b->rows;
+        for (uint32_t r = r0; r < r1; r++) {
+            const float *w = b->w + (size_t)r * b->cols;
+            uint32_t j = 0;
+#if defined(__x86_64__)
+            for (; v && j + 4 <= b->n; j += 4) {
+                const float *x[4];
+                float o[4];
+                for (int t = 0; t < 4; t++)
+                    x[t] = b->x + (size_t)(j + t) * b->cols;
+                dot4_f32_avx2(w, x, b->cols, o);
+                for (int t = 0; t < 4; t++)
+                    b->y[(size_t)(j + t) * b->rows + r] = o[t];
+            }
+#endif
+            for (; j < b->n; j++)
+                b->y[(size_t)j * b->rows + r] =
+                    dot_f32(w, b->x + (size_t)j * b->cols, b->cols);
+        }
     }
 }
 
@@ -159,6 +263,7 @@ static void product(struct janas_llm_model *m, const struct janas_jns_tensor *t,
     if (t->type == 0) {
         struct f32_job b = {
             .w = f32(m, t), .x = x, .y = y, .rows = rows, .cols = cols, .n = n};
+        atomic_init(&b.next, 0);
         janas_pool_run(m->compute, f32_worker, &b);
         return;
     }
@@ -195,6 +300,7 @@ int janas_m_ple_inputs(struct janas_llm_model *m, const int32_t *tokens,
                          .cols = dm,
                          .n = n,
                          .scale = 1.0f / sqrtf((float)dm)};
+    atomic_init(&b.next, 0);
     if (n < 2)
         bf16_worker(&b, 0, 1);
     else
