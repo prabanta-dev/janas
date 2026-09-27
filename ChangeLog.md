@@ -2,6 +2,23 @@
 
 > Curated, user-facing summary of completed work, newest first.
 
+## [2026-09-27] - No Python left
+
+- The README names its author, Maurizio "camauri" Cammalleri, under the
+  introduction and in a new Credits section, with the copyright line in
+  the Licence one; the section also credits the models' authors, llama.cpp
+  and ggml (the reference, and the IQ3_S grid), the Unicode Character
+  Database, OpenAI's specification, the libraries compiled in, and the
+  testers.
+- The last two Python scripts are C programs, built with everything else:
+  `tools/gen_unicode` writes the tokenizer's Unicode tables from the
+  Unicode Character Database (`/usr/share/unicode` on Debian and its kin),
+  `tools/openapi_routes` writes `janas-server`'s route table from OpenAI's
+  specification. Both give, byte for byte, the files the scripts gave
+  (Unicode 15.1.0; OpenAPI 2.3.0, 345 operations), and the coverage count
+  is the same. Nothing in Janas needs Python any more, to build or to
+  regenerate.
+
 ## [2026-09-27] - janas-get: a model in one command
 
 - **`janas-get`** downloads a model of its catalog (the thirteen of

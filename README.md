@@ -23,6 +23,8 @@ a GPU: the weights stay on disk, the experts each token needs are streamed from
 an NVMe SSD, and the ones that keep coming back stay in memory. An 80-billion
 parameter model runs, and answers, on a laptop with 32 GB of RAM.
 
+Designed and written by **Maurizio "camauri" Cammalleri**.
+
 ---
 
 ## ⚠️ Read this first
@@ -961,7 +963,7 @@ says so.
 follows (2.3.0) - has a route that answers 501 and says why: not written
 yet, needs a model of another kind (sound, images, video), trains models, or
 belongs to the administration of OpenAI's service. The table is generated
-from the specification by `tools/openapi_routes.py`, which also counts what is
+from the specification by `tools/openapi_routes`, which also counts what is
 done.
 
 **One request at a time.** The model holds one sequence, so requests wait in
@@ -1010,7 +1012,8 @@ wants fewer threads than for one.
 | `tools/hf2jns_mtp` | the multi-token prediction block, from the original checkpoint: its shards, or just the block's tensors from Hugging Face (`hf:<owner>/<repo>`) |
 | `tools/jns_planes` | rewrites a model with the experts' down matrix in bit planes, so a machine short of memory can read part of it |
 | `jns_check` | checks a model file, with `--verify` every expert's checksum |
-| `tools/openapi_routes.py` | `janas-server`'s route table, from OpenAI's specification |
+| `tools/openapi_routes` | `janas-server`'s route table, from OpenAI's specification |
+| `tools/gen_unicode` | the tokenizer's Unicode tables, from the Unicode Character Database |
 | `mcp_fake_server` | an MCP server over stdio in either era of the protocol, for trying a client without anybody else's server |
 | `llm_eval` | compares the engine's logits against a reference dump |
 | `bench_gemm`, `bench_attn`, `bench_long`, ... | the pieces measured on their own |
@@ -1093,7 +1096,35 @@ outside the Qwen3 MoE families (they are refused with a message).
 Patches are welcome too, but a measurement from a machine nobody here can buy is
 worth more than most patches.
 
+## Credits
+
+Janas is designed and written by **Maurizio "camauri" Cammalleri**
+([LinkedIn](https://www.linkedin.com/in/maurizio-cammalleri-80a89a11/),
+[Substack](https://cammalleri.substack.com/)).
+
+It stands on the work of others, and says so:
+
+- **The models** it runs are their authors': Qwen3, Qwen3.5, Qwen3.6 and
+  Qwen3-Next by the Qwen team of Alibaba Cloud, Gemma 4 by Google; the GGUF
+  quantizations by Qwen, bartowski and unsloth ([MODELS.md](MODELS.md) has
+  every source).
+- **llama.cpp and ggml** are the reference the engine is checked against
+  (logits, tokens, speed); none of their code is in Janas. The one thing
+  taken from ggml is data that defines a format: the IQ3_S grid, in
+  `src/llm/iq3s_grid.h`, under ggml's MIT licence.
+- **The Unicode Character Database** gives the tokenizer its tables
+  (`tools/gen_unicode`), and **OpenAI's OpenAPI specification** gives
+  `janas-server` its route table (`tools/openapi_routes`).
+- **GNU libmicrohttpd, yyjson and Mbed TLS** are compiled into the programs
+  named below.
+- **The people who tried it on their own machines** and reported what they
+  saw, in the issues of this repository: their reports changed the engine
+  more than once (the threads it picks, the prompt's progress, the GPU's
+  diagnosis).
+
 ## Licence
+
+Copyright © 2026 Maurizio "camauri" Cammalleri.
 
 Janas is free software under the **GNU General Public License, version 3 or
 later** — see [LICENSE](LICENSE). Every source file carries its SPDX line.
