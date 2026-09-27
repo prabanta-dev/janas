@@ -43,9 +43,11 @@ Levels (it offers those this machine can hold):
   quick    Qwen3-4B                     2.5 GB download, ~5 GB of disk
   medium   Qwen3.6-35B-A3B              22 GB download, ~45 GB of disk
   full     Qwen3-Next-80B-A3B + MTP     52 GB download, ~100 GB of disk
+  gemma    Gemma-4-E4B + its assistant  5.1 GB download, ~11 GB of disk
 
 Options
-  --level quick|medium|full   the level (repeat for several; default: ask)
+  --level quick|medium|full|gemma
+                              the level (repeat for several; default: ask)
   --dir DIR                   where the models go (default: ./models)
   --yes                       do not ask before each step (sending the
                               report is still asked)
@@ -120,8 +122,16 @@ d103b2733ec1012a52d01edda66b7e5c24ae50508c9f99f5297ea459ef3c061a \
 fa9a50dd910de4e78064ecff17aef43286694277eea3a89a57e9921ca2bfd2da \
 fa3255c73106391e9cb5a97efd30f77a928fb4518d40060f795a8cff6656daed \
 qwen3-next-80b-a3b-q4km 55834574848 107374182400 16" ;;
+    gemma) echo "unsloth/gemma-4-E4B-it-GGUF gemma-4-E4B-it-Q4_K_M.gguf \
+85a896a047553e842f25297ee5b031d64ff30147d9c4af17b1e4b394cd1fab87 \
+7ec828e9bdc1ada2eda907e93b87072f3180f2e8cba5ccedcd360d1a53858675 \
+- gemma-4-e4b-it-q4km 5476083302 11811160064 8" ;;
     esac
 }
+# Gemma 4's assistant (its MTP file), converted by gguf2jns as the model
+GEMMA_MTP_FILE=mtp-gemma-4-E4B-it.gguf
+GEMMA_MTP_SUM=b6a723115efa510d3b3215db1e26790dae84cd08c2134a764f3d194f1f0c3376
+GEMMA_MTP_OUT_SUM=7c6fdb74ba1eb11f9d47b15097a09cce0142aea380a41f1986ba7b8ec4785b53
 MTP_REPO=Qwen/Qwen3-Next-80B-A3B-Instruct
 MTP_FILE=model-00041-of-00041.safetensors
 MTP_SUM=1f3ac4d828f7e08dd14eb4dc6f282139ae1fa0d894e43f247da2539d2ef43826
@@ -142,6 +152,7 @@ fp_expected()
     quick) echo "c08f0f936eeba5cb" ;;
     medium) echo "13e2f198c270b826" ;;
     full) echo "4aae064b918a0e75" ;;
+    gemma) echo "b2c01def5ff6bd5c" ;;
     esac
 }
 
@@ -309,20 +320,26 @@ level()
         }
         printf '%s\n' "$flat" "$jns" >> "$WORK/created"
         download "$repo" "$gguf" "$gsum" || return 1
+        # one step where there are no planes to cut (psum "-"): the file
+        # gguf2jns writes is the one that runs
+        local out=$flat
+        [ "$psum" = "-" ] && out=$jns
         note "converting (gguf2jns)"
-        "$BIN/gguf2jns" "$MODELS/$gguf" "$flat" >>"$LOG" 2>&1 || {
+        "$BIN/gguf2jns" "$MODELS/$gguf" "$out" >>"$LOG" 2>&1 || {
             fail "gguf2jns failed: $LOG"; echo "$lv conversion FAILED" >> "$WORK/results"; return 1; }
-        fingerprint_ok "$flat" "$fsum" && echo "$lv gguf2jns fingerprint ok" >> "$WORK/results" ||
+        fingerprint_ok "$out" "$fsum" && echo "$lv gguf2jns fingerprint ok" >> "$WORK/results" ||
             echo "$lv gguf2jns fingerprint DIFFERS" >> "$WORK/results"
         if [ "$KEEP" = 0 ] && ask "Delete the downloaded GGUF ($(gib "$(stat -c %s "$MODELS/$gguf")") GiB)? It is not needed any more"; then
             rm -f "$MODELS/$gguf" "$MODELS/$gguf.ok"
         fi
-        note "cutting the experts into bit planes (jns_planes)"
-        "$BIN/jns_planes" "$flat" "$jns" >>"$LOG" 2>&1 || {
-            fail "jns_planes failed: $LOG"; echo "$lv planes FAILED" >> "$WORK/results"; return 1; }
-        fingerprint_ok "$jns" "$psum" && echo "$lv jns_planes fingerprint ok" >> "$WORK/results" ||
-            echo "$lv jns_planes fingerprint DIFFERS" >> "$WORK/results"
-        rm -f "$flat"
+        if [ "$psum" != "-" ]; then
+            note "cutting the experts into bit planes (jns_planes)"
+            "$BIN/jns_planes" "$flat" "$jns" >>"$LOG" 2>&1 || {
+                fail "jns_planes failed: $LOG"; echo "$lv planes FAILED" >> "$WORK/results"; return 1; }
+            fingerprint_ok "$jns" "$psum" && echo "$lv jns_planes fingerprint ok" >> "$WORK/results" ||
+                echo "$lv jns_planes fingerprint DIFFERS" >> "$WORK/results"
+            rm -f "$flat"
+        fi
         converted=1
     fi
     local mtp=()
@@ -339,12 +356,28 @@ level()
         fi
         mtp=(--mtp "$mjns")
     fi
+    if [ "$lv" = gemma ]; then
+        local mjns=$MODELS/$name-mtp.jns
+        if ! [ -f "$mjns" ]; then
+            echo "$mjns" >> "$WORK/created"
+            download "${repo}" "$GEMMA_MTP_FILE" "$GEMMA_MTP_SUM" || return 1
+            "$BIN/gguf2jns" "$MODELS/$GEMMA_MTP_FILE" "$mjns" >>"$LOG" 2>&1 || {
+                fail "gguf2jns failed on the assistant: $LOG"; echo "$lv assistant FAILED" >> "$WORK/results"; return 1; }
+            fingerprint_ok "$mjns" "$GEMMA_MTP_OUT_SUM" && echo "$lv assistant fingerprint ok" >> "$WORK/results" ||
+                echo "$lv assistant fingerprint DIFFERS" >> "$WORK/results"
+            [ "$KEEP" = 1 ] || rm -f "$MODELS/$GEMMA_MTP_FILE" "$MODELS/$GEMMA_MTP_FILE.ok"
+        fi
+        mtp=(--mtp "$mjns")
+    fi
 
     # what ran: Janas's own file, and where it came from
     local shown=${gguf%%-Q4_K_M.gguf} how="the SHA-256 of both checked against MODELS.md"
     shown=${shown#Qwen_}
     [ "$converted" = 1 ] || how="converted in an earlier run of this script"
-    local line="- Model ($lv): $shown, run as \`$(basename "$jns")\` - Janas's format (JNS), converted here by gguf2jns and jns_planes from \`$gguf\` of \`$repo\`; $how"
+    local tools="gguf2jns and jns_planes"
+    [ "$psum" = "-" ] && tools="gguf2jns"
+    local line="- Model ($lv): $shown, run as \`$(basename "$jns")\` - Janas's format (JNS), converted here by $tools from \`$gguf\` of \`$repo\`; $how"
+    [ "$lv" = gemma ] && line="$line; with its assistant \`$(basename "$MODELS/$name-mtp.jns")\`, converted by gguf2jns from \`$GEMMA_MTP_FILE\` of \`$repo\`"
     [ "$lv" = full ] && line="$line; with the MTP block \`$(basename "$MODELS/$name-mtp.jns")\`, converted by hf2jns_mtp from \`$MTP_FILE\` of \`$MTP_REPO\`"
     grep -qF "$line" "$WORK/models" 2>/dev/null || echo "$line" >> "$WORK/models"
 
@@ -584,13 +617,13 @@ LOAD_START=$LOAD
 BUILD_FAILED=0
 if build; then
     if [ -z "$LEVELS" ]; then
-        say "Which levels? quick (4B), medium (35B-A3B), full (80B-A3B)"
+        say "Which levels? quick (4B), medium (35B-A3B), full (80B-A3B), gemma (Gemma-4-E4B)"
         read -r -p "   levels, space-separated [quick]: " LEVELS </dev/tty
         LEVELS=${LEVELS:-quick}
     fi
     for lv in $LEVELS; do
         case "$lv" in
-        quick | medium | full) level "$lv" ;;
+        quick | medium | full | gemma) level "$lv" ;;
         *) fail "unknown level $lv" ;;
         esac
     done

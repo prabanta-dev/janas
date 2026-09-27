@@ -1025,9 +1025,10 @@ it was, in general terms only (a load average and a percentage, never which
 programs ran). If you agree, it opens the issue with
 `gh`, or gives you a link to a filled
 [test report form](https://github.com/prabanta-dev/janas/issues/new?template=04-test-report.yml).
-Three levels: `quick` (Qwen3-4B, 2.5 GB to download), `medium`
-(Qwen3.6-35B-A3B, 22 GB) and `full` (Qwen3-Next-80B-A3B with its MTP block,
-about 52 GB); it offers those your machine can hold, and deletes at the end
+Four levels: `quick` (Qwen3-4B, 2.5 GB to download), `medium`
+(Qwen3.6-35B-A3B, 22 GB), `full` (Qwen3-Next-80B-A3B with its MTP block,
+about 52 GB) and `gemma` (Gemma-4-E4B with its assistant, 5.1 GB, runs in
+about 3 GB of memory); it offers those your machine can hold, and deletes at the end
 only what it downloaded, if you say so. `--help` lists the options.
 
 **What to send, by hand.** Run the benchmark and attach the report it writes (a

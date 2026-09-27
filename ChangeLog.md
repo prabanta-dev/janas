@@ -2,6 +2,15 @@
 
 > Curated, user-facing summary of completed work, newest first.
 
+## [2026-09-27] - janas-try tries Gemma
+
+- **`janas-try.sh --level gemma`**: Gemma-4-E4B and its assistant,
+  downloaded from unsloth and checked by SHA-256, converted in one step,
+  with the fingerprints of both files and of the answer at temperature 0
+  (`b2c01def5ff6bd5c`: the same with the default kernels and AVX2 alone,
+  with and without the assistant, on 4 CPUs and without the GPU). 5.1 GB
+  to download; the model runs in about 3 GB of memory.
+
 ## [2026-09-27] - The prediction file found beside the model
 
 - **`janas-chat` and `janas-server` find the model's multi-token
