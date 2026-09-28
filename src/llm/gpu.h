@@ -87,5 +87,9 @@ void janas_gpu_keep_awake(struct janas_gpu *g, int on);
 /* The device's name, and the subgroup size the shaders run with. */
 const char *janas_gpu_name(const struct janas_gpu *g);
 unsigned janas_gpu_subgroup(const struct janas_gpu *g);
+/* The fewest vectors a product needs to be given to the GPU: 1 on a
+   discrete GPU (single tokens too), 2 on an integrated one;
+   JANAS_GPU_MIN_N sets it. */
+size_t janas_gpu_min_n(const struct janas_gpu *g);
 
 #endif

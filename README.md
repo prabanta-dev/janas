@@ -1079,10 +1079,14 @@ and for [a model that will not convert](https://github.com/prabanta-dev/janas/is
 
 1. **CPUs without AVX-VNNI**, and **AMD** — the arithmetic has a path for them
    and it is the least exercised of all.
-2. **Discrete GPUs** (NVIDIA, AMD, Intel Arc). The GPU support is written and
-   correct, bit for bit, but on an integrated GPU it gains nothing: whether it
-   pays on a real card is unknown. **Careful:** a GPU driver reset takes the
-   desktop with it. Start with `janas-bench`, not with a long chat.
+2. **Discrete GPUs** (NVIDIA, AMD, Intel Arc). The GPU support is correct,
+   bit for bit, and it pays where it was measured: on the development
+   laptop's integrated GPU a dense model whose weights all fit in memory
+   reads a prompt about 29% faster (Qwen3-4B, 83 to 107 tokens/s), and on an
+   RTX 5080 (issue #15) Qwen3-4B read 13% faster and, with the GPU on single
+   tokens too, replied 11-16% faster. Every other card is unknown.
+   **Careful:** a GPU driver reset takes the desktop with it. Start with
+   `janas-bench`, not with a long chat.
 3. **Machines with 16 GB or less.** The engine is supposed to trade quality for
    memory on its own — fewer bits per weight, fewer experts per token — and the
    thresholds for that were measured on 32 GB.

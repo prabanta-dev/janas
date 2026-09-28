@@ -74,8 +74,9 @@ struct janas_expert_cache {
 
     /* one request or one batch of the background filling at a time */
     pthread_mutex_t api_lock;
-    size_t filled;       /* slots that hold an expert */
-    double last_request; /* when the caller last asked for experts */
+    size_t filled;          /* slots that hold an expert */
+    _Atomic uint64_t loads; /* experts ever put in a slot */
+    double last_request;    /* when the caller last asked for experts */
     /* the background filling of the cache, if it was started */
     pthread_t warmer;
     int has_warmer, warm_stop;
@@ -383,6 +384,7 @@ static int32_t load(struct janas_expert_cache *c, uint32_t layer, uint32_t e)
     } else {
         c->filled++;
     }
+    atomic_fetch_add(&c->loads, 1);
     int64_t k = (int64_t)layer * c->j->h.n_expert + e;
     c->key[s] = k;
     c->where[k] = s;
@@ -660,6 +662,34 @@ int janas_expert_cache_warm_background(struct janas_expert_cache *c,
          the cache fills up with what the caller asked for instead */
     c->has_warmer = 1;
     return 0;
+}
+
+const uint8_t *janas_expert_cache_resident(struct janas_expert_cache *c,
+                                           uint64_t *bytes, uint64_t *loads)
+{
+    size_t total = (size_t)c->j->h.n_layer * c->j->h.n_expert;
+    /* between begin and finish the caller holds api_lock: asked there, the
+       answer is no rather than waiting on itself (outstanding is the
+       caller's own) */
+    if (c->n_slots < total || c->outstanding)
+        return NULL;
+    pthread_mutex_lock(&c->api_lock);
+    int busy = c->has_warmer && !atomic_load(&c->warm_over);
+    pthread_mutex_lock(&c->lock);
+    busy |= c->pending;
+    pthread_mutex_unlock(&c->lock);
+    int full = c->filled >= total;
+    *loads = atomic_load(&c->loads);
+    pthread_mutex_unlock(&c->api_lock);
+    if (busy || !full)
+        return NULL;
+    *bytes = (uint64_t)c->n_slots * c->slot_bytes;
+    return c->arena;
+}
+
+uint64_t janas_expert_cache_loads(const struct janas_expert_cache *c)
+{
+    return atomic_load(&((struct janas_expert_cache *)c)->loads);
 }
 
 int janas_expert_cache_warming(const struct janas_expert_cache *c)

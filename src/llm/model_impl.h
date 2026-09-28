@@ -84,7 +84,13 @@ struct janas_llm_model {
     struct janas_gpu *gpu; /* optional, for products over blocks */
     int resident_gpu;      /* the resident region belongs to the GPU */
     int gpu_off;           /* weights not shared with it: CPU only */
-    char gpu_why[160];     /* no GPU: why (janas_llm_model_gpu_why) */
+    /* the experts' arena on the GPU (dense models, and mixtures whose
+       every expert fits the cache): 0 not yet, 1 there, -1 not possible;
+       arena_stale when a slot changed since - the GPU's copy no longer
+       true, the experts' products stay on the CPU */
+    int arena_gpu, arena_stale;
+    uint64_t arena_loads;
+    char gpu_why[160]; /* no GPU: why (janas_llm_model_gpu_why) */
     struct janas_expert_cache *cache;
 
     const struct janas_arch *a; /* what this architecture has (arch.h) */
@@ -324,6 +330,9 @@ struct tok_job {
 };
 
 void janas_m_init_tuner(struct janas_llm_model *m);
+int janas_m_gpu_import(struct janas_llm_model *m, const uint8_t *p,
+                       uint64_t bytes, uint64_t unit);
+void janas_m_arena_to_gpu(struct janas_llm_model *m);
 void janas_m_apply_candidate(struct janas_llm_model *m, int cand);
 uint32_t *janas_m_profile_read(const struct janas_llm_model *m, size_t *used);
 void janas_m_profile_write(const struct janas_llm_model *m);

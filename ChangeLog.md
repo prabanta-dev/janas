@@ -2,6 +2,29 @@
 
 > Curated, user-facing summary of completed work, newest first.
 
+## [2026-09-28] - More of the work on the GPU
+
+- **The experts' weights go to the GPU too** once every expert of every
+  layer is in the cache: the feed-forward weights of a dense model, and a
+  mixture small enough to fit. They were always left to the CPU. On the
+  development laptop's integrated GPU, Qwen3-4B reads a prompt 29% faster
+  (83 to 107 tokens/s) and the chip spends 36% less energy per token
+  (0.49 to 0.31 J, RAPL package counter); replies are unchanged.
+  `JANAS_GPU_EXPERTS=0` keeps them on the CPU. Regions over 4 GB no longer
+  turn the GPU off: they are imported in pieces.
+- **Single tokens on a discrete GPU**, where the tuner finds it faster. The
+  tuner never gave a reply's single token to the GPU; on an RTX 5080 (issue
+  #15) doing so made replies 11-16% faster, even with only attention and
+  output in the card's memory. A discrete GPU now takes them, and the tuner
+  tries it and keeps it only if it measures faster; integrated GPUs are
+  left as they were.
+- **Two more weight types on the GPU**: Q6_K in bit planes (the down
+  matrices of every Qwen mixture and of some layers of the dense models)
+  and Q5_K (Qwen3.5 2B and 9B). Like the others they give the CPU's
+  results bit for bit, so a product still splits between the two.
+- `JANAS_GPU_VERBOSE=2` lists each product shape once with its weight
+  types and whether the GPU takes them.
+
 ## [2026-09-27] - No Python left
 
 - The README names its author, Maurizio "camauri" Cammalleri, under the

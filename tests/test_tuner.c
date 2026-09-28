@@ -79,6 +79,35 @@ int main(void)
     }
     CHECK(!t.cand[janas_tuner_best(&t, 0)].gpu, "GPU best for one token");
 
+    /* ... unless the GPU takes single tokens: then it is tried, and kept
+       when faster */
+    {
+        struct janas_tuner g;
+        janas_tuner_init(&g, cand, 4, def, 0);
+        janas_tuner_allow_gpu(&g, 1);
+        janas_tuner_allow_gpu_one(&g, 1);
+        int tried_gpu = 0;
+        for (int i = 0; i < 300; i++) {
+            int c = janas_tuner_pick(&g, 0);
+            tried_gpu += g.cand[c].gpu;
+            janas_tuner_record(&g, 0, c, c == 3 ? 0.5 : 1.0);
+        }
+        CHECK(tried_gpu > 0, "GPU never tried for one token");
+        CHECK(g.cand[janas_tuner_best(&g, 0)].gpu,
+              "faster GPU not best for one token (best %d)",
+              janas_tuner_best(&g, 0));
+        /* slower: tried, not kept */
+        janas_tuner_init(&g, cand, 4, def, 0);
+        janas_tuner_allow_gpu(&g, 1);
+        janas_tuner_allow_gpu_one(&g, 1);
+        for (int i = 0; i < 300; i++) {
+            int c = janas_tuner_pick(&g, 0);
+            janas_tuner_record(&g, 0, c, c == 3 ? 2.0 : 1.0);
+        }
+        CHECK(!g.cand[janas_tuner_best(&g, 0)].gpu,
+              "slower GPU best for one token");
+    }
+
     /* saved and loaded under a key (in a scratch cache directory) */
     char dir[512];
     const char *tmp = getenv("TMPDIR");

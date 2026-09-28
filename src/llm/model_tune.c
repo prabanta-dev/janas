@@ -41,7 +41,9 @@
  * JANAS_TUNE_THREADS=0 keeps every core without trying the others;
  * JANAS_TUNE=0 turns tuning off; JANAS_BLOCK_THREADS fixes the threads for
  * blocks (and turns it off too); JANAS_GPU_ALWAYS=1 makes the GPU variants
- * the defaults for several tokens.
+ * the defaults for several tokens. The GPU variants are tried for one token
+ * too where the GPU takes single tokens (a discrete GPU, or
+ * JANAS_GPU_MIN_N=1): the default stays without it.
  */
 void janas_m_init_tuner(struct janas_llm_model *m)
 {
@@ -82,14 +84,21 @@ void janas_m_init_tuner(struct janas_llm_model *m)
     }
     janas_tuner_init(&m->tuner, c, n, def, (tn && atoi(tn) == 0) || bt);
     janas_tuner_allow_gpu(&m->tuner, 1);
-    /* the saved choices of this machine and model */
+    /* a GPU that takes single tokens (a discrete one) is tried for replies
+       too, and kept only if it measures faster */
+    int one = m->gpu && !m->gpu_off && janas_gpu_min_n(m->gpu) <= 1;
+    janas_tuner_allow_gpu_one(&m->tuner, one);
+    /* the saved choices of this machine and model; "1g" in the key when
+       the GPU may take replies, so that choices saved without it do not
+       stand in for the tries */
     char cpu[128], name[128] = "";
     janas_cpu_name(cpu, sizeof(cpu));
     janas_jns_meta_str(&m->j, "general.name", name, sizeof(name));
-    int w = snprintf(m->tune_key, sizeof(m->tune_key), "v2|%s|%d/%d/%d|%s|%s|",
-                     cpu, m->p_cores, m->p_threads, m->all_threads,
-                     m->gpu && !m->gpu_off ? janas_gpu_name(m->gpu) : "no GPU",
-                     name);
+    int w =
+        snprintf(m->tune_key, sizeof(m->tune_key), "v2|%s|%d/%d/%d|%s%s|%s|",
+                 cpu, m->p_cores, m->p_threads, m->all_threads,
+                 m->gpu && !m->gpu_off ? janas_gpu_name(m->gpu) : "no GPU",
+                 one ? " 1g" : "", name);
     for (int k = 0; k < n && w > 0 && (size_t)w < sizeof(m->tune_key); k++)
         w += snprintf(m->tune_key + w, sizeof(m->tune_key) - (size_t)w, "%d%s,",
                       c[k].threads, c[k].gpu ? "g" : "");

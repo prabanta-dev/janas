@@ -54,6 +54,17 @@ void janas_expert_cache_destroy(struct janas_expert_cache *c);
 size_t janas_expert_cache_slots(const struct janas_expert_cache *c);
 
 /*
+ * The arena, when it holds every expert of every layer and nothing is
+ * being read into it: from then on no slot changes (there is nothing left
+ * to load), so a copy of it stays true - for a GPU. NULL otherwise, and
+ * between begin and finish. loads: the experts ever put in a slot, to tell
+ * later whether one changed.
+ */
+const uint8_t *janas_expert_cache_resident(struct janas_expert_cache *c,
+                                           uint64_t *bytes, uint64_t *loads);
+uint64_t janas_expert_cache_loads(const struct janas_expert_cache *c);
+
+/*
  * Loads up to the cache capacity the experts with the highest counts
  * (counts has n_layer * n_expert entries, layer-major; zero means never).
  * The most frequent end up most recently used. Returns 0 or -1 on I/O error.

@@ -253,14 +253,14 @@ static void run_experts(struct janas_llm_model *m,
     }
     if (janas_m_exp_tracing())
         ex_setup += now() - t_enter;
-    EX_T(ex_t1,
-         janas_gpu_matvec_group(m->gpu_off || !m->gpu_use ? NULL : m->gpu,
-                                m->compute, t1, 2 * (size_t)n_runs));
+    EX_T(ex_t1, janas_gpu_matvec_group(
+                    m->gpu_off || !m->gpu_use || m->arena_stale ? NULL : m->gpu,
+                    m->compute, t1, 2 * (size_t)n_runs));
     struct act_job aj = {m, ng};
     EX_T(ex_act, janas_pool_run(m->compute, act_worker, &aj));
-    EX_T(ex_t2,
-         janas_gpu_matvec_group(m->gpu_off || !m->gpu_use ? NULL : m->gpu,
-                                m->compute, t2, n_runs));
+    EX_T(ex_t2, janas_gpu_matvec_group(
+                    m->gpu_off || !m->gpu_use || m->arena_stale ? NULL : m->gpu,
+                    m->compute, t2, n_runs));
 }
 
 /* The router's choice for token j: softmax, top-k, normalized weights. */

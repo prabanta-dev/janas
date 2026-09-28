@@ -1,0 +1,118 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+   Copyright (C) 2026 Maurizio Cammalleri */
+#version 450
+// Q6_K in bit planes (JANAS_Q6_K_P, quant.h) times up to NV Q8_K vectors,
+// one row per invocation, as janas_q6kp_dot_ref computes it: the high plane
+// (with the scales and d) in the row's 82-byte blocks, the two bare planes
+// in arrays of their own, 64 bytes a block, each packed as Q6_K's qh field.
+// At level 3 (all three planes) the weight is the Q6_K one; at 2 and 1 the
+// centre of the values the missing planes stand for, folded into the block
+// sum as sumi * 2^shk - c * off, the same integers and float operations as
+// the CPU: the results agree bit for bit. Activations shared across the
+// subgroup as in q4k_matvec.comp. The blocks are 82 bytes, so every other
+// one starts 2 bytes off a 4-byte boundary: words are read from the
+// boundary below and realigned, as in q6k_matvec.comp.
+#extension GL_EXT_integer_dot_product : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_ballot : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+
+layout(local_size_x = 64) in;
+layout(constant_id = 0) const uint NV = 8;
+layout(constant_id = 1) const uint SG = 8;
+const uint NX = (19u + SG - 1u) / SG;
+
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer U1 { uint v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer U4 { uvec4 v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer F { float v[]; };
+
+// level 3, 2 or 1: the planes present; p1 (level >= 2) and p0 (level 3) the
+// bare planes of the first row, nb * 64 bytes a row
+layout(push_constant) uniform P { uvec2 w, x, y; uint rows, nb, nv, xs, ys, level; uvec2 p1, p0; } p;
+
+int dp(uint a, uint b) { return dotPacked4x8EXT(int(a), int(b)); }
+uvec4 bc(uvec4 xr[NX], uint k) { return subgroupBroadcast(xr[k / SG], k % SG); }
+
+void main()
+{
+    U1 W = U1(p.w), P1 = U1(p.p1), P0 = U1(p.p0);
+    U4 X = U4(p.x);
+    F Y = F(p.y);
+    uint lane = gl_SubgroupInvocationID;
+    uint row = min(gl_GlobalInvocationID.x, p.rows - 1u);
+    uint v0 = gl_WorkGroupID.y * NV;
+    uint xo[NV];
+    for (uint v = 0; v < NV; v++)
+        xo[v] = min(v0 + v, p.nv - 1u) * p.xs * 20u;
+    float acc[NV];
+    for (uint v = 0; v < NV; v++)
+        acc[v] = 0.0;
+    uint shk = p.level == 3u ? 1u : p.level == 2u ? 3u : 5u;
+    int c = p.level == 3u ? 64 : p.level == 2u ? 61 : 49;
+    uint off = row * p.nb * 82u;  /* bytes */
+    uint pw = row * p.nb * 16u;   /* words of the bare planes */
+    for (uint b = 0; b < p.nb; b++, off += 82u, pw += 16u) {
+        /* the block's 20 words (80 bytes) and d, realigned */
+        uint base = off >> 2, sh = (off & 3u) * 8u;
+        uint wd[21];
+        for (uint k = 0; k < 21u; k++)
+            wd[k] = W.v[base + k];
+        if (sh != 0u)
+            for (uint k = 0; k < 20u; k++)
+                wd[k] = (wd[k] >> 16) | (wd[k + 1u] << 16);
+        float d = unpackHalf2x16(sh != 0u ? wd[20] >> 16 : wd[20] & 0xffffu).x;
+        int sc[16];
+        for (uint k = 0; k < 4u; k++)
+            for (uint j = 0; j < 4u; j++)
+                sc[4u * k + j] = bitfieldExtract(int(wd[16u + k]), int(8u * j), 8);
+        uint w1[16], w0[16];
+        for (uint k = 0; k < 16u; k++) {
+            w1[k] = p.level >= 2u ? P1.v[pw + k] : 0u;
+            w0[k] = p.level >= 3u ? P0.v[pw + k] : 0u;
+        }
+        for (uint v = 0; v < NV; v++) {
+            uvec4 xr[NX];
+            for (uint j = 0; j < NX; j++)
+                xr[j] = X.v[xo[v] + min(j * SG + lane, 19u)];
+            int isum = 0;
+            for (uint n = 0; n < 2u; n++)
+                for (uint part = 0; part < 4u; part++) {
+                    /* 32 values: 2 groups of 16, each with its scale */
+                    uint hsh = part * 2u;
+                    uvec4 a0 = bc(xr, 8u * n + 2u * part);
+                    uvec4 a1 = bc(xr, 8u * n + 2u * part + 1u);
+                    uint a[8] = uint[8](a0.x, a0.y, a0.z, a0.w, a1.x, a1.y, a1.z, a1.w);
+                    int dot0 = 0, dot1 = 0;
+                    for (uint k = 0; k < 8u; k++) {
+                        uint i = 8u * n + k;
+                        uint q = (wd[i] >> hsh) & 0x03030303u;
+                        if (p.level >= 2u)
+                            q = (q << 2) | ((w1[i] >> hsh) & 0x03030303u);
+                        if (p.level >= 3u)
+                            q = (q << 2) | ((w0[i] >> hsh) & 0x03030303u);
+                        if (k < 4u)
+                            dot0 += dp(q, a[k]);
+                        else
+                            dot1 += dp(q, a[k]);
+                    }
+                    uint g = 8u * n + 2u * part;
+                    isum += sc[g] * dot0 + sc[g + 1u] * dot1;
+                }
+            /* the centre of the missing planes, from the block sums */
+            uvec4 bs0 = bc(xr, 16u), bs1 = bc(xr, 17u);
+            uint bw[8] = uint[8](bs0.x, bs0.y, bs0.z, bs0.w, bs1.x, bs1.y, bs1.z, bs1.w);
+            int boff = 0;
+            for (uint s = 0; s < 8u; s++)
+                boff += sc[2u * s] * bitfieldExtract(int(bw[s]), 0, 16) +
+                        sc[2u * s + 1u] * bitfieldExtract(int(bw[s]), 16, 16);
+            float d8 = uintBitsToFloat(bc(xr, 18u).x);
+            acc[v] = fma(d * 0.5 * d8, float(isum * (1 << shk) - c * boff), acc[v]);
+            xo[v] += 20u;
+        }
+    }
+    if (gl_GlobalInvocationID.x < p.rows)
+        for (uint v = 0; v < NV; v++)
+            if (v0 + v < p.nv)
+                Y.v[(v0 + v) * p.ys + row] = acc[v];
+}

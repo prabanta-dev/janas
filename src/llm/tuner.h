@@ -26,7 +26,7 @@
 
 struct janas_tune_cand {
     int threads; /* compute threads (a prefix of the pool) */
-    int gpu;     /* the GPU takes part in products over blocks */
+    int gpu;     /* the GPU takes part in the products */
 };
 
 struct janas_tuner {
@@ -34,6 +34,7 @@ struct janas_tuner {
     int n_cand;
     int fixed;     /* no tuning: the default candidate of each class */
     int allow_gpu; /* candidates with the GPU may be chosen */
+    int gpu_one;   /* ... for one token too (the GPU takes single tokens) */
     int forced;    /* >= 0: every pass uses this candidate (and is measured) */
     struct {
         double cost[JANAS_TUNE_MAX_CANDS]; /* seconds per token, averaged */
@@ -66,6 +67,9 @@ void janas_tuner_force(struct janas_tuner *t, int cand);
 
 /* Whether candidates using the GPU may be chosen (energy saving: no). */
 void janas_tuner_allow_gpu(struct janas_tuner *t, int allow);
+/* Whether they may be chosen for one token too: only where the GPU takes
+   single-token products (janas_gpu_min_n 1, a discrete GPU). */
+void janas_tuner_allow_gpu_one(struct janas_tuner *t, int allow);
 
 /* The best known candidate of a class (for work that is not measured). */
 int janas_tuner_best(const struct janas_tuner *t, int cls);

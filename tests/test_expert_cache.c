@@ -210,6 +210,104 @@ static int model_fetch(struct model *m, int layer, const uint32_t *ids, int n)
     return hits;
 }
 
+/* Every expert of every layer in the arena, nothing being read: only then
+   does janas_expert_cache_resident hand the arena out (for a GPU's copy). */
+static void check_resident(struct janas_jns *j, struct janas_pool *io)
+{
+    enum { ALL = N_LAYER * N_EXPERT };
+    char err[256];
+    uint64_t bytes = 0, loads = 0;
+    static uint8_t expect[SLOT];
+
+    /* fewer slots than experts: never */
+    struct janas_expert_cache *c = janas_expert_cache_create(
+        j, (uint64_t)SLOTS * SLOT, 3, io, err, sizeof(err));
+    CHECK(c != NULL, "create (small): %s", err);
+    if (c) {
+        uint32_t ids[K] = {0, 1, 2};
+        const uint8_t *slots[K];
+        for (uint32_t l = 0; l < N_LAYER; l++)
+            CHECK(janas_expert_cache_fetch(c, l, ids, K, slots) == 0, "fetch");
+        CHECK(janas_expert_cache_resident(c, &bytes, &loads) == NULL,
+              "resident with %d slots for %d experts", SLOTS, ALL);
+        janas_expert_cache_destroy(c);
+    }
+
+    /* room for all: not while one is missing, then the whole arena */
+    c = janas_expert_cache_create(j, (uint64_t)ALL * SLOT, 3, io, err,
+                                  sizeof(err));
+    CHECK(c != NULL, "create (all): %s", err);
+    if (c) {
+        CHECK(janas_expert_cache_slots(c) == ALL, "slots %zu",
+              janas_expert_cache_slots(c));
+        const uint8_t *slot;
+        for (uint32_t k = 0; k + 1 < ALL; k++) {
+            uint32_t e = k % N_EXPERT;
+            CHECK(janas_expert_cache_fetch(c, k / N_EXPERT, &e, 1, &slot) == 0,
+                  "fetch");
+        }
+        CHECK(janas_expert_cache_resident(c, &bytes, &loads) == NULL,
+              "resident with one expert missing");
+        /* the last one asked for and still being read: its slot is taken,
+           so the arena is full, but its bytes are not there yet */
+        uint32_t last = N_EXPERT - 1;
+        uint8_t ready;
+        CHECK(janas_expert_cache_begin(c, N_LAYER - 1, &last, 1, &slot,
+                                       &ready) == 1,
+              "begin did not queue the last expert");
+        CHECK(janas_expert_cache_resident(c, &bytes, &loads) == NULL,
+              "resident while an expert is being read");
+        CHECK(janas_expert_cache_finish(c) == 0, "finish failed");
+        const uint8_t *a = janas_expert_cache_resident(c, &bytes, &loads);
+        CHECK(a != NULL, "not resident with every expert loaded");
+        CHECK(bytes == (uint64_t)ALL * SLOT, "resident bytes %llu",
+              (unsigned long long)bytes);
+        CHECK(loads == ALL && janas_expert_cache_loads(c) == ALL,
+              "loads %llu, expected %d", (unsigned long long)loads, ALL);
+        /* every expert is in the arena, where fetch says it is */
+        for (uint32_t k = 0; a && k < ALL; k++) {
+            uint32_t e = k % N_EXPERT;
+            CHECK(janas_expert_cache_fetch(c, k / N_EXPERT, &e, 1, &slot) == 0,
+                  "fetch");
+            CHECK(slot >= a && slot + SLOT <= a + bytes,
+                  "slot outside the arena");
+            fill_slot(expect, k / N_EXPERT, e);
+            CHECK(memcmp(slot, expect, SLOT) == 0, "arena: wrong bytes");
+        }
+        /* hits load nothing: a GPU's copy stays true */
+        CHECK(janas_expert_cache_loads(c) == ALL, "hits changed loads to %llu",
+              (unsigned long long)janas_expert_cache_loads(c));
+        janas_expert_cache_destroy(c);
+    }
+
+    /* filled in the background: never while it runs, then resident */
+    c = janas_expert_cache_create(j, (uint64_t)ALL * SLOT, 3, io, err,
+                                  sizeof(err));
+    uint32_t *counts = calloc(ALL, sizeof(uint32_t));
+    if (c && counts) {
+        for (size_t k = 0; k < ALL; k++)
+            counts[k] = (uint32_t)(k % 5) + 1;
+        CHECK(janas_expert_cache_warm_background(c, counts) == 0,
+              "background filling did not start");
+        /* the first time it answers, the filling is over and complete */
+        const uint8_t *a = NULL;
+        for (int t = 0; t < 10000 && !a; t++) {
+            a = janas_expert_cache_resident(c, &bytes, &loads);
+            if (!a)
+                usleep(1000);
+        }
+        uint64_t done = 0, total = 0;
+        janas_expert_cache_warm_progress(c, &done, &total);
+        CHECK(a != NULL, "not resident 10 s after the filling began");
+        CHECK(!a || (loads == ALL && done == total),
+              "resident with %llu loads, filling at %llu of %llu",
+              (unsigned long long)loads, (unsigned long long)done,
+              (unsigned long long)total);
+    }
+    janas_expert_cache_destroy(c);
+    free(counts);
+}
+
 /* The whole check, once with the reads on the ring and once without it. */
 static void run(const char *path, const char *how)
 {
@@ -338,6 +436,7 @@ static void run(const char *path, const char *how)
     }
 
     janas_expert_cache_destroy(c);
+    check_resident(&j, io);
     janas_pool_destroy(io);
     janas_jns_close(&j);
     printf("test_expert_cache (%s): %llu requests, %llu hits (model %llu)\n",

@@ -353,6 +353,7 @@ int janas_llm_model_forward(struct janas_llm_model *m, const int32_t *tokens,
        from them, or a slow start decides the whole session */
     if (r == 0 && dt > 0 && !janas_llm_model_settling(m))
         janas_tuner_record(&m->tuner, cls, cand, dt / n);
+    janas_m_arena_to_gpu(m);
     return r;
 }
 

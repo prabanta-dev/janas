@@ -1039,7 +1039,7 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
            flushed out of the CPU's caches before the GPU reads it */
         if (m->resident_gpu)
             janas_gpu_flush(m->gpu, m->resident, m->j.h.resident_bytes);
-        else if (janas_gpu_import(m->gpu, m->resident, m->j.h.resident_bytes) !=
+        else if (janas_m_gpu_import(m, m->resident, m->j.h.resident_bytes, 0) !=
                  0)
             m->gpu_off = 1;
         if (m->mtp_res && janas_gpu_import(m->gpu, m->mtp_res,
@@ -1224,6 +1224,78 @@ uint64_t janas_llm_model_warm(const struct janas_llm_model *m, double *seconds)
     if (seconds)
         *seconds = m->warm_seconds;
     return m->warm_experts;
+}
+
+/* The GPU region of 4 GB at the most: cut at a multiple of unit (an
+   expert slot), or for the resident region (unit 0) where a tensor
+   begins, so that no tensor straddles two and each stays in reach */
+#define GPU_REGION_MAX ((uint64_t)4 << 30)
+
+static uint64_t resident_cut(const struct janas_llm_model *m, uint64_t from)
+{
+    uint64_t base = m->j.h.resident_offset, best = from;
+    for (uint64_t i = 0; i < m->j.h.n_tensor; i++) {
+        uint64_t at = m->j.tensors[i].offset - base;
+        if (at > from && at <= from + GPU_REGION_MAX && at > best)
+            best = at;
+    }
+    return best > from ? best : from + GPU_REGION_MAX;
+}
+
+int janas_m_gpu_import(struct janas_llm_model *m, const uint8_t *p,
+                       uint64_t bytes, uint64_t unit)
+{
+    for (uint64_t at = 0; at < bytes;) {
+        uint64_t end = at + GPU_REGION_MAX;
+        if (end >= bytes)
+            end = bytes;
+        else if (unit)
+            end = at + GPU_REGION_MAX / unit * unit;
+        else
+            end = resident_cut(m, at);
+        if (end > bytes)
+            end = bytes;
+        /* the regions are whole pages: the last one's length rounded up
+           (the allocations are) */
+        uint64_t len = (end - at + 4095) & ~(uint64_t)4095;
+        if (janas_gpu_import(m->gpu, p + at, len) != 0)
+            return -1;
+        at = end;
+    }
+    return 0;
+}
+
+/*
+ * The experts on the GPU too: once the cache holds every expert of every
+ * layer and nothing is being read (a dense model's feed-forwards, or a
+ * mixture that fits), its arena is shared with the GPU or copied to its
+ * memory, and the experts' products are split between the two like the
+ * others. Checked after each pass until then; one change of a slot later
+ * (a new level of bits) and the GPU's copy is no longer used.
+ */
+void janas_m_arena_to_gpu(struct janas_llm_model *m)
+{
+    if (!m->gpu || m->gpu_off || !m->cache || m->arena_gpu < 0)
+        return;
+    if (m->arena_gpu == 1) {
+        if (!m->arena_stale &&
+            janas_expert_cache_loads(m->cache) != m->arena_loads)
+            m->arena_stale = 1;
+        return;
+    }
+    uint64_t bytes, loads;
+    const uint8_t *a = janas_expert_cache_resident(m->cache, &bytes, &loads);
+    if (!a)
+        return;
+    uint64_t slot = janas_expert_cache_slot_bytes(m->cache);
+    if (getenv("JANAS_GPU_EXPERTS") && atoi(getenv("JANAS_GPU_EXPERTS")) == 0)
+        m->arena_gpu = -1;
+    else if (janas_m_gpu_import(m, a, bytes, slot) == 0) {
+        m->arena_gpu = 1;
+        m->arena_loads = loads;
+    } else {
+        m->arena_gpu = -1; /* no room for it: the CPU goes on alone */
+    }
 }
 
 int janas_llm_model_settling(const struct janas_llm_model *m)

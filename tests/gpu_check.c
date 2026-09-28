@@ -2,8 +2,9 @@
    Copyright (C) 2026 Maurizio Cammalleri */
 /*
  * gpu_check.c - products split between the GPU and the CPU must equal the
- * CPU's bit for bit: random Q4_K matrices in shared memory, several shapes,
- * vector counts and strides. Skips (exit 0) when no GPU is usable.
+ * CPU's bit for bit: random Q4_K, Q5_K, Q6_K and Q6_K_P (bit planes, at its
+ * three levels) matrices in shared memory, several shapes, vector counts and
+ * strides. Skips (exit 0) when no GPU is usable.
  *
  * Usage: gpu_check
  */
@@ -63,8 +64,34 @@ int main(void)
     struct janas_block_q6k *w6b = (struct janas_block_q6k *)w6;
     for (size_t b = 0; b < (w6bytes - 4096) / 210; b++)
         w6b[b].d = janas_fp32_to_fp16(0.0001f + (rnd() % 1000) * 1e-6f);
+    /* Q6_K_P: the high planes (82-byte blocks), then the two bare planes
+       (64 bytes a block), row after row as in an expert slot */
+    size_t pbase = (size_t)MAXR * (MAXC / JANAS_QK) * 82 + 4096;
+    pbase = (pbase + 4095) / 4096 * 4096;
+    size_t pplane = (size_t)MAXR * (MAXC / JANAS_QK) * JANAS_Q6KP_PLANE;
+    size_t wpbytes = pbase + 2 * pplane;
+    uint8_t *wp = aligned_alloc(4096, wpbytes);
+    for (size_t i = 0; i < wpbytes; i++)
+        wp[i] = (uint8_t)rnd();
+    struct janas_block_q6kp *wpb = (struct janas_block_q6kp *)wp;
+    for (size_t b = 0; b < (pbase - 4096) / 82; b++)
+        wpb[b].d = janas_fp32_to_fp16(0.0001f + (rnd() % 1000) * 1e-6f);
+    const uint8_t *pl1 = wp + pbase, *pl0 = wp + pbase + pplane;
+    /* Q5_K */
+    size_t w5bytes = (size_t)MAXR * (MAXC / JANAS_QK) * 176;
+    w5bytes = (w5bytes + 4095) / 4096 * 4096;
+    uint8_t *w5 = aligned_alloc(4096, w5bytes);
+    for (size_t i = 0; i < w5bytes; i++)
+        w5[i] = (uint8_t)rnd();
+    struct janas_block_q5k *w5b = (struct janas_block_q5k *)w5;
+    for (size_t b = 0; b < w5bytes / 176; b++) {
+        w5b[b].d = janas_fp32_to_fp16(0.001f + (rnd() % 1000) * 1e-5f);
+        w5b[b].dmin = janas_fp32_to_fp16(0.001f + (rnd() % 1000) * 1e-5f);
+    }
     if (janas_gpu_import(g, w, wbytes) != 0 ||
-        janas_gpu_import(g, w6, w6bytes) != 0) {
+        janas_gpu_import(g, w6, w6bytes) != 0 ||
+        janas_gpu_import(g, wp, wpbytes) != 0 ||
+        janas_gpu_import(g, w5, w5bytes) != 0) {
         printf("gpu_check: import failed\n");
         return 1;
     }
@@ -91,17 +118,31 @@ int main(void)
                                 {1500, 768}}; /* odd blocks per row */
     const size_t nvs[] = {2, 3, 5, 8, 9, 16, 17};
     int bad = 0, runs = 0;
-    for (int q6 = 0; q6 < 2; q6++)
+    /* 0 Q4_K, 1 Q6_K, 2-4 Q6_K_P with three, two and one planes, 5 Q5_K */
+    static const char *names[] = {"Q4_K",     "Q6_K",     "Q6_K_P/3",
+                                  "Q6_K_P/2", "Q6_K_P/1", "Q5_K"};
+    for (int q6 = 0; q6 < 6; q6++)
         for (size_t s = 0; s < sizeof(shapes) / sizeof(shapes[0]); s++)
             for (size_t k = 0; k < sizeof(nvs) / sizeof(nvs[0]); k++)
                 for (int strided = 0; strided < 2; strided++) {
                     size_t rows = shapes[s][0], cols = shapes[s][1];
                     size_t nb = cols / JANAS_QK, nv = nvs[k];
+                    size_t skip = s % 2; /* a row further in, every other
+                                            shape */
                     struct janas_matvec_task t = {
-                        .type = q6 ? JANAS_Q6_K : JANAS_Q4_K,
-                        /* a row further in, every other shape */
-                        .w = q6 ? w6 + (s % 2) * 210 * nb
-                                : w + (s % 2) * 144 * nb,
+                        .type = q6 == 5   ? JANAS_Q5_K
+                                : q6 >= 2 ? JANAS_Q6_K_P
+                                : q6 == 1 ? JANAS_Q6_K
+                                          : JANAS_Q4_K,
+                        .w = q6 == 5   ? w5 + skip * 176 * nb
+                             : q6 >= 2 ? wp + skip * 82 * nb
+                             : q6 == 1 ? w6 + skip * 210 * nb
+                                       : w + skip * 144 * nb,
+                        .plane = {q6 == 2 || q6 == 3
+                                      ? pl1 + skip * JANAS_Q6KP_PLANE * nb
+                                      : NULL,
+                                  q6 == 2 ? pl0 + skip * JANAS_Q6KP_PLANE * nb
+                                          : NULL},
                         .x = x,
                         .rows = rows,
                         .cols = cols,
@@ -150,9 +191,8 @@ int main(void)
                                 printf(
                                     "%s %zux%zu nv %zu strided %d: v %zu row %zu: "
                                     "%g vs %g\n",
-                                    q6 ? "Q6_K" : "Q4_K", rows, cols, nv,
-                                    strided, v, r, ya[v * ys + r],
-                                    yb[v * ys + r]);
+                                    names[q6], rows, cols, nv, strided, v, r,
+                                    ya[v * ys + r], yb[v * ys + r]);
                                 for (size_t u = 0;
                                      getenv("GPU_CHECK_DEBUG") && u < 2 * MAXV;
                                      u++)
@@ -173,6 +213,9 @@ int main(void)
     janas_gpu_destroy(g);
     janas_pool_destroy(pool);
     free(w);
+    free(w6);
+    free(wp);
+    free(w5);
     free(x);
     free(xf);
     free(ya);

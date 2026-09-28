@@ -40,12 +40,12 @@ void janas_tuner_init(struct janas_tuner *t, const struct janas_tune_cand *c,
     }
 }
 
-/* GPU candidates: only when allowed, and never for one token (the GPU
-   takes no part in single-token products: they would differ only by the
+/* GPU candidates: only when allowed, and for one token only where the
+   GPU takes single-token products (elsewhere they would differ only by the
    power its keep-alive costs) */
 static int usable(const struct janas_tuner *t, int cls, int i)
 {
-    return (!t->cand[i].gpu || (t->allow_gpu && cls > 0)) &&
+    return (!t->cand[i].gpu || (t->allow_gpu && (cls > 0 || t->gpu_one))) &&
            (!t->cls[cls].threads || t->cand[i].threads == t->cls[cls].threads);
 }
 
@@ -81,6 +81,11 @@ void janas_tuner_force(struct janas_tuner *t, int cand)
 void janas_tuner_allow_gpu(struct janas_tuner *t, int allow)
 {
     t->allow_gpu = allow;
+}
+
+void janas_tuner_allow_gpu_one(struct janas_tuner *t, int allow)
+{
+    t->gpu_one = allow;
 }
 
 int janas_tuner_best(const struct janas_tuner *t, int cls)
