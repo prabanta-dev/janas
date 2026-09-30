@@ -263,6 +263,62 @@ static void run_experts(struct janas_llm_model *m,
                     m->compute, t2, n_runs));
 }
 
+int janas_m_route_rank(struct janas_llm_model *m, uint32_t l, uint32_t n,
+                       uint32_t k, uint32_t *ids)
+{
+    const struct layer *ly = &m->layers[l];
+    uint32_t ne = m->n_expert;
+    if (!ly->router16 || !ly->ffn_norm || k == 0 || k > 32 || k > ne)
+        return -1;
+    /* xn and router are free between layers: l + 1 norms into xn first */
+    janas_m_norm_quant(m, f32(m, ly->ffn_norm), 0, n);
+    struct router_job rj = {m, ly->router16, n};
+    janas_pool_run(m->compute, router_worker, &rj); /* 512 x 2048 a layer */
+    for (uint32_t j = 0; j < n; j++) {
+        float *r = m->router + (size_t)j * ne;
+        for (uint32_t i = 0; i < k; i++) {
+            uint32_t best = 0;
+            for (uint32_t e = 1; e < ne; e++)
+                if (r[e] > r[best])
+                    best = e;
+            ids[(size_t)j * k + i] = best;
+            r[best] = -INFINITY;
+        }
+    }
+    return 0;
+}
+
+int janas_m_route_predict(struct janas_llm_model *m, uint32_t l, uint32_t n)
+{
+    uint32_t k = m->pred_k;
+    uint32_t *ids = malloc((size_t)n * (k ? k : 1) * sizeof(*ids));
+    if (!ids)
+        return -1;
+    if (janas_m_route_rank(m, l, n, k, ids) == 0)
+        m->pred_fn(m->pred_ctx, l, n, k, ids);
+    free(ids);
+    return 0;
+}
+
+/*
+ * Reads ahead the experts layer l + 1 is likely to want, of a single token:
+ * its router applied to the state before layer l's experts - the time of
+ * those experts and of layer l + 1's attention to read them in, some 0.8 ms
+ * or more on Qwen3-Next-80B, against 0.6 for a read. On that model its
+ * first 12 held 91% of the experts chosen and 85-88% of those the cache
+ * would miss (30 Sep 2026). Only the likeliest, and at most pf_max: past
+ * them the reads are mostly wasted and the disk fills up.
+ */
+void janas_m_prefetch(struct janas_llm_model *m, uint32_t l)
+{
+    double t0 = now();
+    uint32_t ids[32];
+    if (janas_m_route_rank(m, l + 1, 1, m->pf_rank, ids) == 0)
+        janas_expert_cache_prefetch(m->cache, l + 1, ids, m->pf_rank,
+                                    m->pf_max);
+    m->phase[JANAS_PH_ROUTER] += now() - t0;
+}
+
 /* The router's choice for token j: softmax, top-k, normalized weights. */
 static void route_tok(struct janas_llm_model *m, uint32_t j)
 {
@@ -348,6 +404,8 @@ int janas_m_moe_block(struct janas_llm_model *m, const struct layer *ly,
         if (ly->exp_scale)
             for (uint32_t p = 0; p < n * k; p++)
                 m->pair_w[p] *= ly->exp_scale[m->pair_exp[p]];
+        if (m->route_fn && cache == m->cache)
+            m->route_fn(m->route_ctx, l, n, k, m->pair_exp);
     }
     /* counting sort of the pairs by expert */
     uint32_t np = n * k;

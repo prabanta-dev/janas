@@ -1,0 +1,92 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+   Copyright (C) 2026 Maurizio Cammalleri */
+#version 450
+// Q8_0 weights (blocks of 32: an fp16 scale and 32 int8) times up to NV
+// vectors, one row per invocation, as janas_q8_0_dot_ref computes it: the
+// activations in blocks of 32 with a scale each (qs32/d32 of the Q8_K
+// block), each weight block's integer dot in one fma into the accumulator
+// of its position in the group of eight, the eight added at the end as
+// janas_hsum8 does, ((a0+a4)+(a2+a6)) + ((a1+a5)+(a3+a7)): the same float
+// operations as the CPU, so the results agree bit for bit. The activations
+// come in the 32-block layout of convert_x (20 uvec4 a Q8_K block: qs32 in
+// 16, bsums32 in 2, d32 in 2), shared across the subgroup as in
+// q4k_matvec.comp. A weight block is 34 bytes, so every other one starts 2
+// bytes off a 4-byte boundary: its words are realigned.
+#extension GL_EXT_integer_dot_product : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_ballot : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+
+layout(local_size_x = 64) in;
+layout(constant_id = 0) const uint NV = 8;
+layout(constant_id = 1) const uint SG = 8;
+const uint NX = (20u + SG - 1u) / SG;
+
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer U1 { uint v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer U4 { uvec4 v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer F { float v[]; };
+
+layout(push_constant) uniform P { uvec2 w, x, y; uint rows, nb, nv, xs, ys; } p;
+
+int dp(uint a, uint b) { return dotPacked4x8EXT(int(a), int(b)); }
+int dp4(uvec4 a, uvec4 b) { return dp(a.x, b.x) + dp(a.y, b.y) + dp(a.z, b.z) + dp(a.w, b.w); }
+uvec4 bc(uvec4 xr[NX], uint k) { return subgroupBroadcast(xr[k / SG], k % SG); }
+
+void main()
+{
+    U1 W = U1(p.w);
+    U4 X = U4(p.x);
+    F Y = F(p.y);
+    uint lane = gl_SubgroupInvocationID;
+    uint row = min(gl_GlobalInvocationID.x, p.rows - 1u);
+    uint v0 = gl_WorkGroupID.y * NV;
+    uint xo[NV];
+    for (uint v = 0; v < NV; v++)
+        xo[v] = min(v0 + v, p.nv - 1u) * p.xs * 20u;
+    float acc[NV][8];
+    for (uint v = 0; v < NV; v++)
+        for (uint k = 0; k < 8u; k++)
+            acc[v][k] = 0.0;
+    uint gw = row * p.nb * 68u; /* words: a group of eight blocks is 272 bytes */
+    for (uint b = 0; b < p.nb; b++, gw += 68u) {
+        uint wg[68];
+        for (uint i = 0; i < 68u; i++)
+            wg[i] = W.v[gw + i];
+        float d[8];
+        uvec4 q[8][2];
+        for (uint k = 0; k < 8u; k++) {
+            uint B = 34u * k;            /* the block's first byte */
+            uint dw = wg[B >> 2];
+            d[k] = unpackHalf2x16((B & 2u) != 0u ? dw >> 16 : dw & 0xffffu).x;
+            uint qb = B + 2u, wi = qb >> 2;
+            uint qw[8];
+            for (uint i = 0; i < 8u; i++)
+                qw[i] = (qb & 2u) != 0u ? (wg[wi + i] >> 16) | (wg[wi + i + 1u] << 16)
+                                        : wg[wi + i];
+            q[k][0] = uvec4(qw[0], qw[1], qw[2], qw[3]);
+            q[k][1] = uvec4(qw[4], qw[5], qw[6], qw[7]);
+        }
+        for (uint v = 0; v < NV; v++) {
+            uvec4 xr[NX];
+            for (uint j = 0; j < NX; j++)
+                xr[j] = X.v[xo[v] + min(j * SG + lane, 19u)];
+            uvec4 s0 = bc(xr, 18u), s1 = bc(xr, 19u);
+            float d32[8] = float[8](uintBitsToFloat(s0.x), uintBitsToFloat(s0.y),
+                                    uintBitsToFloat(s0.z), uintBitsToFloat(s0.w),
+                                    uintBitsToFloat(s1.x), uintBitsToFloat(s1.y),
+                                    uintBitsToFloat(s1.z), uintBitsToFloat(s1.w));
+            for (uint k = 0; k < 8u; k++) {
+                int dot = dp4(q[k][0], bc(xr, 2u * k)) + dp4(q[k][1], bc(xr, 2u * k + 1u));
+                acc[v][k] = fma(d[k] * d32[k], float(dot), acc[v][k]);
+            }
+            xo[v] += 20u;
+        }
+    }
+    if (gl_GlobalInvocationID.x < p.rows)
+        for (uint v = 0; v < NV; v++)
+            if (v0 + v < p.nv)
+                Y.v[(v0 + v) * p.ys + row] =
+                    ((acc[v][0] + acc[v][4]) + (acc[v][2] + acc[v][6])) +
+                    ((acc[v][1] + acc[v][5]) + (acc[v][3] + acc[v][7]));
+}

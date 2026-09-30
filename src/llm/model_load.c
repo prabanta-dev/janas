@@ -597,7 +597,12 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
         char gerr[256] = "";
         m->gpu = janas_gpu_create(gerr, sizeof(gerr));
         snprintf(m->gpu_why, sizeof(m->gpu_why), "%.150s", m->gpu ? "" : gerr);
-        if (m->gpu && getenv("JANAS_GPU_ALLOC") &&
+        /* the resident region in the GPU driver's memory (JANAS_GPU_ALLOC,
+           or with the whole token on an integrated GPU): the GPU reads it
+           faster than imported pages, some 20% on the development laptop's */
+        if (m->gpu &&
+            (getenv("JANAS_GPU_ALLOC") ||
+             (getenv("JANAS_GPU_TOKEN") && janas_gpu_shares_host(m->gpu))) &&
             (m->resident = janas_gpu_alloc(m->gpu, m->j.h.resident_bytes)))
             m->resident_gpu = 1;
     }
@@ -767,10 +772,16 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
     }
     m->kv_off[n_slots] = kv_len;
     m->ks_off[n_slots] = ks_len;
-    m->kcache = malloc(kv_len ? kv_len : 1);
-    m->vcache = malloc(kv_len ? kv_len : 1);
-    m->kscale = malloc((ks_len ? ks_len : 1) * sizeof(float));
-    m->vscale = malloc((ks_len ? ks_len : 1) * sizeof(float));
+    /* whole pages: an integrated GPU imports them for the token it runs
+       (gpu_token.h) */
+    size_t kvb = (kv_len + 4095) / 4096 * 4096,
+           ksb = (ks_len * sizeof(float) + 4095) / 4096 * 4096;
+    m->kcache = aligned_alloc(4096, kvb ? kvb : 4096);
+    m->vcache = aligned_alloc(4096, kvb ? kvb : 4096);
+    m->kscale = aligned_alloc(4096, ksb ? ksb : 4096);
+    m->vscale = aligned_alloc(4096, ksb ? ksb : 4096);
+    m->kv_bytes = kvb;
+    m->ks_bytes = ksb;
     /* a pair's rows: the experts', or a wider shared feed-forward's */
     m->ff_buf = m->d_ff;
     for (uint32_t l = 0; l < m->n_layer; l++)
@@ -989,6 +1000,25 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
                                          m->io, err, err_len);
     if (!m->cache)
         goto fail;
+    /* reads ahead (model_ffn.c janas_m_prefetch): where they pay, of the
+       next layer's first 10 experts at most 2 (measured on 30 Sep 2026);
+       JANAS_PREFETCH=0 never, =r,b always with those */
+    if (janas_expert_cache_can_prefetch(m->cache)) {
+        const char *pf = getenv("JANAS_PREFETCH");
+        unsigned pr = 0, pb = 0;
+        m->pf_rank = 10;
+        m->pf_max = 2;
+        m->pf_mode = 1;
+        if (pf && atoi(pf) == 0) {
+            m->pf_mode = 0;
+        } else if (pf && sscanf(pf, "%u,%u", &pr, &pb) == 2 && pr >= 1 &&
+                   pr <= 32 && pb >= 1) {
+            m->pf_rank = pr;
+            m->pf_max = pb;
+            m->pf_mode = 2;
+            m->pf_on = 1;
+        }
+    }
     /* fill the cache with the experts this machine used most, before the
        first reply has to find them one token at a time. A caller that does
        not want this (a measurement) neither reads the profile nor adds to
@@ -1067,6 +1097,9 @@ void janas_llm_model_free(struct janas_llm_model *m)
         free(m->use_count);
         m->use_count = NULL;
     }
+    janas_gpu_tok_destroy(m->gpu, m->gtok);
+    free(m->gtok_layers);
+    free(m->gblk_layers);
     janas_gpu_destroy(m->gpu); /* before the memory it imported; frees
                                   the resident region it allocated */
     janas_expert_cache_destroy(m->cache);
@@ -1172,6 +1205,27 @@ int janas_llm_model_set_experts(struct janas_llm_model *m, uint32_t n)
         return 0;
     m->k_use = n;
     return 1;
+}
+
+void janas_llm_model_route_observer(struct janas_llm_model *m,
+                                    janas_llm_route_fn fn, void *ctx)
+{
+    m->route_fn = fn;
+    m->route_ctx = ctx;
+}
+
+void janas_llm_model_route_predictor(struct janas_llm_model *m,
+                                     janas_llm_route_fn fn, void *ctx,
+                                     uint32_t k)
+{
+    m->pred_fn = fn;
+    m->pred_ctx = ctx;
+    m->pred_k = k;
+}
+
+void janas_llm_model_route_predictor_early(struct janas_llm_model *m, int early)
+{
+    m->pred_early = early;
 }
 
 struct janas_gpu *janas_llm_model_gpu(struct janas_llm_model *m)
@@ -1288,9 +1342,19 @@ void janas_m_arena_to_gpu(struct janas_llm_model *m)
     if (!a)
         return;
     uint64_t slot = janas_expert_cache_slot_bytes(m->cache);
+    uint8_t *own = NULL;
     if (getenv("JANAS_GPU_EXPERTS") && atoi(getenv("JANAS_GPU_EXPERTS")) == 0)
         m->arena_gpu = -1;
-    else if (janas_m_gpu_import(m, a, bytes, slot) == 0) {
+    else if ((getenv("JANAS_GPU_ALLOC") || getenv("JANAS_GPU_TOKEN")) &&
+             janas_gpu_shares_host(m->gpu) &&
+             (own = janas_gpu_alloc(m->gpu, bytes)) &&
+             janas_expert_cache_rebase(m->cache, own) == 0) {
+        /* moved into the GPU driver's memory, which it reads faster than
+           imported pages; the CPU reads the same memory */
+        janas_gpu_flush(m->gpu, own, bytes);
+        m->arena_gpu = 1;
+        m->arena_loads = loads;
+    } else if (janas_m_gpu_import(m, a, bytes, slot) == 0) {
         m->arena_gpu = 1;
         m->arena_loads = loads;
     } else {

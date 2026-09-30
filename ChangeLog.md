@@ -2,6 +2,74 @@
 
 > Curated, user-facing summary of completed work, newest first.
 
+## [2026-10-01] - Experts read ahead, steadier drafts, every weight type on the GPU
+
+- **The drafts no longer switch themselves off for good.** The planner of
+  the multi-token prediction drafts judges each number of drafts by the
+  cost of a pass of that many tokens, as last timed. One pass of two
+  tokens timed while the disk was busy made it refuse every draft, and with
+  no drafts that cost was never timed again: in some sessions the drafts
+  stopped after the first hundred tokens and never came back, which is why
+  the same chat ran at 22 tokens/s one time and 26 the next. It now drafts
+  one pass in sixteen even when it chose none, as the drafts copied from
+  the conversation already did. Qwen3-Next-80B in `janas-chat`, three
+  replies of 600 tokens, two rounds alternated with the release of 28
+  September: 26.0 tokens/s (25.5-26.5) against 24.3 (22.5-26.1), +7%.
+- **The same seed gives the same conversation, drafts or not.** A reply
+  cut short - by `--max`, or stopped - after a pass that had accepted
+  drafts past its end dropped those tokens but not the random numbers drawn
+  for them, so every later reply of the conversation came out different
+  from the one without drafts. The numbers are given back now: with the
+  same seed the replies are identical with and without drafts, cut or not.
+- **A reply's statistics count the experts read ahead**; left out, they
+  made the cache look warmer and the disk idler than they were.
+- **Experts read ahead, where the cache misses many.** A mixture whose
+  experts do not fit in memory waited for the disk one layer at a time:
+  Qwen3-Next-80B with every bit and a 4 GiB cache spent half of each token
+  waiting, with the disk busy only 60% of the time. Now the next layer's
+  router is applied ahead, and of its first ten experts up to two not in
+  the cache are read while the current layer computes (on that model the
+  prediction held 91% of the experts chosen). Reading ahead costs on every
+  token and pays only when the cache misses many experts, so it turns
+  itself on above 60 missed experts a token and off below 40. Qwen3-Next-80B,
+  every bit, a fresh cache, three rounds alternated with it off: 4 GiB
+  10.9-11.1 to 11.7-11.8 tokens/s (+6%), 8 GiB 15.6-15.7 to 16.2-16.3
+  (+4%); with a warm 20 GiB cache it never turns on and the speed is the
+  same; in `janas-chat`, with a 4 GiB cache and every expert, 12.6
+  tokens/s against 12.1 of the release of 28 September (+3.6%). The
+  results are the same bits, on or off. `JANAS_PREFETCH=0` turns it off.
+- **The expert cache without transparent-huge-page advice.** With the
+  kernel's huge pages on "always" and their defrag on "madvise" (the
+  common setting), the advice made every first write to the cache try a
+  synchronous compaction of memory, which looked like waiting for the
+  disk. Without it, a reply of Qwen3-Next-80B from a fresh 20 GiB cache
+  went from 17.5-17.7 to 19.7 tokens/s, and a prompt from a warm one from
+  51 to 55; other sizes are even. `JANAS_ARENA_HUGE=1` asks for huge pages
+  as before.
+- **Every quantized type on the GPU**: Q8_0, Q4_0, Q4_1, Q5_1, IQ4_NL,
+  IQ4_XS, Q3_K and IQ3_S join Q4_K, Q5_K and Q6_K, bit for bit the CPU's
+  results (`gpu_check`: 1680 shapes). Gemma-4-26B keeps its attention, its
+  dense feed-forward and its output head in Q8_0; Qwen3.5-9B's "UD" mix
+  keeps some layers in IQ4_XS and Q8_0.
+- **A whole token on the GPU, as an experiment** (`JANAS_GPU_TOKEN=1`,
+  dense Qwen3 models, integrated GPUs): every step of a token - norms,
+  RoPE, attention, products, output head - in one submission, recorded
+  once. `JANAS_GPU_BLOCK=1` does the same for blocks of up to 64 tokens (a
+  prompt, the drafts a speculative pass checks), the same bits as one token
+  at a time; `JANAS_GPU_REPACK=1` gives the Q6_K weights an aligned copy
+  for it (some 0.8 GB more for Qwen3-4B). On the development laptop's
+  integrated GPU it runs level with the CPU: Qwen3-4B writes 24.3-24.7
+  tokens/s against the CPU's 24.8, and in blocks reads a 2000-token prompt
+  at 107 tokens/s where a token at a time gave 61. It is off unless asked
+  for.
+- Tools for measures: `llm_gen cpus=` puts the compute threads on chosen
+  CPUs; `bench_long` reports how long the disk was busy beside how long
+  the engine waited for it, prints the experts' bits and count in use
+  (`BENCH_EXACT=1` keeps every bit and the model's own count), and can
+  save the prompt and the reply; the library can hand a caller the
+  experts each layer routes a token to, and a prediction of the next
+  layer's.
+
 ## [2026-09-28] - More of the work on the GPU
 
 - **The experts' weights go to the GPU too** once every expert of every

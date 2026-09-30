@@ -113,6 +113,16 @@ void janas_sampler_mark(struct janas_sampler *s)
     s->n_seen = 0;
 }
 
+#define SPLITMIX_STEP 0x9e3779b97f4a7c15ull /* splitmix64 below */
+
+/* A draw takes one number, and only above temperature 0 (draw() below):
+   the sequence is a counter, so going back is a subtraction. */
+void janas_sampler_rewind(struct janas_sampler *s, uint32_t n)
+{
+    if (s->p.temperature > 0)
+        s->rng -= (uint64_t)n * SPLITMIX_STEP;
+}
+
 uint32_t janas_sampler_forced(const struct janas_sampler *s)
 {
     return s->forced;
@@ -120,7 +130,7 @@ uint32_t janas_sampler_forced(const struct janas_sampler *s)
 
 static uint64_t splitmix64(uint64_t *x)
 {
-    uint64_t z = (*x += 0x9e3779b97f4a7c15ull);
+    uint64_t z = (*x += SPLITMIX_STEP);
     z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ull;
     z = (z ^ (z >> 27)) * 0x94d049bb133111ebull;
     return z ^ (z >> 31);

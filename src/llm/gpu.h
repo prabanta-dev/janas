@@ -23,6 +23,29 @@
 
 struct janas_gpu;
 
+/*
+ * Q6_K in the GPU's aligned copy (JANAS_GPU_REPACK=1 with the whole token,
+ * model_gpu.c): each 210-byte block padded to 224 - ql 128, qh 64, scales
+ * 16, d at byte 208 - so that every part starts on 16 bytes. Only the GPU
+ * reads it, only for single vectors; a Q6_K_P block with its three planes
+ * becomes the Q6_K block it came from.
+ */
+#define JANAS_Q6_K_A 216
+#define JANAS_Q6KA_BLOCK 224
+
+/*
+ * The single token's copies in tiles of JANAS_TILE rows (JANAS_GPU_REPACK=2:
+ * the Q6_K and the Q4_K matrices with rows of 32 blocks and more; 3: every
+ * Q4_K), block b of a tile's rows side by side, so that the subgroups (a
+ * row each) read neighbouring memory at the same time: faster for long
+ * rows (Qwen3-4B's down matrices), slower for short ones on the
+ * development laptop's integrated GPU. Block b of row r is block ((r / T)
+ * nb + b) T + r % T; rows padded to a whole tile.
+ */
+#define JANAS_TILE 64
+#define JANAS_Q4_K_T 217
+#define JANAS_Q6_K_AT 218
+
 struct janas_gpu *janas_gpu_create(char *err, size_t err_len);
 void janas_gpu_destroy(struct janas_gpu *g);
 

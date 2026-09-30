@@ -1,0 +1,163 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+   Copyright (C) 2026 Maurizio Cammalleri */
+#version 450
+// After the q, k, v products of one token (qkv: q, then k at qd, then v at
+// qd + kvd floats): each head of q normalized (q_norm) and turned (NeoX
+// RoPE over its first n_rot dimensions, pairs i and i + n_rot/2, the
+// token's tables cs and sn), in place; each head of k normalized (k_norm)
+// and turned, then k and v put in the layer's KV cache at eight bits with
+// a scale each (the largest of the head's numbers becomes 127), row `row`
+// of the head's positions, as model_attn.c's qkv_item does. Each head of q
+// is left at eight bits too, for attn_decode.comp: its hd / 4 words of four
+// bytes, then its scale (the largest magnitude over 127), at the start of
+// its own hd floats. One workgroup per head: the n_head of q, then the
+// n_kv of k (with v).
+#extension GL_EXT_buffer_reference : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+
+layout(local_size_x = 128) in;
+
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer F { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer U { uint v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer R0 { uint v[]; };
+
+// qkv; q_norm and k_norm weights (hd each); rope: cos then sin, n_rot/2
+// each; kc, vc: the layer's caches (n_kv x cap x hd bytes); ks, vs: their
+// scales (n_kv x cap floats)
+layout(push_constant) uniform P {
+    uvec2 qkv, qn, kn, rope, kc, vc, ks, vs;
+    uint n_head, n_kv, hd, n_rot, cap, qs; /* qs: floats from a token's qkv to the next's */
+    float eps;
+    uvec2 pos; /* the token's position, read at run time: row pos */
+} p;
+
+shared float sv[512], sw[512];
+shared int qk[512], qv[512];
+
+/* A workgroup's sum and maximum: each subgroup's in one operation, then
+   the subgroups' results in a fixed order - two barriers, not one per
+   level of a tree. */
+shared float sg_part[64];
+
+float wg_sum(float s)
+{
+    float r = subgroupAdd(s);
+    if (subgroupElect())
+        sg_part[gl_SubgroupID] = r;
+    barrier();
+    float tot = sg_part[0];
+    for (uint i = 1u; i < gl_NumSubgroups; i++)
+        tot += sg_part[i];
+    barrier();
+    return tot;
+}
+
+float wg_max(float s)
+{
+    float r = subgroupMax(s);
+    if (subgroupElect())
+        sg_part[gl_SubgroupID] = r;
+    barrier();
+    float m = sg_part[0];
+    for (uint i = 1u; i < gl_NumSubgroups; i++)
+        m = max(m, sg_part[i]);
+    barrier();
+    return m;
+}
+
+float head_sum(float s) { return wg_sum(s); }
+float head_max(float s) { return wg_max(s); }
+
+void main()
+{
+    uint t = gl_LocalInvocationID.x, h = gl_WorkGroupID.x, hd = p.hd;
+    F QKV = F(p.qkv), QN = F(p.qn), KN = F(p.kn), R = F(p.rope);
+    bool isq = h < p.n_head;
+    uint kh = isq ? 0u : h - p.n_head;
+    uint qd = p.n_head * hd, kvd = p.n_kv * hd;
+    /* token j of a block (workgroup y): its qkv, its RoPE tables (cos then
+       sin, n_rot / 2 each, n_rot floats a token), its row pos + j */
+    uint j = gl_WorkGroupID.y, qo = j * p.qs, ro = j * p.n_rot;
+    uint o = qo + (isq ? h * hd : qd + kh * hd);
+    float ss = 0.0;
+    for (uint i = t; i < hd; i += 128u) {
+        float v = QKV.v[o + i];
+        sv[i] = v;
+        ss += v * v;
+    }
+    ss = head_sum(ss);
+    precise float scale = 1.0 / sqrt(ss / float(hd) + p.eps);
+    for (uint i = t; i < hd; i += 128u) {
+        precise float v = sv[i] * scale;
+        sv[i] = v * (isq ? QN.v[i] : KN.v[i]);
+    }
+    barrier();
+    uint half_ = p.n_rot / 2u;
+    for (uint i = t; i < hd; i += 128u) {
+        float r = sv[i];
+        if (i < half_) {
+            float a = sv[i], b = sv[i + half_];
+            r = a * R.v[ro + i] - b * R.v[ro + half_ + i];
+        } else if (i < p.n_rot) {
+            float a = sv[i - half_], b = sv[i];
+            r = a * R.v[ro + half_ + i - half_] + b * R.v[ro + i - half_];
+        }
+        sw[i] = r;
+    }
+    barrier();
+    if (isq) {
+        /* the scores' integer dot products take q at eight bits: the
+           largest magnitude becomes 127, q / (m / 127) rounded to even */
+        float mq = 0.0;
+        for (uint i = t; i < hd; i += 128u)
+            mq = max(mq, abs(sw[i]));
+        mq = head_max(mq);
+        float d = mq / 127.0, id = d > 0.0 ? 1.0 / d : 0.0;
+        U QW = U(p.qkv);
+        for (uint w = t; w < hd / 4u; w += 128u) {
+            uint wq = 0u;
+            for (uint e = 0; e < 4u; e++) {
+                int q = int(clamp(roundEven(sw[4u * w + e] * id), -127.0, 127.0));
+                wq |= (uint(q) & 0xffu) << (8u * e);
+            }
+            QW.v[o + w] = wq;
+        }
+        if (t == 0u)
+            QKV.v[o + hd / 4u] = d;
+        return;
+    }
+    /* k and v of this KV head at eight bits, each with its scale */
+    uint ov = qo + qd + kvd + kh * hd;
+    float mk = 0.0, mv = 0.0;
+    for (uint i = t; i < hd; i += 128u) {
+        sv[i] = QKV.v[ov + i];
+        mk = max(mk, abs(sw[i]));
+        mv = max(mv, abs(sv[i]));
+    }
+    mk = head_max(mk);
+    mv = head_max(mv);
+    float ik = mk > 0.0 ? 127.0 / mk : 0.0, iv = mv > 0.0 ? 127.0 / mv : 0.0;
+    for (uint i = t; i < hd; i += 128u) {
+        qk[i] = int(roundEven(sw[i] * ik));
+        qv[i] = int(roundEven(sv[i] * iv));
+    }
+    barrier();
+    uint row = R0(p.pos).v[0] + j;
+    uint at = (kh * p.cap + row) * hd; /* bytes; hd is a multiple of 4 */
+    U KC = U(p.kc), VC = U(p.vc);
+    for (uint w = t; w < hd / 4u; w += 128u) {
+        KC.v[at / 4u + w] = (uint(qk[4u * w]) & 0xffu) | ((uint(qk[4u * w + 1u]) & 0xffu) << 8) |
+                            ((uint(qk[4u * w + 2u]) & 0xffu) << 16) |
+                            ((uint(qk[4u * w + 3u]) & 0xffu) << 24);
+        VC.v[at / 4u + w] = (uint(qv[4u * w]) & 0xffu) | ((uint(qv[4u * w + 1u]) & 0xffu) << 8) |
+                            ((uint(qv[4u * w + 2u]) & 0xffu) << 16) |
+                            ((uint(qv[4u * w + 3u]) & 0xffu) << 24);
+    }
+    if (t == 0u) {
+        F KS = F(p.ks), VS = F(p.vs);
+        KS.v[kh * p.cap + row] = mk / 127.0;
+        VS.v[kh * p.cap + row] = mv / 127.0;
+    }
+}

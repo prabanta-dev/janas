@@ -331,6 +331,36 @@ int janas_llm_model_shift(struct janas_llm_model *m, uint32_t keep,
 static int forward(struct janas_llm_model *m, const int32_t *tokens, uint32_t n,
                    uint32_t pos0, float *logits, int all_logits);
 
+/*
+ * Reading ahead where it pays: it costs a router and the reads' submission
+ * on every token (~4 ms on Qwen3-Next-80B), and gains only where the cache
+ * misses many experts. Measured on 30 Sep 2026 (that model, every bit): -3%
+ * at ~12 misses a token, even at ~40, +4.5% at ~77, +5-7.5% at ~145. So on
+ * above PF_ON experts a token the cache would have missed (its misses and
+ * those the reads ahead spared it), off below PF_OFF, as it was between
+ * them; off, it costs nothing.
+ */
+#define PF_WINDOW 32
+#define PF_ON 60
+#define PF_OFF 40
+
+static void prefetch_decide(struct janas_llm_model *m,
+                            const struct janas_expert_cache_stats *a,
+                            const struct janas_expert_cache_stats *b)
+{
+    m->pf_would +=
+        (b->misses - a->misses) + (b->prefetch_used - a->prefetch_used);
+    if (++m->pf_tokens < PF_WINDOW)
+        return;
+    uint64_t per = m->pf_would / m->pf_tokens;
+    if (!m->pf_on && per > PF_ON)
+        m->pf_on = 1;
+    else if (m->pf_on && per < PF_OFF)
+        m->pf_on = 0;
+    m->pf_tokens = 0;
+    m->pf_would = 0;
+}
+
 int janas_llm_model_forward(struct janas_llm_model *m, const int32_t *tokens,
                             uint32_t n, uint32_t pos0, float *logits,
                             int all_logits)
@@ -353,6 +383,8 @@ int janas_llm_model_forward(struct janas_llm_model *m, const int32_t *tokens,
        from them, or a slow start decides the whole session */
     if (r == 0 && dt > 0 && !janas_llm_model_settling(m))
         janas_tuner_record(&m->tuner, cls, cand, dt / n);
+    if (r == 0 && n == 1 && m->pf_mode == 1)
+        prefetch_decide(m, &c0, &c1);
     janas_m_arena_to_gpu(m);
     return r;
 }
@@ -402,6 +434,12 @@ static int forward(struct janas_llm_model *m, const int32_t *tokens, uint32_t n,
     if (m->ple_dim && janas_m_ple_inputs(m, tokens, n) != 0)
         return -1;
     set_rope(m, n, pos0);
+    /* a token (or, with JANAS_GPU_BLOCK=1, a block) on the GPU, whole,
+       where it can (model_gpu.c) */
+    if (logits && janas_m_gpu_token(m, pos0, n, all_logits, logits) == 0) {
+        m->ring_hi = pos0 + n;
+        return 0;
+    }
     for (uint32_t l = 0; l < m->n_layer; l++) {
         const struct layer *ly = &m->layers[l];
         janas_m_norm_quant(m, f32(m, ly->attn_norm), 0, n);
@@ -410,6 +448,14 @@ static int forward(struct janas_llm_model *m, const int32_t *tokens, uint32_t n,
             janas_m_rec_layer(m, ly, n);
         else
             janas_m_attn_layer(m, ly, n, pos0);
+        /* the early predictor: layer l + 1's router on the state before
+           layer l's experts (its norm and router buffers are made again
+           just below) */
+        if (m->pred_fn && m->pred_early && l + 1 < m->n_layer &&
+            janas_m_route_predict(m, l + 1, n) != 0)
+            return -1;
+        if (m->pf_on && n == 1 && l + 1 < m->n_layer)
+            janas_m_prefetch(m, l);
         janas_m_norm_quant(m, f32(m, ly->ffn_norm), 0, n);
         trace_row(m, "post_norm", m->xn + (size_t)(n - 1) * dm, dm);
         if (ly->post_ffn) {
@@ -448,6 +494,9 @@ static int forward(struct janas_llm_model *m, const int32_t *tokens, uint32_t n,
         }
         if (m->ple_dim)
             janas_m_ple_layer(m, ly, l, n);
+        if (m->pred_fn && !m->pred_early && l + 1 < m->n_layer &&
+            janas_m_route_predict(m, l + 1, n) != 0)
+            return -1;
         if (m->trace) {
             /* JANAS_TRACE=1: the state after each layer, last token of the
                block, to compare with another implementation */

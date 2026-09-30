@@ -48,7 +48,7 @@ Everything in this repository was written and measured on:
 
 - **Linux Debian 13**, x86-64
 - **Intel Core Ultra 9 185H** (6 performance cores, 8 efficiency, 2 low-power; AVX2, FMA, F16C, AVX-VNNI; integrated Arc GPU)
-- **32 GB** of RAM
+- **32 GB** of DDR5 RAM
 - **1 TB NVMe SSD** (about 5.7 GB/s reading)
 
 Everything the engine does is chosen from what it measures, so another machine
@@ -134,7 +134,13 @@ report from `janas-bench` is the single most useful thing you can send back**
   where it has one, from the conversation where it does not, or from a small
   model of the same family given with `--draft`.
 - **Optional GPU** (Vulkan 1.3, integrated or discrete), used only where the
-  engine measures that it helps. Results are identical with and without it.
+  engine measures that it helps, for every quantized type the CPU reads.
+  Results are identical with and without it.
+- **Experts read ahead** when the expert cache is too small for the model:
+  the next layer's router is applied early and the experts it picks that
+  are not in memory are read from disk while the current layer computes.
+  It turns itself on only when the cache misses many experts a token
+  (Qwen3-Next-80B with a 4 GiB cache: +6%) and changes no result.
 
 On the machine above, with nothing else running, `janas-bench` reports this:
 
@@ -424,13 +430,24 @@ only where the token the model itself sampled is the very same one - at the
 first disagreement the guess is thrown away and the model's own token stands.
 So no wrong guess can survive into the text, and with the same seed the reply
 is the one you would have got without any of it - checked on every run of the
-tests, 256 tokens with drafts and 256 without, from one seed, identical. On
+tests, 256 tokens with drafts and 256 without, from one seed, identical, and
+in `janas-chat` itself over a conversation of three replies cut at 600
+tokens, with and without drafts. How many guesses a pass checks is decided
+from what passes have cost on this machine, and a pass with a guess is still
+tried now and then when the engine has stopped guessing, so that a moment of
+a busy disk does not switch the guesses off for the rest of the session
+(until 1 October 2026 it could: the same chat of Qwen3-Next-80B then ran at
+22 tok/s one time and 26 the next). On
 the development laptop `--mtp` takes Qwen3-Next-80B-A3B from 23 tok/s to 36
 and Qwen3.5-9B from 13 to 22 on an English explanation, and Gemma 4's
 assistants take its four models about one and a half times faster on an
 Italian chat reply (E4B from 18 tok/s to 26, the 12B from 8.5 to 12.9);
 how much it gives depends on the text, and on Italian prose a small Qwen
-gains little.
+gains little. It gives nothing either where the expert cache is much smaller
+than the model: two tokens in a pass call more experts than one, and the
+disk is already the limit (Qwen3-Next-80B with a 4 GiB cache: a run whose
+guesses had stopped after the first reply wrote at 12.75 tok/s, the five
+that kept them at 12.05-12.55).
 `--no-spec` and `/spec off` turn it off; they buy nothing but time, and are
 there to measure with.
 

@@ -558,7 +558,8 @@ struct janas_llm_chat_stats {
     double output_seconds;               /* writing the reply */
     double total_seconds;                /* from send to the end of the reply */
     /* the routed experts of message and reply: those used, those read from
-       the file (not in the cache), the bytes read, the time spent waiting */
+       the file (not in the cache, or read ahead for them), the bytes read
+       (reads ahead included, used or not), the time spent waiting */
     uint64_t experts_used, experts_read, bytes_read;
     double io_wait_seconds;
     /* passes of the reply the engine ran without drafting although drafts

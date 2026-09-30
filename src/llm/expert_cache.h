@@ -27,6 +27,10 @@ struct janas_expert_cache_stats {
     uint64_t warm_bytes; /* and for the filling in the background */
     double io_seconds;   /* wall time of the reads (in the background) */
     double wait_seconds; /* time the caller actually waited for them */
+    /* reads ahead (janas_expert_cache_prefetch): experts read, of those
+       the ones their layer then asked for, and the bytes (not in
+       bytes_read) */
+    uint64_t prefetch_reads, prefetch_used, prefetch_bytes;
 };
 
 struct janas_expert_cache;
@@ -63,6 +67,14 @@ size_t janas_expert_cache_slots(const struct janas_expert_cache *c);
 const uint8_t *janas_expert_cache_resident(struct janas_expert_cache *c,
                                            uint64_t *bytes, uint64_t *loads);
 uint64_t janas_expert_cache_loads(const struct janas_expert_cache *c);
+/*
+ * The arena moved to arena (n_slots x slot bytes, owned by the caller, not
+ * freed here), its contents copied, the file read without O_DIRECT from
+ * then on: for memory a GPU's driver allocated, which it reads faster
+ * than imported pages. Only when nothing is being read (as _resident); 0,
+ * or -1 with nothing changed.
+ */
+int janas_expert_cache_rebase(struct janas_expert_cache *c, uint8_t *arena);
 
 /*
  * Loads up to the cache capacity the experts with the highest counts
@@ -119,6 +131,24 @@ int janas_expert_cache_begin(struct janas_expert_cache *c, uint32_t layer,
                              const uint32_t *ids, size_t n,
                              const uint8_t **slots, uint8_t *ready);
 int janas_expert_cache_finish(struct janas_expert_cache *c);
+
+/*
+ * Reads ahead up to max of the experts ids of the layer that are not in the
+ * cache, in the order given (the most likely first), while the caller goes
+ * on: for a layer that will ask soon. They take the least recently used
+ * slots and stay last in line, and until that layer's next request they are
+ * never taken back (a read in flight must not land in a slot given to
+ * another); that request waits for them, counts those it asks for as hits,
+ * and leaves the others first in line to go. Called between requests, not
+ * between begin and finish; one layer ahead at a time (a new call for
+ * another layer settles the one before). Only where the kernel has io_uring,
+ * on a ring of its own, so that a request never waits for reads ahead of
+ * another layer. Returns the number of reads started (0: none, or no ring).
+ */
+int janas_expert_cache_prefetch(struct janas_expert_cache *c, uint32_t layer,
+                                const uint32_t *ids, size_t n, size_t max);
+/* Whether this cache can read ahead at all (the kernel has io_uring). */
+int janas_expert_cache_can_prefetch(const struct janas_expert_cache *c);
 
 void janas_expert_cache_stats(const struct janas_expert_cache *c,
                               struct janas_expert_cache_stats *s);

@@ -1,0 +1,104 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+   Copyright (C) 2026 Maurizio Cammalleri */
+#version 450
+// Q6_K in the GPU's aligned copy (JANAS_Q6_K_A, gpu.h: each block padded
+// from 210 to 224 bytes - ql 128, qh 64, scales 16, d and padding 16 - so
+// that every part starts on 16 bytes) times one Q8_K vector: as
+// q6k_row.comp, a subgroup per row and eight lanes per block, lane j = 4n +
+// 2h + kk taking positions 16kk .. 16kk + 15 of half n in quarters h and h
+// + 2, so that it reads one uvec4 of ql and one of qh, whole, with nothing
+// to realign. The same integers and the same fmas in the CPU's order: the
+// CPU's result for the Q6_K block it was copied from, bit for bit (and for
+// a Q6_K_P block with its three planes, which is the Q6_K one).
+#extension GL_EXT_integer_dot_product : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_clustered : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+
+layout(local_size_x = 64) in;
+layout(constant_id = 0) const uint NV = 1;
+layout(constant_id = 1) const uint SG = 8;
+layout(constant_id = 2) const uint TILE = 0; /* gpu.h JANAS_TILE, or 0 */
+const uint RPW = 64u / SG; /* rows a workgroup: a subgroup each */
+const uint G = SG / 8u;    /* blocks a subgroup takes a step */
+
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer U4 { uvec4 v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer F { float v[]; };
+
+layout(push_constant) uniform P { uvec2 w, x, y; uint rows, nb, nv, xs, ys; } p;
+
+int dp(uint a, uint b) { return dotPacked4x8EXT(int(a), int(b)); }
+
+uint comp(uvec4 v, uint i) { return i == 0u ? v.x : i == 1u ? v.y : i == 2u ? v.z : v.w; }
+
+void main()
+{
+    U4 W = U4(p.w), X = U4(p.x);
+    F Y = F(p.y);
+    uint lane = gl_SubgroupInvocationID, sg = gl_SubgroupID;
+    uint j = lane % 8u, g = lane / 8u;
+    uint row = gl_WorkGroupID.x * RPW + sg;
+    bool live = row < p.rows;
+    uint r = min(row, p.rows - 1u);
+    /* lane j = 4n + 2h + kk: half n, positions 16kk .. 16kk + 15 of quarters
+       h (low nibbles) and h + 2 (high): one uvec4 of ql and one of qh */
+    uint n = j / 4u, h = (j / 2u) % 2u, kk = j % 2u;
+    uint qlv = 4u * n + 2u * h + kk, qhv = 8u + 2u * n + kk;
+    /* NV vectors from v0 (workgroup y) on, of p.nv, xs blocks apart: the
+       weights read once for all */
+    uint v0 = gl_WorkGroupID.y * NV;
+    float acc[NV];
+    for (uint v = 0; v < NV; v++)
+        acc[v] = 0.0;
+    for (uint b0 = 0; b0 < p.nb; b0 += G) {
+        uint bb = min(b0 + g, p.nb - 1u);
+        uint wo = (TILE == 0u ? r * p.nb + bb : ((r / TILE) * p.nb + bb) * TILE + r % TILE) * 14u;
+        uvec4 l4 = W.v[wo + qlv], h4 = W.v[wo + qhv], sc4 = W.v[wo + 12u];
+        uint q[2][4];
+        int scg[2];
+        for (uint e = 0; e < 2u; e++) {
+            uint part = h + 2u * e, lsh = e * 4u, hsh = part * 2u;
+            for (uint k = 0; k < 4u; k++)
+                q[e][k] = ((comp(l4, k) >> lsh) & 0x0f0f0f0fu) |
+                          (((comp(h4, k) >> hsh) & 0x03030303u) << 4);
+            uint gi = 8u * n + 2u * part + kk; /* its group of 16 */
+            scg[e] = bitfieldExtract(int(comp(sc4, gi / 4u)), int(8u * (gi % 4u)), 8);
+        }
+        /* offset term j: scales 2j and 2j + 1 times their activation sums */
+        uint scw = comp(sc4, j / 2u);
+        int s0 = bitfieldExtract(int(scw), int(16u * (j % 2u)), 8);
+        int s1 = bitfieldExtract(int(scw), int(16u * (j % 2u) + 8u), 8);
+        float d = unpackHalf2x16(W.v[wo + 13u].x & 0xffffu).x;
+        for (uint v = 0; v < NV; v++) {
+            uint xo = (min(v0 + v, p.nv - 1u) * p.xs + bb) * 20u;
+            int isum = 0;
+            for (uint e = 0; e < 2u; e++) {
+                uint part = h + 2u * e;
+                uvec4 a4 = X.v[xo + 8u * n + 2u * part + kk];
+                int dot = 0;
+                for (uint k = 0; k < 4u; k++)
+                    dot += dp(q[e][k], comp(a4, k));
+                isum += scg[e] * dot;
+            }
+            uint bw = comp(X.v[xo + 16u + j / 4u], j % 4u);
+            isum -= 32 * (s0 * bitfieldExtract(int(bw), 0, 16) + s1 * bitfieldExtract(int(bw), 16, 16));
+            isum = subgroupClusteredAdd(isum, 8u);
+            /* d and the activations' scale: lane 0 alone needs them */
+            float sa = 0.0;
+            if (j == 0u)
+                sa = d * uintBitsToFloat(X.v[xo + 18u].x);
+            for (uint k = 0; k < G; k++) {
+                float ak = G == 1u ? sa : subgroupShuffle(sa, 8u * k);
+                int ik = G == 1u ? isum : subgroupShuffle(isum, 8u * k);
+                if (lane == 0u && b0 + k < p.nb)
+                    acc[v] = fma(ak, float(ik), acc[v]);
+            }
+        }
+    }
+    if (lane == 0u && live)
+        for (uint v = 0; v < NV; v++)
+            if (v0 + v < p.nv)
+                Y.v[(v0 + v) * p.ys + row] = acc[v];
+}

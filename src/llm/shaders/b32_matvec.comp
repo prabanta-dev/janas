@@ -1,0 +1,148 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+   Copyright (C) 2026 Maurizio Cammalleri */
+#version 450
+// Weights in blocks of 32 with four- or five-bit values, KIND chosen when
+// the pipeline is made: 0 Q4_0 (q - 8), 1 IQ4_NL (a table of sixteen
+// levels), 2 Q4_1 and 3 Q5_1 (d q + m, Q5_1 with a fifth bit per weight in
+// qh). As the CPU computes them (nib_dot_ref and dm_dot_ref in quant.c):
+// each block's integer dot in one fma into the accumulator of its position
+// in the group of eight, the minimum of Q4_1/Q5_1 (m times the block's
+// activation sum) in accumulators of its own, the eight added at the end as
+// janas_hsum8 does - the same float operations, so the results agree bit
+// for bit. Q4_0's q - 8 is folded as the exact integer sum q.a - 8 sum(a).
+// The activations come in the 32-block layout (20 uvec4 a Q8_K block: qs32
+// in 16, bsums32 in 2, d32 in 2), shared across the subgroup as in
+// q4k_matvec.comp. The low nibbles of a block's 16 bytes are weights 0-15,
+// the high ones 16-31.
+#extension GL_EXT_integer_dot_product : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_ballot : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+
+layout(local_size_x = 64) in;
+layout(constant_id = 0) const uint NV = 8;
+layout(constant_id = 1) const uint SG = 8;
+layout(constant_id = 2) const uint KIND = 0;
+const uint NX = (20u + SG - 1u) / SG;
+/* bytes of a block, and of a group of eight in words */
+const uint S = KIND == 3u ? 24u : KIND == 2u ? 20u : 18u;
+const uint GW = 2u * S;
+const bool DM = KIND >= 2u;
+
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer U1 { uint v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer U4 { uvec4 v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer F { float v[]; };
+
+layout(push_constant) uniform P { uvec2 w, x, y; uint rows, nb, nv, xs, ys; } p;
+
+const int IQ4[16] = int[16](-127, -104, -83, -65, -49, -35, -22, -10,
+                            1, 13, 25, 38, 53, 69, 89, 113);
+
+int dp(uint a, uint b) { return dotPacked4x8EXT(int(a), int(b)); }
+int dp4(uvec4 a, uvec4 b) { return dp(a.x, b.x) + dp(a.y, b.y) + dp(a.z, b.z) + dp(a.w, b.w); }
+uvec4 bc(uvec4 xr[NX], uint k) { return subgroupBroadcast(xr[k / SG], k % SG); }
+
+/* four bits (weights 4j..4j+3) spread to bit 4 of each byte */
+uint spread5(uint b)
+{
+    return ((b & 1u) << 4) | ((b & 2u) << 11) | ((b & 4u) << 18) | ((b & 8u) << 25);
+}
+
+/* each byte of w through the IQ4_NL table */
+uint iq4(uint w)
+{
+    return (uint(IQ4[w & 15u]) & 0xffu) | ((uint(IQ4[(w >> 8) & 15u]) & 0xffu) << 8) |
+           ((uint(IQ4[(w >> 16) & 15u]) & 0xffu) << 16) |
+           ((uint(IQ4[(w >> 24) & 15u]) & 0xffu) << 24);
+}
+
+float hsum8(float a[8])
+{
+    return ((a[0] + a[4]) + (a[2] + a[6])) + ((a[1] + a[5]) + (a[3] + a[7]));
+}
+
+void main()
+{
+    U1 W = U1(p.w);
+    U4 X = U4(p.x);
+    F Y = F(p.y);
+    uint lane = gl_SubgroupInvocationID;
+    uint row = min(gl_GlobalInvocationID.x, p.rows - 1u);
+    uint v0 = gl_WorkGroupID.y * NV;
+    uint xo[NV];
+    for (uint v = 0; v < NV; v++)
+        xo[v] = min(v0 + v, p.nv - 1u) * p.xs * 20u;
+    float acc[NV][8], accm[NV][8];
+    for (uint v = 0; v < NV; v++)
+        for (uint k = 0; k < 8u; k++) {
+            acc[v][k] = 0.0;
+            accm[v][k] = 0.0;
+        }
+    uint gw = row * p.nb * GW;
+    for (uint b = 0; b < p.nb; b++, gw += GW) {
+        uint wg[48];
+        for (uint i = 0; i < GW; i++)
+            wg[i] = W.v[gw + i];
+        float d[8], m[8];
+        uvec4 lo[8], hi[8];
+        for (uint k = 0; k < 8u; k++) {
+            uint B = S * k; /* the block's first byte */
+            uint hw = wg[B >> 2];
+            vec2 dm = unpackHalf2x16((B & 2u) != 0u ? (hw >> 16) | (wg[(B >> 2) + 1u] << 16) : hw);
+            d[k] = dm.x;
+            m[k] = dm.y;
+            uint qb = B + S - 16u, wi = qb >> 2;
+            uint q[4];
+            for (uint i = 0; i < 4u; i++)
+                q[i] = (qb & 2u) != 0u ? (wg[wi + i] >> 16) | (wg[wi + i + 1u] << 16) : wg[wi + i];
+            uint qh = KIND == 3u ? wg[(B + 4u) >> 2] : 0u;
+            for (uint i = 0; i < 4u; i++) {
+                uint l = q[i] & 0x0f0f0f0fu, h = (q[i] >> 4) & 0x0f0f0f0fu;
+                if (KIND == 1u) {
+                    l = iq4(l);
+                    h = iq4(h);
+                } else if (KIND == 3u) {
+                    l |= spread5((qh >> (4u * i)) & 15u);
+                    h |= spread5((qh >> (16u + 4u * i)) & 15u);
+                }
+                q[i] = l;
+                if (i == 0u) { lo[k].x = l; hi[k].x = h; }
+                if (i == 1u) { lo[k].y = l; hi[k].y = h; }
+                if (i == 2u) { lo[k].z = l; hi[k].z = h; }
+                if (i == 3u) { lo[k].w = l; hi[k].w = h; }
+            }
+        }
+        for (uint v = 0; v < NV; v++) {
+            uvec4 xr[NX];
+            for (uint j = 0; j < NX; j++)
+                xr[j] = X.v[xo[v] + min(j * SG + lane, 19u)];
+            uvec4 s0 = bc(xr, 18u), s1 = bc(xr, 19u);
+            float d32[8] = float[8](uintBitsToFloat(s0.x), uintBitsToFloat(s0.y),
+                                    uintBitsToFloat(s0.z), uintBitsToFloat(s0.w),
+                                    uintBitsToFloat(s1.x), uintBitsToFloat(s1.y),
+                                    uintBitsToFloat(s1.z), uintBitsToFloat(s1.w));
+            uvec4 b0 = bc(xr, 16u), b1 = bc(xr, 17u);
+            uint bw[8] = uint[8](b0.x, b0.y, b0.z, b0.w, b1.x, b1.y, b1.z, b1.w);
+            for (uint k = 0; k < 8u; k++) {
+                int dot = dp4(lo[k], bc(xr, 2u * k)) + dp4(hi[k], bc(xr, 2u * k + 1u));
+                /* the block's activation sum: bsums32 of its two halves */
+                int asum = bitfieldExtract(int(bw[k]), 0, 16) + bitfieldExtract(int(bw[k]), 16, 16);
+                if (KIND == 0u)
+                    dot -= 8 * asum;
+                acc[v][k] = fma(d[k] * d32[k], float(dot), acc[v][k]);
+                if (DM)
+                    accm[v][k] = fma(m[k] * d32[k], float(asum), accm[v][k]);
+            }
+            xo[v] += 20u;
+        }
+    }
+    if (gl_GlobalInvocationID.x < p.rows)
+        for (uint v = 0; v < NV; v++)
+            if (v0 + v < p.nv) {
+                float r = hsum8(acc[v]);
+                if (DM)
+                    r = r + hsum8(accm[v]);
+                Y.v[(v0 + v) * p.ys + row] = r;
+            }
+}

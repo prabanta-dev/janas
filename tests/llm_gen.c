@@ -10,6 +10,8 @@
  * Usage: llm_gen <model.jns> <prompt.int32> <n_prompt> <n_new> <k> [auto]
  *                [mtp=<mtp.jns>] [conf=<min probability of an MTP draft>]
  * With mtp= the drafts come from the model's MTP block instead of lookup.
+ * With cpus=<list> (e.g. 0-11 or 18,19) the compute threads run on those
+ * CPUs, one each (to run it beside another process on other cores).
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -95,6 +97,7 @@ int main(int argc, char **argv)
     const char *draft_path = NULL;
     uint64_t seed = 20260922;
     float top_p = 0.8f;
+    int cpu_list[64], n_list = 0;
     for (int i = 6; i < argc; i++) {
         if (strcmp(argv[i], "auto") == 0)
             use_auto = 1;
@@ -114,7 +117,20 @@ int main(int argc, char **argv)
             draft_path = argv[i] + 6;
         else if (strncmp(argv[i], "seed=", 5) == 0)
             seed = strtoull(argv[i] + 5, NULL, 10);
-        else if (strncmp(argv[i], "top_p=", 6) == 0)
+        else if (strncmp(argv[i], "cpus=", 5) == 0) {
+            /* a, a-b, comma separated */
+            for (const char *c = argv[i] + 5; *c && n_list < 64;) {
+                char *e;
+                long a = strtol(c, &e, 10), b = a;
+                if (e == c)
+                    break;
+                if (*e == '-')
+                    b = strtol(e + 1, &e, 10);
+                for (long k = a; k <= b && n_list < 64; k++)
+                    cpu_list[n_list++] = (int)k;
+                c = *e == ',' ? e + 1 : e;
+            }
+        } else if (strncmp(argv[i], "top_p=", 6) == 0)
             top_p = (float)atof(argv[i] + 6);
         else if (strncmp(argv[i], "seed=", 5) == 0)
             seed = (uint64_t)strtoull(argv[i] + 5, NULL, 10);
@@ -123,7 +139,10 @@ int main(int argc, char **argv)
     struct janas_cpu_layout lay;
     int ccpus[12] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
     const int *compute = ccpus;
-    if (n_compute != 12 && janas_cpu_layout(NULL, 0, &lay) == 0) {
+    if (n_list > 0) {
+        compute = cpu_list;
+        n_compute = n_list;
+    } else if (n_compute != 12 && janas_cpu_layout(NULL, 0, &lay) == 0) {
         if (n_compute < 1 || n_compute > lay.n)
             n_compute = lay.n;
         compute = lay.cpus;

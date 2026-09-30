@@ -65,6 +65,10 @@ int janas_sampler_bias(struct janas_sampler *s, const int32_t *ids,
 /* The filter (NULL: none); the sampler keeps the pointer's contents. */
 void janas_sampler_filter(struct janas_sampler *s,
                           const struct janas_sample_filter *f);
+/* The random sequence n draws back, as if the last n picks had not been
+   made: a speculative pass draws for drafts that a reply cut short never
+   returns. The penalties' counts are not undone (a mark resets them). */
+void janas_sampler_rewind(struct janas_sampler *s, uint32_t n);
 /* The penalties count the tokens picked from here on. */
 void janas_sampler_mark(struct janas_sampler *s);
 

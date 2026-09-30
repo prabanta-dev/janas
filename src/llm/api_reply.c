@@ -113,8 +113,13 @@ void janas_api_update_stats(janas_llm_chat *c)
     struct janas_expert_cache_stats cs;
     janas_expert_cache_stats(janas_llm_model_cache(c->llm->m), &cs);
     s->experts_used = cs.requests - c->cs0.requests;
-    s->experts_read = cs.misses - c->cs0.misses;
-    s->bytes_read = cs.bytes_read - c->cs0.bytes_read;
+    /* the experts read ahead count as read: they came from the file, and
+       left out they made the cache look warmer than it is and the disk
+       idler (1 Oct 2026: 108 GB "read" against 161 without them) */
+    s->experts_read =
+        cs.misses - c->cs0.misses + cs.prefetch_used - c->cs0.prefetch_used;
+    s->bytes_read = cs.bytes_read - c->cs0.bytes_read + cs.prefetch_bytes -
+                    c->cs0.prefetch_bytes;
     s->io_wait_seconds = cs.wait_seconds - c->cs0.wait_seconds;
     /* the reading of the prompt, and the rest of what a reply costs */
     uint32_t done = janas_llm_session_computed(c->s) - c->kv_from;

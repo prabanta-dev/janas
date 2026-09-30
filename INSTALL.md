@@ -85,6 +85,8 @@ It takes a few minutes: it measures prompt processing and generation speed for e
 ## Troubleshooting
 
 - `JANAS_GPU=0` turns the GPU off; `JANAS_GPU_DEVICE=integrated` or `discrete` picks one when there are both.
+- `JANAS_PREFETCH=0` never reads experts ahead (by default it turns itself on when the cache misses many experts a token).
+- `JANAS_ARENA_HUGE=1` asks the kernel for huge pages for the expert cache, as before 30 September 2026 (with transparent huge pages on `always` and their defrag on `madvise` it made the first writes to the cache slow).
 - `JANAS_KERNELS=avx2` uses the AVX2 kernels even where AVX-VNNI is available.
 - `JANAS_TUNE=0` turns self-tuning off (fixed defaults); delete `~/.cache/janas/tuning.txt` to start tuning from scratch.
 - `JANAS_TUNE_THREADS=0` keeps every usable thread instead of letting the first passes choose between every thread, one per performance core and the performance cores' threads; the choice, once made, is kept for that machine and model.

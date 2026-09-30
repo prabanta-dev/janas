@@ -1,0 +1,134 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+   Copyright (C) 2026 Maurizio Cammalleri */
+#version 450
+// Q6_K in bit planes (JANAS_Q6_K_P) times one Q8_K vector, a subgroup per
+// row, eight lanes per block, as q6k_row.comp: lane j = 4 n + part takes
+// the 32 values of half n, quarter part - two bits from each plane present
+// (the high plane in the row's 82-byte blocks, the bare planes p1 and p0
+// in arrays of their own, 64 bytes a block) - and the j-th pair of the
+// block's scaled activation sums; both integer sums are added exactly
+// across the eight lanes, and one lane forms sumi x 2^shk - c x off and
+// chains the fmas in the CPU's order (janas_q6kp_dot_ref): the CPU's result
+// bit for bit, at the three levels. The 82-byte blocks start 2 bytes off a
+// 4-byte boundary every other time: words are realigned.
+#extension GL_EXT_integer_dot_product : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_clustered : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+
+layout(local_size_x = 64) in;
+layout(constant_id = 0) const uint NV = 1;
+layout(constant_id = 1) const uint SG = 8;
+const uint RPW = 64u / SG; /* rows a workgroup: a subgroup each */
+const uint G = SG / 8u;    /* blocks a subgroup takes a step */
+
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer U1 { uint v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer U4 { uvec4 v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer F { float v[]; };
+
+layout(push_constant) uniform P { uvec2 w, x, y; uint rows, nb, nv, xs, ys, level; uvec2 p1, p0; } p;
+
+
+int dp(uint a, uint b) { return dotPacked4x8EXT(int(a), int(b)); }
+
+uint wat(U1 W, uint off, uint i)
+{
+    uint base = off >> 2;
+    return (off & 3u) != 0u ? (W.v[base + i] >> 16) | (W.v[base + i + 1u] << 16) : W.v[base + i];
+}
+
+void main()
+{
+    U1 W = U1(p.w);
+    U4 P1Q = U4(p.p1), P0Q = U4(p.p0);
+    U4 X = U4(p.x);
+    F Y = F(p.y);
+    uint lane = gl_SubgroupInvocationID, sg = gl_SubgroupID;
+    uint j = lane % 8u, g = lane / 8u;
+    uint row = gl_WorkGroupID.x * RPW + sg;
+    bool live = row < p.rows;
+    uint r = min(row, p.rows - 1u);
+    uint shk = p.level == 3u ? 1u : p.level == 2u ? 3u : 5u;
+    int c = p.level == 3u ? 64 : p.level == 2u ? 61 : 49;
+    uint n = j / 4u, part = j % 4u, hsh = part * 2u;
+    uint gi = 8u * n + 2u * part;
+    /* NV vectors from v0 (workgroup y) on, of p.nv, xs blocks apart: the
+       weights read once for all */
+    uint v0 = gl_WorkGroupID.y * NV;
+    float acc[NV];
+    for (uint v = 0; v < NV; v++)
+        acc[v] = 0.0;
+    for (uint b0 = 0; b0 < p.nb; b0 += G) {
+        uint b = b0 + g;
+        uint bb = min(b, p.nb - 1u);
+        uint blk = r * p.nb + bb;
+        uint off = blk * 82u, pw = blk * 16u;
+        uint scw0 = wat(W, off, 16u + gi / 4u);
+        int sca = bitfieldExtract(int(scw0), int(8u * (gi % 4u)), 8);
+        int scb = bitfieldExtract(int(scw0), int(8u * (gi % 4u + 1u)), 8);
+        /* the high plane's 8 words of this half, from 9 raw words */
+        uint raw[9], hw[8];
+        uint base = (off >> 2) + 8u * n;
+        for (uint k = 0; k < 9u; k++)
+            raw[k] = W.v[base + k];
+        for (uint k = 0; k < 8u; k++)
+            hw[k] = (off & 3u) != 0u ? (raw[k] >> 16) | (raw[k + 1u] << 16) : raw[k];
+        /* the bare planes' words, two uvec4 each (64-byte aligned) */
+        uvec4 p1a = uvec4(0), p1b = uvec4(0), p0a = uvec4(0), p0b = uvec4(0);
+        if (p.level >= 2u) {
+            p1a = P1Q.v[pw / 4u + 2u * n];
+            p1b = P1Q.v[pw / 4u + 2u * n + 1u];
+        }
+        if (p.level >= 3u) {
+            p0a = P0Q.v[pw / 4u + 2u * n];
+            p0b = P0Q.v[pw / 4u + 2u * n + 1u];
+        }
+        uint w1[8] = uint[8](p1a.x, p1a.y, p1a.z, p1a.w, p1b.x, p1b.y, p1b.z, p1b.w);
+        uint w0[8] = uint[8](p0a.x, p0a.y, p0a.z, p0a.w, p0b.x, p0b.y, p0b.z, p0b.w);
+        uint qv[8];
+        for (uint k = 0; k < 8u; k++) {
+            uint q = (hw[k] >> hsh) & 0x03030303u;
+            if (p.level >= 2u)
+                q = (q << 2) | ((w1[k] >> hsh) & 0x03030303u);
+            if (p.level >= 3u)
+                q = (q << 2) | ((w0[k] >> hsh) & 0x03030303u);
+            qv[k] = q;
+        }
+        uint scw = wat(W, off, 16u + j / 2u);
+        int s0 = bitfieldExtract(int(scw), int(16u * (j % 2u)), 8);
+        int s1 = bitfieldExtract(int(scw), int(16u * (j % 2u) + 8u), 8);
+        float d = unpackHalf2x16(wat(W, off, 20u) & 0xffffu).x;
+        for (uint v = 0; v < NV; v++) {
+            uint xo = (min(v0 + v, p.nv - 1u) * p.xs + bb) * 20u;
+            uvec4 a0 = X.v[xo + gi], a1 = X.v[xo + gi + 1u];
+            uint a[8] = uint[8](a0.x, a0.y, a0.z, a0.w, a1.x, a1.y, a1.z, a1.w);
+            int dot0 = 0, dot1 = 0;
+            for (uint k = 0; k < 8u; k++) {
+                if (k < 4u)
+                    dot0 += dp(qv[k], a[k]);
+                else
+                    dot1 += dp(qv[k], a[k]);
+            }
+            int isum = sca * dot0 + scb * dot1;
+            uvec4 bs = X.v[xo + 16u + j / 4u];
+            uint bw = j % 4u == 0u ? bs.x : j % 4u == 1u ? bs.y : j % 4u == 2u ? bs.z : bs.w;
+            int boff = s0 * bitfieldExtract(int(bw), 0, 16) + s1 * bitfieldExtract(int(bw), 16, 16);
+            isum = subgroupClusteredAdd(isum, 8u);
+            boff = subgroupClusteredAdd(boff, 8u);
+            float sa = d * 0.5 * uintBitsToFloat(X.v[xo + 18u].x);
+            for (uint k = 0; k < G; k++) {
+                float ak = G == 1u ? sa : subgroupShuffle(sa, 8u * k);
+                int ik = G == 1u ? isum : subgroupShuffle(isum, 8u * k);
+                int ok = G == 1u ? boff : subgroupShuffle(boff, 8u * k);
+                if (lane == 0u && b0 + k < p.nb)
+                    acc[v] = fma(ak, float(ik * (1 << shk) - c * ok), acc[v]);
+            }
+        }
+    }
+    if (lane == 0u && live)
+        for (uint v = 0; v < NV; v++)
+            if (v0 + v < p.nv)
+                Y.v[(v0 + v) * p.ys + row] = acc[v];
+}

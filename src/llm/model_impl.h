@@ -18,6 +18,7 @@
 #include "attention.h"
 #include "common/pool.h"
 #include "gpu.h"
+#include "gpu_token.h"
 #include "jns.h"
 #include "quant.h"
 #include "tuner.h"
@@ -156,6 +157,21 @@ struct janas_llm_model {
      * Half precision: attention at long context is bound by reading it.
      */
     int8_t *kcache, *vcache;
+    size_t kv_bytes, ks_bytes; /* the caches' and the scales' allocations */
+    /* the whole token on the GPU (gpu_token.h, JANAS_GPU_TOKEN=1): 0 not
+       tried yet, 1 ready, -1 not for this model; loads: the experts' loads
+       it was built with (a change and it is built again) */
+    struct janas_gpu_tok *gtok;
+    struct janas_gpu_tok_model gtok_md;
+    struct janas_gpu_tok_layer *gtok_layers;
+    struct janas_gpu_tok_layer *gblk_layers; /* the weights as they are,
+                                                 with a GPU copy */
+    int gtok_state, gtok_kv;
+    uint64_t gtok_loads;
+    /* the aligned copy of its Q6_K weights for the GPU (JANAS_GPU_REPACK),
+       in the GPU driver's memory, kept for a rebuild */
+    uint8_t *gtok_repack;
+    size_t gtok_repack_bytes;
     float *kscale, *vscale; /* one per position and KV head */
     /*
      * Recurrent state in two buffers, a base and a tip, so that rolling back
@@ -249,7 +265,22 @@ struct janas_llm_model {
     int exp_auto;   /* the level was chosen from the memory available */
     int k_auto;     /* and so was the number of experts per token */
     int warm_use;   /* preload the most used experts, and count them */
-    uint32_t *use_count;   /* experts used this session, n_layer * n_expert */
+    uint32_t *use_count; /* experts used this session, n_layer * n_expert */
+    janas_llm_route_fn route_fn; /* janas_llm_model_route_observer */
+    void *route_ctx;
+    janas_llm_route_fn pred_fn; /* janas_llm_model_route_predictor */
+    void *pred_ctx;
+    uint32_t pred_k;
+    int pred_early; /* ahead of layer l's experts, not after layer l */
+    /* reads ahead (janas_m_prefetch): the next layer's router applied
+       before this layer's experts, of its first r experts at most b read
+       ahead. pf_mode 0 never, 1 where it pays (pf_on, decided every
+       PF_WINDOW tokens from the experts the cache would have missed), 2
+       always (JANAS_PREFETCH=0, unset, =r,b) */
+    uint32_t pf_rank, pf_max;
+    int pf_mode, pf_on;
+    uint32_t pf_tokens;
+    uint64_t pf_would;
     uint64_t warm_experts; /* experts preloaded at open from the profile */
     double warm_seconds;
 
@@ -333,6 +364,8 @@ void janas_m_init_tuner(struct janas_llm_model *m);
 int janas_m_gpu_import(struct janas_llm_model *m, const uint8_t *p,
                        uint64_t bytes, uint64_t unit);
 void janas_m_arena_to_gpu(struct janas_llm_model *m);
+int janas_m_gpu_token(struct janas_llm_model *m, uint32_t pos, uint32_t n,
+                      int all, float *logits);
 void janas_m_apply_candidate(struct janas_llm_model *m, int cand);
 uint32_t *janas_m_profile_read(const struct janas_llm_model *m, size_t *used);
 void janas_m_profile_write(const struct janas_llm_model *m);
@@ -366,6 +399,16 @@ int janas_m_exp_tracing(void);
 void janas_m_exp_report(void);
 /* which experts a moe_block call runs */
 enum { MOE_ALL, MOE_SHARED, MOE_ROUTED };
+/* The router of layer l applied ahead to the state x (for the predictor
+   probe, janas_llm_model_route_predictor): 0 or -1. */
+int janas_m_route_predict(struct janas_llm_model *m, uint32_t l, uint32_t n);
+/* The router of layer l applied to the state x of n tokens: its first k
+   experts for each token into ids (n x k), best first. 0, or -1 when the
+   layer has no router to apply ahead. Uses xn, xq and router. */
+int janas_m_route_rank(struct janas_llm_model *m, uint32_t l, uint32_t n,
+                       uint32_t k, uint32_t *ids);
+/* Reads ahead for layer l + 1 of a single token (JANAS_PREFETCH). */
+void janas_m_prefetch(struct janas_llm_model *m, uint32_t l);
 int janas_m_moe_block(struct janas_llm_model *m, const struct layer *ly,
                       struct janas_expert_cache *cache,
                       const struct janas_jns_layer *jl, uint32_t l, uint32_t n,

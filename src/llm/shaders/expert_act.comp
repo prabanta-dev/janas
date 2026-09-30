@@ -9,6 +9,8 @@
 // One workgroup per 256-value block; gate and up of block b of item i at
 // g[(i * nb + b) * 256 ...], u likewise; the output block at x.
 #extension GL_EXT_buffer_reference : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
 #extension GL_EXT_buffer_reference_uvec2 : require
 
 layout(local_size_x = 256) in;
@@ -18,7 +20,23 @@ layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer U 
 
 layout(push_constant) uniform P { uvec2 g, u, x; uint blocks; } p;
 
-shared float amax_s[256];
+/* The workgroup's maximum: each subgroup's in one operation, then the
+   subgroups' - two barriers, not one per level of a tree. */
+shared float sg_part[64];
+
+float wg_max(float s)
+{
+    float r = subgroupMax(s);
+    if (subgroupElect())
+        sg_part[gl_SubgroupID] = r;
+    barrier();
+    float m = sg_part[0];
+    for (uint i = 1u; i < gl_NumSubgroups; i++)
+        m = max(m, sg_part[i]);
+    barrier();
+    return m;
+}
+
 shared int q_s[256];
 
 float exp_det(float x)
@@ -62,14 +80,8 @@ void main()
     precise float gs = gv * s;
     precise float h = gs * uv;
     /* the block's largest magnitude (max is exact in any order) */
-    amax_s[t] = abs(h);
-    barrier();
-    for (uint w = 128u; w > 0u; w >>= 1) {
-        if (t < w)
-            amax_s[t] = max(amax_s[t], amax_s[t + w]);
-        barrier();
-    }
-    precise float d = amax_s[0] * 0.007874015718698502;
+    float amax = wg_max(abs(h));
+    precise float d = amax * 0.007874015718698502;
     precise float id = d > 0.0 ? recip_det(d) : 0.0;
     precise float qf = roundEven(h * id);
     q_s[t] = int(clamp(qf, -127.0, 127.0));

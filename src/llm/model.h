@@ -270,6 +270,34 @@ uint32_t janas_llm_model_experts(const struct janas_llm_model *m,
                                  uint32_t *most);
 int janas_llm_model_set_experts(struct janas_llm_model *m, uint32_t n);
 
+/*
+ * The router's choices as they are made: after each MoE layer of the main
+ * model routes a pass of n tokens, fn gets the layer and, token after
+ * token, the k experts each chose (exp[j * k + i]). For measures of which
+ * experts a text uses; NULL stops it. Runs on the calling thread, inside
+ * the pass: it must be quick and must not call the model.
+ */
+typedef void (*janas_llm_route_fn)(void *ctx, uint32_t layer, uint32_t n,
+                                   uint32_t k, const uint32_t *exp);
+void janas_llm_model_route_observer(struct janas_llm_model *m,
+                                    janas_llm_route_fn fn, void *ctx);
+/*
+ * For measures of prefetching: after each layer l of the main model, the
+ * router of layer l + 1 applied ahead to the state after l (normed as l + 1
+ * will norm it, without l + 1's attention in between), and fn gets layer
+ * l + 1 and, token after token, the k experts it ranks first (k <= 32). Costs
+ * a router and a norm per layer while set; NULL stops it. The pass itself
+ * is unchanged.
+ */
+void janas_llm_model_route_predictor(struct janas_llm_model *m,
+                                     janas_llm_route_fn fn, void *ctx,
+                                     uint32_t k);
+/* With early set, the prediction for layer l + 1 is made sooner: on the
+   state after layer l's attention, before its experts (more time to read
+   ahead, a state further from the one l + 1 routes). */
+void janas_llm_model_route_predictor_early(struct janas_llm_model *m,
+                                           int early);
+
 /* The GPU in use, or NULL. */
 struct janas_gpu *janas_llm_model_gpu(struct janas_llm_model *m);
 /* Without one, why: the driver's or the build's reason, or that it was

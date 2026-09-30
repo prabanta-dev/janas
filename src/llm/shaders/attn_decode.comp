@@ -1,0 +1,205 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+   Copyright (C) 2026 Maurizio Cammalleri */
+#version 450
+// Attention of one token, first step: one workgroup per KV head and run of
+// C positions of the layer's eight-bit KV cache (n_kv x cap x hd bytes, a
+// scale per position and KV head), for the G = n_head / n_kv query heads
+// that share the KV head - its keys read once for all of them.
+// For each query head h and run c: scores q.k x the key's scale x `scale`
+// (q at eight bits too, a scale per head, as llama.cpp takes it with an
+// eight-bit cache: the dot products are integer, four bytes at a time; q
+// left so by qk_rope.comp, hd / 4 words then the scale in a head's floats),
+// their maximum m, the sum l of e^(s - m), and the values weighted by e^(s
+// - m) (and the value's scale), written to part at (h nch + c)(hd + 2):
+// the hd sums, then m and l. attn_merge.comp joins the runs. Workgroup x =
+// kh nch + c; the runs past the token's position leave at once, so that
+// the dispatch recorded once serves every position. The GPU's own order of
+// the sums: not the CPU's bits (attention.c), the same result to rounding.
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_clustered : require
+#extension GL_EXT_integer_dot_product : require
+
+layout(local_size_x = 256) in;
+
+layout(constant_id = 2) const uint G = 4; /* query heads a KV head */
+const uint C = 128u;       /* positions a run: gpu_token.c ATT_RUN */
+const uint MAXQ = 2048u;  /* G x hd */
+const uint MAXS = 1024u;  /* G x C */
+
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer R { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer B4 { uvec4 v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 8) readonly buffer B2 { uvec2 v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer W { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer RP { uint v[]; };
+
+layout(push_constant) uniform P {
+    uvec2 q, kc, vc, ks, vs, part;
+    uint n_head, n_kv, hd, cap, nch;
+    float scale;
+    uint qs, ps; /* floats from a token's qkv, and its runs, to the next's */
+    uvec2 pos; /* the token's position, read at run time: npos = pos + 1 */
+} p;
+
+shared float sq[MAXQ];  /* the G query heads */
+shared float sc[MAXS];  /* scores, then weights: head g at g C */
+shared float r8[MAXS / 8u];  /* the maxima of eight scores */
+shared float r8s[MAXS / 8u]; /* and the sums of eight weights */
+shared uint sqw[MAXQ / 4u]; /* the query heads at eight bits, four a word */
+shared float sqs[16];       /* and their scales */
+
+int byte_of(uint w, uint i) { return bitfieldExtract(int(w), int(8u * i), 8); }
+
+uint comp(uvec4 v, uint i) { return i == 0u ? v.x : i == 1u ? v.y : i == 2u ? v.z : v.w; }
+
+void main()
+{
+    uint t = gl_LocalInvocationID.x, hd = p.hd;
+    uint kh = gl_WorkGroupID.x / p.nch, c = gl_WorkGroupID.x % p.nch;
+    /* token j of a block (workgroup y): positions 0 .. pos + j */
+    uint j0 = gl_WorkGroupID.y;
+    uint npos = RP(p.pos).v[0] + j0 + 1u, p0 = c * C;
+    if (p0 >= npos)
+        return; /* the whole workgroup: past the token */
+    uint n = min(C, npos - p0);
+    R Q = R(p.q), KS = R(p.ks), VS = R(p.vs);
+    RP QW = RP(p.q);
+    B4 KC = B4(p.kc), VC = B4(p.vc); /* 16 bytes a load: hd % 16 == 0 */
+    /* the G query heads at eight bits and their scales, as qk_rope.comp
+       left them */
+    uint qo = j0 * p.qs + kh * G * hd, nw = hd / 4u;
+    for (uint k = t; k < G * nw; k += 256u)
+        sqw[k] = QW.v[qo + (k / nw) * hd + k % nw];
+    if (t < G)
+        sqs[t] = Q.v[qo + t * hd + nw];
+    barrier();
+    uint base = kh * p.cap + p0; /* the run's first position */
+    /* scores: four threads a position (256 threads: C / 64 rounds), each
+       a quarter of the key for all G heads at once - the key read once -
+       the quarters added across the cluster */
+    for (uint r0 = 0; r0 < C; r0 += 64u) {
+        uint j = r0 + t / 4u, qq = t % 4u, jj = min(j, n - 1u);
+        uint w0 = (base + jj) * hd / 16u;
+        int dg[G];
+        for (uint g = 0; g < G; g++)
+            dg[g] = 0;
+        for (uint w = qq; w < hd / 16u; w += 4u) {
+            uvec4 k4 = KC.v[w0 + w];
+            for (uint g = 0; g < G; g++) {
+                uint o = g * hd / 4u + 4u * w;
+                dg[g] += dotPacked4x8EXT(int(sqw[o]), int(k4.x)) +
+                         dotPacked4x8EXT(int(sqw[o + 1u]), int(k4.y)) +
+                         dotPacked4x8EXT(int(sqw[o + 2u]), int(k4.z)) +
+                         dotPacked4x8EXT(int(sqw[o + 3u]), int(k4.w));
+            }
+        }
+        float ksc = KS.v[base + jj] * p.scale;
+        for (uint g = 0; g < G; g++) {
+            int d = subgroupClusteredAdd(dg[g], 4u);
+            if (qq == 0u && j < n)
+                sc[g * C + j] = float(d) * sqs[g] * ksc;
+        }
+    }
+    barrier();
+    /* each head's maximum and sum: a thread a (head, position), the
+       eights by cluster, then a head's eight eights in order */
+    const uint IT = (G * C + 255u) / 256u;
+    for (uint it = 0; it < IT; it++) {
+        uint k = it * 256u + t, g = k / C, j = k % C;
+        float v = g < G && j < n ? sc[k] : -1.0 / 0.0;
+        float cm = subgroupClusteredMax(v, 8u);
+        if (t % 8u == 0u && g < G)
+            r8[k / 8u] = cm;
+    }
+    barrier();
+    /* each thread its head's maximum from the eights, in the order the
+       table of maxima took (no barrier for it); the eights of the sums
+       in a table of their own, the maxima still being read */
+    for (uint it = 0; it < IT; it++) {
+        uint k = it * 256u + t, g = min(k / C, G - 1u), j = k % C;
+        bool in_g = k / C < G, on = in_g && j < n;
+        float m = r8[g * (C / 8u)];
+        for (uint q = 1u; q < C / 8u; q++)
+            m = max(m, r8[g * (C / 8u) + q]);
+        float e = on ? exp(sc[k] - m) : 0.0;
+        if (in_g)
+            sc[k] = on ? e * VS.v[base + j] : 0.0;
+        float ce = subgroupClusteredAdd(e, 8u);
+        if (t % 8u == 0u && in_g)
+            r8s[k / 8u] = ce;
+    }
+    barrier();
+    /* the weighted values, the slices' sums through the shared memory
+       the query heads are done with, added in order. Up to four heads a
+       KV head and runs of more than 64 positions: a thread 8 dimensions
+       of every head (each value read once, 8 bytes a load) and a slice of
+       the run's positions, four slices in the four lanes of a cluster,
+       added there first. Else (shorter runs, where that is slower, or more
+       heads): a thread 16 dimensions of one head. SH: the slice sets left
+       for the shared memory. */
+    uint SH;
+    if (G <= 4u && n > 64u) {
+        uint U = hd / 8u;
+        SH = min(256u / (4u * U), MAXQ / (G * hd));
+        if (t < 4u * U * SH) {
+            uint slo = t % 4u, u = (t / 4u) % U, shi = t / (4u * U), d0 = u * 8u;
+            B2 VC2 = B2(p.vc);
+            float a[G * 8u];
+            for (uint k = 0; k < G * 8u; k++)
+                a[k] = 0.0;
+            for (uint j = slo + 4u * shi; j < n; j += 4u * SH) {
+                uvec2 v2 = VC2.v[((base + j) * hd + d0) / 8u];
+                for (uint k = 0; k < 8u; k++) {
+                    float vb = float(byte_of(k < 4u ? v2.x : v2.y, k % 4u));
+                    for (uint g = 0; g < G; g++)
+                        a[g * 8u + k] += sc[g * C + j] * vb;
+                }
+            }
+            for (uint g = 0; g < G; g++)
+                for (uint k = 0; k < 8u; k++) {
+                    float x = subgroupClusteredAdd(a[g * 8u + k], 4u);
+                    if (slo == 0u)
+                        sq[shi * G * hd + g * hd + d0 + k] = x;
+                }
+        }
+    } else {
+        uint U = G * hd / 16u;
+        SH = min(256u / U, MAXQ / (G * hd));
+        if (t < U * SH) {
+            uint u = t % U, sl_ = t / U, g = u / (hd / 16u), d0 = (u % (hd / 16u)) * 16u;
+            float a[16];
+            for (uint k = 0; k < 16u; k++)
+                a[k] = 0.0;
+            for (uint j = sl_; j < n; j += SH) {
+                uvec4 v4 = VC.v[((base + j) * hd + d0) / 16u];
+                float wj = sc[g * C + j];
+                for (uint k = 0; k < 16u; k++)
+                    a[k] += wj * float(byte_of(comp(v4, k / 4u), k % 4u));
+            }
+            for (uint k = 0; k < 16u; k++)
+                sq[sl_ * G * hd + g * hd + d0 + k] = a[k];
+        }
+    }
+    barrier();
+    W O = W(p.part);
+    for (uint k = t; k < G * hd; k += 256u) {
+        uint g = k / hd, i = k % hd;
+        float a = sq[k];
+        for (uint q = 1u; q < SH; q++)
+            a += sq[q * G * hd + k];
+        uint h = kh * G + g;
+        O.v[j0 * p.ps + (h * p.nch + c) * (hd + 2u) + i] = a;
+    }
+    if (t < G) {
+        /* the head's maximum and sum, from the eights in their order */
+        float m = r8[t * (C / 8u)], l = 0.0;
+        for (uint q = 1u; q < C / 8u; q++)
+            m = max(m, r8[t * (C / 8u) + q]);
+        for (uint q = 0; q < C / 8u; q++)
+            l += r8s[t * (C / 8u) + q];
+        uint h = kh * G + t;
+        O.v[j0 * p.ps + (h * p.nch + c) * (hd + 2u) + hd] = m;
+        O.v[j0 * p.ps + (h * p.nch + c) * (hd + 2u) + hd + 1u] = l;
+    }
+}

@@ -1,0 +1,92 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+   Copyright (C) 2026 Maurizio Cammalleri */
+#version 450
+// IQ4_XS weights times up to NV Q8_K vectors, one row per invocation, as
+// janas_iq4xs_dot_ref computes it: eight groups of 32 weights through the
+// sixteen levels of IQ4_NL, each group's integer dot times its 6-bit scale
+// (ls - 32), the block's exact integer sum in one fma: the same float
+// operation as the CPU, so the results agree bit for bit. A block is 136
+// bytes, 34 words: d and scales_h, scales_l, then the nibbles, group g's 16
+// bytes holding its weights 0-15 (low nibbles) and 16-31 (high).
+// Activations shared across the subgroup as in q4k_matvec.comp.
+#extension GL_EXT_integer_dot_product : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_ballot : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+
+layout(local_size_x = 64) in;
+layout(constant_id = 0) const uint NV = 8;
+layout(constant_id = 1) const uint SG = 8;
+const uint NX = (19u + SG - 1u) / SG;
+
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer U1 { uint v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer U4 { uvec4 v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer F { float v[]; };
+
+layout(push_constant) uniform P { uvec2 w, x, y; uint rows, nb, nv, xs, ys; } p;
+
+const int IQ4[16] = int[16](-127, -104, -83, -65, -49, -35, -22, -10,
+                            1, 13, 25, 38, 53, 69, 89, 113);
+
+int dp(uint a, uint b) { return dotPacked4x8EXT(int(a), int(b)); }
+int dp4(uvec4 a, uvec4 b) { return dp(a.x, b.x) + dp(a.y, b.y) + dp(a.z, b.z) + dp(a.w, b.w); }
+uvec4 bc(uvec4 xr[NX], uint k) { return subgroupBroadcast(xr[k / SG], k % SG); }
+
+/* each byte of w (a nibble) through the IQ4_NL table */
+uint iq4(uint w)
+{
+    return (uint(IQ4[w & 15u]) & 0xffu) | ((uint(IQ4[(w >> 8) & 15u]) & 0xffu) << 8) |
+           ((uint(IQ4[(w >> 16) & 15u]) & 0xffu) << 16) |
+           ((uint(IQ4[(w >> 24) & 15u]) & 0xffu) << 24);
+}
+
+void main()
+{
+    U1 W = U1(p.w);
+    U4 X = U4(p.x);
+    F Y = F(p.y);
+    uint lane = gl_SubgroupInvocationID;
+    uint row = min(gl_GlobalInvocationID.x, p.rows - 1u);
+    uint v0 = gl_WorkGroupID.y * NV;
+    uint xo[NV];
+    for (uint v = 0; v < NV; v++)
+        xo[v] = min(v0 + v, p.nv - 1u) * p.xs * 20u;
+    float acc[NV];
+    for (uint v = 0; v < NV; v++)
+        acc[v] = 0.0;
+    uint wo = row * p.nb * 34u;
+    for (uint b = 0; b < p.nb; b++, wo += 34u) {
+        uint w0 = W.v[wo], sl = W.v[wo + 1u];
+        float d = unpackHalf2x16(w0).x;
+        uint sh = w0 >> 16;
+        int sc[8];
+        uvec4 lo[8], hi[8];
+        for (uint g = 0; g < 8u; g++) {
+            uint ls = ((sl >> (8u * (g / 2u) + 4u * (g & 1u))) & 15u) |
+                      (((sh >> (2u * g)) & 3u) << 4);
+            sc[g] = int(ls) - 32;
+            uvec4 q = uvec4(W.v[wo + 2u + 4u * g], W.v[wo + 3u + 4u * g],
+                            W.v[wo + 4u + 4u * g], W.v[wo + 5u + 4u * g]);
+            lo[g] = uvec4(iq4(q.x & 0x0f0f0f0fu), iq4(q.y & 0x0f0f0f0fu),
+                          iq4(q.z & 0x0f0f0f0fu), iq4(q.w & 0x0f0f0f0fu));
+            hi[g] = uvec4(iq4((q.x >> 4) & 0x0f0f0f0fu), iq4((q.y >> 4) & 0x0f0f0f0fu),
+                          iq4((q.z >> 4) & 0x0f0f0f0fu), iq4((q.w >> 4) & 0x0f0f0f0fu));
+        }
+        for (uint v = 0; v < NV; v++) {
+            uvec4 xr[NX];
+            for (uint j = 0; j < NX; j++)
+                xr[j] = X.v[xo[v] + min(j * SG + lane, 19u)];
+            int isum = 0;
+            for (uint g = 0; g < 8u; g++)
+                isum += sc[g] * (dp4(lo[g], bc(xr, 2u * g)) + dp4(hi[g], bc(xr, 2u * g + 1u)));
+            float d8 = uintBitsToFloat(bc(xr, 18u).x);
+            acc[v] = fma(d * d8, float(isum), acc[v]);
+            xo[v] += 20u;
+        }
+    }
+    if (gl_GlobalInvocationID.x < p.rows)
+        for (uint v = 0; v < NV; v++)
+            if (v0 + v < p.nv)
+                Y.v[(v0 + v) * p.ys + row] = acc[v];
+}

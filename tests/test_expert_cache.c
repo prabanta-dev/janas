@@ -7,7 +7,9 @@
  * file system, not tmpfs) whose every expert slot is filled with its own
  * (layer, expert) identity, then checks on random request sequences that
  * every returned slot holds the expert asked for, and that hits and misses
- * match a reference model of the replacement policy.
+ * match a reference model of the replacement policy. Reads ahead
+ * (janas_expert_cache_prefetch): hits with the right bytes when their layer
+ * asks, never evicted before it has, unprotected once it has.
  */
 #define _GNU_SOURCE
 #include <fcntl.h>
@@ -277,7 +279,24 @@ static void check_resident(struct janas_jns *j, struct janas_pool *io)
         /* hits load nothing: a GPU's copy stays true */
         CHECK(janas_expert_cache_loads(c) == ALL, "hits changed loads to %llu",
               (unsigned long long)janas_expert_cache_loads(c));
-        janas_expert_cache_destroy(c);
+        /* moved to memory of another's (as a GPU driver's): every expert
+           where fetch says, with its bytes, in the new arena */
+        uint8_t *moved = aligned_alloc(4096, (size_t)ALL * SLOT);
+        CHECK(moved && janas_expert_cache_rebase(c, moved) == 0,
+              "rebase failed");
+        for (uint32_t k = 0; moved && k < ALL; k++) {
+            uint32_t e = k % N_EXPERT;
+            CHECK(janas_expert_cache_fetch(c, k / N_EXPERT, &e, 1, &slot) == 0,
+                  "fetch after rebase");
+            CHECK(slot >= moved && slot + SLOT <= moved + (size_t)ALL * SLOT,
+                  "slot outside the new arena");
+            fill_slot(expect, k / N_EXPERT, e);
+            CHECK(memcmp(slot, expect, SLOT) == 0, "rebased: wrong bytes");
+        }
+        CHECK(janas_expert_cache_resident(c, &bytes, &loads) == moved,
+              "resident is not the new arena");
+        janas_expert_cache_destroy(c); /* not the arena: it is ours */
+        free(moved);
     }
 
     /* filled in the background: never while it runs, then resident */
@@ -309,6 +328,125 @@ static void check_resident(struct janas_jns *j, struct janas_pool *io)
 }
 
 /* The whole check, once with the reads on the ring and once without it. */
+/* A request of one layer, checked: every slot holds its expert. */
+static void ask(struct janas_expert_cache *c, uint32_t layer,
+                const uint32_t *ids, int n, const char *what)
+{
+    static uint8_t expect[SLOT];
+    const uint8_t *slots[K];
+    CHECK(janas_expert_cache_fetch(c, layer, ids, (size_t)n, slots) == 0,
+          "%s: fetch failed", what);
+    for (int i = 0; i < n; i++) {
+        fill_slot(expect, layer, ids[i]);
+        CHECK(memcmp(slots[i], expect, SLOT) == 0,
+              "%s: layer %u expert %u has the wrong bytes", what, layer,
+              ids[i]);
+    }
+}
+
+/* Reads ahead: only with io_uring (without, prefetch reads nothing). */
+static void check_prefetch(struct janas_jns *j, struct janas_pool *io)
+{
+    char err[256];
+    struct janas_expert_cache_stats st;
+    struct janas_expert_cache *c = janas_expert_cache_create(
+        j, (uint64_t)SLOTS * SLOT, 3, io, err, sizeof(err));
+    CHECK(c != NULL, "create (prefetch): %s", err);
+    if (!c)
+        return;
+    /* the basic case: read ahead, then asked - hits, the right bytes */
+    uint32_t ahead[4] = {0, 1, 2, 3};
+    int n = janas_expert_cache_prefetch(c, 1, ahead, 4, 2);
+    const char *u = getenv("JANAS_URING");
+    int ring = !(u && atoi(u) == 0);
+    if (!ring) {
+        CHECK(n == 0, "prefetch without io_uring read %d", n);
+        janas_expert_cache_destroy(c);
+        return;
+    }
+    if (n == 0) { /* no io_uring in this kernel: nothing to check */
+        janas_expert_cache_destroy(c);
+        return;
+    }
+    CHECK(n == 2, "prefetch read %d of at most 2", n);
+    uint32_t want[3] = {0, 1, 5};
+    ask(c, 1, want, 3, "after a prefetch");
+    janas_expert_cache_stats(c, &st);
+    CHECK(st.hits == 2 && st.misses == 1, "prefetched: %llu hits, %llu misses",
+          (unsigned long long)st.hits, (unsigned long long)st.misses);
+    CHECK(st.prefetch_reads == 2 && st.prefetch_used == 2,
+          "prefetch stats %llu read, %llu used",
+          (unsigned long long)st.prefetch_reads,
+          (unsigned long long)st.prefetch_used);
+    CHECK(st.bytes_read == SLOT && st.prefetch_bytes == 2 * SLOT,
+          "bytes %llu, ahead %llu", (unsigned long long)st.bytes_read,
+          (unsigned long long)st.prefetch_bytes);
+    /* protection: the cache full, a prefetch for layer 2 takes two slots;
+       layer 0 then asks for three new experts, and must not take them */
+    uint32_t l0a[3] = {0, 1, 2};
+    ask(c, 0, l0a, 3, "filling");
+    uint32_t ahead2[2] = {6, 7};
+    CHECK(janas_expert_cache_prefetch(c, 2, ahead2, 2, 2) == 2,
+          "prefetch into a full cache");
+    uint32_t l0b[3] = {3, 4, 5};
+    ask(c, 0, l0b, 3, "evicting around a prefetch");
+    janas_expert_cache_reset_stats(c);
+    uint32_t l2[3] = {6, 7, 0};
+    ask(c, 2, l2, 3, "the prefetched layer");
+    janas_expert_cache_stats(c, &st);
+    CHECK(st.hits == 2 && st.prefetch_used == 2,
+          "prefetched and protected: %llu hits, %llu used",
+          (unsigned long long)st.hits, (unsigned long long)st.prefetch_used);
+    /* unused: read ahead and not asked, it is protected no longer - the
+       misses that follow may take its slot */
+    uint32_t ahead3[1] = {4};
+    CHECK(janas_expert_cache_prefetch(c, 1, ahead3, 1, 1) == 1,
+          "prefetch of one");
+    uint32_t l1[3] = {0, 1, 2};
+    ask(c, 1, l1, 3, "a layer that did not want it");
+    uint32_t l0c[1] = {6};
+    ask(c, 0, l0c, 1, "one miss");
+    janas_expert_cache_reset_stats(c);
+    uint32_t l1b[1] = {4};
+    ask(c, 1, l1b, 1, "the unused one again");
+    janas_expert_cache_stats(c, &st);
+    CHECK(st.misses == 1, "an unused prefetch stayed in the cache");
+    /* the engine's order: layer l + 1 read ahead before layer l asks, so
+       two sets are out at once - the one for l + 1 must survive layer l's
+       request and its misses, and be counted when l + 1 asks */
+    {
+        struct janas_expert_cache *e = janas_expert_cache_create(
+            j, (uint64_t)SLOTS * SLOT, 3, io, err, sizeof(err));
+        CHECK(e != NULL, "create (two sets): %s", err);
+        if (e) {
+            uint32_t a1[1] = {4}, a2[1] = {5};
+            CHECK(janas_expert_cache_prefetch(e, 1, a1, 1, 1) == 1,
+                  "ahead of layer 1");
+            uint32_t r0[3] = {0, 1, 2};
+            ask(e, 0, r0, 3, "layer 0 with layer 1 read ahead");
+            CHECK(janas_expert_cache_prefetch(e, 2, a2, 1, 1) == 1,
+                  "ahead of layer 2");
+            uint32_t r1[3] = {4, 0, 1};
+            ask(e, 1, r1, 3, "layer 1 with layer 2 read ahead");
+            janas_expert_cache_stats(e, &st);
+            CHECK(st.prefetch_used == 1, "layer 1's read ahead: %llu used",
+                  (unsigned long long)st.prefetch_used);
+            uint32_t r2[3] = {5, 0, 1};
+            ask(e, 2, r2, 3, "layer 2");
+            janas_expert_cache_stats(e, &st);
+            CHECK(st.prefetch_used == 2 && st.prefetch_reads == 2,
+                  "two sets: %llu of %llu used",
+                  (unsigned long long)st.prefetch_used,
+                  (unsigned long long)st.prefetch_reads);
+            janas_expert_cache_destroy(e);
+        }
+    }
+    /* destroyed with reads ahead in flight */
+    uint32_t ahead4[2] = {1, 2};
+    janas_expert_cache_prefetch(c, 2, ahead4, 2, 2);
+    janas_expert_cache_destroy(c);
+}
+
 static void run(const char *path, const char *how)
 {
     rng = 0x9E3779B97F4A7C15ull;
@@ -436,6 +574,7 @@ static void run(const char *path, const char *how)
     }
 
     janas_expert_cache_destroy(c);
+    check_prefetch(&j, io);
     check_resident(&j, io);
     janas_pool_destroy(io);
     janas_jns_close(&j);

@@ -640,6 +640,7 @@ int janas_llm_session_truncate(struct janas_llm_session *s, uint32_t n)
     uint32_t kv = n > 0 ? n - 1 : 0;
     if (kv < s->n_kv && janas_llm_model_recurrent(s->m))
         return -1;
+    janas_sampler_rewind(s->smp, s->n - s->ret); /* drawn, never returned */
     s->n = s->ret = n;
     if (s->n_kv > kv)
         s->n_kv = kv;
@@ -678,7 +679,11 @@ int janas_llm_session_append(struct janas_llm_session *s, const int32_t *tokens,
     if (s->ret < s->n) {
         /* drop the generated tokens nobody has seen; if the last kept one
            already ran, run it again: its MTP row paired it with a dropped
-           token */
+           token. Each was drawn, so the random sequence goes back as many:
+           otherwise a reply cut short with drafts accepted past the cut
+           left every later reply of the conversation drawn from other
+           numbers than without drafts (1 Oct 2026) */
+        janas_sampler_rewind(s->smp, s->n - s->ret);
         s->n = s->ret;
         if (s->n > 0 && s->n_kv > s->n - 1)
             s->n_kv = s->n - 1;
@@ -920,6 +925,13 @@ int janas_llm_session_next(struct janas_llm_session *s, int32_t *token)
     }
     if (s->mtp && drafts_wanted && s->off_left == 0 && !probe) {
         nd = plan ? plan_drafts(&s->pl, s->msurv, s->n_mdraft) : s->n_mdraft;
+        /* one pass in sixteen drafts anyway, as the copies do: a pass of
+           two tokens timed once while the disk was busy made the planner
+           refuse every draft, and with none its cost was never timed again
+           - Qwen3-Next-80B with a 4 GiB cache drafted 33 times in a
+           session and then never (1 Oct 2026) */
+        if (plan && nd == 0 && s->n_mdraft > 0 && s->st.passes % 16 == 0)
+            nd = 1;
         memcpy(block + 1, s->mdraft, (size_t)nd * sizeof(int32_t));
     }
     if ((uint32_t)nd > s->cap - s->n)

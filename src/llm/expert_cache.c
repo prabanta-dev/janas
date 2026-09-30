@@ -27,6 +27,8 @@
 #define URING_BATCH 4
 /* and again from this many times the threads of the I/O pool on */
 #define URING_DEEP_TIMES 4
+/* reads ahead at most, for one layer */
+#define PF_MAX 64
 
 struct read_job {
     uint64_t offset;
@@ -36,8 +38,9 @@ struct read_job {
 
 struct janas_expert_cache {
     const struct janas_jns *j;
-    int level; /* 1 to 3: how much of a slot is read (see the header) */
-    int fd;    /* O_DIRECT, independent of the jns descriptor */
+    int level;         /* 1 to 3: how much of a slot is read (see the header) */
+    int fd;            /* O_DIRECT, independent of the jns descriptor */
+    int arena_foreign; /* the arena belongs to another (a GPU): not freed */
     struct janas_pool *io;
 
     uint64_t slot_bytes;
@@ -102,6 +105,22 @@ struct janas_expert_cache {
     int outstanding; /* begin called, finish not yet (caller thread only) */
     int stop;
     int batch_rc;
+
+    /*
+     * Reads ahead (janas_expert_cache_prefetch), two sets: the engine reads
+     * ahead for layer l + 1 before layer l asks, so the set for l + 1 is
+     * made while the one for l still waits for its request. Each set has a
+     * ring of its own (by the layer's parity), so a request waits only for
+     * the reads ahead of its own layer, never for another layer's. The
+     * slots they fill are flagged (never a victim) until their layer's
+     * request settles them.
+     */
+    struct janas_uring *pf_ring[2];
+    uint8_t *pf_flag; /* per slot */
+    int32_t pf_slot[2][PF_MAX];
+    size_t pf_n[2];
+    uint32_t pf_layer[2];
+    int pf_inflight[2];
 };
 
 static double now(void)
@@ -165,6 +184,30 @@ static void push_front(struct janas_expert_cache *c, int32_t s)
         c->tail = s;
 }
 
+/* Last in line: the next to go (a read ahead not yet asked for). */
+static void push_back(struct janas_expert_cache *c, int32_t s)
+{
+    c->next[s] = NONE;
+    c->prev[s] = c->tail;
+    if (c->tail != NONE)
+        c->next[c->tail] = s;
+    c->tail = s;
+    if (c->head == NONE)
+        c->head = s;
+}
+
+static void layer_push_back(struct janas_expert_cache *c, int32_t s)
+{
+    uint32_t l = slot_layer(c, s);
+    c->lnext[s] = NONE;
+    c->lprev[s] = c->ltail[l];
+    if (c->ltail[l] != NONE)
+        c->lnext[c->ltail[l]] = s;
+    c->ltail[l] = s;
+    if (c->lhead[l] == NONE)
+        c->lhead[l] = s;
+}
+
 static void touch(struct janas_expert_cache *c, int32_t s)
 {
     if (c->head != s) {
@@ -190,12 +233,12 @@ static int32_t victim(struct janas_expert_cache *c)
         for (uint32_t d = 0; d < nl; d++) {
             uint32_t l = (c->cur_layer + nl - d) % nl;
             for (int32_t s = c->ltail[l]; s != NONE; s = c->lprev[s])
-                if (c->stamp[s] != c->request)
+                if (c->stamp[s] != c->request && !c->pf_flag[s])
                     return s;
         }
     }
     for (int32_t s = c->tail; s != NONE; s = c->prev[s])
-        if (c->stamp[s] != c->request)
+        if (c->stamp[s] != c->request && !c->pf_flag[s])
             return s;
     return NONE;
 }
@@ -447,15 +490,29 @@ struct janas_expert_cache *janas_expert_cache_create(const struct janas_jns *j,
     c->lnext = malloc(n_slots * sizeof(int32_t));
     c->lhead = malloc(((size_t)j->h.n_layer + 1) * sizeof(int32_t));
     c->ltail = malloc(((size_t)j->h.n_layer + 1) * sizeof(int32_t));
+    c->pf_flag = calloc(n_slots, 1);
     if (c->fd < 0 || !c->arena || !c->where || !c->key || !c->prev ||
         !c->next || !c->stamp || !c->jobs || !c->lprev || !c->lnext ||
-        !c->lhead || !c->ltail) {
+        !c->lhead || !c->ltail || !c->pf_flag) {
         snprintf(err, err_len, "cannot allocate %zu slots of %llu bytes",
                  n_slots, (unsigned long long)slot_bytes);
         janas_expert_cache_destroy(c);
         return NULL;
     }
-    madvise(c->arena, arena_bytes, MADV_HUGEPAGE);
+    /*
+     * No MADV_HUGEPAGE: with the kernel's transparent huge pages on
+     * "always" and their defrag on "madvise" (as on the development
+     * laptop), a region so marked makes every first write to a page try a
+     * synchronous compaction of memory, which on a machine with fragmented
+     * memory fails and only costs. Measured on 30 Sep 2026 (Qwen3-Next-80B, a
+     * fresh 20 GiB cache): ~1,800-8,800 failed compactions a reply, decode
+     * 17.5 -> 19.7 tokens/s without it, prefill 51 -> 55, and no loss once
+     * the cache is warm (23.0-23.6 against 23.1-23.3) - the kernel still
+     * gives huge pages where they are free. JANAS_ARENA_HUGE=1 asks for
+     * them again.
+     */
+    if (getenv("JANAS_ARENA_HUGE") && atoi(getenv("JANAS_ARENA_HUGE")) > 0)
+        madvise(c->arena, arena_bytes, MADV_HUGEPAGE);
     pthread_mutex_init(&c->api_lock, NULL);
     pthread_mutex_init(&c->lock, NULL);
     pthread_cond_init(&c->cond, NULL);
@@ -470,6 +527,14 @@ struct janas_expert_cache *janas_expert_cache_create(const struct janas_jns *j,
     const char *ur = getenv("JANAS_URING");
     if (!ur || atoi(ur) != 0)
         c->ring = janas_uring_create(URING_QUEUE);
+    if (c->ring) {
+        c->pf_ring[0] = janas_uring_create(PF_MAX);
+        c->pf_ring[1] = c->pf_ring[0] ? janas_uring_create(PF_MAX) : NULL;
+        if (!c->pf_ring[1]) {
+            janas_uring_destroy(c->pf_ring[0]);
+            c->pf_ring[0] = NULL;
+        }
+    }
     c->ring_batch = URING_BATCH;
     /* deep enough that the kernel has made more readers than the pool has
        threads: measured on 21 Sep 2026 at 32 reads, with eight of them */
@@ -513,6 +578,12 @@ void janas_expert_cache_destroy(struct janas_expert_cache *c)
     }
     free(c->warm_counts);
     free(c->warm_order);
+    for (int p = 0; p < 2; p++) {
+        if (c->pf_ring[p] && c->pf_inflight[p]) /* no read may land after */
+            janas_uring_wait(c->pf_ring[p]);
+        janas_uring_destroy(c->pf_ring[p]);
+    }
+    free(c->pf_flag);
     if (c->has_coordinator) {
         pthread_mutex_lock(&c->lock);
         while (c->pending)
@@ -528,7 +599,8 @@ void janas_expert_cache_destroy(struct janas_expert_cache *c)
     pthread_mutex_destroy(&c->api_lock);
     if (c->fd >= 0)
         close(c->fd);
-    free(c->arena);
+    if (!c->arena_foreign)
+        free(c->arena);
     free(c->where);
     free(c->key);
     free(c->prev);
@@ -674,7 +746,8 @@ const uint8_t *janas_expert_cache_resident(struct janas_expert_cache *c,
     if (c->n_slots < total || c->outstanding)
         return NULL;
     pthread_mutex_lock(&c->api_lock);
-    int busy = c->has_warmer && !atomic_load(&c->warm_over);
+    int busy = (c->has_warmer && !atomic_load(&c->warm_over)) || c->pf_n[0] ||
+               c->pf_n[1];
     pthread_mutex_lock(&c->lock);
     busy |= c->pending;
     pthread_mutex_unlock(&c->lock);
@@ -685,6 +758,34 @@ const uint8_t *janas_expert_cache_resident(struct janas_expert_cache *c,
         return NULL;
     *bytes = (uint64_t)c->n_slots * c->slot_bytes;
     return c->arena;
+}
+
+int janas_expert_cache_rebase(struct janas_expert_cache *c, uint8_t *arena)
+{
+    pthread_mutex_lock(&c->api_lock);
+    int busy = c->outstanding || c->pf_n[0] || c->pf_n[1] ||
+               (c->has_warmer && !atomic_load(&c->warm_over));
+    pthread_mutex_lock(&c->lock);
+    busy |= c->pending;
+    pthread_mutex_unlock(&c->lock);
+    /* the new memory takes no O_DIRECT reads (a GPU driver's mapping):
+       the file opened again without it, for the loads that may still come */
+    char path[64];
+    snprintf(path, sizeof(path), "/proc/self/fd/%d", c->j->fd);
+    int fd = busy ? -1 : open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        pthread_mutex_unlock(&c->api_lock);
+        return -1;
+    }
+    memcpy(arena, c->arena, c->n_slots * c->slot_bytes);
+    close(c->fd);
+    c->fd = fd;
+    if (!c->arena_foreign)
+        free(c->arena);
+    c->arena = arena;
+    c->arena_foreign = 1;
+    pthread_mutex_unlock(&c->api_lock);
+    return 0;
 }
 
 uint64_t janas_expert_cache_loads(const struct janas_expert_cache *c)
@@ -745,6 +846,97 @@ int janas_expert_cache_warm(struct janas_expert_cache *c,
     return rc;
 }
 
+/* A set of reads ahead complete (under api_lock); on an I/O error their
+   slots are emptied, so that nothing takes them for what they were to
+   hold. */
+static void pf_collect(struct janas_expert_cache *c, int p)
+{
+    if (!c->pf_inflight[p])
+        return;
+    double t0 = now();
+    int rc = janas_uring_wait(c->pf_ring[p]);
+    c->st.wait_seconds += now() - t0;
+    c->pf_inflight[p] = 0;
+    if (rc == 0)
+        return;
+    for (size_t i = 0; i < c->pf_n[p]; i++) {
+        int32_t s = c->pf_slot[p][i];
+        c->where[c->key[s]] = NONE;
+        layer_unlink(c, s);
+        c->key[s] = NONE;
+        c->filled--;
+    }
+}
+
+/* A set settled: complete, and no longer kept (under api_lock). */
+static void pf_settle(struct janas_expert_cache *c, int p)
+{
+    pf_collect(c, p);
+    for (size_t i = 0; i < c->pf_n[p]; i++)
+        c->pf_flag[c->pf_slot[p][i]] = 0;
+    c->pf_n[p] = 0;
+}
+
+int janas_expert_cache_prefetch(struct janas_expert_cache *c, uint32_t layer,
+                                const uint32_t *ids, size_t n, size_t max)
+{
+    int p = (int)(layer & 1);
+    if (!c->pf_ring[p] || layer >= c->j->h.n_layer || c->outstanding)
+        return 0;
+    pthread_mutex_lock(&c->api_lock);
+    pf_settle(c, p); /* a set left over (its layer never asked) */
+    size_t base = (size_t)layer * c->j->h.n_expert, count = 0;
+    uint64_t bytes = c->j->layers[layer].level_bytes[c->level - 1];
+    for (size_t i = 0; i < n && count < max && count < PF_MAX; i++) {
+        if (ids[i] >= c->j->h.n_expert || c->where[base + ids[i]] != NONE)
+            continue;
+        int32_t s = victim(c);
+        if (s == NONE)
+            break;
+        if (c->key[s] != NONE) {
+            c->where[c->key[s]] = NONE;
+            layer_unlink(c, s);
+        } else {
+            c->filled++;
+        }
+        atomic_fetch_add(&c->loads, 1);
+        int64_t k = (int64_t)base + ids[i];
+        c->key[s] = k;
+        c->where[k] = s;
+        layer_push_back(c, s);
+        unlink_slot(c, s);
+        push_back(c, s);
+        if (janas_uring_read(c->pf_ring[p], c->fd,
+                             c->arena + (size_t)s * c->slot_bytes, bytes,
+                             janas_jns_expert_offset(c->j, layer, ids[i])) !=
+            0) { /* the ring is full: this one stays unread */
+            c->where[k] = NONE;
+            layer_unlink(c, s);
+            c->key[s] = NONE;
+            c->filled--;
+            break;
+        }
+        c->pf_flag[s] = 1;
+        c->pf_slot[p][c->pf_n[p]++] = s;
+        count++;
+    }
+    if (count) {
+        c->pf_layer[p] = layer;
+        c->pf_inflight[p] = 1;
+        c->st.prefetch_reads += count;
+        c->st.prefetch_bytes += count * bytes;
+        if (janas_uring_submit(c->pf_ring[p]) != 0)
+            pf_settle(c, p); /* waits and empties what did not start */
+    }
+    pthread_mutex_unlock(&c->api_lock);
+    return (int)count;
+}
+
+int janas_expert_cache_can_prefetch(const struct janas_expert_cache *c)
+{
+    return c->pf_ring[0] != NULL;
+}
+
 int janas_expert_cache_begin(struct janas_expert_cache *c, uint32_t layer,
                              const uint32_t *ids, size_t n,
                              const uint8_t **slots, uint8_t *ready)
@@ -762,6 +954,15 @@ int janas_expert_cache_begin(struct janas_expert_cache *c, uint32_t layer,
     }
     c->cur_layer = layer;
     c->pass_asked += n;
+    /* reads ahead for this layer (or for one it went past): wait for them;
+       counted as used where this request asks for them, then settled. The
+       set of a later layer stays as it is, still in flight. */
+    int pf_here[2];
+    for (int p = 0; p < 2; p++) {
+        pf_here[p] = c->pf_n[p] && layer >= c->pf_layer[p];
+        if (pf_here[p])
+            pf_collect(c, p);
+    }
     int32_t s[256];
     size_t base = (size_t)layer * c->j->h.n_expert;
     /* hits first, so that they are stamped before any victim is chosen */
@@ -773,10 +974,19 @@ int janas_expert_cache_begin(struct janas_expert_cache *c, uint32_t layer,
         s[i] = c->where[base + ids[i]];
         ready[i] = s[i] != NONE;
         if (s[i] != NONE) {
+            /* a read ahead for this very layer: its set is settled here */
+            if (c->pf_flag[s[i]] == 1 && pf_here[layer & 1] &&
+                c->pf_layer[layer & 1] == layer) {
+                c->st.prefetch_used++;
+                c->pf_flag[s[i]] = 2; /* counted once */
+            }
             touch(c, s[i]);
             c->st.hits++;
         }
     }
+    for (int p = 0; p < 2; p++)
+        if (pf_here[p])
+            pf_settle(c, p); /* the unused ones: last in line, free to go */
     int queued = 0;
     for (size_t i = 0; i < n; i++)
         if (s[i] == NONE) {

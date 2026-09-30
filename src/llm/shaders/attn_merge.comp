@@ -1,0 +1,116 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+   Copyright (C) 2026 Maurizio Cammalleri */
+#version 450
+// Attention of one token, second step, with the quantization of its output
+// for the products that follow: one workgroup per block of 256 of the
+// n_head x hd outputs, a value a thread (element e: head e / hd, dimension
+// e % hd). The runs of attn_decode.comp joined in their order - the
+// largest maximum M, each run's sums and l scaled by e^(m - M), the sums
+// divided by the total - then quantized to Q8_K as norm_quant.comp does
+// (q256, and q32 if set): no dispatch of its own between the two.
+#extension GL_EXT_buffer_reference : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_clustered : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+
+layout(local_size_x = 256) in;
+
+const uint C = 128u; /* positions a run, as attn_decode.comp */
+
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer R { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer U { uint v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer RP { uint v[]; };
+
+layout(push_constant) uniform P {
+    uvec2 part, q256, q32;
+    uint hd, nch, ps; /* ps: floats from a token's runs to the next's */
+    uint pad_;
+    uvec2 pos;
+} p;
+
+shared float m8[32];        /* the block's maxima, eight values each */
+shared int s8a[32], s8b[32]; /* and its quants' sums, eight each */
+
+bool set(uvec2 a) { return a.x != 0u || a.y != 0u; }
+
+float recip_det(float d)
+{
+    precise float y = uintBitsToFloat(0x7EF311C3u - floatBitsToUint(d));
+    for (int i = 0; i < 3; i++)
+        y = fma(y, fma(-d, y, 1.0), y);
+    return y;
+}
+
+int q8(float v, float id)
+{
+    precise float q = roundEven(v * id);
+    return int(clamp(q, -127.0, 127.0));
+}
+
+void main()
+{
+    uint t = gl_LocalInvocationID.x, b = gl_WorkGroupID.x, hd = p.hd;
+    U Q = U(p.q256), Q32 = U(p.q32);
+    /* token j of a block (workgroup y): positions 0 .. pos + j */
+    uint j0 = gl_WorkGroupID.y;
+    uint runs = (RP(p.pos).v[0] + j0 + C) / C; /* npos / C, rounded up */
+    R PR = R(p.part);
+    uint e = 256u * b + t, h = e / hd, i = e % hd;
+    uint at = j0 * p.ps + h * p.nch * (hd + 2u);
+    float M = PR.v[at + hd];
+    for (uint c = 1u; c < runs; c++)
+        M = max(M, PR.v[at + c * (hd + 2u) + hd]);
+    float L = 0.0, a = 0.0;
+    for (uint c = 0; c < runs; c++) {
+        uint o = at + c * (hd + 2u);
+        float f = exp(PR.v[o + hd] - M);
+        L += PR.v[o + hd + 1u] * f;
+        a += PR.v[o + i] * f;
+    }
+    float v = a / L;
+    /* the maxima of the groups of 32 and of the block */
+    float mc = subgroupClusteredMax(abs(v), 8u);
+    if (t % 8u == 0u)
+        m8[t / 8u] = mc;
+    barrier();
+    uint l = t / 32u;
+    float m32 = max(max(m8[4u * l], m8[4u * l + 1u]), max(m8[4u * l + 2u], m8[4u * l + 3u]));
+    float m256 = 0.0;
+    for (uint k = 0; k < 32u; k++)
+        m256 = max(m256, m8[k]);
+    precise float dd = m256 * 0.007874015718698502;
+    float id = dd > 0.0 ? recip_det(dd) : 0.0;
+    precise float d32 = m32 * 0.007874015718698502;
+    float id32 = d32 > 0.0 ? recip_det(d32) : 0.0;
+    int qa = q8(v, id), qb = q8(v, id32);
+    /* four quants a word, from four neighbouring threads */
+    uint wa = subgroupClusteredOr((uint(qa) & 0xffu) << (8u * (t % 4u)), 4u);
+    uint wb = subgroupClusteredOr((uint(qb) & 0xffu) << (8u * (t % 4u)), 4u);
+    uint base = (j0 * gl_NumWorkGroups.x + b) * 80u; /* 320 bytes a block */
+    if (t % 4u == 0u) {
+        Q.v[base + t / 4u] = wa;
+        if (set(p.q32))
+            Q32.v[base + t / 4u] = wb;
+    }
+    /* the sums of 16 quants: two of eight each */
+    int ca = subgroupClusteredAdd(qa, 8u), cb = subgroupClusteredAdd(qb, 8u);
+    if (t % 8u == 0u) {
+        s8a[t / 8u] = ca;
+        s8b[t / 8u] = cb;
+    }
+    barrier();
+    if (t < 8u) {
+        int sa0 = s8a[4u * t] + s8a[4u * t + 1u], sa1 = s8a[4u * t + 2u] + s8a[4u * t + 3u];
+        Q.v[base + 64u + t] = (uint(sa0) & 0xffffu) | (uint(sa1) << 16);
+        if (set(p.q32)) {
+            int sb0 = s8b[4u * t] + s8b[4u * t + 1u], sb1 = s8b[4u * t + 2u] + s8b[4u * t + 3u];
+            Q32.v[base + 64u + t] = (uint(sb0) & 0xffffu) | (uint(sb1) << 16);
+            precise float dt =
+                max(max(m8[4u * t], m8[4u * t + 1u]), max(m8[4u * t + 2u], m8[4u * t + 3u])) *
+                0.007874015718698502;
+            Q32.v[base + 72u + t] = floatBitsToUint(dt);
+        }
+    }
+    if (t == 0u)
+        Q.v[base + 72u] = floatBitsToUint(dd);
+}
