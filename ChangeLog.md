@@ -2,6 +2,28 @@
 
 > Curated, user-facing summary of completed work, newest first.
 
+## [2026-10-01] - Code completion in the editor
+
+- **`janas-server` fills in code at an editor's cursor**, with a model for
+  code such as Qwen3-Coder-30B-A3B-Instruct, through OpenAI's
+  `/v1/completions` with a `suffix` and through llama.cpp's **`/infill`**,
+  which the extensions made for llama.cpp ask (llama.vscode): the line up
+  to the cursor, `n_predict` (0: the prompt only), `n_indent` and
+  `t_max_predict_ms` read as llama.cpp reads them, the answer as
+  llama.cpp's. Tried in VSCodium with llama.vscode and with Continue;
+  how to set them up in [docs/code-completion.md](docs/code-completion.md).
+- **The window sent at every keystroke is kept from moving.** The
+  extensions send "the last N lines before the cursor", whose start moves
+  at every new line, and the whole window was read again: 17 s for 1,330
+  tokens at every request. The start of each window is now remembered and
+  kept, put ahead when the editor slides its window, the text before the
+  cursor cut at a line within `--fim-prefix` tokens (2048), the lines after
+  it within `--fim-suffix` (8), the text written within `--fim-max` (256):
+  1.5-2.2 s a proposal after the first request of a window, on a laptop
+  with Qwen3-Coder-30B-A3B in memory.
+- **Sixteen stop strings** a request, where OpenAI takes four: Continue
+  sends more, and every one of its requests was refused.
+
 ## [2026-10-01] - janas-flights, the first of Janas's services
 
 - **janas-flights**, flights as an MCP server of its own, for `janas-chat`

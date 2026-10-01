@@ -13,6 +13,7 @@
  * prompt, which is then read once where the model can go back over it.
  */
 #include "server.h"
+#include "fim.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -31,6 +32,8 @@ struct srv_engine {
     int stop;
     int verbose;
     uint32_t max_input, warn_input;
+    struct srv_fim *fim; /* the windows of fill-in-the-middle requests */
+    uint32_t fim_max;    /* the tokens they write at most; 0: as asked */
     char desc[1024];
     char system[1024]; /* the system message Janas's programs use */
     int64_t created;
@@ -313,6 +316,36 @@ static int32_t ids_text(struct srv_engine *e, struct srv_prompt *pp)
     return pp->text ? JANAS_LLM_OK : JANAS_LLM_EINVAL;
 }
 
+/* The tokens of a text, for the window of a fill-in-the-middle request. */
+static int32_t count_tokens(void *ctx, const char *s, size_t n)
+{
+    int32_t t = 0;
+    if (n > INT32_MAX)
+        return -1;
+    int32_t rc = janas_llm_tokenize(ctx, s, (int32_t)n, 0, NULL, 0, &t);
+    return rc == JANAS_LLM_OK || rc == JANAS_LLM_ESMALL ? t : -1;
+}
+
+/* The prompt of a request with a suffix: the window around the cursor
+   (fim.c), so that the next keystroke finds it computed. */
+static int32_t load_infill(struct srv_engine *e, struct srv_job *j,
+                           const struct srv_prompt *pp)
+{
+    size_t off = 0, sl = j->n_suffix;
+    const char *how = "";
+    if (e->fim)
+        srv_fim_window(e->fim, count_tokens, e->llm, pp->text, pp->n, j->suffix,
+                       j->n_suffix, &off, &sl, &how);
+    if (e->verbose && (off || sl < j->n_suffix))
+        fprintf(stderr,
+                "janas-server: fill in the middle: prefix from byte %zu of "
+                "%zu%s%s, suffix %zu of %zu bytes\n",
+                off, pp->n, *how ? ", " : "", how, sl, j->n_suffix);
+    return janas_llm_chat_infill(e->chat, pp->text + off,
+                                 (int32_t)(pp->n - off), j->suffix,
+                                 (int32_t)sl);
+}
+
 /* The request's prompt for reply k. */
 static int32_t load(struct srv_engine *e, struct srv_job *j, int k)
 {
@@ -324,10 +357,8 @@ static int32_t load(struct srv_engine *e, struct srv_job *j, int k)
             if (rc != JANAS_LLM_OK)
                 return rc;
         }
-        return j->suffix
-                   ? janas_llm_chat_infill(c, pp->text, (int32_t)pp->n,
-                                           j->suffix, (int32_t)j->n_suffix)
-                   : janas_llm_chat_prompt(c, pp->text, (int32_t)pp->n);
+        return j->suffix ? load_infill(e, j, pp)
+                         : janas_llm_chat_prompt(c, pp->text, (int32_t)pp->n);
     }
     int32_t rc = janas_llm_chat_begin(c);
     for (int32_t i = 0; rc == JANAS_LLM_OK && i < j->n_msg; i++) {
@@ -340,6 +371,36 @@ static int32_t load(struct srv_engine *e, struct srv_job *j, int k)
     return rc == JANAS_LLM_OK ? janas_llm_chat_run(c) : rc;
 }
 
+/* /infill's n_indent: a line of the text started past *nl indented less
+   than n_indent (blank lines aside) ends it there, as llama.cpp does. 1
+   when cut. */
+static int indent_cut(struct srv_choice *ch, int n_indent, size_t *nl)
+{
+    for (;;) {
+        if (*nl > 0) {
+            size_t pos = *nl;
+            int ind = 0;
+            while (pos < ch->n_text &&
+                   (ch->text[pos] == ' ' || ch->text[pos] == '\t')) {
+                ind++;
+                pos++;
+            }
+            if (pos < ch->n_text && ch->text[pos] != '\n' &&
+                ch->text[pos] != '\r' && ind < n_indent) {
+                ch->n_text = *nl;
+                ch->text[*nl] = 0;
+                return 1;
+            }
+        }
+        const char *p = *nl < ch->n_text
+                            ? memchr(ch->text + *nl, '\n', ch->n_text - *nl)
+                            : NULL;
+        if (!p)
+            return 0;
+        *nl = (size_t)(p - ch->text) + 1;
+    }
+}
+
 /* One reply, into choice k. Returns the library's code. */
 static int32_t run_one(struct srv_engine *e, struct srv_job *j, int k)
 {
@@ -349,6 +410,9 @@ static int32_t run_one(struct srv_engine *e, struct srv_job *j, int k)
     if (j->seeded)
         p.seed += (uint64_t)k;
     p.max_input = e->max_input; /* the server's limit, not the request's */
+    if (j->suffix && e->fim_max &&
+        (p.max_reply <= 0 || p.max_reply > (int32_t)e->fim_max))
+        p.max_reply = (int32_t)e->fim_max;
     int32_t rc = janas_llm_chat_set_params(c, &p);
     if (rc == JANAS_LLM_OK)
         rc = load(e, j, k);
@@ -357,6 +421,8 @@ static int32_t run_one(struct srv_engine *e, struct srv_job *j, int k)
         if (strlen(j->stop[i]) > max_stop)
             max_stop = strlen(j->stop[i]);
     int32_t seen = 0;
+    size_t nl = 0;            /* n_indent: where the last line started */
+    struct timespec t0 = {0}; /* t_max_predict_ms: the first token */
     while (rc == JANAS_LLM_OK) {
         char buf[512];
         int32_t len = 0;
@@ -379,6 +445,19 @@ static int32_t run_one(struct srv_engine *e, struct srv_job *j, int k)
                 ch->n_text = (size_t)at;
                 ch->text[at] = 0;
                 ch->by_stop = 1;
+            }
+            if (!bad && j->n_indent > 0 && indent_cut(ch, j->n_indent, &nl))
+                ch->by_stop = 1;
+            if (!bad && j->t_max_predict_ms > 0) {
+                struct timespec now;
+                clock_gettime(CLOCK_MONOTONIC, &now);
+                if (!t0.tv_sec && !t0.tv_nsec)
+                    t0 = now;
+                double ms = (double)(now.tv_sec - t0.tv_sec) * 1e3 +
+                            (double)(now.tv_nsec - t0.tv_nsec) / 1e6;
+                if (ms > j->t_max_predict_ms &&
+                    memchr(ch->text, '\n', ch->n_text))
+                    ch->by_stop = 1;
             }
         }
         int quit = j->cancel || ch->by_stop || bad || rc == JANAS_LLM_DONE;
@@ -677,8 +756,11 @@ struct srv_engine *srv_engine_start(const struct srv_config *cfg, char *err,
     janas_llm_describe(e->llm, e->desc, sizeof(e->desc), &n);
     janas_llm_default_system(e->llm, e->system, sizeof(e->system), &n);
     e->created = (int64_t)time(NULL);
+    e->fim = srv_fim_new(cfg->fim_prefix, cfg->fim_suffix);
+    e->fim_max = cfg->fim_max;
     if (pthread_create(&e->th, NULL, engine_main, e) != 0) {
         snprintf(err, err_len, "cannot start the engine's thread");
+        srv_fim_free(e->fim);
         janas_llm_chat_destroy(e->chat);
         janas_llm_close(e->llm);
         free(e);
@@ -712,6 +794,7 @@ void srv_engine_stop(struct srv_engine *e)
     janas_llm_chat_destroy(e->chat);
     janas_llm_close(e->llm);
     janas_llm_close(e->emb);
+    srv_fim_free(e->fim);
     pthread_mutex_destroy(&e->mu);
     pthread_cond_destroy(&e->cv);
     free(e);

@@ -13,6 +13,7 @@
 #include <string.h>
 
 #include "server/engine.c"
+#include "server/fim.c"
 #include "server/request.c"
 #include "server/request_opts.c"
 
@@ -190,7 +191,8 @@ static void invalid(void)
          "\"response_format\":{\"type\":\"xml\"}}",
          1, "invalid_value"},
         {"{\"messages\":[{\"role\":\"user\",\"content\":\"a\"}],"
-         "\"stop\":[\"a\",\"b\",\"c\",\"d\",\"e\"]}",
+         "\"stop\":[\"a\",\"b\",\"c\",\"d\",\"e\",\"f\",\"g\",\"h\",\"i\","
+         "\"j\",\"k\",\"l\",\"m\",\"n\",\"o\",\"p\",\"q\"]}",
          1, "invalid_value"},
         {"{\"messages\":[{\"role\":\"user\",\"content\":\"a\"}],"
          "\"top_logprobs\":3}",
@@ -274,11 +276,46 @@ static void mangled(void)
            accepted, total);
 }
 
+/* /infill's n_indent (engine.c), fed a token at a time */
+static void indent(void)
+{
+    static const struct {
+        const char *tokens[8];
+        int n_indent;
+        const char *want;
+    } t[] = {
+        /* the body goes on, then a line less indented: cut before it */
+        {{"x = 1;\n", "    y", " = 2;\n", "}\n", "int z;"},
+         4,
+         "x = 1;\n    y = 2;\n"},
+        /* blank lines do not end it */
+        {{"a;\n", "\n", "    b;\n", "  c;"}, 4, "a;\n\n    b;\n"},
+        /* nothing less indented: all of it */
+        {{"if (x)\n", "        y();\n", "    z();"},
+         4,
+         "if (x)\n        y();\n    z();"},
+    };
+    for (size_t i = 0; i < sizeof(t) / sizeof(t[0]); i++) {
+        struct srv_choice ch = {0};
+        size_t nl = 0;
+        int cut = 0;
+        for (int k = 0; k < 8 && t[i].tokens[k] && !cut; k++) {
+            grow(&ch.text, &ch.n_text, &ch.cap_text, t[i].tokens[k],
+                 strlen(t[i].tokens[k]));
+            cut = indent_cut(&ch, t[i].n_indent, &nl);
+        }
+        CHECK(ch.text && strcmp(ch.text, t[i].want) == 0,
+              "n_indent case %zu: '%s'", i, ch.text ? ch.text : "");
+        free(ch.text);
+    }
+}
+
 int main(void)
 {
     valid();
     invalid();
     mangled();
+    indent();
     printf("test_server_request: %s\n", failures ? "FAILED" : "ok");
     return failures ? 1 : 0;
 }

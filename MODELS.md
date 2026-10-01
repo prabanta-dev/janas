@@ -103,6 +103,14 @@ b46fedd33e0bfb0cae308aa3c158d0a4b2c4a1d2185a1ed6f093cdaf39064772  Qwen_Qwen3.6-3
 0276b0697a05075fec8ab076a757205537804ff41dd7e9dadace7c6993763563  qwen3-coder-next-q4km.jns   (jns_planes)
 ```
 
+**Qwen3-Coder-30B-A3B-Instruct**, for code completion, from
+[`unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF`](https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF):
+
+```
+fadc3e5f8d42bf7e894a785b05082e47daee4df26680389817e2093056f088ad  Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf
+bee7d25509e911a195cbf05a157e69bb05a62d2241cca2c4fdcfef269dcb2bdd  qwen3-coder-30b-a3b-q4km.jns   (gguf2jns)
+```
+
 **Qwen3-4B**, from [`Qwen/Qwen3-4B-GGUF`](https://huggingface.co/Qwen/Qwen3-4B-GGUF).
 This one is dense: it has no experts to route, so its feed-forward becomes the
 single slot of each layer, and half its layers keep a `down` matrix in Q4_K,

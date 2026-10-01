@@ -67,6 +67,16 @@ static void usage(FILE *f)
         "                    below the context: longer ones get a 400 that\n"
         "                    says by how much (nothing is ever cut)\n"
         "  --warn-input N    longer inputs are taken, and said on stderr\n"
+        "  --fim-prefix N    completions with a suffix (an editor filling in\n"
+        "                    code): the tokens before the cursor read at\n"
+        "                    most, cut at a line and from a start kept\n"
+        "                    across keystrokes (default 2048; 0: all)\n"
+        "  --fim-suffix N    the lines after the cursor read (default 8;\n"
+        "                    0: all)\n"
+        "  --fim-max N       the tokens written there at most, whatever the\n"
+        "                    request asks (default 256; 0: as asked): an\n"
+        "                    editor asks for thousands, and the requests\n"
+        "                    of the next keystrokes wait for them\n"
         "  --metrics FILE    JSON lines of what every reply costs: prompt,\n"
         "                    progress of a long one, first token, the end\n"
         "                    (counters and times, never text)\n"
@@ -123,6 +133,9 @@ int main(int argc, char **argv)
     c->max_queue = 16;
     c->keep = 8;
     c->keep_disk = (uint64_t)8 << 30;
+    c->fim_prefix = 2048;
+    c->fim_suffix = 8;
+    c->fim_max = 256;
     int no_store = 0;
     c->max_body = (size_t)32 << 20;
     c->max_connections = 64;
@@ -195,6 +208,12 @@ int main(int argc, char **argv)
             c->max_input = (uint32_t)atol(arg(argc, argv, &i));
         } else if (!strcmp(a, "--warn-input")) {
             c->warn_input = (uint32_t)atol(arg(argc, argv, &i));
+        } else if (!strcmp(a, "--fim-prefix")) {
+            c->fim_prefix = (uint32_t)atol(arg(argc, argv, &i));
+        } else if (!strcmp(a, "--fim-suffix")) {
+            c->fim_suffix = (uint32_t)atol(arg(argc, argv, &i));
+        } else if (!strcmp(a, "--fim-max")) {
+            c->fim_max = (uint32_t)atol(arg(argc, argv, &i));
         } else if (!strcmp(a, "--metrics")) {
             setenv("JANAS_METRICS", arg(argc, argv, &i), 1);
         } else if (!strcmp(a, "--progress")) {

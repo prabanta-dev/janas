@@ -130,8 +130,9 @@ report from `janas-bench` is the single most useful thing you can send back**
   that clients written for it can use a model running on this machine:
   chat and completions with tools, JSON output held to a schema and
   log-probabilities, the Responses API with its conversations, embeddings
-  and moderations, and a chat page of its own to try it from a browser
-  ([below](#using-it-over-http)).
+  and moderations, a chat page of its own to try it from a browser
+  ([below](#using-it-over-http)), and code completion for VSCodium and VS
+  Code ([docs/code-completion.md](docs/code-completion.md)).
 - **`janas-bench`:** measures the machine, fills its profile and writes a report.
 - **Faster replies** from drafts the model verifies, so the text is exactly the
   one it would have written: from the model's own multi-token prediction block
@@ -211,6 +212,7 @@ the machine to itself.
 - [MODELS.md](MODELS.md) — what a converted model's licence is, and what may be redistributed
 - [CONTRIBUTING.md](CONTRIBUTING.md) — how to help, and the sign-off
 - [docs/services](docs/services/README.md) — Janas's services (flights), in `janas-chat` and in other MCP clients
+- [docs/code-completion.md](docs/code-completion.md) — code completion in VSCodium and VS Code, through `janas-server`
 - [AUTHORS](AUTHORS) — who wrote it, and what it owes to others
 - [LICENSE](LICENSE) — GNU GPL, version 3 or later
 
@@ -257,6 +259,7 @@ that is where these examples put them, and where the project keeps its own.
 | **Qwen3-Next-80B-A3B-Instruct** — most of this engine was measured on it | [Qwen](https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct-GGUF) | 48.4 GB | 48.4 GB | 32 GB |
 | **Qwen3.6-35B-A3B** — the easiest to start with | [bartowski](https://huggingface.co/bartowski/Qwen_Qwen3.6-35B-A3B-GGUF) | 22.3 GB | 22.3 GB | 16-32 GB |
 | **Qwen3-Coder-Next** | [Qwen](https://huggingface.co/Qwen/Qwen3-Coder-Next-GGUF) | 48.4 GB | 48.4 GB | 32 GB |
+| **Qwen3-Coder-30B-A3B-Instruct** — for code completion in the editor ([docs/code-completion.md](docs/code-completion.md)) | [unsloth](https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF) | 18.6 GB | 18.6 GB | 32 GB, to keep it whole in memory |
 | **Qwen3-30B-A3B** | [Qwen](https://huggingface.co/Qwen/Qwen3-30B-A3B-GGUF) | 18.6 GB | 18.6 GB | 16 GB |
 | **Qwen3.5-9B** — dense; its prediction block from the checkpoint ([MODELS.md](MODELS.md#the-fingerprints)) | [unsloth](https://huggingface.co/unsloth/Qwen3.5-9B-GGUF) | 5.7 GB | 5.7 GB | 16 GB |
 | **Qwen3.5-2B** — dense, small and quick; a prediction block too | [unsloth](https://huggingface.co/unsloth/Qwen3.5-2B-GGUF) | 1.3 GB | 1.3 GB | 8 GB |
@@ -669,6 +672,17 @@ estimate has not yet been checked on a run that long.
 `janas-server` takes `--metrics`, `--progress`, `--max-input` and
 `--warn-input`.
 
+## Filling in code
+
+`janas-server` fills in code at an editor's cursor, with a model for code
+such as Qwen3-Coder-30B-A3B: OpenAI's `/v1/completions` with a `suffix`,
+and llama.cpp's `/infill`, which llama.vscode asks. The window sent at
+every keystroke is kept from moving, so that a keystroke reads only what
+it changed: 1.5-2.2 s a proposal on a laptop, where a window slid a line
+was read again in 17 s. How to set it up in VSCodium and VS Code, with
+llama.vscode or Continue, and what was measured:
+[docs/code-completion.md](docs/code-completion.md).
+
 ## Using it from a program
 
 The library is shaped for foreign-function interfaces from the start: opaque
@@ -835,6 +849,7 @@ model running on this machine. It takes the model options `janas-chat` takes
 | `--test` | serve a chat page for trying it out, on `/test` (below) |
 | `--max-input N` | the longest input a request may have, in tokens, below the context: a longer one gets a 400 (`input_limit_exceeded`) whose error says `input_tokens`, `max_input_tokens`, `excess_tokens` and the parts, and nothing is ever cut to fit |
 | `--warn-input N` | longer inputs are taken, and said on stderr with their parts |
+| `--fim-prefix N`, `--fim-suffix N`, `--fim-max N` | completions with a `suffix`, an editor filling in code at its cursor: the tokens before the cursor read at most (2048; 0: all) and the lines after it (8; 0: all); `--fim-max N` the tokens written there at most, whatever the request asks (256; 0: as asked), since an editor asks for thousands and the requests of the next keystrokes wait for them. Over the budget the text before the cursor is cut at a line to three quarters of it, and the start of the window is kept across keystrokes, also when the editor slides its window, so that a keystroke reads only what it changed (see [Filling in code](#filling-in-code)) |
 | `--metrics FILE`, `--progress S` | JSON lines of what every reply costs, and progress lines while a long prompt is read (see [Watching a long prompt](#watching-a-long-prompt)); `--verbose` prints progress every 30 s |
 | `--no-mcp` | refuse tools of type `mcp` in `/v1/responses`: no connection leaves the server on a request's word (below) |
 | `--keep N` | conversations kept computed besides the one in use (8; 0: none), so that clients taking turns, or a client's requests on the side for titles and tags, do not have their conversations read again from the start |
@@ -855,6 +870,7 @@ What it answers:
 | `POST /v1/chat/completions` | a conversation, the reply whole or streamed (`"stream": true`, server-sent events), with tools, JSON output, log-probabilities and more than one reply (below) |
 | `GET`, `POST`, `DELETE /v1/chat/completions/{id}`, `GET /v1/chat/completions`, `.../messages` | the completions a client asked to keep (`"store": true`): read, listed with their `metadata`, changed, deleted |
 | `POST /v1/completions` | raw text to continue, no chat format around it; several prompts, token ids, `echo`, `logprobs`, `best_of`, `suffix` |
+| `POST /infill` | llama.cpp's route for filling in code, which editors' extensions made for llama.cpp ask (llama.vscode): `input_prefix`, `prompt`, `input_suffix`, `n_predict` (0: the prompt only, read for the next request), `n_indent`, `t_max_predict_ms`, the answer as llama.cpp's (`content`, `timings`); `input_extra` is not used, and the most likely token is always taken |
 | `POST /v1/responses` and the six operations under it | OpenAI's newer API: items in and out, `previous_response_id`, conversations, streamed events, `background` and `cancel`, `input_items`, `input_tokens`, `compact` |
 | `/v1/conversations` and its seven operations | conversations the server keeps, and their items |
 | `POST /v1/embeddings` | with `--embedding-model FILE`: the vectors of texts (below) |

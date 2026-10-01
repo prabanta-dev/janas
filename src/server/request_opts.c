@@ -53,9 +53,9 @@ static int read_stop(struct srv_perr *e, struct srv_parsed *pr, yyjson_val *st,
     } else if (st && yyjson_is_arr(st)) {
         size_t idx, max;
         yyjson_val *s;
-        if (yyjson_arr_size(st) > 4)
-            return srv_pfail(
-                pr, BAD("invalid_value", "'stop' holds at most four strings."));
+        if (yyjson_arr_size(st) > SRV_MAX_STOP)
+            return srv_pfail(pr, BAD("invalid_value",
+                                     "'stop' holds at most sixteen strings."));
         yyjson_arr_foreach(st, idx, max, s)
         {
             if (!yyjson_is_str(s))

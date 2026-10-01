@@ -288,6 +288,10 @@ static enum MHD_Result dispatch(struct srv_req *r)
             r, 401, "invalid_request_error", "invalid_api_key",
             "Incorrect or missing API key: send it as "
             "\"Authorization: Bearer <key>\".");
+    /* llama.cpp's route for filling in code, which editors' extensions
+       made for it ask: not OpenAI's, so not in routes.inc */
+    if (strcmp(r->path, "/infill") == 0 && strcmp(r->method, "POST") == 0)
+        return (enum MHD_Result)srv_infill(r);
     const struct route *other = NULL;
     for (size_t i = 0; i < sizeof(routes) / sizeof(routes[0]); i++) {
         const struct route *rt = &routes[i];

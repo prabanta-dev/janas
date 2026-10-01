@@ -52,7 +52,15 @@ struct srv_config {
                                no connection goes out on a request's word */
     uint32_t max_input;     /* longest prompt taken, tokens; 0: the context */
     uint32_t warn_input;    /* prompts longer are taken, and said on stderr */
+    uint32_t fim_prefix;    /* fill in the middle: the tokens before the
+                               cursor read at most (0: all) */
+    uint32_t fim_suffix;    /* the lines after it (0: all) */
+    uint32_t fim_max;       /* the tokens it writes at most (0: as asked) */
 };
+
+/* Stop strings a request may give: OpenAI takes four, editors' extensions
+   send more (Continue up to sixteen). */
+#define SRV_MAX_STOP 16
 
 /* The engine: the model, its conversations, and the queue. */
 struct srv_engine;
@@ -122,9 +130,15 @@ struct srv_job {
     int n_prompts;
     char *suffix;
     size_t n_suffix;
+    /* /infill, as llama.cpp: a new line indented less than n_indent ends
+       the text; past t_max_predict_ms, so does a new line; prefill_only:
+       the prompt is read, nothing is answered */
+    int n_indent, prefill_only;
+    int32_t t_max_predict_ms;
     struct janas_llm_chat_params p;
-    int seeded;    /* the request gave a seed: choice k takes seed + k */
-    char *stop[4]; /* strings that end the reply where they appear */
+    int seeded; /* the request gave a seed: choice k takes seed + k */
+    char *stop[SRV_MAX_STOP]; /* strings that end the reply where they
+                                 appear */
     int n_stop;
     /* tools (a JSON array, as the request has it), tool_choice, and the
        form of the answer */
@@ -246,6 +260,7 @@ int srv_embeddings_create(struct srv_req *r);
 int srv_moderations_create(struct srv_req *r);
 int srv_chat_create(struct srv_req *r);
 int srv_completion_create(struct srv_req *r);
+int srv_infill(struct srv_req *r); /* POST /infill, llama.cpp's */
 /* stored.c: the completions kept with store: true */
 int srv_stored_list(struct srv_req *r);
 int srv_stored_get(struct srv_req *r);
