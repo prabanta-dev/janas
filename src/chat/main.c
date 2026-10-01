@@ -245,11 +245,14 @@ static void usage(void)
         "                   the MCP servers whose tools the model may call\n"
         "                   (default ~/.config/janas/mcp.json, in the\n"
         "                   format of the other clients: mcpServers)\n"
-        "  --no-mcp         start no MCP server\n"
+        "  --no-mcp         start no MCP server, Janas's services included\n"
+        "  --no-services    start none of Janas's own services (janas-flights\n"
+        "                   and the others beside janas-chat, started by\n"
+        "                   default: their tools run without asking)\n"
         "  --progress <s>   a line on stderr every s seconds while a long\n"
         "                   prompt is read, and one after each reply\n"
         "  --mcp-instructions\n"
-        "                   add what the MCP servers say of their tools to\n"
+        "                   add what the other MCP servers say of their tools to\n"
         "                   the system message, marked as theirs (off by\n"
         "                   default: it is text their authors wrote, which\n"
         "                   the model would read as instructions)\n"
@@ -593,7 +596,7 @@ struct chat_opts { /* where the words land: main keeps them, this names them */
     const char **system_arg;
     int *stats, *markdown, *gpu;
     const char **mcp_config;
-    int *mcp, *mcp_auto, *mcp_instructions;
+    int *mcp, *mcp_auto, *mcp_instructions, *services;
     int *no_mtp;
     const char *mtp_found; /* the MTP file found, not asked for: unsaved */
 };
@@ -632,6 +635,10 @@ static int take_options(int n, char **w, struct chat_opts *o)
         }
         if (strcmp(a, "--no-mcp") == 0) {
             *o->mcp = 0;
+            continue;
+        }
+        if (strcmp(a, "--no-services") == 0) {
+            *o->services = 0;
             continue;
         }
         if (strcmp(a, "--mcp-auto") == 0) {
@@ -848,6 +855,8 @@ static void conf_write(const char *path, const struct chat_opts *o)
         fprintf(f, "--mcp-config %s\n", *o->mcp_config);
     if (!*o->mcp)
         fprintf(f, "--no-mcp\n");
+    if (!*o->services)
+        fprintf(f, "--no-services\n");
     if (*o->mcp_auto)
         fprintf(f, "--mcp-auto\n");
     if (*o->mcp_instructions)
@@ -861,9 +870,10 @@ static void conf_write(const char *path, const struct chat_opts *o)
 static void mcp_list(void)
 {
     if (!mcpc_count()) {
-        term_printf(&term, "no MCP server is running: they are configured in "
-                           "~/.config/janas/mcp.json, or the file --mcp-config "
-                           "names\n");
+        term_printf(&term, "no MCP server is running: Janas's services start "
+                           "when they are beside janas-chat, the others are "
+                           "configured in ~/.config/janas/mcp.json, or the "
+                           "file --mcp-config names\n");
         return;
     }
     for (size_t i = 0; i < mcpc_count(); i++) {
@@ -871,8 +881,12 @@ static void mcp_list(void)
         int32_t len;
         janas_mcp_info(mcpc_server(i), info, sizeof(info), &len);
         janas_mcp_tool_names(mcpc_server(i), names, sizeof(names), &len);
-        term_printf(&term, "%s%s%s\n%s%s", T_BOLD(&term), mcpc_name(i),
-                    T_RESET(&term), info, T_DIM(&term));
+        term_printf(&term, "%s%s%s%s\n%s%s", T_BOLD(&term), mcpc_name(i),
+                    T_RESET(&term),
+                    mcpc_is_own(i) ? " - a service of Janas: its tools run "
+                                     "without asking"
+                                   : "",
+                    info, T_DIM(&term));
         for (char *t = strtok(names, "\n"); t; t = strtok(NULL, "\n"))
             term_printf(&term, "  %s__%s\n", mcpc_name(i), t);
         term_printf(&term, "%s\n", T_RESET(&term));
@@ -934,10 +948,12 @@ static int run_calls(janas_llm_chat *c, int autorun)
             break;
         }
         term_gap(&term);
-        term_printf(&term, "%s→ %s%s %s%.*s%s%s\n", T_CMD(&term), name,
+        /* a service of Janas's runs by itself: its call is only noted */
+        term_printf(&term, "%s→ %s%s %s%.*s%s%s\n",
+                    mcpc_own(name) ? T_DIM(&term) : T_CMD(&term), name,
                     T_DIM(&term), "", 400, args,
                     strlen(args) > 400 ? " ..." : "", T_RESET(&term));
-        int go = autorun || mcpc_always(name);
+        int go = autorun || mcpc_always(name) || mcpc_own(name);
         if (!go && interrupted) {
             go = 0;
         } else if (!go && !term.tty) {
@@ -1113,12 +1129,12 @@ int main(int argc, char **argv)
     int markdown = 1; /* the marks read, not printed; never on a pipe */
     int gpu = 1;      /* the GPU may be given work, if there is one */
     const char *mcp_config = NULL; /* NULL: the default file */
-    int mcp = 1, mcp_auto = 0, mcp_instructions = 0, no_mtp = 0;
+    int mcp = 1, mcp_auto = 0, mcp_instructions = 0, services = 1, no_mtp = 0;
     static char mtp_found[4096];
     struct chat_opts o = {
-        &mp,     &cp,         &system_arg, &stats,    &markdown,
-        &gpu,    &mcp_config, &mcp,        &mcp_auto, &mcp_instructions,
-        &no_mtp, mtp_found};
+        &mp,       &cp,         &system_arg, &stats,    &markdown,
+        &gpu,      &mcp_config, &mcp,        &mcp_auto, &mcp_instructions,
+        &services, &no_mtp,     mtp_found};
     /* the file first, the command line after it: what is typed wins */
     char cpath[1024];
     char *conf_text = NULL;
@@ -1173,14 +1189,21 @@ int main(int argc, char **argv)
     }
     if (!gpu && janas_llm_set_gpu(llm, 0) != JANAS_LLM_OK)
         fprintf(stderr, "janas-chat: %s\n", janas_llm_last_error());
-    /* the tools of the MCP servers configured, given to the model */
-    if (mcp && mcpc_start(mcp_config) > 0 && mcpc_tools() &&
+    /* the tools of the MCP servers configured and of Janas's own services
+       beside the program, given to the model */
+    if (mcp) {
+        mcpc_start(mcp_config);
+        if (services)
+            mcpc_start_services();
+    }
+    if (mcpc_count() && mcpc_tools() &&
         janas_llm_chat_tools(c, mcpc_tools(), -1) != JANAS_LLM_OK) {
         fprintf(stderr, "janas-chat: MCP tools: %s\n", janas_llm_last_error());
         mcpc_stop();
     }
-    /* and, asked for, what the servers say of their tools */
-    if (mcp_instructions && mcpc_count() && (mcp_extra = mcpc_instructions()) &&
+    /* what Janas's services say of their tools, and, asked for, what the
+       other servers say of theirs */
+    if (mcpc_count() && (mcp_extra = mcpc_instructions(mcp_instructions)) &&
         set_system(c, system) != JANAS_LLM_OK)
         fprintf(stderr, "janas-chat: %s\n", janas_llm_last_error());
     char desc[512];

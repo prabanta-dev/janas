@@ -2,6 +2,34 @@
 
 > Curated, user-facing summary of completed work, newest first.
 
+## [2026-10-01] - janas-flights, the first of Janas's services
+
+- **janas-flights**, flights as an MCP server of its own, for `janas-chat`
+  or any MCP client: where a flight is and what it is doing
+  (`flight_status`), the flights of a route (`flights_between`), what
+  flies now over a sea, by its name in English or Italian
+  (`flights_over`), and near an airport, a city or a point
+  (`flights_nearby`). Live positions come from the open ADS-B networks
+  (adsb.lol, adsb.fi as the fallback) and need no key; schedules, gates
+  and delays come from AviationStack with a free key of the user's own
+  (100 calls a month), asked only about one flight or one route - lists
+  and areas use open data only. Times are given in each airport's local
+  time and in UTC, places in words, and a live position is given to a
+  scheduled flight only when the aircraft fits its route. On 1 October:
+  AZ1709 from Fiumicino to Catania seen over the Tyrrhenian Sea with two
+  arrival estimates, the 21 flights from Fiumicino to Catania, 45
+  aircraft over the Tyrrhenian Sea.
+- **`janas-chat` starts Janas's services by itself**: those it finds
+  beside it, with no configuration. Their tools run without asking (they
+  read public data and change nothing), their calls show as dimmed lines,
+  and the model is told to use them whenever a question is on their
+  subject, without naming them. `--no-services` starts none.
+- **The server side of MCP** moved to `src/common/mcp_server.c`, shared by
+  `janas-mcp` and `janas-flights`.
+- **docs/services/**: the services documented apart from the README, with
+  how to use them in Claude Code and the clients that read an
+  `mcpServers` file.
+
 ## [2026-10-01] - Experts read ahead, steadier drafts, every weight type on the GPU
 
 - **The drafts no longer switch themselves off for good.** The planner of

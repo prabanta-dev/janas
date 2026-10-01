@@ -122,6 +122,10 @@ report from `janas-bench` is the single most useful thing you can send back**
 - **`janas-mcp`:** the other way round, the model offered as tools to MCP
   clients - a question to it, the embedding of a text
   ([below](#janas-as-an-mcp-server)).
+- **`janas-flights`:** where a flight is and what flies over a sea or a
+  place, as MCP tools, from the ADS-B receivers of the community, and
+  today's schedules with a free AviationStack key: the first of Janas's
+  services ([docs/services](docs/services/README.md)).
 - **`janas-server`:** the model behind an HTTP API that follows OpenAI's, so
   that clients written for it can use a model running on this machine:
   chat and completions with tools, JSON output held to a schema and
@@ -206,6 +210,7 @@ the machine to itself.
 - [ChangeLog.md](ChangeLog.md) — what changed, newest first
 - [MODELS.md](MODELS.md) — what a converted model's licence is, and what may be redistributed
 - [CONTRIBUTING.md](CONTRIBUTING.md) — how to help, and the sign-off
+- [docs/services](docs/services/README.md) — Janas's services (flights), in `janas-chat` and in other MCP clients
 - [AUTHORS](AUTHORS) — who wrote it, and what it owes to others
 - [LICENSE](LICENSE) — GNU GPL, version 3 or later
 
@@ -564,9 +569,18 @@ printf 'Explain mixture of experts in one paragraph.\n/quit\n' \
     | bin/x86_64-linux/janas-chat qwen3-next.jns --temp 0 --max 200
 ```
 
+### Janas's services
+
+The chat starts by itself the services of Janas it finds beside it - for
+now `janas-flights` - and the model uses their tools when a question needs
+them, without being told: ask "which flights are over the Tyrrhenian Sea
+now?". `--no-services` starts none. How they work, their keys, and how to
+use them in Claude Code and other clients:
+[docs/services](docs/services/README.md).
+
 ### Tools from MCP servers
 
-The chat starts the [Model Context Protocol](https://modelcontextprotocol.io)
+The chat also starts the [Model Context Protocol](https://modelcontextprotocol.io)
 servers listed in `~/.config/janas/mcp.json` (or in the file `--mcp-config`
 names), in the format the other clients use, so a configuration can be
 copied from one of them:
@@ -1032,6 +1046,7 @@ wants fewer threads than for one.
 | `jns_check` | checks a model file, with `--verify` every expert's checksum |
 | `tools/openapi_routes` | `janas-server`'s route table, from OpenAI's specification |
 | `tools/gen_unicode` | the tokenizer's Unicode tables, from the Unicode Character Database |
+| `tools/gen_geo` | `janas-flights`' tables of airports, cities and seas, from OurAirports, GeoNames and Natural Earth |
 | `mcp_fake_server` | an MCP server over stdio in either era of the protocol, for trying a client without anybody else's server |
 | `llm_eval` | compares the engine's logits against a reference dump |
 | `bench_gemm`, `bench_attn`, `bench_long`, ... | the pieces measured on their own |
@@ -1139,6 +1154,14 @@ It stands on the work of others, and says so:
   `janas-server` its route table (`tools/openapi_routes`).
 - **GNU libmicrohttpd, yyjson and Mbed TLS** are compiled into the programs
   named below.
+- **`janas-flights`** reads the positions of aircraft from
+  [adsb.lol](https://adsb.lol) (data under the Open Database License) and
+  [adsb.fi](https://adsb.fi), routes from
+  [adsbdb.com](https://www.adsbdb.com) and, with a key of the user's,
+  schedules from [AviationStack](https://aviationstack.com); its tables of places are built from
+  [OurAirports](https://ourairports.com) (public domain),
+  [GeoNames](https://www.geonames.org) (CC BY 4.0) and
+  [Natural Earth](https://www.naturalearthdata.com) (public domain).
 - **The people who tried it on their own machines** and reported what they
   saw, in the issues of this repository: their reports changed the engine
   more than once (the threads it picks, the prompt's progress, the GPU's

@@ -9,8 +9,7 @@
 
 #include <stdio.h>
 
-#include "common/mcp_rpc.h"
-#include "common/mcp_stdio.h"
+#include "common/mcp_server.h"
 #include "janas/llm.h"
 #include "llm/json.h"
 
@@ -21,28 +20,16 @@ struct mcpd {
     struct janas_llm_chat_params cp; /* as started; a call may change some */
     janas_llm *emb; /* the model that gives embeddings (NULL: none) */
     char emb_name[128];
-    int call_seconds; /* longest a generation may run (0: no limit) */
-    /* the client: its lines in, the answers out */
-    struct janas_mcp_proc in;
-    FILE *out;
-    /* the call running, which a notifications/cancelled may stop, and the
-       requests that came meanwhile, answered after it */
-    const struct janas_json *running;
-    int cancelled;
-    char **queue;
-    size_t n_queue;
+    int call_seconds;      /* longest a generation may run (0: no limit) */
+    struct janas_mcps srv; /* the protocol (common/mcp_server.c) */
 };
-
-/* An answer: members of the result (JSON text without braces) for the
-   request of id, with what the revision the request spoke wants. */
-void mcpd_result(struct mcpd *d, const struct janas_json *id, int modern,
-                 const char *members, size_t n);
-void mcpd_error(struct mcpd *d, const struct janas_json *id, int code,
-                const char *message, const char *data);
 
 /* While a call runs: what the client sent meanwhile, taken in. 1 when the
    call running was cancelled. */
-int mcpd_poll(struct mcpd *d);
+static inline int mcpd_poll(struct mcpd *d)
+{
+    return janas_mcps_poll(&d->srv);
+}
 
 /* tools.c: the tools/list members ("tools": [...]); a tools/call into the
    members of its result (0), or -1 for a tool there is not. */

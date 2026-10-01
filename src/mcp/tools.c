@@ -77,15 +77,6 @@ void mcpd_tools_list(const struct mcpd *d, struct janas_buf *b)
     janas_buf_puts(b, "]");
 }
 
-/* A result of one text item. */
-static void text_result(struct janas_buf *b, const char *t, size_t n,
-                        int is_error)
-{
-    janas_buf_puts(b, "\"content\": [{\"type\": \"text\", \"text\": ");
-    janas_json_write_str(b, t, n);
-    janas_buf_printf(b, "}], \"isError\": %s", is_error ? "true" : "false");
-}
-
 static double now(void)
 {
     struct timespec t;
@@ -103,7 +94,7 @@ static int generate(struct mcpd *d, const struct janas_json *args,
     const struct janas_json *temp = janas_json_get(args, "temperature");
     if (!janas_json_str(prompt)) {
         const char *m = "prompt is required, as a string";
-        text_result(b, m, strlen(m), 1);
+        janas_mcps_text_result(b, m, strlen(m), 1);
         return 0;
     }
     struct janas_llm_chat_params p = d->cp;
@@ -128,7 +119,7 @@ static int generate(struct mcpd *d, const struct janas_json *args,
         rc = janas_llm_chat_run(d->chat);
     if (rc != JANAS_LLM_OK) {
         const char *m = janas_llm_last_error();
-        text_result(b, m, strlen(m), 1);
+        janas_mcps_text_result(b, m, strlen(m), 1);
         return 0;
     }
     struct janas_buf answer = {0};
@@ -156,17 +147,18 @@ static int generate(struct mcpd *d, const struct janas_json *args,
         from++;
     if (answer.oom) {
         const char *m = "out of memory";
-        text_result(b, m, strlen(m), 1);
+        janas_mcps_text_result(b, m, strlen(m), 1);
     } else if (rc < 0 && answer.n == from) {
         const char *m = janas_llm_last_error();
-        text_result(b, m, strlen(m), 1);
+        janas_mcps_text_result(b, m, strlen(m), 1);
     } else {
         if (late)
             janas_buf_puts(&answer, "\n[cut: the time given to a call ran "
                                     "out]");
         else if (rc < 0)
             janas_buf_printf(&answer, "\n[cut: %s]", janas_llm_last_error());
-        text_result(b, answer.p ? answer.p + from : "", answer.n - from, 0);
+        janas_mcps_text_result(b, answer.p ? answer.p + from : "",
+                               answer.n - from, 0);
     }
     janas_buf_free(&answer);
     return 0;
@@ -179,7 +171,7 @@ static void embed(struct mcpd *d, const struct janas_json *args,
     const struct janas_json *dims = janas_json_get(args, "dimensions");
     if (!janas_json_str(text)) {
         const char *m = "text is required, as a string";
-        text_result(b, m, strlen(m), 1);
+        janas_mcps_text_result(b, m, strlen(m), 1);
         return;
     }
     int32_t dim = janas_llm_embed_dim(d->emb), want = 0;
@@ -192,7 +184,7 @@ static void embed(struct mcpd *d, const struct janas_json *args,
     if (!v || janas_llm_embed(d->emb, text->s, (int32_t)text->n, want, v, &n,
                               &tokens) != JANAS_LLM_OK) {
         const char *m = v ? janas_llm_last_error() : "out of memory";
-        text_result(b, m, strlen(m), 1);
+        janas_mcps_text_result(b, m, strlen(m), 1);
         free(v);
         return;
     }
@@ -205,9 +197,9 @@ static void embed(struct mcpd *d, const struct janas_json *args,
     free(v);
     if (a.oom) {
         const char *m = "out of memory";
-        text_result(b, m, strlen(m), 1);
+        janas_mcps_text_result(b, m, strlen(m), 1);
     } else {
-        text_result(b, a.p, a.n, 0);
+        janas_mcps_text_result(b, a.p, a.n, 0);
         janas_buf_puts(b, ", \"structuredContent\": {\"embedding\": ");
         janas_buf_put(b, a.p, a.n);
         janas_buf_printf(b, ", \"tokens\": %d}", tokens);

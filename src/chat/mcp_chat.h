@@ -17,6 +17,13 @@
    a missing file means none), saying on stderr how each one went. Returns
    how many run. */
 int mcpc_start(const char *path);
+/* Starts Janas's own services found beside janas-chat (janas-flights...)
+   but those the configuration already names. Returns how many started. */
+int mcpc_start_services(void);
+/* Whether a tool (server__tool), or the server i, is of Janas's own
+   services: they run without asking. */
+int mcpc_own(const char *tool);
+int mcpc_is_own(size_t i);
 void mcpc_stop(void);
 
 /* The tools of all the servers as one JSON array for janas_llm_chat_tools
@@ -24,8 +31,9 @@ void mcpc_stop(void);
 const char *mcpc_tools(void);
 
 /* What the servers say of how their tools are meant to be used, for the
-   system message, marked as theirs (malloc'd; NULL: none said anything). */
-char *mcpc_instructions(void);
+   system message: Janas's own services always, the others' (marked as
+   theirs) when others is set. malloc'd; NULL: none said anything. */
+char *mcpc_instructions(int others);
 
 /* The servers running: their names and handles. */
 size_t mcpc_count(void);
