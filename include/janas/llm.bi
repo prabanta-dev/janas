@@ -330,6 +330,18 @@ declare function janas_llm_chat_tools(byval c as janas_llm_chat ptr, _
 declare function janas_llm_chat_tools_add(byval c as janas_llm_chat ptr, _
                                           byval json as const zstring ptr, _
                                           byval length as long) as long
+'' A request on the side, between two replies: system (may be NULL) and
+'' text answered greedily in at most max_tokens into buf; the conversation
+'' is put back as it was.
+declare function janas_llm_chat_aside(byval c as janas_llm_chat ptr, _
+                                      byval system as const zstring ptr, _
+                                      byval system_len as long, _
+                                      byval text as const zstring ptr, _
+                                      byval text_len as long, _
+                                      byval max_tokens as long, _
+                                      byval buf as zstring ptr, _
+                                      byval cap as long, _
+                                      byval length as long ptr) as long
 declare function janas_llm_chat_tool_choice(byval c as janas_llm_chat ptr, _
                                             byval choice as long, _
                                             byval name_ as const zstring ptr, _

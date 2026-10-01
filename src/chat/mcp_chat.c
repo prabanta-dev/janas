@@ -13,6 +13,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "layout.h"
 #include "llm/json.h"
 
 /* An answer longer than this is cut: the context is the model's memory of
@@ -578,6 +579,21 @@ int mcpc_call(const char *name, const char *args, char **text, char **shown)
                  (size_t)len - keep);
     }
     *text = t;
+    /* data with a layout: the user's text from it, the model's brief */
+    int32_t rl = 0;
+    janas_mcp_result_json(s->m, NULL, 0, &rl);
+    char *raw = rl > 0 ? malloc((size_t)rl + 1) : NULL;
+    char *user = NULL, *brief = NULL;
+    if (raw && janas_mcp_result_json(s->m, raw, rl + 1, &rl) == JANAS_MCP_OK &&
+        !janas_mcp_result_error(s->m) &&
+        layout_take(raw, (size_t)rl, &user, &brief)) {
+        free(*text);
+        *text = brief;
+        *shown = user;
+        free(raw);
+        return 0;
+    }
+    free(raw);
     int32_t ul = 0;
     janas_mcp_result_user(s->m, NULL, 0, &ul);
     if (ul > 0 && (*shown = malloc((size_t)ul + 1)) != NULL &&

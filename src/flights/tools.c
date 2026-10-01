@@ -25,6 +25,7 @@
 #include "common/mcp_server.h"
 #include "flights.h"
 #include "common/geo.h"
+#include "common/template.h"
 
 #define DEG(x) ((x) * 1e-5)
 #define KM_PER_NM 1.852
@@ -883,49 +884,83 @@ static int flights_between(const struct janas_json *args, struct janas_buf *b)
 
 /* ---- flights_over ---- */
 
-/* One aircraft on one line: callsign, aircraft, altitude, speed, heading,
-   where, and its route on record when it fits. */
-static void ac_line(const struct fl_ac *a, const struct fl_route *r,
+/* "key": "value", as JSON */
+static void jstr(struct janas_buf *b, const char *key, const char *v)
+{
+    janas_buf_printf(b, "\"%s\": ", key);
+    janas_json_write_str(b, v, strlen(v));
+}
+
+/* One aircraft as an item of a layout's "aircraft" (layouts.c): what
+   ac_line says, as data. */
+static void ac_json(const struct fl_ac *a, const struct fl_route *r,
                     int have_route, struct janas_buf *b)
 {
-    if (a->flight[0])
-        janas_buf_puts(b, a->flight);
-    else
-        janas_buf_printf(b, "no callsign (transponder %s)", a->hex);
-    if (a->reg[0] || a->type[0])
-        janas_buf_printf(b, " (%s%s%s)", a->reg,
-                         a->reg[0] && a->type[0] ? ", " : "", a->type);
-    janas_buf_puts(b, ": ");
-    if (a->ground)
-        janas_buf_puts(b, "on the ground");
-    else if (a->has_alt && a->alt >= 10000)
-        janas_buf_printf(b, "FL%03ld", lround(a->alt / 100));
-    else if (a->has_alt) {
-        thousands(b, a->alt);
-        janas_buf_puts(b, " ft");
-    } else
-        janas_buf_puts(b, "altitude not reported");
-    if (!a->ground && a->has_alt && fabs(a->rate) > 400)
-        janas_buf_puts(b, a->rate > 0 ? " climbing" : " descending");
-    if (a->gs >= 0)
-        janas_buf_printf(b, ", %.0f kts", a->gs);
-    if (a->track >= 0)
-        janas_buf_printf(b, ", heading %s", geo_compass(a->track));
-    janas_buf_puts(b, "; ");
-    geo_describe(a->lat, a->lon, b);
-    const char *sq = squawk_meaning(a->squawk);
-    if (sq)
-        janas_buf_printf(b, "; EMERGENCY: transponder code %s", sq);
-    if (have_route && route_fits(a, r)) {
-        janas_buf_puts(b, "; route on record: ");
-        janas_buf_printf(b, "%s (%s) to %s (%s)",
-                         r->from.city[0] ? r->from.city : r->from.name,
-                         r->from.iata[0] ? r->from.iata : r->from.icao,
-                         r->to.city[0] ? r->to.city : r->to.name,
-                         r->to.iata[0] ? r->to.iata : r->to.icao);
-        if (r->airline[0])
-            janas_buf_printf(b, ", %s", r->airline);
+    janas_buf_puts(b, "{");
+    jstr(b, "hex", a->hex);
+    if (a->flight[0]) {
+        janas_buf_puts(b, ", ");
+        jstr(b, "callsign", a->flight);
     }
+    if (a->reg[0]) {
+        janas_buf_puts(b, ", ");
+        jstr(b, "reg", a->reg);
+    }
+    if (a->type[0]) {
+        janas_buf_puts(b, ", ");
+        jstr(b, "type", a->type);
+    }
+    if (a->ground) {
+        janas_buf_puts(b, ", \"ground\": true");
+        double km = 1e30;
+        const struct geo_airport *ap =
+            a->has_pos ? geo_airport_near(a->lat, a->lon, &km) : NULL;
+        if (ap && km < 6) {
+            char at[160];
+            snprintf(at, sizeof at, "%s (%s)", ap->name, ap->iata);
+            janas_buf_puts(b, ", ");
+            jstr(b, "airport", at);
+        }
+        if (a->gs >= 0)
+            janas_buf_printf(b, ", \"on_ground\": \"%s\"",
+                             a->gs < 3    ? "stationary"
+                             : a->gs < 40 ? "taxiing"
+                                          : "runway");
+    } else if (a->has_alt && a->alt >= 10000)
+        janas_buf_printf(b, ", \"fl\": \"%03ld\"", lround(a->alt / 100));
+    else if (a->has_alt)
+        janas_buf_printf(b, ", \"ft\": %ld", lround(a->alt));
+    if (!a->ground && a->has_alt && fabs(a->rate) > 400)
+        janas_buf_puts(b, a->rate > 0 ? ", \"climbing\": true"
+                                      : ", \"descending\": true");
+    if (a->gs >= 0)
+        janas_buf_printf(b, ", \"kts\": %.0f", a->gs);
+    if (a->track >= 0) {
+        janas_buf_puts(b, ", ");
+        jstr(b, "heading", geo_compass(a->track));
+    }
+    janas_buf_puts(b, ", \"where\": ");
+    geo_describe_json(a->lat, a->lon, b);
+    if (squawk_meaning(a->squawk)) {
+        janas_buf_puts(b, ", ");
+        jstr(b, "emergency", a->squawk);
+    }
+    if (have_route && route_fits(a, r)) {
+        janas_buf_puts(b, ", \"route\": {");
+        jstr(b, "from", r->from.city[0] ? r->from.city : r->from.name);
+        janas_buf_puts(b, ", ");
+        jstr(b, "from_code", r->from.iata[0] ? r->from.iata : r->from.icao);
+        janas_buf_puts(b, ", ");
+        jstr(b, "to", r->to.city[0] ? r->to.city : r->to.name);
+        janas_buf_puts(b, ", ");
+        jstr(b, "to_code", r->to.iata[0] ? r->to.iata : r->to.icao);
+        if (r->airline[0]) {
+            janas_buf_puts(b, ", ");
+            jstr(b, "airline", r->airline);
+        }
+        janas_buf_puts(b, "}");
+    }
+    janas_buf_puts(b, "}");
 }
 
 static int by_lon(const void *x, const void *y)
@@ -1029,52 +1064,57 @@ static int flights_over(const struct janas_json *args, struct janas_buf *b)
     }
     if (n_all)
         qsort(all, n_all, sizeof(*all), by_lon);
-    struct janas_buf out = {0};
-    now_text(&out);
+    /* the data, for the layout (layouts.c) */
+    struct janas_buf d = {0};
+    char utc[16];
+    hhmm(time(NULL), "UTC", utc, sizeof utc);
     size_t airborne = 0;
-    for (size_t i = 0; i < n_all; i++)
+    int emergencies = 0;
+    for (size_t i = 0; i < n_all; i++) {
         airborne += !all[i].ground;
-    janas_buf_printf(&out, "%zu aircraft over the %s now (%zu in the air)",
-                     n_all, area.name, airborne);
+        emergencies += squawk_meaning(all[i].squawk) != NULL;
+    }
+    janas_buf_printf(&d, "{\"time\": \"%s\", ", utc);
+    jstr(&d, "sea", area.name);
+    janas_buf_printf(&d, ", \"count\": %zu, \"airborne\": %zu", n_all,
+                     airborne);
     if (failed)
-        janas_buf_printf(&out,
-                         "; %d of the %d parts of the sea could not be asked, "
-                         "so there may be more",
-                         failed, nx * ny);
+        janas_buf_printf(&d, ", \"failed\": %d, \"parts\": %d", failed,
+                         nx * ny);
     if (n_all > (size_t)limit)
-        janas_buf_printf(&out, "; %d of them listed", limit);
-    janas_buf_puts(&out, n_all ? ", from west to east:\n" : ".");
+        janas_buf_printf(&d, ", \"listed\": %d", limit);
+    if (emergencies)
+        janas_buf_printf(&d, ", \"emergencies\": %d", emergencies);
+    janas_buf_puts(&d, ", \"aircraft\": [");
     int routes = 0;
     for (size_t i = 0; i < n_all && i < (size_t)limit; i++) {
         struct fl_route r = {0};
         int have = 0;
         if (all[i].flight[0] && i < ROUTES_OVER) {
             have = fl_route(all[i].flight, &r) == 1;
-            routes |= have;
+            routes |= have && route_fits(&all[i], &r);
         }
-        janas_buf_printf(&out, "\n%zu. ", i + 1);
-        ac_line(&all[i], &r, have, &out);
+        janas_buf_puts(&d, i ? ", " : "");
+        ac_json(&all[i], &r, have, &d);
     }
-    if (routes)
-        janas_buf_puts(&out, "\n\nRoutes on record come from the community "
-                             "(adsbdb), not from schedules: usually right, "
-                             "sometimes not; those that do not fit the "
-                             "position are left out.");
-    janas_buf_puts(&out, "\nOnly aircraft with a transponder heard by the "
-                         "community's receivers are counted: nearly all "
-                         "airliners, not every small or military aircraft.");
+    janas_buf_puts(&d, "], ");
     /* open data only: no schedule is asked for a list */
-    janas_buf_printf(&out,
-                     "\n\nSources: live positions from %s (%s)%s; sea "
-                     "boundaries from Natural Earth.",
-                     net,
-                     strcmp(net, "adsb.lol") == 0
-                         ? "data under the ODbL, https://adsb.lol"
-                         : "https://adsb.fi",
-                     routes ? "; routes from adsbdb.com" : "");
+    jstr(&d, "net", net);
+    janas_buf_puts(&d, ", ");
+    jstr(&d, "net_url",
+         strcmp(net, "adsb.lol") == 0 ? "https://adsb.lol" : "https://adsb.fi");
+    janas_buf_printf(&d, "%s%s}",
+                     strcmp(net, "adsb.lol") == 0 ? ", \"odbl\": true" : "",
+                     routes ? ", \"routes\": true" : "");
     free(all);
-    janas_mcps_text_result(b, out.p ? out.p : "", out.n, 0);
-    janas_buf_free(&out);
+    if (d.oom || janas_tpl_result(b, "flights_over", d.p, d.n, FL_OVER_LAYOUT,
+                                  FL_OVER_BRIEF, err, sizeof err) != 0) {
+        char m[480];
+        snprintf(m, sizeof m, "The answer could not be written: %s",
+                 d.oom ? "out of memory" : err);
+        janas_mcps_text_result(b, m, strlen(m), 1);
+    }
+    janas_buf_free(&d);
     return 0;
 }
 
@@ -1106,7 +1146,7 @@ static int flights_nearby(const struct janas_json *args, struct janas_buf *b)
         limit = 1;
     if (limit > MAX_LIST)
         limit = MAX_LIST;
-    char where[256] = "";
+    char where[256] = "", here[128] = "", how[128] = "";
     if (place && *place) {
         const struct geo_airport *ap = geo_airport_find(place);
         const struct geo_city *c = ap ? NULL : geo_city_find(place);
@@ -1142,6 +1182,9 @@ static int flights_nearby(const struct janas_json *args, struct janas_buf *b)
         lon = w.lon;
         snprintf(where, sizeof where, "%s (where the user is, %s)",
                  w.city[0] ? w.city : "the user's position", w.how);
+        snprintf(here, sizeof here, "%s",
+                 w.city[0] ? w.city : "the user's position");
+        snprintf(how, sizeof how, "%s", w.how);
         place = where; /* named: no point to put into words */
     } else {
         snprintf(where, sizeof where, "%.3f, %.3f", lat, lon);
@@ -1166,38 +1209,61 @@ static int flights_nearby(const struct janas_json *args, struct janas_buf *b)
         }
     if (m)
         qsort(v, m, sizeof(*v), by_km);
-    struct janas_buf out = {0};
-    now_text(&out);
-    if (!(place && *place)) { /* a point: where it is, in words */
-        janas_buf_printf(&out, "The point %s is ", where);
-        geo_describe(lat, lon, &out);
-        janas_buf_puts(&out, ".\n");
+    /* the data, for the layout (layouts.c) */
+    struct janas_buf d = {0};
+    char utc[16];
+    hhmm(time(NULL), "UTC", utc, sizeof utc);
+    janas_buf_printf(&d, "{\"time\": \"%s\", ", utc);
+    jstr(&d, "place", here[0] ? here : where);
+    if (how[0]) {
+        janas_buf_puts(&d, ", ");
+        jstr(&d, "how", how);
     }
-    janas_buf_printf(&out, "%zu aircraft within %.0f km of %s", m, radius,
-                     where);
+    if (!(place && *place)) { /* a point: where it is */
+        janas_buf_puts(&d, ", \"point\": ");
+        geo_describe_json(lat, lon, &d);
+    }
+    janas_buf_printf(&d, ", \"radius\": %.0f, \"count\": %zu", radius, m);
     if (m > (size_t)limit)
-        janas_buf_printf(&out, "; the nearest %d", limit);
-    janas_buf_puts(&out, m ? ":\n" : ".");
+        janas_buf_printf(&d, ", \"listed\": %d", limit);
+    janas_buf_puts(&d, ", \"aircraft\": [");
     int routes = 0;
     for (size_t i = 0; i < m && i < (size_t)limit; i++) {
         const struct fl_ac *a = v[i].a;
-        janas_buf_printf(&out, "\n%zu. %.0f km %s of %s\n", i + 1, v[i].km,
-                         geo_compass(geo_bearing(lat, lon, a->lat, a->lon)),
-                         where);
         struct fl_route r = {0};
         int have = 0;
         if (a->flight[0] && i < ROUTES_ASKED) {
             have = fl_route(a->flight, &r) == 1;
-            routes |= have;
+            routes |= have && route_fits(a, &r);
         }
-        ac_text(a, &r, have, &out);
-        janas_buf_puts(&out, "\n");
+        janas_buf_puts(&d, i ? ", " : "");
+        ac_json(a, &r, have, &d);
+        /* how far and which way from the place, into the item */
+        d.n--; /* its "}" */
+        janas_buf_printf(&d, ", \"dist_km\": %.0f, ", v[i].km);
+        jstr(&d, "dist_dir",
+             geo_compass(geo_bearing(lat, lon, a->lat, a->lon)));
+        janas_buf_puts(&d, "}");
     }
-    sources(&out, net, routes, 0);
+    janas_buf_puts(&d, "], ");
+    jstr(&d, "net", net);
+    janas_buf_puts(&d, ", ");
+    jstr(&d, "net_url",
+         strcmp(net, "adsb.lol") == 0 ? "https://adsb.lol" : "https://adsb.fi");
+    janas_buf_printf(&d, "%s%s%s}",
+                     strcmp(net, "adsb.lol") == 0 ? ", \"odbl\": true" : "",
+                     routes ? ", \"routes\": true" : "",
+                     fl_sched_have() ? "" : ", \"no_schedules\": true");
     free(v);
     free(ac);
-    janas_mcps_text_result(b, out.p ? out.p : "", out.n, 0);
-    janas_buf_free(&out);
+    if (d.oom || janas_tpl_result(b, "flights_nearby", d.p, d.n, FL_NEAR_LAYOUT,
+                                  FL_NEAR_BRIEF, err, sizeof err) != 0) {
+        char msg[480];
+        snprintf(msg, sizeof msg, "The answer could not be written: %s",
+                 d.oom ? "out of memory" : err);
+        janas_mcps_text_result(b, msg, strlen(msg), 1);
+    }
+    janas_buf_free(&d);
     return 0;
 }
 

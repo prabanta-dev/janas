@@ -33,15 +33,51 @@ static void result(struct janas_mcps *s, const struct janas_json *id,
     janas_buf_puts(&b, "{\"jsonrpc\":\"2.0\",\"id\":");
     janas_json_write(&b, id);
     janas_buf_puts(&b, ",\"result\":{");
+    /* the server's own _meta, and the tool's when it gave one (a layout,
+       common/template.h): one object, a key may not come twice */
+    struct janas_buf all = {0};
+    janas_buf_puts(&all, "{");
+    janas_buf_put(&all, members, n);
+    janas_buf_puts(&all, "}");
+    struct janas_json_doc *d = modern && n && !all.oom
+                                   ? janas_json_parse(all.p, all.n, NULL, 0)
+                                   : NULL;
+    const struct janas_json *meta =
+        d ? janas_json_get(janas_json_root(d), "_meta") : NULL;
+    janas_buf_free(&all);
     if (modern) {
         janas_buf_puts(&b, "\"resultType\":\"complete\",\"_meta\":{\"io."
                            "modelcontextprotocol/serverInfo\":{\"name\":");
         janas_json_write_str(&b, s->name, strlen(s->name));
         janas_buf_puts(&b, ",\"version\":");
         janas_json_write_str(&b, s->version, strlen(s->version));
-        janas_buf_puts(&b, n ? "}}," : "}}");
+        janas_buf_puts(&b, "}");
+        for (const struct janas_json *m =
+                 meta && meta->type == JANAS_JSON_OBJECT ? meta->child : NULL;
+             m; m = m->next) {
+            janas_buf_puts(&b, ",");
+            janas_json_write_str(&b, m->key, m->key_n);
+            janas_buf_puts(&b, ":");
+            janas_json_write(&b, m);
+        }
+        janas_buf_puts(&b, n ? "}," : "}");
     }
-    janas_buf_put(&b, members, n);
+    if (meta) { /* the members but the _meta written above */
+        int first = 1;
+        for (const struct janas_json *m = janas_json_root(d)->child; m;
+             m = m->next) {
+            if (m == meta)
+                continue;
+            janas_buf_puts(&b, first ? "" : ",");
+            janas_json_write_str(&b, m->key, m->key_n);
+            janas_buf_puts(&b, ":");
+            janas_json_write(&b, m);
+            first = 0;
+        }
+    } else {
+        janas_buf_put(&b, members, n);
+    }
+    janas_json_free(d);
     janas_buf_puts(&b, "}}\n");
     send_buf(s, &b);
 }

@@ -30,6 +30,7 @@
 
 #include "common/sysinfo.h"
 #include "edit.h"
+#include "layout.h"
 #include "janas/llm.h"
 #include "markdown.h"
 #include "mcp_chat.h"
@@ -643,6 +644,58 @@ static void prep_wait(const janas_llm *llm, int stop)
     }
     pthread_join(prep.th, NULL);
     prep.on = 0;
+}
+
+/*
+ * A service's layout in the user's language, asked of the model on the
+ * side (the conversation saved and put back): once a layout and language,
+ * then kept. Said on the terminal, as it takes a while.
+ */
+static janas_llm_chat *aside_chat;
+
+static int translate(const char *name, const char *system, const char *text,
+                     char **out)
+{
+    if (!aside_chat)
+        return -1;
+    term_gap(&term);
+    prep_say(T_USER(&term),
+             "Writing the layout of %s's answers in your language (%s), "
+             "once: it is kept in ~/.config/janas/layouts.",
+             name, layout_lang());
+    footer(idle_llm, aside_chat, "writing a layout");
+    size_t cap = 32768;
+    char *buf = malloc(cap);
+    int32_t len = 0;
+    if (!buf || janas_llm_chat_aside(aside_chat, system, -1, text, -1, 4096,
+                                     buf, (int32_t)cap, &len) != JANAS_LLM_OK) {
+        prep_say(T_WARN(&term), "the layout could not be written: %s",
+                 buf ? janas_llm_last_error() : "out of memory");
+        free(buf);
+        return -1;
+    }
+    *out = buf;
+    return 0;
+}
+
+/* The user's language, from the computer's (LANG=it_IT.UTF-8: it). */
+static void user_lang(void)
+{
+    static const char *const vars[] = {"LC_ALL", "LC_MESSAGES", "LANG"};
+    for (size_t i = 0; i < sizeof vars / sizeof *vars; i++) {
+        const char *v = getenv(vars[i]);
+        if (!v || !*v)
+            continue;
+        char l[16];
+        size_t n = strcspn(v, "_.@");
+        snprintf(l, sizeof l, "%.*s", (int)(n < 15 ? n : 15), v);
+        int ok = n >= 2 && n <= 3;
+        for (size_t k = 0; ok && k < n; k++)
+            ok = l[k] >= 'a' && l[k] <= 'z';
+        layout_set_lang(ok ? l : "en");
+        return;
+    }
+    layout_set_lang("en");
 }
 
 static void restart(janas_llm_chat *c, const char *system)
@@ -1425,6 +1478,9 @@ int main(int argc, char **argv)
         fprintf(stderr, "janas-chat: %s\n", janas_llm_last_error());
     /* the tools of the MCP servers configured and of Janas's own services
        beside the program, given to the model */
+    aside_chat = c;
+    user_lang();
+    layout_set_translator(translate);
     if (mcp) {
         mcpc_defer(!all_tools);
         mcpc_start(mcp_config);

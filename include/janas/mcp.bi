@@ -118,6 +118,12 @@ declare function janas_mcp_result_user(byval m as const janas_mcp ptr, _
                                        byval buf as zstring ptr, _
                                        byval cap as long, _
                                        byval length as long ptr) as long
+'' The whole result of the last call as JSON (content, structuredContent,
+'' _meta...).
+declare function janas_mcp_result_json(byval m as const janas_mcp ptr, _
+                                       byval buf as zstring ptr, _
+                                       byval cap as long, _
+                                       byval length as long ptr) as long
 declare sub janas_mcp_cancel(byval m as janas_mcp ptr)
 
 end extern

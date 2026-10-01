@@ -481,6 +481,20 @@ JANAS_LLM_API int32_t janas_llm_chat_tools(janas_llm_chat *c, const char *json,
 JANAS_LLM_API int32_t janas_llm_chat_tools_add(janas_llm_chat *c,
                                                const char *json, int32_t len);
 
+/*
+ * A request on the side, between two replies: a system message (NULL:
+ * none) and a user message, answered greedily, with no reasoning, in at
+ * most max_tokens, into buf (as the other texts: *len its length, and
+ * JANAS_LLM_ESMALL when cap cannot hold it). The conversation is saved
+ * first and put back after as it was: the next message continues it.
+ * janas-chat asks this way for a service's layout in the user's language,
+ * once. It costs the reading of the request and of the answer, and memory
+ * for a copy of the conversation.
+ */
+JANAS_LLM_API int32_t janas_llm_chat_aside(
+    janas_llm_chat *c, const char *system, int32_t system_len, const char *text,
+    int32_t text_len, int32_t max_tokens, char *buf, int32_t cap, int32_t *len);
+
 /* Whether the model calls a tool, from the next reply on: as it judges
    (AUTO, default), never (NONE), at least one (REQUIRED), or the function
    named (FUNCTION, name of len bytes). parallel 0 allows one call at most

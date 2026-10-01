@@ -44,15 +44,22 @@ static const char *cover_words(const char *c)
     return c ? c : "";
 }
 
-static void clouds_of(const struct janas_json *cl, char *out, size_t cap)
+static void clouds_of(const struct janas_json *cl, char *out, size_t cap,
+                      struct wx_obs *o)
 {
     size_t n = 0;
     out[0] = 0;
+    o->n_layers = 0;
     for (const struct janas_json *c =
              cl && cl->type == JANAS_JSON_ARRAY ? cl->child : NULL;
          c && n < cap; c = c->next) {
         const char *cov = janas_json_str(janas_json_get(c, "cover"));
         double base = obs_num(c, "base");
+        if (o->n_layers < (int)(sizeof o->layer / sizeof *o->layer)) {
+            snprintf(o->layer[o->n_layers].cover,
+                     sizeof o->layer[o->n_layers].cover, "%s", cov ? cov : "");
+            o->layer[o->n_layers++].base_ft = base;
+        }
         n += (size_t)snprintf(out + n, cap - n, "%s%s", n ? ", " : "",
                               cover_words(cov));
         if (!isnan(base) && n < cap)
@@ -119,7 +126,8 @@ int wx_metar_parse(const char *text, size_t len, double lat, double lon,
                  janas_json_str(janas_json_get(best, "wxString"))
                      ? janas_json_str(janas_json_get(best, "wxString"))
                      : "");
-        clouds_of(janas_json_get(best, "clouds"), o->clouds, sizeof o->clouds);
+        clouds_of(janas_json_get(best, "clouds"), o->clouds, sizeof o->clouds,
+                  o);
         snprintf(o->raw, sizeof o->raw, "%s",
                  janas_json_str(janas_json_get(best, "rawOb"))
                      ? janas_json_str(janas_json_get(best, "rawOb"))

@@ -56,6 +56,7 @@ struct janas_mcp {
     size_t n_tools;
     struct janas_buf result; /* the last call's answer, as text */
     struct janas_buf shown;  /* its parts for the user alone (audience) */
+    struct janas_buf raw;    /* the whole result, as JSON */
     int result_error;
     volatile sig_atomic_t cancel;
     int http_status; /* the last HTTP answer's */

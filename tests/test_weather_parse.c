@@ -861,6 +861,9 @@ static void words(void)
     CHECK(strcmp(wx_sea_words(0.08), "calm") == 0 &&
               strcmp(wx_sea_words(1.5), "moderate") == 0,
           "Douglas");
+    CHECK(wx_douglas(0.05) == 1 && wx_douglas(0.3) == 2 &&
+              wx_douglas(1.5) == 4 && wx_douglas(20) == 9,
+          "Douglas degrees");
     wx_from_dir(321, s, sizeof s);
     CHECK(strcmp(s, "from the north-west (321°)") == 0, "direction: '%s'", s);
 }

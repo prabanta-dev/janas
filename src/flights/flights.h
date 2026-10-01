@@ -98,6 +98,13 @@ int fl_sched_parse(const char *text, size_t len, struct fl_sched **v, size_t *n,
 
 void fl_sched_free(void);
 
+/* ---- layouts.c ---- */
+
+/* flights_over's layout and brief (common/template.h). */
+extern const char FL_OVER_LAYOUT[], FL_OVER_BRIEF[];
+/* flights_nearby's */
+extern const char FL_NEAR_LAYOUT[], FL_NEAR_BRIEF[];
+
 /* ---- tools.c ---- */
 
 void fl_tools_list(void *ctx, struct janas_buf *b);

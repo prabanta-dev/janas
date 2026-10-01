@@ -51,55 +51,59 @@ static int area_points(const struct geo_area *a, struct wx_sea *s)
     return k;
 }
 
-static void point_line(const struct wx_sea *s, int days, int with_place,
-                       struct janas_buf *out)
+/* One point: now, and its days. */
+static void point_json(const struct wx_sea *s, int days, int with_place,
+                       struct janas_buf *d)
 {
-    char dir[64];
-    janas_buf_puts(out, "- ");
+    janas_buf_puts(d, "{\"wave\": ");
+    janas_buf_printf(d, "%.1f, \"wave_code\": %d", s->wave,
+                     wx_douglas(s->wave));
     if (with_place) {
-        geo_describe(s->lat, s->lon, out);
-        janas_buf_puts(out, ": ");
+        janas_buf_puts(d, ", \"where\": ");
+        geo_describe_json(s->lat, s->lon, d);
     }
-    wx_from_dir(s->wave_dir, dir, sizeof dir);
-    janas_buf_printf(out, "waves %.1f m (%s) %s", s->wave,
-                     wx_sea_words(s->wave), dir);
-    if (!isnan(s->period))
-        janas_buf_printf(out, ", period %.0f s", s->period);
-    if (!isnan(s->wind_wave))
-        janas_buf_printf(out, "; wind waves %.1f m", s->wind_wave);
+    if (!isnan(s->wave_dir))
+        wx_jstr(d, "wave_from", geo_compass(s->wave_dir));
+    wx_jnum(d, "period", s->period, 0);
+    if (!isnan(s->wind_wave)) {
+        janas_buf_puts(d, ", \"has_wind_wave\": true");
+        wx_jnum(d, "wind_wave", s->wind_wave, 1);
+    }
     if (!isnan(s->swell)) {
-        wx_from_dir(s->swell_dir, dir, sizeof dir);
-        janas_buf_printf(out, ", swell %.1f m %s", s->swell, dir);
+        janas_buf_puts(d, ", \"has_swell\": true");
+        wx_jnum(d, "swell", s->swell, 1);
+        if (!isnan(s->swell_dir))
+            wx_jstr(d, "swell_from", geo_compass(s->swell_dir));
     }
-    if (!isnan(s->sst))
-        janas_buf_printf(out, "; water %.1f °C", s->sst);
+    wx_jnum(d, "sst", s->sst, 1);
     if (!isnan(s->wind)) {
-        wx_from_dir(s->wind_dir, dir, sizeof dir);
-        janas_buf_printf(out, "; wind %.0f km/h (%s) %s", s->wind,
-                         wx_wind_words(s->wind), dir);
-        if (!isnan(s->gust))
-            janas_buf_printf(out, ", gusts %.0f km/h", s->gust);
+        janas_buf_puts(d, ", \"has_wind\": true");
+        wx_jwind(d, s->wind, s->wind_dir);
+        wx_jnum(d, "gust", s->gust, 0);
     }
-    janas_buf_puts(out, "\n");
-    for (int d = 0; d < s->n_day && d < days; d++) {
-        const struct wx_sea_day *y = &s->day[d];
-        char name[48];
-        wx_day_name(y->date, name, sizeof name);
-        wx_from_dir(y->wave_dir, dir, sizeof dir);
-        janas_buf_printf(out, "    %s: waves up to %.1f m (%s) %s", name,
-                         y->wave_max, wx_sea_words(y->wave_max), dir);
+    janas_buf_puts(d, ", \"days\": [");
+    for (int k = 0; k < s->n_day && k < days; k++) {
+        const struct wx_sea_day *y = &s->day[k];
+        janas_buf_puts(d, k ? ", {" : "{");
+        wx_jdate(d, y->date);
+        janas_buf_printf(d, ", \"max\": %.1f, \"code\": %d", y->wave_max,
+                         wx_douglas(y->wave_max));
+        if (!isnan(y->wave_dir))
+            wx_jstr(d, "from", geo_compass(y->wave_dir));
         if (!isnan(y->wind_max)) {
-            janas_buf_printf(out, ", wind up to %.0f km/h (%s)", y->wind_max,
-                             wx_wind_words(y->wind_max));
-            if (!isnan(y->gust_max))
-                janas_buf_printf(out, ", gusts %.0f", y->gust_max);
+            janas_buf_puts(d, ", \"has_wind\": true");
+            wx_jnum(d, "wind", y->wind_max, 0);
+            janas_buf_printf(d, ", \"bft\": %d", wx_beaufort(y->wind_max));
+            wx_jnum(d, "gust", y->gust_max, 0);
         }
-        janas_buf_puts(out, "\n");
+        janas_buf_puts(d, "}");
     }
+    janas_buf_puts(d, "]}");
 }
 
-static void summary(const struct wx_sea *s, int n, int days,
-                    struct janas_buf *out)
+/* A whole sea: from what to what now, and where it is roughest each day. */
+static void summary_json(const struct wx_sea *s, int n, int days,
+                         struct janas_buf *d)
 {
     double lo = NAN, hi = NAN, t_lo = NAN, t_hi = NAN;
     int ok = 0;
@@ -118,30 +122,33 @@ static void summary(const struct wx_sea *s, int n, int days,
                 t_hi = s[i].sst;
         }
     }
-    janas_buf_printf(out, "Now, at %d points: waves %.1f to %.1f m (%s", ok, lo,
-                     hi, wx_sea_words(lo));
-    if (strcmp(wx_sea_words(lo), wx_sea_words(hi)) != 0)
-        janas_buf_printf(out, " to %s", wx_sea_words(hi));
-    janas_buf_puts(out, ")");
-    if (!isnan(t_lo))
-        janas_buf_printf(out, ", water %.1f to %.1f °C", t_lo, t_hi);
-    janas_buf_puts(out, ".\n");
-    for (int d = 0; d < days; d++) {
+    janas_buf_printf(d,
+                     ", \"summary\": {\"points\": %d, \"lo\": %.1f, \"hi\": "
+                     "%.1f, \"lo_code\": %d, \"hi_code\": %d",
+                     ok, lo, hi, wx_douglas(lo), wx_douglas(hi));
+    if (wx_douglas(lo) != wx_douglas(hi))
+        janas_buf_puts(d, ", \"hi_other\": true");
+    wx_jnum(d, "t_lo", t_lo, 1);
+    wx_jnum(d, "t_hi", t_hi, 1);
+    janas_buf_puts(d, ", \"days\": [");
+    int any = 0;
+    for (int k = 0; k < days; k++) {
         int at = -1;
         for (int i = 0; i < n; i++)
-            if (s[i].ok && d < s[i].n_day && !isnan(s[i].day[d].wave_max) &&
-                (at < 0 || s[i].day[d].wave_max > s[at].day[d].wave_max))
+            if (s[i].ok && k < s[i].n_day && !isnan(s[i].day[k].wave_max) &&
+                (at < 0 || s[i].day[k].wave_max > s[at].day[k].wave_max))
                 at = i;
         if (at < 0)
             continue;
-        char name[48];
-        wx_day_name(s[at].day[d].date, name, sizeof name);
-        janas_buf_printf(out, "%s: highest waves %.1f m (%s), ", name,
-                         s[at].day[d].wave_max,
-                         wx_sea_words(s[at].day[d].wave_max));
-        geo_describe(s[at].lat, s[at].lon, out);
-        janas_buf_puts(out, ".\n");
+        janas_buf_puts(d, any++ ? ", {" : "{");
+        wx_jdate(d, s[at].day[k].date);
+        janas_buf_printf(d, ", \"max\": %.1f, \"code\": %d, \"where\": ",
+                         s[at].day[k].wave_max,
+                         wx_douglas(s[at].day[k].wave_max));
+        geo_describe_json(s[at].lat, s[at].lon, d);
+        janas_buf_puts(d, "}");
     }
+    janas_buf_puts(d, "]}");
 }
 
 int wx_tool_sea(const struct janas_json *args, struct janas_buf *b)
@@ -157,6 +164,7 @@ int wx_tool_sea(const struct janas_json *args, struct janas_buf *b)
     char err[512], tz[48] = "", title[256], how[96] = "";
     int n;
     struct geo_area a;
+    struct wx_place place = {0};
     if (area) {
         if (!geo_area_find(area, &a)) {
             janas_buf_printf(&out,
@@ -178,6 +186,7 @@ int wx_tool_sea(const struct janas_json *args, struct janas_buf *b)
         struct wx_place p;
         if (wx_arg_place(args, &p, b) != 0)
             return 0;
+        place = p;
         snprintf(how, sizeof how, "%s", p.how);
         memset(&s[0], 0, sizeof s[0]);
         s[0].lat = p.lat;
@@ -206,20 +215,26 @@ int wx_tool_sea(const struct janas_json *args, struct janas_buf *b)
         return wx_result(&out, b, 1);
     }
     const char *T = strchr(s[0].time, 'T');
-    janas_buf_printf(&out,
-                     "The state of %s at %.5s local time (%s), and "
-                     "the next %d days:\n",
-                     title, T ? T + 1 : s[0].time, tz[0] ? tz : "UTC", days);
+    struct janas_buf d = {0};
+    if (area) {
+        janas_buf_puts(&d, "{\"sea\": ");
+        janas_json_write_str(&d, a.name, strlen(a.name));
+    } else {
+        wx_jplace(&d, &place);
+    }
+    janas_buf_printf(&d, ", \"time\": \"%.5s\"", T ? T + 1 : s[0].time);
+    wx_jstr(&d, "tz", tz[0] ? tz : "UTC");
+    janas_buf_printf(&d, ", \"days\": %d", days);
     if (area)
-        summary(s, n, days, &out);
+        summary_json(s, n, days, &d);
+    janas_buf_puts(&d, ", \"points\": [");
+    int k = 0;
     for (int i = 0; i < n; i++)
-        if (s[i].ok)
-            point_line(&s[i], days, area != NULL, &out);
-    janas_buf_puts(&out, "The waves' height is the significant height (the "
-                         "mean of the highest third); single waves can be "
-                         "almost twice as high. Source: Open-Meteo's sea "
-                         "and weather models (open-meteo.com, CC BY 4.0): "
-                         "forecasts, not measures.");
-    wx_place_note(how, &out);
-    return wx_result(&out, b, 0);
+        if (s[i].ok) {
+            janas_buf_puts(&d, k++ ? ", " : "");
+            point_json(&s[i], days, area != NULL, &d);
+        }
+    janas_buf_puts(&d, "]}");
+    (void)how;
+    return wx_answer(b, "weather_sea", &d, WX_SEA_LAYOUT, WX_SEA_BRIEF);
 }

@@ -249,6 +249,8 @@ int janas_api_begin_reply(janas_llm_chat *c, uint32_t reply_at, uint32_t total,
                           uint32_t cached);
 /* Building a prompt begins (its time is prepare_seconds). */
 void janas_api_prep_start(janas_llm_chat *c);
+/* The session's options from the chat's parameters. */
+int32_t janas_api_options(const janas_llm_chat *c, struct janas_gen_options *o);
 /* What janas_llm_chat_prepare read, dropped: the system message or the
    tools change. */
 void janas_api_unprepare(janas_llm_chat *c);

@@ -148,6 +148,11 @@ struct wx_obs {
     char visib[8];     /* statute miles as given: "6+", "1 1/2" */
     char wx[32];       /* present weather, as coded: "-RA", "TSRA" */
     char clouds[96];   /* "few at 1500 ft, scattered at 1700 ft" */
+    struct {
+        char cover[8];  /* "FEW", "OVC", "CAVOK" */
+        double base_ft; /* NAN when not given */
+    } layer[6];         /* the same, as coded */
+    int n_layers;
     char raw[160];
 };
 
@@ -208,6 +213,11 @@ const char *wx_code_text(int code);
 void wx_symbol_text(const char *symbol, char *out, size_t cap);
 /* The wind's force in words, on the Beaufort scale ("moderate breeze"). */
 const char *wx_wind_words(double kmh);
+/* The wind's force on the Beaufort scale, 0 (calm) to 12. */
+int wx_beaufort(double kmh);
+/* The sea's state on the Douglas scale, 1 (calm, below 10 cm) to 9
+   (phenomenal). */
+int wx_douglas(double m);
 /* The sea's state from the waves' height, on the Douglas scale. */
 const char *wx_sea_words(double m);
 /* "from the north-west (321°)" */
@@ -246,5 +256,28 @@ int wx_tool_now(const struct janas_json *args, struct janas_buf *b);
 int wx_tool_forecast(const struct janas_json *args, struct janas_buf *b);
 int wx_tool_sea(const struct janas_json *args, struct janas_buf *b);
 int wx_tool_alerts(const struct janas_json *args, struct janas_buf *b);
+
+/* ---- report.c: data for a layout (common/template.h) ---- */
+
+/* , "key": value, as JSON: a text; a number with that many decimals,
+   nothing when NAN; the wind's force and where it blows from; a date's
+   weekday (0 Sunday), day and month (no comma before). */
+void wx_jstr(struct janas_buf *b, const char *key, const char *v);
+void wx_jnum(struct janas_buf *b, const char *key, double v, int decimals);
+void wx_jwind(struct janas_buf *b, double kmh, double deg);
+void wx_jdate(struct janas_buf *b, const char *date);
+/* {"place": its name, and "how" when it is where the user is (no "}"). */
+void wx_jplace(struct janas_buf *b, const struct wx_place *p);
+/* The result from the data d (freed) and a layout; an error otherwise. */
+int wx_answer(struct janas_buf *b, const char *name, struct janas_buf *d,
+              const char *layout, const char *brief);
+
+/* ---- layouts.c ---- */
+
+/* The layouts and briefs of weather_now and weather_forecast
+   (common/template.h). */
+extern const char WX_NOW_LAYOUT[], WX_NOW_BRIEF[];
+extern const char WX_FORECAST_LAYOUT[], WX_FORECAST_BRIEF[];
+extern const char WX_SEA_LAYOUT[], WX_SEA_BRIEF[];
 
 #endif

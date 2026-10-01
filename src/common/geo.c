@@ -371,17 +371,25 @@ const struct geo_city *geo_city_near(double lat, double lon, double *km)
     return near;
 }
 
-void geo_describe(double lat, double lon, struct janas_buf *b)
+/* Where a point is: the sea it is over (NULL: land), the nearest city
+   and the nearest of another region that lies the other way (NULL: none
+   worth naming), and how far and which way from the nearest. */
+struct where {
+    const char *sea;
+    const struct geo_city *near, *other;
+    double km;
+    const char *dir;
+};
+
+static int where_parts(double lat, double lon, struct where *w)
 {
     /* the nearest city, and the nearest of another region that lies the
        other way: the two the position is between */
     const struct geo_city *other = NULL;
     double d_near, d_other = 1e30;
     const struct geo_city *near = geo_city_near(lat, lon, &d_near);
-    if (!near) {
-        janas_buf_printf(b, "at %.2f, %.2f", lat, lon);
-        return;
-    }
+    if (!near)
+        return -1;
     double b_near = geo_bearing(lat, lon, DEG(near->lat), DEG(near->lon));
     for (size_t i = 0; i < N_OF(geo_cities); i++) {
         const struct geo_city *c = &geo_cities[i];
@@ -398,26 +406,77 @@ void geo_describe(double lat, double lon, struct janas_buf *b)
             other = c;
         }
     }
-    const char *sea = geo_sea_at(lat, lon);
-    if (sea) {
-        janas_buf_printf(b, "over the %s", sea);
-        if (other && d_other < 3 * d_near + 100 && d_other < 400) {
+    *w = (struct where){.sea = geo_sea_at(lat, lon),
+                        .near = near,
+                        .km = d_near,
+                        .dir = geo_compass(geo_bearing(
+                            DEG(near->lat), DEG(near->lon), lat, lon))};
+    if (w->sea && other && d_other < 3 * d_near + 100 && d_other < 400)
+        w->other = other;
+    return 0;
+}
+
+void geo_describe(double lat, double lon, struct janas_buf *b)
+{
+    struct where w;
+    if (where_parts(lat, lon, &w) != 0) {
+        janas_buf_printf(b, "at %.2f, %.2f", lat, lon);
+        return;
+    }
+    if (w.sea) {
+        janas_buf_printf(b, "over the %s", w.sea);
+        if (w.other) {
             janas_buf_puts(b, ", between ");
-            where_of(near, b);
+            where_of(w.near, b);
             janas_buf_puts(b, " and ");
-            where_of(other, b);
+            where_of(w.other, b);
         }
         janas_buf_puts(b, "; ");
     } else {
         janas_buf_puts(b, "over ");
-        where_of(near, b);
+        where_of(w.near, b);
         janas_buf_puts(b, "; ");
     }
-    if (d_near < 3)
-        janas_buf_printf(b, "over %s", near->name);
+    if (w.km < 3)
+        janas_buf_printf(b, "over %s", w.near->name);
     else
-        janas_buf_printf(
-            b, "%.0f km %s of %s", d_near,
-            geo_compass(geo_bearing(DEG(near->lat), DEG(near->lon), lat, lon)),
-            near->name);
+        janas_buf_printf(b, "%.0f km %s of %s", w.km, w.dir, w.near->name);
+}
+
+static void json_str(struct janas_buf *b, const char *key, const char *v)
+{
+    janas_buf_printf(b, "\"%s\": ", key);
+    janas_json_write_str(b, v, strlen(v));
+}
+
+void geo_describe_json(double lat, double lon, struct janas_buf *b)
+{
+    struct where w;
+    if (where_parts(lat, lon, &w) != 0) {
+        janas_buf_printf(b, "{\"lat\": %.2f, \"lon\": %.2f}", lat, lon);
+        return;
+    }
+    struct janas_buf r = {0};
+    where_of(w.near, &r);
+    janas_buf_puts(b, "{");
+    if (w.sea) {
+        json_str(b, "sea", w.sea);
+        janas_buf_puts(b, ", ");
+    }
+    janas_buf_puts(b, "\"region\": ");
+    janas_json_write_str(b, r.p ? r.p : "", r.n);
+    if (w.other) {
+        r.n = 0;
+        where_of(w.other, &r);
+        janas_buf_puts(b, ", \"and\": ");
+        janas_json_write_str(b, r.p ? r.p : "", r.n);
+    }
+    janas_buf_puts(b, ", ");
+    json_str(b, "city", w.near->name);
+    if (w.km >= 3) {
+        janas_buf_printf(b, ", \"km\": %.0f, ", w.km);
+        json_str(b, "dir", w.dir);
+    }
+    janas_buf_puts(b, "}");
+    janas_buf_free(&r);
 }

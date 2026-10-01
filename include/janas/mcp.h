@@ -183,6 +183,10 @@ JANAS_MCP_API int32_t janas_mcp_result_error(const janas_mcp *m);
  */
 JANAS_MCP_API int32_t janas_mcp_result_user(const janas_mcp *m, char *buf,
                                             int32_t cap, int32_t *len);
+/* The whole result of the last call as JSON (content, structuredContent,
+   _meta...), for a client that does more with it than read its text. */
+JANAS_MCP_API int32_t janas_mcp_result_json(const janas_mcp *m, char *buf,
+                                            int32_t cap, int32_t *len);
 
 /* Stops the call in progress on m, which then returns an error; the server
    is told (notifications/cancelled). */

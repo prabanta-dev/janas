@@ -99,5 +99,10 @@ int geo_area_has(const struct geo_area *a, double lat, double lon);
 
 /* The position in words, appended to b. */
 void geo_describe(double lat, double lon, struct janas_buf *b);
+/* The same as a JSON object, for a layout (common/template.h): "sea" when
+   over one, "region" ("Sicily, Italy": the region over, or the first of
+   the two a sea lies between), "and" (the second), "city", and "km" and
+   "dir" from it when 3 km or more away. */
+void geo_describe_json(double lat, double lon, struct janas_buf *b);
 
 #endif

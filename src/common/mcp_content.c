@@ -170,6 +170,12 @@ void janas_mcp_take_result(struct janas_mcp *m, const struct janas_json *res)
     m->result.oom = 0;
     m->shown.n = 0;
     m->shown.oom = 0;
+    m->raw.n = 0;
+    m->raw.oom = 0;
+    janas_json_write(&m->raw, res);
+    janas_buf_put(&m->raw, "", 1); /* NUL-terminated, not counted */
+    if (m->raw.n)
+        m->raw.n--;
     m->result_error = janas_json_get(res, "isError") &&
                       janas_json_get(res, "isError")->type == JANAS_JSON_TRUE;
     const struct janas_json *content = janas_json_get(res, "content");

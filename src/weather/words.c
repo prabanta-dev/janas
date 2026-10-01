@@ -144,6 +144,27 @@ const char *wx_wind_words(double kmh)
     return "hurricane force";
 }
 
+int wx_beaufort(double kmh)
+{
+    static const double below[] = {1,  6,  12, 20, 29,  39,
+                                   50, 62, 75, 89, 103, 118};
+    int i = 0;
+    while (i < 12 && !(kmh < below[i]))
+        i++;
+    return i;
+}
+
+int wx_douglas(double m)
+{
+    /* degree 0 is the glassy sea, no waves at all: a model's height is
+       never that, so the first degree is 1, below 10 cm */
+    static const double below[] = {0.1, 0.5, 1.25, 2.5, 4, 6, 9, 14};
+    int i = 0;
+    while (i < 8 && !(m < below[i]))
+        i++;
+    return i + 1;
+}
+
 const char *wx_sea_words(double m)
 {
     if (m < 0.1)

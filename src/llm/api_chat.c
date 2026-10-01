@@ -71,6 +71,11 @@ static int32_t gen_options(const janas_llm_chat *c, struct janas_gen_options *o)
     return JANAS_LLM_OK;
 }
 
+int32_t janas_api_options(const janas_llm_chat *c, struct janas_gen_options *o)
+{
+    return gen_options(c, o);
+}
+
 static int32_t take_params(janas_llm_chat *c,
                            const struct janas_llm_chat_params *pp)
 {
