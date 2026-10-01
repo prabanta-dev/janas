@@ -44,79 +44,57 @@ static void schema_str(struct janas_buf *b, const char *name, const char *what)
     janas_buf_puts(b, "}");
 }
 
+/* The model reads all of it before it can use a tool: every word costs. */
 void fl_tools_list(void *ctx, struct janas_buf *b)
 {
     (void)ctx;
     janas_buf_puts(
         b, "\"tools\": [{\"name\": \"flight_status\", \"title\": \"Status "
-           "of a flight\", \"description\": \"A flight's status: its "
-           "scheduled, estimated and actual departure and arrival times, "
-           "gates and delay (today's flights, when the server has an "
-           "AviationStack key), and where it is now from the ADS-B receivers "
-           "of the community: on the ground (parked, taxiing, on the runway) "
-           "or in the air (altitude, speed, climbing or descending), where "
-           "it is in words (sea, region, nearest city) and an arrival time "
-           "estimated from its speed. Give the flight number (FR1234, "
-           "AZ1631) or the callsign (RYR1234, VLG1595).\", "
-           "\"inputSchema\": {\"type\": \"object\", \"properties\": {");
-    schema_str(b, "flight",
-               "Flight number (IATA airline code and number, e.g. VY1595) or "
-               "callsign (e.g. VLG1595).");
+           "of a flight\", \"description\": \"A flight's times, gate and "
+           "delay today (with an AviationStack key), and where it is now "
+           "(ADS-B): on the ground or in the air, where in words, an "
+           "arrival estimate.\", \"inputSchema\": {\"type\": \"object\", "
+           "\"properties\": {");
+    schema_str(b, "flight", "Flight number (AZ1631) or callsign (VLG1595).");
     janas_buf_puts(
         b, "}, \"required\": [\"flight\"], \"additionalProperties\": false}}, "
            "{\"name\": \"flights_between\", \"title\": \"Flights of a "
            "route\", \"description\": \"Today's flights from one airport to "
-           "another (and the latest ones), with their status and scheduled, "
-           "estimated and actual times, and where those in the air are now. "
-           "Needs an AviationStack key on the server. Give the two airports "
-           "as IATA or ICAO codes or as city names in English (Turin, "
-           "Trapani).\", \"inputSchema\": {\"type\": \"object\", "
+           "another, with their times and where those flying are (needs an "
+           "AviationStack key).\", \"inputSchema\": {\"type\": \"object\", "
            "\"properties\": {");
-    schema_str(b, "from", "Departure airport: code (TRN) or city.");
+    schema_str(b, "from", "Airport code (TRN) or city in English.");
     janas_buf_puts(b, ", ");
-    schema_str(b, "to", "Arrival airport: code (TPS) or city.");
+    schema_str(b, "to", "Airport code (TPS) or city in English.");
     janas_buf_puts(
         b, "}, \"required\": [\"from\", \"to\"], \"additionalProperties\": "
            "false}}, "
            "{\"name\": \"flights_over\", \"title\": \"Flights over a "
-           "sea\", \"description\": \"How many and which aircraft are "
-           "flying now over a sea (the Tyrrhenian, the Adriatic, the North "
-           "Sea...), from the ADS-B receivers of the community, open data "
-           "only: for each its callsign, aircraft, altitude, speed, heading, "
-           "where it is in words and its route when one is on record. Use "
-           "this for questions about a sea; do not call flight_status for "
-           "each aircraft found.\", \"inputSchema\": {\"type\": "
-           "\"object\", \"properties\": {");
-    schema_str(b, "area",
-               "A sea's name in English (Tyrrhenian Sea, Adriatic Sea, "
-               "Ligurian Sea, Ionian Sea, North Sea).");
+           "sea\", \"description\": \"The aircraft flying now over a sea "
+           "(ADS-B, open data), with where each is and its route.\", "
+           "\"inputSchema\": {\"type\": \"object\", \"properties\": {");
+    schema_str(b, "area", "A sea in English (Tyrrhenian Sea, North Sea).");
     janas_buf_puts(
         b, ", \"limit\": {\"type\": \"integer\", \"minimum\": 1, "
            "\"maximum\": 80, \"description\": \"At most this many listed "
-           "(default 40); the count is of all.\"}}, \"required\": "
-           "[\"area\"], \"additionalProperties\": false}}, "
+           "(default 40).\"}}, \"required\": [\"area\"], "
+           "\"additionalProperties\": false}}, "
            "{\"name\": \"flights_nearby\", \"title\": \"Flights near a "
            "place\", \"description\": \"The aircraft flying now near an "
-           "airport, a city or a point, from the ADS-B receivers of the "
-           "community: for each its callsign, state, altitude and speed, "
-           "where it is in words and its route when known. Give a place "
-           "(an airport's IATA or ICAO code, or a city's name in English: "
-           "Turin, Milan, Rome) or a latitude and longitude.\", "
+           "airport, a city or a point (ADS-B, open data).\", "
            "\"inputSchema\": {\"type\": \"object\", \"properties\": {");
     schema_str(b, "place",
-               "An airport code (TRN, LIMF) or a city name in English. "
-               "Leave out place and coordinates only when the user names "
-               "no place: then where the user is (as set on the computer, "
-               "or estimated from the internet connection).");
+               "Airport code (TRN) or city in English. Leave out place and "
+               "coordinates only when the user names no place: then where "
+               "the user is.");
     janas_buf_puts(
         b, ", \"latitude\": {\"type\": \"number\", \"minimum\": -90, "
            "\"maximum\": 90}, \"longitude\": {\"type\": \"number\", "
            "\"minimum\": -180, \"maximum\": 180}, \"radius_km\": {\"type\": "
            "\"number\", \"minimum\": 1, \"maximum\": 460, \"description\": "
-           "\"How far around the place (default 50).\"}, \"limit\": "
-           "{\"type\": \"integer\", \"minimum\": 1, \"maximum\": 40, "
-           "\"description\": \"At most this many, the nearest first "
-           "(default 15).\"}}, \"additionalProperties\": false}}]");
+           "\"Default 50.\"}, \"limit\": {\"type\": \"integer\", "
+           "\"minimum\": 1, \"maximum\": 40, \"description\": \"Nearest "
+           "first (default 15).\"}}, \"additionalProperties\": false}}]");
 }
 
 /* ---- words ---- */

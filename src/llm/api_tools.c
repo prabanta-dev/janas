@@ -11,32 +11,117 @@
 #include "llm/chat.h"
 #include "llm/schema.h"
 
-int32_t janas_llm_chat_tools(janas_llm_chat *c, const char *json, int32_t len)
+/* An array's items, without its brackets ("" when empty). */
+static void items_of(const char *json, const char **p, size_t *n)
 {
-    if (!c)
-        return janas_api_fail(JANAS_LLM_EINVAL, "no chat");
-    size_t n = json ? janas_api_text_len(json, len) : 0;
-    if (n == 0) {
-        janas_toolset_free(c->tools);
-        c->tools = NULL;
-        return JANAS_LLM_OK;
+    const char *a = json ? strchr(json, '[') : NULL;
+    const char *b = json ? strrchr(json, ']') : NULL;
+    if (!a || !b || b <= a) {
+        *p = "";
+        *n = 0;
+        return;
     }
-    if (c->llm->tools == JANAS_TOOLS_NONE)
-        return janas_api_fail(JANAS_LLM_EMODEL,
-                              "this model's chat template has no tools");
-    char err[200];
-    struct janas_toolset *t = janas_toolset_parse(json, n, err, sizeof(err));
-    if (!t)
-        return janas_api_fail(JANAS_LLM_EINVAL, "tools: %s", err);
-    if (janas_toolset_count(t) == 0) {
-        janas_toolset_free(t);
-        t = NULL;
+    a++;
+    while (a < b && (*a == ' ' || *a == '\n' || *a == '\t' || *a == '\r'))
+        a++;
+    *p = a;
+    *n = (size_t)(b - a);
+}
+
+/* The tools the model may call: those of the system message and those
+   added, made one set again. */
+static int32_t make_tools(janas_llm_chat *c)
+{
+    const char *a, *b;
+    size_t an, bn;
+    items_of(c->tools_json, &a, &an);
+    items_of(c->more_json, &b, &bn);
+    struct janas_toolset *t = NULL;
+    if (an || bn) {
+        char *all = malloc(an + bn + 4);
+        if (!all)
+            return janas_api_fail(JANAS_LLM_ENOMEM, "out of memory");
+        size_t k = 0;
+        all[k++] = '[';
+        memcpy(all + k, a, an);
+        k += an;
+        if (an && bn)
+            all[k++] = ',';
+        memcpy(all + k, b, bn);
+        k += bn;
+        all[k++] = ']';
+        char err[200];
+        t = janas_toolset_parse(all, k, err, sizeof(err));
+        free(all);
+        if (!t)
+            return janas_api_fail(JANAS_LLM_EINVAL, "tools: %s", err);
+        if (janas_toolset_count(t) == 0) {
+            janas_toolset_free(t);
+            t = NULL;
+        }
     }
     janas_toolset_free(c->tools);
     c->tools = t;
     if (c->tool_choice == JANAS_LLM_TOOLS_FUNCTION)
         c->tool_choice = JANAS_LLM_TOOLS_AUTO; /* the function may be gone */
     return JANAS_LLM_OK;
+}
+
+/* json (n bytes, 0: none) checked and kept in *keep, its set in *set. */
+static int32_t take_json(janas_llm_chat *c, const char *json, size_t n,
+                         char **keep, struct janas_toolset **set)
+{
+    struct janas_toolset *t = NULL;
+    char *copy = NULL;
+    if (n) {
+        if (c->llm->tools == JANAS_TOOLS_NONE)
+            return janas_api_fail(JANAS_LLM_EMODEL,
+                                  "this model's chat template has no tools");
+        char err[200];
+        t = janas_toolset_parse(json, n, err, sizeof(err));
+        if (!t)
+            return janas_api_fail(JANAS_LLM_EINVAL, "tools: %s", err);
+        copy = malloc(n + 1);
+        if (!copy) {
+            janas_toolset_free(t);
+            return janas_api_fail(JANAS_LLM_ENOMEM, "out of memory");
+        }
+        memcpy(copy, json, n);
+        copy[n] = 0;
+        if (janas_toolset_count(t) == 0) {
+            janas_toolset_free(t);
+            t = NULL;
+        }
+    }
+    free(*keep);
+    *keep = copy;
+    if (set) {
+        janas_toolset_free(*set);
+        *set = t;
+    } else {
+        janas_toolset_free(t);
+    }
+    return make_tools(c);
+}
+
+int32_t janas_llm_chat_tools(janas_llm_chat *c, const char *json, int32_t len)
+{
+    if (!c)
+        return janas_api_fail(JANAS_LLM_EINVAL, "no chat");
+    janas_api_unprepare(c);
+    size_t n = json ? janas_api_text_len(json, len) : 0;
+    free(c->more_json); /* a new set: what was added goes */
+    c->more_json = NULL;
+    return take_json(c, json, n, &c->tools_json, &c->tools_sys);
+}
+
+int32_t janas_llm_chat_tools_add(janas_llm_chat *c, const char *json,
+                                 int32_t len)
+{
+    if (!c)
+        return janas_api_fail(JANAS_LLM_EINVAL, "no chat");
+    size_t n = json ? janas_api_text_len(json, len) : 0;
+    return take_json(c, json, n, &c->more_json, NULL);
 }
 
 int32_t janas_llm_chat_tool_choice(janas_llm_chat *c, int32_t choice,
@@ -232,6 +317,11 @@ void janas_api_tools_free(janas_llm_chat *c)
     janas_api_reply_clear(c);
     janas_toolset_free(c->tools);
     c->tools = NULL;
+    janas_toolset_free(c->tools_sys);
+    c->tools_sys = NULL;
+    free(c->tools_json);
+    free(c->more_json);
+    c->tools_json = c->more_json = NULL;
     janas_json_free(c->schema);
     c->schema = NULL;
     free(c->calls);

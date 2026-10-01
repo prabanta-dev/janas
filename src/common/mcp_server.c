@@ -71,6 +71,18 @@ void janas_mcps_text_result(struct janas_buf *b, const char *t, size_t n,
     janas_buf_printf(b, "}], \"isError\": %s", is_error ? "true" : "false");
 }
 
+void janas_mcps_split_result(struct janas_buf *b, const char *model,
+                             size_t model_n, const char *user, size_t user_n)
+{
+    janas_buf_puts(b, "\"content\": [{\"type\": \"text\", \"text\": ");
+    janas_json_write_str(b, model, model_n);
+    janas_buf_puts(b, ", \"annotations\": {\"audience\": [\"assistant\"]}}, "
+                      "{\"type\": \"text\", \"text\": ");
+    janas_json_write_str(b, user, user_n);
+    janas_buf_puts(b, ", \"annotations\": {\"audience\": [\"user\"]}}], "
+                      "\"isError\": false");
+}
+
 /* Two ids the same: of the same type, and written the same. */
 static int same_id(const struct janas_json *a, const struct janas_json *b)
 {

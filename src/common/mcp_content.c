@@ -148,16 +148,40 @@ static void content_item(struct janas_buf *b, const struct janas_json *c)
     }
 }
 
+/* Whether an item is for the model: its annotations' audience names the
+   assistant, or names no one. An item for the user alone ("audience":
+   ["user"]) is the user's to read as it is - a page, a long listing - and
+   not the model's. */
+static int for_model(const struct janas_json *c)
+{
+    const struct janas_json *a =
+        janas_json_get(janas_json_get(c, "annotations"), "audience");
+    if (!a || a->type != JANAS_JSON_ARRAY || !a->child)
+        return 1;
+    for (const struct janas_json *w = a->child; w; w = w->next)
+        if (janas_json_is(w, "assistant"))
+            return 1;
+    return 0;
+}
+
 void janas_mcp_take_result(struct janas_mcp *m, const struct janas_json *res)
 {
     m->result.n = 0;
     m->result.oom = 0;
+    m->shown.n = 0;
+    m->shown.oom = 0;
     m->result_error = janas_json_get(res, "isError") &&
                       janas_json_get(res, "isError")->type == JANAS_JSON_TRUE;
     const struct janas_json *content = janas_json_get(res, "content");
-    int any = 0;
+    int any = 0, shown = 0;
     if (content && content->type == JANAS_JSON_ARRAY)
         for (const struct janas_json *c = content->child; c; c = c->next) {
+            if (!for_model(c)) {
+                if (shown++)
+                    janas_buf_put(&m->shown, "\n", 1);
+                content_item(&m->shown, c);
+                continue;
+            }
             if (any)
                 janas_buf_put(&m->result, "\n", 1);
             content_item(&m->result, c);
@@ -166,6 +190,12 @@ void janas_mcp_take_result(struct janas_mcp *m, const struct janas_json *res)
     const struct janas_json *sc = janas_json_get(res, "structuredContent");
     if (!any && sc)
         janas_json_write(&m->result, sc);
+    else if (!any && shown)
+        janas_buf_puts(&m->result, "(The answer was shown to the user as "
+                                   "it is.)");
+    janas_buf_put(&m->shown, "", 1);
+    if (m->shown.n)
+        m->shown.n--;
     janas_buf_put(&m->result, "", 1); /* NUL-terminated, not counted */
     if (m->result.n)
         m->result.n--;

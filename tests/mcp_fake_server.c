@@ -162,7 +162,10 @@ static void call(const struct janas_json *id, const struct janas_json *params)
                    "\"mimeType\":\"image/png\"},{\"type\":\"resource_link\","
                    "\"uri\":\"file:///x.txt\",\"name\":\"x.txt\"},{\"type\":"
                    "\"resource\",\"resource\":{\"uri\":\"file:///y.txt\","
-                   "\"text\":\"why\"}}]");
+                   "\"text\":\"why\"}},{\"type\":\"text\",\"text\":\"for "
+                   "you\",\"annotations\":{\"audience\":[\"user\"]}},{\"type\""
+                   ":\"text\",\"text\":\"both\",\"annotations\":{\"audience\""
+                   ":[\"user\",\"assistant\"]}}]");
     } else if (strcmp(name, "whoami") == 0) {
         char s[600];
         snprintf(s, sizeof(s), "name=%s param=%s", seen_name, seen_param);

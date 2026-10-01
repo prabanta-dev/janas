@@ -27,7 +27,7 @@ Designed and written by **Maurizio "camauri" Cammalleri**.
 |---|---|
 | **Stage** | Early development. Formats, file layouts, the public API and the command line **change without notice**, and have changed several times a week. |
 | **Stability** | **Not verified.** The engine is deliberately hard on the machine: it fills the free memory with its expert cache and reads the disk at full speed with `O_DIRECT`. On a machine with less headroom than it reckons, the desktop can be pushed into swap and become slow or unresponsive. Using a GPU has, once, caused a driver reset that took the desktop with it. |
-| **Data** | It writes only in `~/.cache/janas` (what it learns about your machine) and where you tell it to put a converted model. It does not touch the model files it reads. |
+| **Data** | It writes only in `~/.cache/janas` (what it learns about your machine, and the system messages it has read, so as not to read them again) and where you tell it to put a converted model. It does not touch the model files it reads. |
 | **Hardware** | Developed and run on **one** machine (below). On anything else it is untested: it may be slower, it may refuse the model, it may misbehave. |
 
 If something goes wrong, `Ctrl-C` stops a reply and `Ctrl-D` leaves the chat; `--cache <GiB>` puts a hard limit on the memory it takes, and `JANAS_GPU=0` keeps it off the GPU entirely.
@@ -54,6 +54,7 @@ Everything the engine does is chosen from what it measures, so another machine w
 - **`janas-mcp`:** the other way round, the model offered as tools to MCP clients - a question to it, the embedding of a text ([below](#janas-as-an-mcp-server)).
 - **`janas-flights`:** where a flight is and what flies over a sea or a place, as MCP tools, from the ADS-B receivers of the community, and today's schedules with a free AviationStack key: the first of Janas's services ([docs/services](docs/services/README.md)).
 - **`janas-weather`:** the weather now, with what the nearest station measured, the forecast, the sea and its waves, and the warnings in force (in Italy the Civil Protection's levels), from free sources with no key ([docs/services/weather.md](docs/services/weather.md)).
+- **`janas-wiki`:** Wikipedia when you ask for it: its search, a page shown to you as it is (the introduction, then the section asked for) while the model reads only a note of it, and the pages about what lies around a place ([docs/services/wiki.md](docs/services/wiki.md)).
 - **`janas-server`:** the model behind an HTTP API that follows OpenAI's, so that clients written for it can use a model running on this machine: chat and completions with tools, JSON output held to a schema and log-probabilities, the Responses API with its conversations, embeddings and moderations, a chat page of its own to try it from a browser ([below](#using-it-over-http)), and code completion for VSCodium and VS Code ([docs/code-completion.md](docs/code-completion.md)).
 - **`janas-bench`:** measures the machine, fills its profile and writes a report.
 - **Faster replies** from drafts the model verifies, so the text is exactly the one it would have written: from the model's own multi-token prediction block where it has one, from the conversation where it does not, or from a small model of the same family given with `--draft`.
@@ -87,7 +88,7 @@ For a point of reference, llama.cpp (build `2b18470` of 18 September 2026) on th
 - [ChangeLog.md](ChangeLog.md) — what changed, newest first
 - [MODELS.md](MODELS.md) — what a converted model's licence is, and what may be redistributed
 - [CONTRIBUTING.md](CONTRIBUTING.md) — how to help, and the sign-off
-- [docs/services](docs/services/README.md) — Janas's services (flights, weather), in `janas-chat` and in other MCP clients
+- [docs/services](docs/services/README.md) — Janas's services (flights, weather, Wikipedia), in `janas-chat` and in other MCP clients
 - [docs/code-completion.md](docs/code-completion.md) — code completion in VSCodium and VS Code, through `janas-server`
 - [AUTHORS](AUTHORS) — who wrote it, and what it owes to others
 - [LICENSE](LICENSE) — GNU GPL, version 3 or later
@@ -293,7 +294,11 @@ printf 'Explain mixture of experts in one paragraph.\n/quit\n' \
 
 ### Janas's services
 
-The chat starts by itself the services of Janas it finds beside it - `janas-flights` and `janas-weather` - and the model uses their tools when a question needs them, without being told: ask "which flights are over the Tyrrhenian Sea now?" or "what's the weather like?" (with no place, where you are: `JANAS_LOCATION`, or a guess from the internet connection). `--no-services` starts none. How they work, their keys, and how to use them in Claude Code and other clients: [docs/services](docs/services/README.md).
+The chat starts by itself the services of Janas it finds beside it - `janas-flights`, `janas-weather` and `janas-wiki` - and the model uses their tools when a question needs them, without being told: ask "which flights are over the Tyrrhenian Sea now?", "what's the weather like?" or "show me Wikipedia's page on Zeffirelli" (with no place, where you are: `JANAS_LOCATION`, or a guess from the internet connection). `--no-services` starts none. How they work, their keys, and how to use them in Claude Code and other clients: [docs/services](docs/services/README.md).
+
+**The services' tools are given when they are needed.** Written into the system message, the tools of three services made it four thousand tokens, over a minute of a large model before the first message, and every service more made it longer. The system message now holds a catalog, a line a service, and the model opens a service when a question needs it: that service's instructions and tools come back as the answer of the call, its tools can be called from then on, and the next reply is held to be a call (a small model told to call one made the answer up instead). With Qwen3.6-35B-A3B the system message went from 4,057 tokens to 616, and opening the weather costs about a thousand tokens, once in a conversation, when the first question about the weather comes. `--all-tools` writes them all into the system message as before.
+
+**The system message is read ahead.** It used to be four thousand tokens with the services' tools, and the first reply waited for all of it. `janas-chat` now reads it as soon as it starts, while you write, and says so: a line in the conversation when it begins, and "reading the tools ahead" with how far it is in the status line, where it is the last thing to be dropped on a narrow window; a message sent before the end waits for it, with "waiting for the tools" and the share, and Ctrl-C leaves the rest to the reply. Once read it is kept in `~/.cache/janas` (2 GiB at most for these files), and the next chat on the same model finds it there: "System message and tools ready". Changing the system message or the tools reads them again.
 
 ### Tools from MCP servers
 
@@ -353,7 +358,7 @@ while (janas_llm_chat_next(chat, piece, sizeof(piece), &len) == JANAS_LLM_OK)
 cc yours.c -Iinclude -Lbin/x86_64-linux -ljanas_llm -o yours
 ```
 
-A program that keeps the conversation itself - an HTTP client does, and sends it whole every time - hands it over with `janas_llm_chat_load`: the messages with their roles, the last one the user's. Whatever the new conversation shares with the one already computed is not read again, so the same messages plus a new one cost only the new one. `janas_llm_chat_prompt` continues raw text, with no chat format around it, and `janas_llm_default_system` gives the system message Janas's own programs use. `janas_llm_chat_stats` says why a reply ended and how much of its prompt was already computed. `janas_llm_chat_keep` keeps a few conversations computed besides the current one, for a program that switches between them: the one that shares most of the next request is copied back instead of being read again.
+A program that keeps the conversation itself - an HTTP client does, and sends it whole every time - hands it over with `janas_llm_chat_load`: the messages with their roles, the last one the user's. Whatever the new conversation shares with the one already computed is not read again, so the same messages plus a new one cost only the new one. `janas_llm_chat_prompt` continues raw text, with no chat format around it, and `janas_llm_default_system` gives the system message Janas's own programs use. `janas_llm_chat_stats` says why a reply ended and how much of its prompt was already computed. `janas_llm_chat_keep` keeps a few conversations computed besides the current one, for a program that switches between them: the one that shares most of the next request is copied back instead of being read again. `janas_llm_chat_prepare` reads the system message and the tools before the first message, a block at a time, so that a program can read them while its user writes; with `janas_llm_chat_keep_disk` a system message read once on a model is found on the disk by the next chat.
 
 ### From FreeBASIC and BASIC MODERN
 
@@ -590,6 +595,7 @@ It stands on the work of others, and says so:
 - **GNU libmicrohttpd, yyjson and Mbed TLS** are compiled into the programs named below.
 - **`janas-flights`** reads the positions of aircraft from [adsb.lol](https://adsb.lol) (data under the Open Database License) and [adsb.fi](https://adsb.fi), routes from [adsbdb.com](https://www.adsbdb.com) and, with a key of the user's, schedules from [AviationStack](https://aviationstack.com); its tables of places are built from [OurAirports](https://ourairports.com) (public domain), [GeoNames](https://www.geonames.org) (CC BY 4.0) and [Natural Earth](https://www.naturalearthdata.com) (public domain).
 - **`janas-weather`** reads forecasts and the sea from [Open-Meteo](https://open-meteo.com) (CC BY 4.0) and [MET Norway](https://api.met.no) (CC BY 4.0), the stations' reports from [aviationweather.gov](https://aviationweather.gov) (NOAA), warnings from [MeteoAlarm](https://meteoalarm.org) (EUMETNET) and the Italian alert levels from the [Dipartimento della Protezione Civile](https://github.com/pcm-dpc/DPC-Bollettini-Criticita-Idrogeologica-Idraulica) (CC BY 4.0). With no place named, the services ask [GeoJS](https://www.geojs.io) or [ipwho.is](https://ipwho.is) where the internet connection is.
+- **`janas-wiki`** reads [Wikipedia](https://www.wikipedia.org) through its API; the text is Wikipedia's, under CC BY-SA 4.0, and every answer gives the page's address.
 - **The people who tried it on their own machines** and reported what they saw, in the issues of this repository: their reports changed the engine more than once (the threads it picks, the prompt's progress, the GPU's diagnosis).
 
 ## Licence

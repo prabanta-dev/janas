@@ -248,8 +248,19 @@ static void check_calls(janas_mcp *m)
     CHECK(janas_mcp_call(m, "picture", -1, "{}", -1, 10) == JANAS_MCP_OK &&
               janas_mcp_result(m, buf, sizeof(buf), &len) == JANAS_MCP_OK &&
               strstr(buf, "[image image/png, 6 bytes") &&
-              strstr(buf, "file:///x.txt") && strstr(buf, "why"),
+              strstr(buf, "file:///x.txt") && strstr(buf, "why") &&
+              strstr(buf, "both") && !strstr(buf, "for you"),
           "picture: %s", buf);
+    /* the part for the user alone, apart */
+    CHECK(janas_mcp_result_user(m, buf, sizeof(buf), &len) == JANAS_MCP_OK &&
+              strcmp(buf, "for you") == 0 && len == 7,
+          "for the user alone: %s", buf);
+    CHECK(janas_mcp_call(m, "add", -1, "{\"a\": 1, \"b\": 2}", -1, 10) ==
+                  JANAS_MCP_OK &&
+              janas_mcp_result_user(m, buf, sizeof(buf), &len) ==
+                  JANAS_MCP_OK &&
+              len == 0,
+          "nothing for the user alone: %d", len);
     CHECK(janas_mcp_call(m, "nothing", -1, "{}", -1, 10) == JANAS_MCP_EFAIL,
           "unknown tool");
     CHECK(janas_mcp_call(m, "add", -1, "[1]", -1, 10) == JANAS_MCP_EINVAL,

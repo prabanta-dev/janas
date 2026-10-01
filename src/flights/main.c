@@ -25,25 +25,17 @@
 #endif
 
 static const char INSTRUCTIONS[] =
-    "Use these tools by yourself whenever the user asks about flights, "
-    "aircraft, airports, departures and arrivals, or what is flying "
-    "somewhere: the user does not need to name them or ask for them. In "
-    "your reply never name the tools, the server or the service: just give "
-    "the answer, with the data's sources when the tool lists them. "
-    "Flight information: today's schedules (scheduled, estimated and actual "
-    "times, gates, delays) when the server has an AviationStack key, and "
-    "live positions from the ADS-B receivers of the community: where an "
-    "aircraft is, how high and how fast, whether it is on the ground, "
-    "taxiing, on the runway or in the air, where that is in words. Tell the "
-    "user what the tools return, in the user's language, without adding "
-    "figures of your own: the tools already give distances, places and "
-    "times in the airports' local time. Never invent a time the tools did "
-    "not give. Routes marked as probably wrong must not be stated. For an "
-    "area - a sea, the sky around a place - use flights_over or "
-    "flights_nearby, which use open data only; never call flight_status "
-    "or flights_between for each aircraft of a list: the schedules have a "
-    "small monthly quota, kept for questions about one flight or one "
-    "route.";
+    "Use these tools by yourself for questions on flights, aircraft, "
+    "airports, departures and arrivals, or what is flying somewhere; the "
+    "user need not name them, and you never name them. Schedules (times, "
+    "gates, delays) come from AviationStack when the server has a key, "
+    "positions from the community's ADS-B receivers. Tell what they "
+    "return in the user's language, adding no figures or times of your "
+    "own; never state a route marked as probably wrong. For an area - a "
+    "sea, around a place - use flights_over or flights_nearby, and never "
+    "call flight_status or flights_between for each aircraft of a list: "
+    "their quota is small. Never ask for flights the user did not ask "
+    "for.";
 
 static void usage(void)
 {

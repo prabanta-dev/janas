@@ -243,6 +243,13 @@ declare function janas_llm_chat_set_params(byval c as janas_llm_chat ptr, _
 declare function janas_llm_chat_system(byval c as janas_llm_chat ptr, _
                                        byval text as const zstring ptr, _
                                        byval length as long) as long
+'' Reads the system message and the tools now, a block at a time, before
+'' the first message: 1 while more is left, 0 when read, or an error; done
+'' and total (may be NULL) count their tokens. With _keep and _keep_disk,
+'' one read before on the same model is taken as it was.
+declare function janas_llm_chat_prepare(byval c as janas_llm_chat ptr, _
+                                        byval done as long ptr, _
+                                        byval total as long ptr) as long
 declare function janas_llm_chat_send(byval c as janas_llm_chat ptr, _
                                      byval text as const zstring ptr, _
                                      byval length as long) as long
@@ -317,6 +324,12 @@ declare function janas_llm_chat_kept_disk(byval c as const janas_llm_chat ptr, _
 declare function janas_llm_chat_tools(byval c as janas_llm_chat ptr, _
                                       byval json as const zstring ptr, _
                                       byval length as long) as long
+'' More tools the model may call, not written into the system message (their
+'' definitions reach the model another way): from the next reply on; each
+'' call replaces the last one's; NULL or 0: none.
+declare function janas_llm_chat_tools_add(byval c as janas_llm_chat ptr, _
+                                          byval json as const zstring ptr, _
+                                          byval length as long) as long
 declare function janas_llm_chat_tool_choice(byval c as janas_llm_chat ptr, _
                                             byval choice as long, _
                                             byval name_ as const zstring ptr, _

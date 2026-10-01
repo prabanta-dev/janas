@@ -67,4 +67,11 @@ int janas_mcps_poll(struct janas_mcps *s);
 void janas_mcps_text_result(struct janas_buf *b, const char *t, size_t n,
                             int is_error);
 
+/* A result of two text items: one for the model alone, one for the user
+   alone (their annotations' audience), for a client that shows the user's
+   as it is and gives the model only the first; a client that heeds no
+   audience gives the model both. */
+void janas_mcps_split_result(struct janas_buf *b, const char *model,
+                             size_t model_n, const char *user, size_t user_n);
+
 #endif

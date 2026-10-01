@@ -13,8 +13,12 @@
  * keeps them in too little memory to hold one, and must behave as the first.
  * Last, the disk (janas_llm_chat_keep_disk): a conversation with a long
  * system message is written when its chat ends, and a new chat finds it
- * computed, with the same reply. The disk is a directory of the test's own
- * (XDG_CACHE_HOME), removed at the end.
+ * computed, with the same reply. And the system message read ahead
+ * (janas_llm_chat_prepare), as janas-chat does while its user writes: the
+ * reply to the first message is the same as without it, the message
+ * finds the system message computed, a new chat finds it on the disk at
+ * once, and a new system message set after it drops it. The disk is a
+ * directory of the test's own (XDG_CACHE_HOME), removed at the end.
  *
  * Usage: llm_keep <model.jns> [mtp=<file>] [draft=<file>]
  */
@@ -168,6 +172,144 @@ static int run_disk(janas_llm *llm)
     return 0;
 }
 
+/* A message sent (janas_llm_chat_send) and its reply read, into t. */
+static int send_reply(janas_llm_chat *c, const char *text, struct turn *t)
+{
+    if (janas_llm_chat_send(c, text, -1) != JANAS_LLM_OK) {
+        fprintf(stderr, "send: %s\n", janas_llm_last_error());
+        return -1;
+    }
+    size_t len = 0;
+    for (;;) {
+        char buf[256];
+        int32_t k = 0;
+        int32_t rc = janas_llm_chat_next(c, buf, sizeof(buf), &k);
+        if (rc == JANAS_LLM_DONE)
+            break;
+        if (rc != JANAS_LLM_OK) {
+            fprintf(stderr, "next: %s\n", janas_llm_last_error());
+            return -1;
+        }
+        if (len + (size_t)k < CAP) {
+            memcpy(t->text + len, buf, (size_t)k);
+            len += (size_t)k;
+        }
+    }
+    t->text[len] = 0;
+    struct janas_llm_chat_stats st = {.size = sizeof(st)};
+    janas_llm_chat_stats(c, &st);
+    t->prompt = st.prompt_tokens;
+    t->cached = st.cached_tokens;
+    return 0;
+}
+
+/* A chat with the system message sys; keep: kept in memory and on the
+   disk. */
+static janas_llm_chat *chat_with(janas_llm *llm, const char *sys, int keep)
+{
+    struct janas_llm_chat_params p;
+    janas_llm_chat_params_default(&p);
+    p.temperature = 0;
+    p.max_reply = REPLY;
+    p.thinking = 0;
+    janas_llm_chat *c;
+    if (janas_llm_chat_create(llm, &p, &c) != JANAS_LLM_OK)
+        return NULL;
+    if (janas_llm_chat_system(c, sys, -1) != JANAS_LLM_OK ||
+        (keep &&
+         (janas_llm_chat_keep(c, 2, 0) != JANAS_LLM_OK ||
+          janas_llm_chat_keep_disk(c, (uint64_t)1 << 30) != JANAS_LLM_OK))) {
+        janas_llm_chat_destroy(c);
+        return NULL;
+    }
+    return c;
+}
+
+/* The system message read ahead: rc of the first call, steps, and the
+   tokens read of how many. */
+static int prepare_all(janas_llm_chat *c, int *first, int *steps, int32_t *done,
+                       int32_t *total)
+{
+    int rc;
+    *steps = 0;
+    while ((rc = janas_llm_chat_prepare(c, done, total)) == 1)
+        if ((*steps)++ == 0)
+            *first = 1;
+    if (*steps == 0)
+        *first = rc;
+    return rc;
+}
+
+static int run_prepare(janas_llm *llm)
+{
+    static char sys[32768];
+    size_t n = (size_t)snprintf(sys, sizeof(sys), "Read ahead.\n");
+    for (int i = 1; i <= 90; i++)
+        n += (size_t)snprintf(sys + n, sizeof(sys) - n,
+                              "Rule %d: answer briefly, in English, and "
+                              "never mention the number %d.\n",
+                              i, 1000 + 7 * i);
+    static struct turn plain, ahead, again, other;
+    int fail = 0, first = 0, steps = 0, first2 = 0, steps2 = 0;
+    int32_t done = 0, total = 0, done2 = 0, total2 = 0;
+    /* without it */
+    janas_llm_chat *c = chat_with(llm, sys, 0);
+    if (!c || send_reply(c, A1, &plain))
+        return -1;
+    janas_llm_chat_destroy(c);
+    /* read ahead, then the message */
+    c = chat_with(llm, sys, 1);
+    if (!c || prepare_all(c, &first, &steps, &done, &total) != 0 ||
+        send_reply(c, A1, &ahead))
+        return -1;
+    janas_llm_chat_destroy(c); /* and to the disk */
+    /* a new chat: found on the disk */
+    c = chat_with(llm, sys, 1);
+    if (!c || prepare_all(c, &first2, &steps2, &done2, &total2) != 0 ||
+        send_reply(c, A1, &again))
+        return -1;
+    janas_llm_chat_destroy(c);
+    /* read ahead, then another system message */
+    c = chat_with(llm, sys, 0);
+    int32_t d3, t3;
+    int other_ok =
+        c && janas_llm_chat_prepare(c, &d3, &t3) >= 0 &&
+        janas_llm_chat_system(c, "Answer in one word.", -1) == JANAS_LLM_OK &&
+        send_reply(c, A1, &other) == 0;
+    if (c)
+        janas_llm_chat_destroy(c);
+    printf("prepare: %d steps, %d of %d tokens; prompt/cached %u/%u (without "
+           "it %u/%u); a new chat: %d steps (first %d), %d of %d, %u/%u; "
+           "another system message: %u/%u\n",
+           steps, done, total, ahead.prompt, ahead.cached, plain.prompt,
+           plain.cached, steps2, first2, done2, total2, again.prompt,
+           again.cached, other.prompt, other.cached);
+    if (done != total || total < 1024 || steps < 1) {
+        printf("FAIL: prepare: not read to the end\n");
+        fail = 1;
+    }
+    if (strcmp(plain.text, ahead.text) || strcmp(plain.text, again.text)) {
+        printf("FAIL: prepare: another reply\n--- without\n%s\n--- "
+               "ahead\n%s\n--- again\n%s\n",
+               plain.text, ahead.text, again.text);
+        fail = 1;
+    }
+    if (ahead.cached + 1 < (uint32_t)total ||
+        again.cached + 1 < (uint32_t)total) {
+        printf("FAIL: prepare: the message did not find it computed\n");
+        fail = 1;
+    }
+    if (steps2 != 0 || first2 != 0 || done2 != total2) {
+        printf("FAIL: prepare: a new chat read it again (%d steps)\n", steps2);
+        fail = 1;
+    }
+    if (!other_ok || other.cached > 8 || other.prompt >= (uint32_t)total) {
+        printf("FAIL: prepare: another system message kept the first\n");
+        fail = 1;
+    }
+    return fail;
+}
+
 int main(int argc, char **argv)
 {
     if (argc < 2) {
@@ -233,10 +375,12 @@ int main(int argc, char **argv)
              tmp && *tmp ? tmp : "/tmp", (int)getpid());
     if (!fail) {
         setenv("XDG_CACHE_HOME", dir, 1);
-        fail = run_disk(llm) != 0;
+        fail = run_disk(llm) != 0 || run_prepare(llm) != 0;
         nftw(dir, rm_one, 16, FTW_DEPTH | FTW_PHYS);
     }
     janas_llm_close(llm);
-    printf("%s\n", fail ? "FAIL" : "OK: same replies, first turns kept");
+    printf("%s\n", fail ? "FAIL"
+                        : "OK: same replies, first turns kept, system "
+                          "message read ahead");
     return fail;
 }

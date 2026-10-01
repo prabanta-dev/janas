@@ -210,10 +210,10 @@ static int render(janas_llm_chat *c, uint32_t *reply_off)
         if (c->msgs[i].role == JANAS_LLM_ROLE_USER)
             last_q = i;
     int err = janas_api_begin_sequence(c);
-    if (llm->format == FORMAT_GEMMA && !c->tools &&
+    if (llm->format == FORMAT_GEMMA && !c->tools_sys &&
         c->msgs[0].role != JANAS_LLM_ROLE_SYSTEM)
         err |= janas_api_add_system(c, NULL, 0); /* <|think|>, if asked */
-    if (c->tools && c->msgs[0].role != JANAS_LLM_ROLE_SYSTEM) {
+    if (c->tools_sys && c->msgs[0].role != JANAS_LLM_ROLE_SYSTEM) {
         /* with tools there is a system message whatever the caller says */
         err |= janas_api_add_system(c, NULL, 0);
         err |= janas_api_flush_text(c);
@@ -296,6 +296,7 @@ static int32_t load_ids(janas_llm_chat *c, uint32_t reply_off)
 {
     if (janas_api_flush_text(c) != 0)
         return janas_api_fail(JANAS_LLM_ENOMEM, "out of memory");
+    c->prepared = 0; /* what it read is reused below like any other start */
     uint32_t reserve = c->p.max_reply > 0 && c->p.max_reply < 1024
                            ? (uint32_t)c->p.max_reply
                            : 1024;

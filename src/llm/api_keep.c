@@ -209,6 +209,20 @@ void janas_api_keep_prompt(janas_llm_chat *c)
     evict(c);
 }
 
+/*
+ * The system message read ahead (janas_llm_chat_prepare), kept like the
+ * one janas_api_keep_system reads: a start that the conversations growing
+ * from it do not drop. With a disk it goes there when the chat ends, and
+ * the next chat on the same model starts from it.
+ */
+void janas_api_keep_prefix(janas_llm_chat *c)
+{
+    if (c->keep_max <= 0)
+        return;
+    keep_current(c, 1);
+    evict(c);
+}
+
 void janas_api_keep_free(janas_llm_chat *c)
 {
     /* with a disk, what is kept goes there, and the conversation too */

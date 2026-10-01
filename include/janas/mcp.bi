@@ -112,6 +112,12 @@ declare function janas_mcp_result(byval m as const janas_mcp ptr, _
                                   byval cap as long, _
                                   byval length as long ptr) as long
 declare function janas_mcp_result_error(byval m as const janas_mcp ptr) as long
+'' The answer's parts for the user alone (audience "user"), to be shown as
+'' they are; janas_mcp_result leaves them out. length 0: none.
+declare function janas_mcp_result_user(byval m as const janas_mcp ptr, _
+                                       byval buf as zstring ptr, _
+                                       byval cap as long, _
+                                       byval length as long ptr) as long
 declare sub janas_mcp_cancel(byval m as janas_mcp ptr)
 
 end extern

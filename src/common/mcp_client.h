@@ -55,6 +55,7 @@ struct janas_mcp {
     struct janas_mcp_tool *tools;
     size_t n_tools;
     struct janas_buf result; /* the last call's answer, as text */
+    struct janas_buf shown;  /* its parts for the user alone (audience) */
     int result_error;
     volatile sig_atomic_t cancel;
     int http_status; /* the last HTTP answer's */
@@ -92,7 +93,8 @@ int32_t janas_mcp_fail(int32_t code, const char *fmt, ...)
     __attribute__((format(printf, 2, 3)));
 
 /* mcp_content.c: the tools of a tools/list page added to m (0, or -1 on
-   memory); the content of a tools/call result as text into m->result. */
+   memory); the content of a tools/call result as text into m->result,
+   the parts meant for the user alone into m->shown. */
 int janas_mcp_take_tools(struct janas_mcp *m, const struct janas_json *list);
 void janas_mcp_take_result(struct janas_mcp *m, const struct janas_json *res);
 void janas_mcp_free_tools(struct janas_mcp *m);

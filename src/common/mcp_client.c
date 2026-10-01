@@ -469,6 +469,7 @@ void janas_mcp_close(janas_mcp *m)
     free(m->server_version);
     free(m->instructions);
     janas_buf_free(&m->result);
+    janas_buf_free(&m->shown);
     free(m);
 }
 
@@ -745,6 +746,7 @@ int32_t janas_mcp_call(janas_mcp *m, const char *name, int32_t name_len,
         return janas_mcp_fail(JANAS_MCP_EINVAL, "invalid argument");
     __atomic_store_n(&m->cancel, 0, __ATOMIC_RELAXED);
     m->result.n = 0;
+    m->shown.n = 0;
     m->result_error = 0;
     size_t nn = name_len < 0 ? strlen(name) : (size_t)name_len;
     size_t an = !args ? 0 : args_len < 0 ? strlen(args) : (size_t)args_len;
@@ -825,7 +827,7 @@ int32_t janas_mcp_call(janas_mcp *m, const char *name, int32_t name_len,
     else
         janas_mcp_take_result(m, a.result);
     janas_rpc_free(&a);
-    if (rc == JANAS_MCP_OK && m->result.oom)
+    if (rc == JANAS_MCP_OK && (m->result.oom || m->shown.oom))
         rc = janas_mcp_fail(JANAS_MCP_ENOMEM, "out of memory");
     return rc;
 }
@@ -836,6 +838,14 @@ int32_t janas_mcp_result(const janas_mcp *m, char *buf, int32_t cap,
     if (!m)
         return janas_mcp_fail(JANAS_MCP_EINVAL, "invalid argument");
     return copy_out(m->result.p ? m->result.p : "", m->result.n, buf, cap, len);
+}
+
+int32_t janas_mcp_result_user(const janas_mcp *m, char *buf, int32_t cap,
+                              int32_t *len)
+{
+    if (!m)
+        return janas_mcp_fail(JANAS_MCP_EINVAL, "invalid argument");
+    return copy_out(m->shown.p ? m->shown.p : "", m->shown.n, buf, cap, len);
 }
 
 int32_t janas_mcp_result_error(const janas_mcp *m)

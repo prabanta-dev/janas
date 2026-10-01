@@ -25,15 +25,15 @@ static void schema_str(struct janas_buf *b, const char *name, const char *what)
     janas_buf_puts(b, "}");
 }
 
+/* The model reads all of it before it can use a tool: every word costs
+   (with Qwen3.6-35B-A3B on a laptop, about a second for fifty tokens). */
 static void place_props(struct janas_buf *b)
 {
     schema_str(b, "place",
-               "A place's name, in Italian or English (Trapani, Firenze, "
-               "Florence, Milano); \"name, region\" or \"name, country\" "
-               "when several places share it; or an airport's code. "
-               "Leave out place and coordinates only when the user names "
-               "no place: then where the user is (as set on the computer, "
-               "or estimated from the internet connection).");
+               "A place in Italian or English (Firenze, Florence), "
+               "\"name, region\" when several share it, or an airport "
+               "code. Leave out place and coordinates only when the user "
+               "names no place: then where the user is.");
     janas_buf_puts(b,
                    ", \"latitude\": {\"type\": \"number\", \"minimum\": -90, "
                    "\"maximum\": 90}, \"longitude\": {\"type\": \"number\", "
@@ -45,60 +45,45 @@ void wx_tools_list(void *ctx, struct janas_buf *b)
     (void)ctx;
     janas_buf_puts(
         b, "\"tools\": [{\"name\": \"weather_now\", \"title\": \"The "
-           "weather now\", \"description\": \"The weather now at a place: "
-           "sky, temperature and how it feels, humidity, wind and gusts, "
-           "rain, pressure, today's lowest and highest and sunrise and "
-           "sunset, from a forecast model; and what the nearest weather "
-           "station (an airport's) measured, with when and how far away. "
-           "Give a place's name, or a latitude and longitude.\", "
-           "\"inputSchema\": {\"type\": \"object\", \"properties\": {");
+           "weather now\", \"description\": \"The weather now at a place, "
+           "from a forecast model, and what the nearest airport station "
+           "measured.\", \"inputSchema\": {\"type\": \"object\", "
+           "\"properties\": {");
     place_props(b);
     janas_buf_puts(
         b, "}, \"additionalProperties\": false}}, "
            "{\"name\": \"weather_forecast\", \"title\": \"Weather "
-           "forecast\", \"description\": \"The forecast for a place, day "
-           "by day (sky, lowest and highest temperature, rain and its "
-           "chance, wind and gusts, sunrise and sunset) and the next hours "
-           "(every three hours, or every hour when asked).\", "
-           "\"inputSchema\": {\"type\": \"object\", \"properties\": {");
+           "forecast\", \"description\": \"The forecast by the day, and "
+           "for the next hours.\", \"inputSchema\": {\"type\": \"object\", "
+           "\"properties\": {");
     place_props(b);
     janas_buf_puts(
         b, ", \"days\": {\"type\": \"integer\", \"minimum\": 1, "
-           "\"maximum\": 16, \"description\": \"How many days, today "
-           "included (default 3).\"}, \"hourly\": {\"type\": \"boolean\", "
-           "\"description\": \"Every hour of the next two days, instead "
-           "of every three hours of the next one.\"}}, "
-           "\"additionalProperties\": false}}, "
+           "\"maximum\": 16, \"description\": \"Days, today included "
+           "(default 3).\"}, \"hourly\": {\"type\": \"boolean\", "
+           "\"description\": \"Every hour of two days, not every three of "
+           "one.\"}}, \"additionalProperties\": false}}, "
            "{\"name\": \"weather_sea\", \"title\": \"The sea\", "
-           "\"description\": \"The state of the sea, now and in the next "
-           "days: wave height (with its name: calm, slight, moderate, "
-           "rough...), direction and period, wind waves and swell, the "
-           "water's temperature and the wind. For a whole sea by its name "
-           "(Tyrrhenian Sea, Tirreno, Adriatico, mar Ligure), at several "
-           "points across it, or for the sea off a coastal place.\", "
-           "\"inputSchema\": {\"type\": \"object\", \"properties\": {");
-    schema_str(b, "area",
-               "A sea's name, in English or Italian (Tyrrhenian Sea, "
-               "Tirreno, Adriatic, mar Ligure, Ionio).");
+           "\"description\": \"Waves, swell, the water's temperature and "
+           "the wind, now and in the next days: across a sea named, or "
+           "off a coastal place.\", \"inputSchema\": {\"type\": "
+           "\"object\", \"properties\": {");
+    schema_str(b, "area", "A sea (Tyrrhenian Sea, Tirreno, Adriatico).");
     janas_buf_puts(b, ", ");
     place_props(b);
     janas_buf_puts(
         b, ", \"days\": {\"type\": \"integer\", \"minimum\": 1, "
-           "\"maximum\": 8, \"description\": \"How many days, today "
-           "included (default 2).\"}}, \"additionalProperties\": false}}, "
+           "\"maximum\": 8, \"description\": \"Days, today included "
+           "(default 2).\"}}, \"additionalProperties\": false}}, "
            "{\"name\": \"weather_alerts\", \"title\": \"Weather "
            "warnings\", \"description\": \"The weather warnings in force "
-           "for a place: those of the national weather services gathered "
-           "by MeteoAlarm (wind, thunderstorms, heat, snow, by level: "
-           "yellow, orange, red), the place's region first; and in Italy "
-           "the Civil Protection's official alert levels for its zone, for "
-           "floods, landslides and thunderstorms, today and tomorrow.\", "
-           "\"inputSchema\": {\"type\": \"object\", \"properties\": {");
+           "for a place (MeteoAlarm), and in Italy the Civil Protection's "
+           "alert levels for today and tomorrow.\", \"inputSchema\": "
+           "{\"type\": \"object\", \"properties\": {");
     place_props(b);
     janas_buf_puts(b, ", ");
     schema_str(b, "language",
-               "The language of the warnings' texts when given in it: it, "
-               "en, fr, de, es (default en).");
+               "The warnings' language: it, en, fr, de, es (default en).");
     janas_buf_puts(b, "}, \"additionalProperties\": false}}]");
 }
 

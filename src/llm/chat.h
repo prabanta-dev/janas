@@ -89,6 +89,9 @@ struct janas_llm_chat {
     uint32_t *turn;
     size_t n_turn, cap_turn;
     uint32_t sys_tokens;
+    /* the session holds the system message alone, read ahead
+       (janas_llm_chat_prepare): 1 while being read, 2 once read */
+    int prepared;
     uint64_t dropped; /* tokens forgotten in this conversation */
     /* the message being built: ids, and plain text not yet tokenized */
     int32_t *ids;
@@ -150,8 +153,12 @@ struct janas_llm_chat {
     } *msgs;
     size_t n_msgs, cap_msgs;
 
-    /* tools, and the form of the answer (api_tools.c) */
-    struct janas_toolset *tools;
+    /* tools, and the form of the answer (api_tools.c): those the model
+       may call (the grammar's), and of them those written into the system
+       message; the rest were added later (janas_llm_chat_tools_add), as
+       JSON kept to make the whole again */
+    struct janas_toolset *tools, *tools_sys;
+    char *tools_json, *more_json;
     int32_t tool_choice, tool_only, parallel;
     int32_t format;
     struct janas_json_doc *schema;
@@ -242,6 +249,9 @@ int janas_api_begin_reply(janas_llm_chat *c, uint32_t reply_at, uint32_t total,
                           uint32_t cached);
 /* Building a prompt begins (its time is prepare_seconds). */
 void janas_api_prep_start(janas_llm_chat *c);
+/* What janas_llm_chat_prepare read, dropped: the system message or the
+   tools change. */
+void janas_api_unprepare(janas_llm_chat *c);
 /* A prompt of total tokens against max_input: 0, or JANAS_LLM_ELIMIT with
    its size and parts in the stats and said. last_at is set. */
 int32_t janas_api_check_input(janas_llm_chat *c, uint32_t total);
@@ -278,6 +288,8 @@ void janas_api_keep_pick(janas_llm_chat *c);
 /* api_keep.c: after it is loaded, the prompt of a model with a recurrent
    state is computed and kept, for a second reply to it. */
 void janas_api_keep_prompt(janas_llm_chat *c);
+/* The system message read ahead, kept as a start of conversations. */
+void janas_api_keep_prefix(janas_llm_chat *c);
 /* api_keep.c: on a model with a recurrent state, the system message of a
    conversation about to be read from `from` is computed first and kept;
    returns where the rest is to be read from. */

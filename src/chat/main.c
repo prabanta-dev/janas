@@ -17,12 +17,15 @@
 #define _XOPEN_SOURCE 700 /* wcwidth, for the width of what is printed */
 #include <errno.h>
 #include <locale.h>
+#include <pthread.h>
+#include <stdatomic.h>
 #include <sys/stat.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "common/sysinfo.h"
@@ -84,6 +87,27 @@ static void foot_add(struct foot *p, int *np, int keep, const char *fmt, ...)
     (*np)++;
 }
 
+/*
+ * The system message and the tools, read ahead (janas_llm_chat_prepare)
+ * while the user writes the first message: with Janas's services they are
+ * some four thousand tokens, over a minute of a large model the first time
+ * on it, and the first reply used to sit on "reading" all that while. On a
+ * thread of its own, said on the terminal when it starts, and in the
+ * footer, in the part kept longest, until it ends; a message sent before
+ * then waits for it in plain sight.
+ */
+static struct {
+    pthread_t th;
+    int on; /* started, not joined */
+    atomic_int busy, stop, done, total;
+} prep;
+
+static int prep_pct(void)
+{
+    int t = atomic_load(&prep.total), d = atomic_load(&prep.done);
+    return t > 0 ? (int)(100LL * d / t) : 0;
+}
+
 /* The line at the bottom: what is worth having under the eye while the
    conversation scrolls above it. */
 /* what main asked for, read by the footer: the address of its own, so a
@@ -98,10 +122,15 @@ static void footer(const janas_llm *llm, const janas_llm_chat *c,
     char name[96] = "";
     int32_t len;
     janas_llm_name(llm, name, sizeof(name), &len);
+    /* while the system message is read ahead, the chat and the engine's
+       settings are the reading thread's: only the cache's filling, which
+       is made to be watched from aside, is asked */
+    int reading = atomic_load(&prep.busy);
     struct janas_llm_chat_stats s = {.size = sizeof(s)};
-    int have = c && janas_llm_chat_stats(c, &s) == JANAS_LLM_OK;
+    int have = c && !reading && janas_llm_chat_stats(c, &s) == JANAS_LLM_OK;
     int32_t used = 0, most = 0;
-    janas_llm_experts(llm, &used, &most);
+    if (!reading)
+        janas_llm_experts(llm, &used, &most);
     int64_t done = 0, total = 0;
     janas_llm_preload(llm, &done, &total);
 
@@ -109,8 +138,11 @@ static void footer(const janas_llm *llm, const janas_llm_chat *c,
     int np = 0;
     if (name[0])
         foot_add(part, &np, 3, "%s", name);
-    foot_add(part, &np, 2, "%d bit", janas_llm_expert_bits(llm));
-    foot_add(part, &np, 2, "%d/%d experts", used, most);
+    if (!reading) {
+        foot_add(part, &np, 2, "%d bit", janas_llm_expert_bits(llm));
+        foot_add(part, &np, 2, "%d/%d experts", used, most);
+    } else if (!state) /* kept longest: it is what holds the reply back */
+        foot_add(part, &np, 9, "reading the tools ahead %d%%", prep_pct());
     if (have && s.context_size)
         foot_add(part, &np, 4, "context %u/%u", s.context_used, s.context_size);
     /* only where it is on, and only where it means something: it is the one
@@ -126,7 +158,7 @@ static void footer(const janas_llm *llm, const janas_llm_chat *c,
         foot_add(part, &np, 1, "cache %d%%",
                  (int)(100 * done / (total ? total : 1)));
     if (state && *state)
-        foot_add(part, &np, 5, "%s", state);
+        foot_add(part, &np, reading ? 9 : 5, "%s", state);
 
     /* drop the least worth keeping until what is left fits, and never the
        last one standing: one part cut off says more than an empty line */
@@ -180,6 +212,8 @@ static int footer_idle(void)
     int64_t done = 0, total = 0;
     janas_llm_preload(idle_llm, &done, &total);
     int pct = total > done ? (int)(100 * done / total) : -1;
+    /* and the reading ahead's share, while it goes */
+    pct = pct * 1000 + (atomic_load(&prep.busy) ? prep_pct() : 999);
     if (pct == shown)
         return 0;
     shown = pct;
@@ -249,6 +283,9 @@ static void usage(void)
         "  --no-services    start none of Janas's own services (janas-flights\n"
         "                   and the others beside janas-chat, started by\n"
         "                   default: their tools run without asking)\n"
+        "  --all-tools      write all the services' tools into the system\n"
+        "                   message, instead of a catalog the model opens a\n"
+        "                   service from when a question needs it\n"
         "  --progress <s>   a line on stderr every s seconds while a long\n"
         "                   prompt is read, and one after each reply\n"
         "  --mcp-instructions\n"
@@ -504,9 +541,115 @@ static int32_t set_system(janas_llm_chat *c, const char *system)
     return rc;
 }
 
+/* What the reading ahead says, where the user sees it: in the
+   conversation, or on stderr when the output is a pipe. */
+static void prep_say(const char *colour, const char *fmt, ...)
+    __attribute__((format(printf, 2, 3)));
+static void prep_say(const char *colour, const char *fmt, ...)
+{
+    char text[512];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(text, sizeof(text), fmt, ap);
+    va_end(ap);
+    if (term.tty) /* a blank line after it: the prompt is not glued to it */
+        term_printf(&term, "%s%s%s\n\n", colour, text, T_RESET(&term));
+    else
+        fprintf(stderr, "%s\n", text);
+}
+
+static double now_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec * 1e3 + (double)ts.tv_nsec / 1e6;
+}
+
+static void *prep_main(void *arg)
+{
+    janas_llm_chat *c = arg;
+    int32_t d = 0, t = 0;
+    while (!atomic_load(&prep.stop) && janas_llm_chat_prepare(c, &d, &t) == 1) {
+        atomic_store(&prep.done, d);
+        atomic_store(&prep.total, t);
+    }
+    atomic_store(&prep.busy, 0);
+    return NULL;
+}
+
+/* The reading ahead of the system message, begun: its first block here,
+   which says how long it is, the rest on the thread. */
+static void prep_start(janas_llm_chat *c)
+{
+    if (prep.on)
+        return;
+    int32_t d = 0, t = 0;
+    double t0 = now_ms();
+    int r = janas_llm_chat_prepare(c, &d, &t);
+    if (r < 0) {
+        prep_say(T_WARN(&term),
+                 "the system message could not be read "
+                 "ahead: %s",
+                 janas_llm_last_error());
+        return;
+    }
+    if (r == 0) {
+        if (t >= 1024 && now_ms() - t0 < 2000)
+            prep_say(T_OK(&term),
+                     "System message and tools ready: %d tokens, as read "
+                     "in an earlier chat.",
+                     (int)t);
+        return;
+    }
+    atomic_store(&prep.done, d);
+    atomic_store(&prep.total, t);
+    atomic_store(&prep.stop, 0);
+    atomic_store(&prep.busy, 1);
+    if (pthread_create(&prep.th, NULL, prep_main, c) != 0) {
+        atomic_store(&prep.busy, 0); /* the first reply reads it */
+        return;
+    }
+    prep.on = 1;
+    prep_say(T_USER(&term),
+             "Reading the system message and the tools ahead: %d tokens, "
+             "the first time on this model (later chats find them "
+             "read). Write meanwhile: the status line shows how far it "
+             "is, and the first reply starts when it is done; Ctrl-C "
+             "while it waits leaves the rest to the reply.",
+             (int)t);
+}
+
+/* The reading ahead, waited for in plain sight (the chat is the thread's
+   until then); stop: the rest is left to the first reply. */
+static void prep_wait(const janas_llm *llm, int stop)
+{
+    if (!prep.on)
+        return;
+    if (stop)
+        atomic_store(&prep.stop, 1);
+    while (atomic_load(&prep.busy)) {
+        if (interrupted) {
+            atomic_store(&prep.stop, 1);
+            interrupted = 0;
+        }
+        char st[64];
+        snprintf(st, sizeof(st), "%s the tools %d%%",
+                 atomic_load(&prep.stop) ? "stopping the reading of"
+                                         : "waiting for",
+                 prep_pct());
+        footer(llm, NULL, st);
+        struct timespec ts = {0, 200 * 1000 * 1000};
+        nanosleep(&ts, NULL);
+    }
+    pthread_join(prep.th, NULL);
+    prep.on = 0;
+}
+
 static void restart(janas_llm_chat *c, const char *system)
 {
     janas_llm_chat_reset(c);
+    mcpc_close_services(); /* a new conversation opens them anew */
+    janas_llm_chat_tools_add(c, NULL, 0);
     if (set_system(c, system) != JANAS_LLM_OK)
         term_printf(&term, "%s\n", janas_llm_last_error());
 }
@@ -599,6 +742,7 @@ struct chat_opts { /* where the words land: main keeps them, this names them */
     int *mcp, *mcp_auto, *mcp_instructions, *services;
     int *no_mtp;
     const char *mtp_found; /* the MTP file found, not asked for: unsaved */
+    int *all_tools;
 };
 
 static int take_options(int n, char **w, struct chat_opts *o)
@@ -639,6 +783,10 @@ static int take_options(int n, char **w, struct chat_opts *o)
         }
         if (strcmp(a, "--no-services") == 0) {
             *o->services = 0;
+            continue;
+        }
+        if (strcmp(a, "--all-tools") == 0) {
+            *o->all_tools = 1;
             continue;
         }
         if (strcmp(a, "--mcp-auto") == 0) {
@@ -857,6 +1005,8 @@ static void conf_write(const char *path, const struct chat_opts *o)
         fprintf(f, "--no-mcp\n");
     if (!*o->services)
         fprintf(f, "--no-services\n");
+    if (*o->all_tools)
+        fprintf(f, "--all-tools\n");
     if (*o->mcp_auto)
         fprintf(f, "--mcp-auto\n");
     if (*o->mcp_instructions)
@@ -971,6 +1121,8 @@ static int failed_before(const char *key)
    there is nothing more to do, -1 when the exchange stops here. */
 static int run_calls(janas_llm_chat *c, int autorun)
 {
+    /* a reply held to a call (below) holds only that one */
+    janas_llm_chat_tool_choice(c, JANAS_LLM_TOOLS_AUTO, NULL, 0, 1);
     int32_t n = janas_llm_chat_calls(c);
     if (n <= 0 || !mcpc_count())
         return 0;
@@ -1017,7 +1169,19 @@ static int run_calls(janas_llm_chat *c, int autorun)
         }
         if (go) {
             footer(idle_llm, c, "running a tool");
-            int rc = mcpc_call(name, args, &texts[i]);
+            char *shown = NULL;
+            unsigned gen = mcpc_opened();
+            int rc = mcpc_call(name, args, &texts[i], &shown);
+            if (mcpc_opened() != gen) { /* a service opened: its tools */
+                char *more = mcpc_opened_tools();
+                if (janas_llm_chat_tools_add(c, more, -1) != JANAS_LLM_OK)
+                    term_printf(&term, "%s\n", janas_llm_last_error());
+                free(more);
+                /* and the next reply is a call: told to call one, a small
+                   model (Qwen3.5-0.8B) still made up the weather instead */
+                janas_llm_chat_tool_choice(c, JANAS_LLM_TOOLS_REQUIRED, NULL, 0,
+                                           1);
+            }
             if (rc != 0 && key && failed.n < FAILED_MAX) {
                 failed.call[failed.n++] = key;
                 key = NULL;
@@ -1028,6 +1192,13 @@ static int run_calls(janas_llm_chat *c, int autorun)
                 &term, "%s%s%.*s%s%s\n", rc ? T_WARN(&term) : T_DIM(&term),
                 rc > 0 ? "tool error: " : "", (int)(line < 200 ? line : 200), t,
                 line < strlen(t) || line > 200 ? " ..." : "", T_RESET(&term));
+            if (shown && *shown) {
+                /* the user's, as the tool wrote it (a page): the model
+                   has only a note of it */
+                term_gap(&term);
+                term_printf(&term, "%s\n", shown);
+            }
+            free(shown);
         } else if (!texts[i]) {
             texts[i] = strdup("The user did not allow this call: it was "
                               "not run.");
@@ -1192,11 +1363,12 @@ int main(int argc, char **argv)
     int gpu = 1;      /* the GPU may be given work, if there is one */
     const char *mcp_config = NULL; /* NULL: the default file */
     int mcp = 1, mcp_auto = 0, mcp_instructions = 0, services = 1, no_mtp = 0;
+    int all_tools = 0;
     static char mtp_found[4096];
     struct chat_opts o = {
         &mp,       &cp,         &system_arg, &stats,    &markdown,
         &gpu,      &mcp_config, &mcp,        &mcp_auto, &mcp_instructions,
-        &services, &no_mtp,     mtp_found};
+        &services, &no_mtp,     mtp_found,   &all_tools};
     /* the file first, the command line after it: what is typed wins */
     char cpath[1024];
     char *conf_text = NULL;
@@ -1254,6 +1426,7 @@ int main(int argc, char **argv)
     /* the tools of the MCP servers configured and of Janas's own services
        beside the program, given to the model */
     if (mcp) {
+        mcpc_defer(!all_tools);
         mcpc_start(mcp_config);
         if (services)
             mcpc_start_services();
@@ -1267,6 +1440,12 @@ int main(int argc, char **argv)
        other servers say of theirs */
     if (mcpc_count() && (mcp_extra = mcpc_instructions(mcp_instructions)) &&
         set_system(c, system) != JANAS_LLM_OK)
+        fprintf(stderr, "janas-chat: %s\n", janas_llm_last_error());
+    /* the system message once read is kept, in memory and on the disk
+       (~/.cache/janas), so that a /reset or the next chat on this model
+       does not read it again */
+    if (janas_llm_chat_keep(c, 2, 0) != JANAS_LLM_OK ||
+        janas_llm_chat_keep_disk(c, (uint64_t)2 << 30) != JANAS_LLM_OK)
         fprintf(stderr, "janas-chat: %s\n", janas_llm_last_error());
     char desc[512];
     int32_t dl;
@@ -1292,6 +1471,7 @@ int main(int argc, char **argv)
         line_idle = footer_idle;
     } else
         fprintf(stderr, "%s\n/help for the commands\n", desc);
+    prep_start(c);
 
     struct sigaction sa = {.sa_handler = on_sigint};
     sigemptyset(&sa.sa_mask);
@@ -1306,6 +1486,11 @@ int main(int argc, char **argv)
     while ((n = read_message(&msg, &cap, tty)) >= 0) {
         if (n == 0)
             continue;
+        /* the chat is the reading thread's until it ends: but for the
+           pages, which do not touch it, everything waits for it */
+        if (strcmp(msg, "/help") != 0 && strcmp(msg, "/about") != 0)
+            prep_wait(llm,
+                      strcmp(msg, "/quit") == 0 || strcmp(msg, "/exit") == 0);
         if (msg[0] == '/') {
             term_gap(&term); /* what a command answers is one block */
             char *arg = strchr(msg, ' ');
@@ -1418,6 +1603,7 @@ int main(int argc, char **argv)
                     footer(llm, c, NULL);
                 } else
                     term_printf(&term, "new conversation\n");
+                prep_start(c);
             } else if (strcmp(msg, "/system") == 0) {
                 if (!*arg) {
                     term_printf(&term, "%s\n",
@@ -1430,6 +1616,7 @@ int main(int argc, char **argv)
                 term_printf(&term, "new conversation %s\n",
                             system ? "with this system message"
                                    : "with no system message");
+                prep_start(c);
             } else if (strcmp(msg, "/experts") == 0) {
                 int32_t used = 0, most = 0;
                 if (*arg &&
@@ -1490,6 +1677,7 @@ int main(int argc, char **argv)
                 break;
         footer(llm, c, NULL);
     }
+    prep_wait(llm, 1);
     failed_clear();
     free(msg);
     free(system);

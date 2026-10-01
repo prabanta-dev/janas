@@ -175,6 +175,14 @@ JANAS_MCP_API int32_t janas_mcp_call(janas_mcp *m, const char *name,
 JANAS_MCP_API int32_t janas_mcp_result(const janas_mcp *m, char *buf,
                                        int32_t cap, int32_t *len);
 JANAS_MCP_API int32_t janas_mcp_result_error(const janas_mcp *m);
+/*
+ * What the answer gives to the user alone - its parts annotated with an
+ * audience of "user" without "assistant": a page, a long listing, to be
+ * shown as it is rather than read by the model. janas_mcp_result leaves
+ * them out. *len 0: none.
+ */
+JANAS_MCP_API int32_t janas_mcp_result_user(const janas_mcp *m, char *buf,
+                                            int32_t cap, int32_t *len);
 
 /* Stops the call in progress on m, which then returns an error; the server
    is told (notifications/cancelled). */

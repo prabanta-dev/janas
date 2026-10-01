@@ -172,9 +172,26 @@ static int contains(const char *hay, const char *needle)
     return hay && needle && *needle && strcasestr(hay, needle) != NULL;
 }
 
+/* GeoNames' feature code as a weight: a capital, a region's, a
+   province's or county's, a municipality's seat, a place. */
+static double rank_weight(const char *code)
+{
+    static const struct {
+        const char *code;
+        double w;
+    } w[] = {{"PPLC", 20}, {"PPLA", 10}, {"PPLA2", 3}, {"PPLA3", 2}};
+    for (size_t i = 0; code && i < sizeof w / sizeof *w; i++)
+        if (strcmp(code, w[i].code) == 0)
+            return w[i].w;
+    return 1;
+}
+
 /* The geocoding's place of that name: the nearest to (near_lat, near_lon)
    when given (the name of a point's city: Turin, not Turin in Georgia),
-   else the name itself first, then the most people. */
+   else the most people, weighed by the place's rank: Trapani the town,
+   not a hamlet called so; "Milan" Milano, not Milan in Tennessee;
+   "Venice" Venezia (51,000 people in its old town, a regional capital),
+   not Dayton in Ohio, which the geocoding gives first. */
 static int find_named(const char *query, double near_lat, double near_lon,
                       struct wx_place *p, char *err, size_t err_len)
 {
@@ -211,12 +228,11 @@ static int find_named(const char *query, double near_lat, double near_lon,
     const struct janas_json *res =
         d ? janas_json_get(janas_json_root(d), "results") : NULL;
     const struct janas_json *best = NULL;
-    double best_pop = -1, best_km = 1e30;
-    int best_exact = 0, near = !isnan(near_lat) && !isnan(near_lon);
+    double best_score = -1, best_km = 1e30;
+    int near = !isnan(near_lat) && !isnan(near_lon);
     for (const struct janas_json *r =
              res && res->type == JANAS_JSON_ARRAY ? res->child : NULL;
          r; r = r->next) {
-        const char *rn = janas_json_str(janas_json_get(r, "name"));
         const char *a1 = janas_json_str(janas_json_get(r, "admin1"));
         const char *a2 = janas_json_str(janas_json_get(r, "admin2"));
         const char *co = janas_json_str(janas_json_get(r, "country"));
@@ -235,15 +251,14 @@ static int find_named(const char *query, double near_lat, double near_lon,
             }
             continue;
         }
-        int exact = same_name(rn, name);
         double pop = janas_json_num(janas_json_get(r, "population"), 0);
-        /* the name itself before a longer one holding it, then the most
-           people: Trapani the town, not a hamlet called so */
-        if (!best || exact > best_exact ||
-            (exact == best_exact && pop > best_pop)) {
+        /* + 1: places of no known population still count */
+        double score =
+            (pop + 1) *
+            rank_weight(janas_json_str(janas_json_get(r, "feature_code")));
+        if (!best || score > best_score) {
             best = r;
-            best_pop = pop;
-            best_exact = exact;
+            best_score = score;
         }
     }
     int ok = 0;

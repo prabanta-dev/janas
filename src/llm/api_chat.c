@@ -154,6 +154,7 @@ int32_t janas_llm_chat_system(janas_llm_chat *c, const char *text, int32_t len)
 {
     if (!c || !text)
         return janas_api_fail(JANAS_LLM_EINVAL, "invalid argument");
+    janas_api_unprepare(c);
     if (janas_llm_session_length(c->s) > 0)
         return janas_api_fail(JANAS_LLM_EINVAL,
                               "the conversation has started: reset it first");
@@ -177,6 +178,7 @@ int32_t janas_llm_chat_reset(janas_llm_chat *c)
     c->system = NULL;
     c->n_turn = 0;
     c->sys_tokens = 0;
+    c->prepared = 0;
     c->tools_tokens = 0;
     c->dropped = 0;
     c->replying = c->closed = c->ended = 0;
@@ -364,12 +366,12 @@ int janas_api_add_system(janas_llm_chat *c, const char *sys, size_t n)
         /* a system turn only when there is something to say: the message,
            or <|think|> at its top when reasoning is asked for */
         int think = llm->thinker && c->p.thinking != 0;
-        int tools = c->tools && llm->tools == JANAS_TOOLS_GEMMA;
+        int tools = c->tools_sys && llm->tools == JANAS_TOOLS_GEMMA;
         if (!think && !tools && (!sys || n == 0))
             return 0;
         struct janas_buf b = {0};
         janas_tools_system(&b, tools ? JANAS_TOOLS_GEMMA : JANAS_TOOLS_NONE,
-                           c->tools, sys, n);
+                           c->tools_sys, sys, n);
         int err = b.oom || janas_api_add_special(c, llm->im_start) ||
                   janas_api_add_text(c, "system\n", 7) ||
                   (think && (janas_api_add_special(c, llm->think_on) ||
@@ -380,7 +382,7 @@ int janas_api_add_system(janas_llm_chat *c, const char *sys, size_t n)
         janas_buf_free(&b);
         return err ? -1 : 0;
     }
-    if (!c->tools || llm->tools == JANAS_TOOLS_NONE)
+    if (!c->tools_sys || llm->tools == JANAS_TOOLS_NONE)
         return janas_api_add_message(c, "system", sys ? sys : "", n);
     /* how many of its tokens the tools take: the message without them is
        built and taken back, for the count alone */
@@ -394,7 +396,7 @@ int janas_api_add_system(janas_llm_chat *c, const char *sys, size_t n)
     size_t plain = c->n_ids - ids0;
     c->n_ids = ids0;
     struct janas_buf b = {0};
-    janas_tools_system(&b, llm->tools, c->tools, sys, n);
+    janas_tools_system(&b, llm->tools, c->tools_sys, sys, n);
     int err = b.oom || janas_api_add_special(c, llm->im_start) ||
               janas_api_add_text(c, "system\n", 7) ||
               janas_api_add_markup(c, b.p, b.n) ||
@@ -520,6 +522,80 @@ int janas_api_note_turn(janas_llm_chat *c, uint32_t at)
     }
     c->turn[c->n_turn++] = at;
     return 0;
+}
+
+void janas_api_unprepare(janas_llm_chat *c)
+{
+    if (!c->prepared)
+        return;
+    janas_llm_session_reset(c->s);
+    c->prepared = 0;
+    c->sys_tokens = 0;
+}
+
+int32_t janas_llm_chat_prepare(janas_llm_chat *c, int32_t *done, int32_t *total)
+{
+    if (done)
+        *done = 0;
+    if (total)
+        *total = 0;
+    if (!c)
+        return janas_api_fail(JANAS_LLM_EINVAL, "no chat");
+    if (!c->prepared) {
+        if (janas_llm_session_length(c->s) > 0 || c->replying)
+            return 0; /* the conversation has started */
+        c->n_ids = c->n_text = 0;
+        int err = janas_api_begin_sequence(c);
+        if (c->system || c->tools_sys || c->llm->format == FORMAT_GEMMA)
+            err |= janas_api_add_system(c, c->system,
+                                        c->system ? strlen(c->system) : 0);
+        err |= janas_api_flush_text(c);
+        if (err)
+            return janas_api_fail(JANAS_LLM_ENOMEM, "out of memory");
+        if (c->n_ids < 2)
+            return 0; /* nothing worth reading ahead */
+        c->sys_tokens = (uint32_t)c->n_ids;
+        /* read before, in memory or on the disk: taken as it was */
+        janas_api_keep_pick(c);
+        const int32_t *h;
+        uint32_t hn = janas_llm_session_tokens(c->s, &h), same = 0;
+        while (same < hn && same < c->n_ids && h[same] == c->ids[same])
+            same++;
+        if (janas_llm_session_truncate(c->s, same) != 0) {
+            janas_llm_session_reset(c->s); /* a recurrent state */
+            same = 0;
+        }
+        if (janas_llm_session_append(c->s, c->ids + same,
+                                     (uint32_t)c->n_ids - same) != 0) {
+            janas_llm_session_reset(c->s);
+            return janas_api_fail(JANAS_LLM_EFULL,
+                                  "the system message does not fit in the "
+                                  "context (%u tokens)",
+                                  c->llm->n_ctx);
+        }
+        c->prepared = 1;
+    }
+    int r = 0;
+    if (c->prepared == 1) {
+        r = janas_llm_session_prefill_step(c->s);
+        if (r < 0) {
+            janas_api_unprepare(c);
+            return janas_api_fail(JANAS_LLM_EFAIL,
+                                  "the system message could not be read");
+        }
+        if (r == 0) {
+            c->prepared = 2;
+            janas_api_keep_prefix(c);
+        }
+    }
+    /* all but the last token: the first message's pass reads it */
+    uint32_t len = (uint32_t)janas_llm_session_length(c->s);
+    uint32_t got = janas_llm_session_computed(c->s);
+    if (done)
+        *done = (int32_t)(got + 1 >= len ? len : got);
+    if (total)
+        *total = (int32_t)len;
+    return r > 0 ? 1 : 0;
 }
 
 void janas_api_prep_start(janas_llm_chat *c)
@@ -701,6 +777,10 @@ static int32_t send_turn(janas_llm_chat *c, const char *text, size_t n,
     if (gemma_answers) {
         err |= janas_api_add_markup(c, ans.p, ans.n);
         c->in_turn = 1;
+    } else if (c->prepared) {
+        /* the system message, read ahead: the session holds it (the rest
+           of it, when it was not read to the end, the reply reads) */
+        c->prepared = 0;
     } else if (janas_llm_session_length(c->s) > 0) {
         /* close the previous reply: its stop token is in the sequence, or
            it was cut and gets one now; then the newline after it */
@@ -710,7 +790,7 @@ static int32_t send_turn(janas_llm_chat *c, const char *text, size_t n,
     } else {
         /* the start: <bos> where the format has one, the system message */
         err |= janas_api_begin_sequence(c);
-        if (c->system || c->tools || c->llm->format == FORMAT_GEMMA)
+        if (c->system || c->tools_sys || c->llm->format == FORMAT_GEMMA)
             err |= janas_api_add_system(c, c->system,
                                         c->system ? strlen(c->system) : 0);
         c->sys_tokens = (uint32_t)c->n_ids;

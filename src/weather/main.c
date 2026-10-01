@@ -17,20 +17,17 @@
 #endif
 
 static const char INSTRUCTIONS[] =
-    "Use these tools by yourself whenever the user asks about the weather, "
-    "the temperature, rain, wind, the sea and its waves, or weather "
-    "warnings, now or in the next days: the user does not need to name "
-    "them or ask for them. In your reply never name the tools, the server "
-    "or the service: just give the answer, with the sources the tool "
-    "lists. Tell the user what the tools return, in the user's language, "
-    "without adding figures of your own: they already give the times in "
-    "the place's local time and the wind and the sea in words. A forecast "
-    "is a model's value and a station's is a measure: say which is which "
-    "when both are given, and when they disagree say so. For a sea as a "
-    "whole use weather_sea with its name; for warnings use weather_alerts, "
-    "and say plainly when there is none. When the user names no place, "
-    "give none: the tools take where the user is and say how they know "
-    "it; tell the user which place that is, and that it may be off.";
+    "Use these tools by yourself for any question on the weather, rain, "
+    "wind, the sea and its waves, or weather warnings; the user need not "
+    "name them, and you never name them. Tell what they return in the "
+    "user's language, adding no figures of your own: times are local "
+    "already, wind and sea in words. A forecast is a model's value and a "
+    "station's report a measure: say which, and say when they disagree. "
+    "For a whole sea use weather_sea with its name; for warnings "
+    "weather_alerts, and say plainly when there are none. With no place "
+    "named, give none: the tool takes where the user is and says how it "
+    "knows; tell the user that place, and that it may be off. Never ask "
+    "for weather the user did not ask for.";
 
 static void usage(void)
 {

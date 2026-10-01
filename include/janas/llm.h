@@ -302,6 +302,22 @@ JANAS_LLM_API int32_t janas_llm_chat_system(janas_llm_chat *c, const char *text,
                                             int32_t len);
 
 /*
+ * Reads the system message and the tools now, before the first message, a
+ * block at a time: 1 while more is left, 0 when they are read (or there is
+ * nothing to read, or the conversation has started), or an error. done and
+ * total (either may be NULL) say how many of their tokens are read. With
+ * many tools the system message is thousands of tokens, tens of seconds of
+ * a large model: a program reads it while its user writes, and the first
+ * message finds it read. With janas_llm_chat_keep and _keep_disk on, a
+ * system message read before - in this chat, or in one before it on the
+ * same model - is taken as it was, and the one read here is kept for the
+ * next. Setting the system message or the tools afterwards drops what was
+ * read; janas_llm_chat_send, _send_results and _load are as without it.
+ */
+JANAS_LLM_API int32_t janas_llm_chat_prepare(janas_llm_chat *c, int32_t *done,
+                                             int32_t *total);
+
+/*
  * Sends a user message; the reply follows through janas_llm_chat_next. A
  * reply still being read is cut where it is and closed first.
  */
@@ -451,6 +467,19 @@ JANAS_LLM_API int32_t janas_llm_chat_kept_disk(const janas_llm_chat *c,
  */
 JANAS_LLM_API int32_t janas_llm_chat_tools(janas_llm_chat *c, const char *json,
                                            int32_t len);
+
+/*
+ * More tools the model may call, not written into the system message: the
+ * program gives the model their definitions some other way - in a tool's
+ * answer, as janas-chat does when the model opens one of Janas's services -
+ * so that a long list need not be read before the first message. Their
+ * calls are held to their grammar like the others'. Takes effect from the
+ * next reply, at any point of the conversation; each call replaces what
+ * the last one added (NULL or a length of 0: none). janas_llm_chat_tools
+ * drops them.
+ */
+JANAS_LLM_API int32_t janas_llm_chat_tools_add(janas_llm_chat *c,
+                                               const char *json, int32_t len);
 
 /* Whether the model calls a tool, from the next reply on: as it judges
    (AUTO, default), never (NONE), at least one (REQUIRED), or the function
