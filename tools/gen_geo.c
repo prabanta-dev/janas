@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
    Copyright (C) 2026 Maurizio Cammalleri */
 /*
- * gen_geo.c - generates src/flights/geo_data.h, the tables of janas-flights'
- * geography (src/flights/geo.h): countries, first-level regions, time
+ * gen_geo.c - generates src/common/geo_data.h, the tables of Janas's
+ * services' geography (src/common/geo.h): countries, first-level regions, time
  * zones, cities of 30,000 people or more and every capital, the airports
  * with an IATA code and scheduled flights, and the seas as polygons.
  *
@@ -19,7 +19,7 @@
  * An airport's time zone is that of the nearest city. The seas' outlines
  * are simplified to about a kilometre (Douglas-Peucker, 0.01 degree).
  *
- * Usage: gen_geo <data-directory> > src/flights/geo_data.h
+ * Usage: gen_geo <data-directory> > src/common/geo_data.h
  */
 #include <math.h>
 #include <stdint.h>
@@ -483,7 +483,7 @@ int main(int argc, char **argv)
 {
     if (argc != 2) {
         fprintf(stderr,
-                "usage: gen_geo <data-directory> > src/flights/geo_data.h\n");
+                "usage: gen_geo <data-directory> > src/common/geo_data.h\n");
         return 2;
     }
     snprintf(dir, sizeof dir, "%s", argv[1]);

@@ -10,7 +10,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "flights/geo.c"
+#include "common/geo.c"
 
 static int failures;
 

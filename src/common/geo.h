@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
    Copyright (C) 2026 Maurizio Cammalleri */
 /*
- * geo.h - janas-flights' geography: airports, cities, seas, and a position
+ * geo.h - the geography of Janas's services (janas-flights, janas-weather):
+ * airports, cities, seas, and a position
  * put into words ("over the Tyrrhenian Sea, between Corsica (France) and
  * Tuscany (Italy), 85 km WSW of Livorno"), so that the model telling it
  * never has to work out where a latitude and a longitude are.
@@ -10,8 +11,8 @@
  * OurAirports (public domain), GeoNames (CC BY 4.0) and Natural Earth
  * (public domain). Coordinates are in hundred-thousandths of a degree.
  */
-#ifndef JANAS_FLIGHTS_GEO_H
-#define JANAS_FLIGHTS_GEO_H
+#ifndef JANAS_COMMON_GEO_H
+#define JANAS_COMMON_GEO_H
 
 #include <stdint.h>
 
@@ -65,10 +66,14 @@ const struct geo_airport *geo_airport_find(const char *what);
 /* A city by name (its ASCII name, case ignored; the most populous of those
    of that name); NULL when none. */
 const struct geo_city *geo_city_find(const char *name);
+/* The nearest city (within 5 degrees of latitude; one under 10,000
+   people only within 3 km), and its distance; NULL when none. */
+const struct geo_city *geo_city_near(double lat, double lon, double *km);
 /* The nearest airport with scheduled flights, and its distance. */
 const struct geo_airport *geo_airport_near(double lat, double lon, double *km);
 
 const char *geo_country_name(uint16_t i);
+const char *geo_country_iso2(uint16_t i); /* "IT" */
 const char *geo_region_name(uint16_t i);
 const char *geo_tz_name(uint16_t i);
 

@@ -2,7 +2,7 @@
    Copyright (C) 2026 Maurizio Cammalleri */
 /*
  * flights.h - janas-flights, flights as an MCP service: what its parts
- * share. net.c fetches, adsb.c reads the community ADS-B networks
+ * share. common/https_get.c fetches, adsb.c reads the community ADS-B networks
  * (adsb.lol, adsb.fi as the fallback), route.c asks adsbdb for a
  * callsign's route and an airline's codes, schedule.c asks AviationStack
  * for the times (with a key of the user's), tools.c offers the tools.
@@ -13,14 +13,8 @@
 #include <stddef.h>
 #include <time.h>
 
+#include "common/https_get.h"
 #include "llm/json.h"
-
-/* ---- net.c ---- */
-
-/* GET of url (https), following redirects, the body into out. The HTTP
-   status (200...), or -1 with the reason in err. */
-int fl_get(const char *url, const char *const *headers, size_t n_headers,
-           struct janas_buf *out, char *err, size_t err_len);
 
 /* ---- adsb.c ---- */
 

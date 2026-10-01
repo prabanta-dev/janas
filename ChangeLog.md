@@ -2,991 +2,318 @@
 
 > Curated, user-facing summary of completed work, newest first.
 
+## [2026-10-01] - janas-weather, and "here" for the services
+
+- **janas-weather**, the weather as an MCP service, from free sources with no key: the weather now (`weather_now`: Open-Meteo's model, and what the nearest airport's station measured, with when and how far; when the two disagree, the answer says so), the forecast day by day and hour by hour (`weather_forecast`), the sea at points across it or off a place, with the waves' names (`weather_sea`), and the warnings in force from MeteoAlarm, with the Civil Protection's levels in Italy (`weather_alerts`). MET Norway answers when Open-Meteo does not. `janas-chat` starts it by itself; [docs/services/weather.md](docs/services/weather.md).
+- **"Here", when a question names no place**: `JANAS_LOCATION` (a city, `lat,lon`, or `off`), else the internet connection's position (GeoJS, ipwho.is), else the city of the computer's time zone; the answer says which, and the model tells the user it is a guess. For the weather and for `flights_nearby`.
+- **Tool calls in Qwen's XML form take their parameters in any order.** The grammar held them to the schema's order, and a model that began with a later one could no longer write an earlier one: Qwen3.6-35B-A3B asked the forecast with the number of days first and the place lost, sixteen times over.
+- **`janas-chat` does not run again a call that failed** with the same arguments in the same exchange: the model is told to answer or to ask, and at the second time the exchange stops.
+
 ## [2026-10-01] - Code completion in the editor
 
-- **`janas-server` fills in code at an editor's cursor**, with a model for
-  code such as Qwen3-Coder-30B-A3B-Instruct, through OpenAI's
-  `/v1/completions` with a `suffix` and through llama.cpp's **`/infill`**,
-  which the extensions made for llama.cpp ask (llama.vscode): the line up
-  to the cursor, `n_predict` (0: the prompt only), `n_indent` and
-  `t_max_predict_ms` read as llama.cpp reads them, the answer as
-  llama.cpp's. Tried in VSCodium with llama.vscode and with Continue;
-  how to set them up in [docs/code-completion.md](docs/code-completion.md).
-- **The window sent at every keystroke is kept from moving.** The
-  extensions send "the last N lines before the cursor", whose start moves
-  at every new line, and the whole window was read again: 17 s for 1,330
-  tokens at every request. The start of each window is now remembered and
-  kept, put ahead when the editor slides its window, the text before the
-  cursor cut at a line within `--fim-prefix` tokens (2048), the lines after
-  it within `--fim-suffix` (8), the text written within `--fim-max` (256):
-  1.5-2.2 s a proposal after the first request of a window, on a laptop
-  with Qwen3-Coder-30B-A3B in memory.
-- **Sixteen stop strings** a request, where OpenAI takes four: Continue
-  sends more, and every one of its requests was refused.
+- **`janas-server` fills in code at an editor's cursor**, with a model for code such as Qwen3-Coder-30B-A3B-Instruct, through OpenAI's `/v1/completions` with a `suffix` and through llama.cpp's **`/infill`**, which the extensions made for llama.cpp ask (llama.vscode): the line up to the cursor, `n_predict` (0: the prompt only), `n_indent` and `t_max_predict_ms` read as llama.cpp reads them, the answer as llama.cpp's. Tried in VSCodium with llama.vscode and with Continue; how to set them up in [docs/code-completion.md](docs/code-completion.md).
+- **The window sent at every keystroke is kept from moving.** The extensions send "the last N lines before the cursor", whose start moves at every new line, and the whole window was read again: 17 s for 1,330 tokens at every request. The start of each window is now remembered and kept, put ahead when the editor slides its window, the text before the cursor cut at a line within `--fim-prefix` tokens (2048), the lines after it within `--fim-suffix` (8), the text written within `--fim-max` (256): 1.5-2.2 s a proposal after the first request of a window, on a laptop with Qwen3-Coder-30B-A3B in memory.
+- **Sixteen stop strings** a request, where OpenAI takes four: Continue sends more, and every one of its requests was refused.
 
 ## [2026-10-01] - janas-flights, the first of Janas's services
 
-- **janas-flights**, flights as an MCP server of its own, for `janas-chat`
-  or any MCP client: where a flight is and what it is doing
-  (`flight_status`), the flights of a route (`flights_between`), what
-  flies now over a sea, by its name in English or Italian
-  (`flights_over`), and near an airport, a city or a point
-  (`flights_nearby`). Live positions come from the open ADS-B networks
-  (adsb.lol, adsb.fi as the fallback) and need no key; schedules, gates
-  and delays come from AviationStack with a free key of the user's own
-  (100 calls a month), asked only about one flight or one route - lists
-  and areas use open data only. Times are given in each airport's local
-  time and in UTC, places in words, and a live position is given to a
-  scheduled flight only when the aircraft fits its route. On 1 October:
-  AZ1709 from Fiumicino to Catania seen over the Tyrrhenian Sea with two
-  arrival estimates, the 21 flights from Fiumicino to Catania, 45
-  aircraft over the Tyrrhenian Sea.
-- **`janas-chat` starts Janas's services by itself**: those it finds
-  beside it, with no configuration. Their tools run without asking (they
-  read public data and change nothing), their calls show as dimmed lines,
-  and the model is told to use them whenever a question is on their
-  subject, without naming them. `--no-services` starts none.
-- **The server side of MCP** moved to `src/common/mcp_server.c`, shared by
-  `janas-mcp` and `janas-flights`.
-- **docs/services/**: the services documented apart from the README, with
-  how to use them in Claude Code and the clients that read an
-  `mcpServers` file.
+- **janas-flights**, flights as an MCP server of its own, for `janas-chat` or any MCP client: where a flight is and what it is doing (`flight_status`), the flights of a route (`flights_between`), what flies now over a sea, by its name in English or Italian (`flights_over`), and near an airport, a city or a point (`flights_nearby`). Live positions come from the open ADS-B networks (adsb.lol, adsb.fi as the fallback) and need no key; schedules, gates and delays come from AviationStack with a free key of the user's own (100 calls a month), asked only about one flight or one route - lists and areas use open data only. Times are given in each airport's local time and in UTC, places in words, and a live position is given to a scheduled flight only when the aircraft fits its route. On 1 October: AZ1709 from Fiumicino to Catania seen over the Tyrrhenian Sea with two arrival estimates, the 21 flights from Fiumicino to Catania, 45 aircraft over the Tyrrhenian Sea.
+- **`janas-chat` starts Janas's services by itself**: those it finds beside it, with no configuration. Their tools run without asking (they read public data and change nothing), their calls show as dimmed lines, and the model is told to use them whenever a question is on their subject, without naming them. `--no-services` starts none.
+- **The server side of MCP** moved to `src/common/mcp_server.c`, shared by `janas-mcp` and `janas-flights`.
+- **docs/services/**: the services documented apart from the README, with how to use them in Claude Code and the clients that read an `mcpServers` file.
 
 ## [2026-10-01] - Experts read ahead, steadier drafts, every weight type on the GPU
 
-- **The drafts no longer switch themselves off for good.** The planner of
-  the multi-token prediction drafts judges each number of drafts by the
-  cost of a pass of that many tokens, as last timed. One pass of two
-  tokens timed while the disk was busy made it refuse every draft, and with
-  no drafts that cost was never timed again: in some sessions the drafts
-  stopped after the first hundred tokens and never came back, which is why
-  the same chat ran at 22 tokens/s one time and 26 the next. It now drafts
-  one pass in sixteen even when it chose none, as the drafts copied from
-  the conversation already did. Qwen3-Next-80B in `janas-chat`, three
-  replies of 600 tokens, two rounds alternated with the release of 28
-  September: 26.0 tokens/s (25.5-26.5) against 24.3 (22.5-26.1), +7%.
-- **The same seed gives the same conversation, drafts or not.** A reply
-  cut short - by `--max`, or stopped - after a pass that had accepted
-  drafts past its end dropped those tokens but not the random numbers drawn
-  for them, so every later reply of the conversation came out different
-  from the one without drafts. The numbers are given back now: with the
-  same seed the replies are identical with and without drafts, cut or not.
-- **A reply's statistics count the experts read ahead**; left out, they
-  made the cache look warmer and the disk idler than they were.
-- **Experts read ahead, where the cache misses many.** A mixture whose
-  experts do not fit in memory waited for the disk one layer at a time:
-  Qwen3-Next-80B with every bit and a 4 GiB cache spent half of each token
-  waiting, with the disk busy only 60% of the time. Now the next layer's
-  router is applied ahead, and of its first ten experts up to two not in
-  the cache are read while the current layer computes (on that model the
-  prediction held 91% of the experts chosen). Reading ahead costs on every
-  token and pays only when the cache misses many experts, so it turns
-  itself on above 60 missed experts a token and off below 40. Qwen3-Next-80B,
-  every bit, a fresh cache, three rounds alternated with it off: 4 GiB
-  10.9-11.1 to 11.7-11.8 tokens/s (+6%), 8 GiB 15.6-15.7 to 16.2-16.3
-  (+4%); with a warm 20 GiB cache it never turns on and the speed is the
-  same; in `janas-chat`, with a 4 GiB cache and every expert, 12.6
-  tokens/s against 12.1 of the release of 28 September (+3.6%). The
-  results are the same bits, on or off. `JANAS_PREFETCH=0` turns it off.
-- **The expert cache without transparent-huge-page advice.** With the
-  kernel's huge pages on "always" and their defrag on "madvise" (the
-  common setting), the advice made every first write to the cache try a
-  synchronous compaction of memory, which looked like waiting for the
-  disk. Without it, a reply of Qwen3-Next-80B from a fresh 20 GiB cache
-  went from 17.5-17.7 to 19.7 tokens/s, and a prompt from a warm one from
-  51 to 55; other sizes are even. `JANAS_ARENA_HUGE=1` asks for huge pages
-  as before.
-- **Every quantized type on the GPU**: Q8_0, Q4_0, Q4_1, Q5_1, IQ4_NL,
-  IQ4_XS, Q3_K and IQ3_S join Q4_K, Q5_K and Q6_K, bit for bit the CPU's
-  results (`gpu_check`: 1680 shapes). Gemma-4-26B keeps its attention, its
-  dense feed-forward and its output head in Q8_0; Qwen3.5-9B's "UD" mix
-  keeps some layers in IQ4_XS and Q8_0.
-- **A whole token on the GPU, as an experiment** (`JANAS_GPU_TOKEN=1`,
-  dense Qwen3 models, integrated GPUs): every step of a token - norms,
-  RoPE, attention, products, output head - in one submission, recorded
-  once. `JANAS_GPU_BLOCK=1` does the same for blocks of up to 64 tokens (a
-  prompt, the drafts a speculative pass checks), the same bits as one token
-  at a time; `JANAS_GPU_REPACK=1` gives the Q6_K weights an aligned copy
-  for it (some 0.8 GB more for Qwen3-4B). On the development laptop's
-  integrated GPU it runs level with the CPU: Qwen3-4B writes 24.3-24.7
-  tokens/s against the CPU's 24.8, and in blocks reads a 2000-token prompt
-  at 107 tokens/s where a token at a time gave 61. It is off unless asked
-  for.
-- Tools for measures: `llm_gen cpus=` puts the compute threads on chosen
-  CPUs; `bench_long` reports how long the disk was busy beside how long
-  the engine waited for it, prints the experts' bits and count in use
-  (`BENCH_EXACT=1` keeps every bit and the model's own count), and can
-  save the prompt and the reply; the library can hand a caller the
-  experts each layer routes a token to, and a prediction of the next
-  layer's.
+- **The drafts no longer switch themselves off for good.** The planner of the multi-token prediction drafts judges each number of drafts by the cost of a pass of that many tokens, as last timed. One pass of two tokens timed while the disk was busy made it refuse every draft, and with no drafts that cost was never timed again: in some sessions the drafts stopped after the first hundred tokens and never came back, which is why the same chat ran at 22 tokens/s one time and 26 the next. It now drafts one pass in sixteen even when it chose none, as the drafts copied from the conversation already did. Qwen3-Next-80B in `janas-chat`, three replies of 600 tokens, two rounds alternated with the release of 28 September: 26.0 tokens/s (25.5-26.5) against 24.3 (22.5-26.1), +7%.
+- **The same seed gives the same conversation, drafts or not.** A reply cut short - by `--max`, or stopped - after a pass that had accepted drafts past its end dropped those tokens but not the random numbers drawn for them, so every later reply of the conversation came out different from the one without drafts. The numbers are given back now: with the same seed the replies are identical with and without drafts, cut or not.
+- **A reply's statistics count the experts read ahead**; left out, they made the cache look warmer and the disk idler than they were.
+- **Experts read ahead, where the cache misses many.** A mixture whose experts do not fit in memory waited for the disk one layer at a time: Qwen3-Next-80B with every bit and a 4 GiB cache spent half of each token waiting, with the disk busy only 60% of the time. Now the next layer's router is applied ahead, and of its first ten experts up to two not in the cache are read while the current layer computes (on that model the prediction held 91% of the experts chosen). Reading ahead costs on every token and pays only when the cache misses many experts, so it turns itself on above 60 missed experts a token and off below 40. Qwen3-Next-80B, every bit, a fresh cache, three rounds alternated with it off: 4 GiB 10.9-11.1 to 11.7-11.8 tokens/s (+6%), 8 GiB 15.6-15.7 to 16.2-16.3 (+4%); with a warm 20 GiB cache it never turns on and the speed is the same; in `janas-chat`, with a 4 GiB cache and every expert, 12.6 tokens/s against 12.1 of the release of 28 September (+3.6%). The results are the same bits, on or off. `JANAS_PREFETCH=0` turns it off.
+- **The expert cache without transparent-huge-page advice.** With the kernel's huge pages on "always" and their defrag on "madvise" (the common setting), the advice made every first write to the cache try a synchronous compaction of memory, which looked like waiting for the disk. Without it, a reply of Qwen3-Next-80B from a fresh 20 GiB cache went from 17.5-17.7 to 19.7 tokens/s, and a prompt from a warm one from 51 to 55; other sizes are even. `JANAS_ARENA_HUGE=1` asks for huge pages as before.
+- **Every quantized type on the GPU**: Q8_0, Q4_0, Q4_1, Q5_1, IQ4_NL, IQ4_XS, Q3_K and IQ3_S join Q4_K, Q5_K and Q6_K, bit for bit the CPU's results (`gpu_check`: 1680 shapes). Gemma-4-26B keeps its attention, its dense feed-forward and its output head in Q8_0; Qwen3.5-9B's "UD" mix keeps some layers in IQ4_XS and Q8_0.
+- **A whole token on the GPU, as an experiment** (`JANAS_GPU_TOKEN=1`, dense Qwen3 models, integrated GPUs): every step of a token - norms, RoPE, attention, products, output head - in one submission, recorded once. `JANAS_GPU_BLOCK=1` does the same for blocks of up to 64 tokens (a prompt, the drafts a speculative pass checks), the same bits as one token at a time; `JANAS_GPU_REPACK=1` gives the Q6_K weights an aligned copy for it (some 0.8 GB more for Qwen3-4B). On the development laptop's integrated GPU it runs level with the CPU: Qwen3-4B writes 24.3-24.7 tokens/s against the CPU's 24.8, and in blocks reads a 2000-token prompt at 107 tokens/s where a token at a time gave 61. It is off unless asked for.
+- Tools for measures: `llm_gen cpus=` puts the compute threads on chosen CPUs; `bench_long` reports how long the disk was busy beside how long the engine waited for it, prints the experts' bits and count in use (`BENCH_EXACT=1` keeps every bit and the model's own count), and can save the prompt and the reply; the library can hand a caller the experts each layer routes a token to, and a prediction of the next layer's.
 
 ## [2026-09-28] - More of the work on the GPU
 
-- **The experts' weights go to the GPU too** once every expert of every
-  layer is in the cache: the feed-forward weights of a dense model, and a
-  mixture small enough to fit. They were always left to the CPU. On the
-  development laptop's integrated GPU, Qwen3-4B reads a prompt 29% faster
-  (83 to 107 tokens/s) and the chip spends 36% less energy per token
-  (0.49 to 0.31 J, RAPL package counter); replies are unchanged.
-  `JANAS_GPU_EXPERTS=0` keeps them on the CPU. Regions over 4 GB no longer
-  turn the GPU off: they are imported in pieces.
-- **Single tokens on a discrete GPU**, where the tuner finds it faster. The
-  tuner never gave a reply's single token to the GPU; on an RTX 5080 (issue
-  #15) doing so made replies 11-16% faster, even with only attention and
-  output in the card's memory. A discrete GPU now takes them, and the tuner
-  tries it and keeps it only if it measures faster; integrated GPUs are
-  left as they were.
-- **Two more weight types on the GPU**: Q6_K in bit planes (the down
-  matrices of every Qwen mixture and of some layers of the dense models)
-  and Q5_K (Qwen3.5 2B and 9B). Like the others they give the CPU's
-  results bit for bit, so a product still splits between the two.
-- `JANAS_GPU_VERBOSE=2` lists each product shape once with its weight
-  types and whether the GPU takes them.
+- **The experts' weights go to the GPU too** once every expert of every layer is in the cache: the feed-forward weights of a dense model, and a mixture small enough to fit. They were always left to the CPU. On the development laptop's integrated GPU, Qwen3-4B reads a prompt 29% faster (83 to 107 tokens/s) and the chip spends 36% less energy per token (0.49 to 0.31 J, RAPL package counter); replies are unchanged. `JANAS_GPU_EXPERTS=0` keeps them on the CPU. Regions over 4 GB no longer turn the GPU off: they are imported in pieces.
+- **Single tokens on a discrete GPU**, where the tuner finds it faster. The tuner never gave a reply's single token to the GPU; on an RTX 5080 (issue #15) doing so made replies 11-16% faster, even with only attention and output in the card's memory. A discrete GPU now takes them, and the tuner tries it and keeps it only if it measures faster; integrated GPUs are left as they were.
+- **Two more weight types on the GPU**: Q6_K in bit planes (the down matrices of every Qwen mixture and of some layers of the dense models) and Q5_K (Qwen3.5 2B and 9B). Like the others they give the CPU's results bit for bit, so a product still splits between the two.
+- `JANAS_GPU_VERBOSE=2` lists each product shape once with its weight types and whether the GPU takes them.
 
 ## [2026-09-27] - No Python left
 
-- The README names its author, Maurizio "camauri" Cammalleri, under the
-  introduction and in a new Credits section, with the copyright line in
-  the Licence one; the section also credits the models' authors, llama.cpp
-  and ggml (the reference, and the IQ3_S grid), the Unicode Character
-  Database, OpenAI's specification, the libraries compiled in, and the
-  testers. An `AUTHORS` file says the same in the GNU way.
-- The last two Python scripts are C programs, built with everything else:
-  `tools/gen_unicode` writes the tokenizer's Unicode tables from the
-  Unicode Character Database (`/usr/share/unicode` on Debian and its kin),
-  `tools/openapi_routes` writes `janas-server`'s route table from OpenAI's
-  specification. Both give, byte for byte, the files the scripts gave
-  (Unicode 15.1.0; OpenAPI 2.3.0, 345 operations), and the coverage count
-  is the same. Nothing in Janas needs Python any more, to build or to
-  regenerate.
+- The README names its author, Maurizio "camauri" Cammalleri, under the introduction and in a new Credits section, with the copyright line in the Licence one; the section also credits the models' authors, llama.cpp and ggml (the reference, and the IQ3_S grid), the Unicode Character Database, OpenAI's specification, the libraries compiled in, and the testers. An `AUTHORS` file says the same in the GNU way.
+- The last two Python scripts are C programs, built with everything else: `tools/gen_unicode` writes the tokenizer's Unicode tables from the Unicode Character Database (`/usr/share/unicode` on Debian and its kin), `tools/openapi_routes` writes `janas-server`'s route table from OpenAI's specification. Both give, byte for byte, the files the scripts gave (Unicode 15.1.0; OpenAPI 2.3.0, 345 operations), and the coverage count is the same. Nothing in Janas needs Python any more, to build or to regenerate.
 
 ## [2026-09-27] - janas-get: a model in one command
 
-- **`janas-get`** downloads a model of its catalog (the thirteen of
-  MODELS.md: Qwen3, Qwen3.5, Qwen3.6, Qwen3-Next, Coder-Next, the
-  embedding model, Gemma 4) from Hugging Face, checks the SHA-256 of
-  every file against MODELS.md, runs the converters of the same build
-  (gguf2jns, jns_planes) and makes the prediction file beside the model -
-  hf2jns_mtp over range requests, or Gemma 4's assistant - with its
-  fingerprint too. Downloads resume; files already there are checked, not
-  fetched again; the GGUF goes as soon as it is converted, so the disk
-  holds two copies at the most. `janas-get hf:<owner>/<repo>/<file>` takes
-  any GGUF, checked against the SHA-256 Hugging Face lists.
-- Its own HTTPS download in pieces (the client of hf2jns_mtp) and its own
-  SHA-256, on the x86 SHA extensions where the CPU has them (1.4 GB/s on
-  the development laptop): no curl, no sha256sum.
-- **`janas-try.sh` gets its models through it**: the catalog and the
-  fingerprints are in one place. A test checks the catalog against
-  MODELS.md, digit by digit.
+- **`janas-get`** downloads a model of its catalog (the thirteen of MODELS.md: Qwen3, Qwen3.5, Qwen3.6, Qwen3-Next, Coder-Next, the embedding model, Gemma 4) from Hugging Face, checks the SHA-256 of every file against MODELS.md, runs the converters of the same build (gguf2jns, jns_planes) and makes the prediction file beside the model - hf2jns_mtp over range requests, or Gemma 4's assistant - with its fingerprint too. Downloads resume; files already there are checked, not fetched again; the GGUF goes as soon as it is converted, so the disk holds two copies at the most. `janas-get hf:<owner>/<repo>/<file>` takes any GGUF, checked against the SHA-256 Hugging Face lists.
+- Its own HTTPS download in pieces (the client of hf2jns_mtp) and its own SHA-256, on the x86 SHA extensions where the CPU has them (1.4 GB/s on the development laptop): no curl, no sha256sum.
+- **`janas-try.sh` gets its models through it**: the catalog and the fingerprints are in one place. A test checks the catalog against MODELS.md, digit by digit.
 
 ## [2026-09-27] - janas-try tries Gemma
 
-- **`janas-try.sh --level gemma`**: Gemma-4-E4B and its assistant,
-  downloaded from unsloth and checked by SHA-256, converted in one step,
-  with the fingerprints of both files and of the answer at temperature 0
-  (`b2c01def5ff6bd5c`: the same with the default kernels and AVX2 alone,
-  with and without the assistant, on 4 CPUs and without the GPU). 5.1 GB
-  to download; the model runs in about 3 GB of memory.
+- **`janas-try.sh --level gemma`**: Gemma-4-E4B and its assistant, downloaded from unsloth and checked by SHA-256, converted in one step, with the fingerprints of both files and of the answer at temperature 0 (`b2c01def5ff6bd5c`: the same with the default kernels and AVX2 alone, with and without the assistant, on 4 CPUs and without the GPU). 5.1 GB to download; the model runs in about 3 GB of memory.
 
 ## [2026-09-27] - The prediction file found beside the model
 
-- **`janas-chat` and `janas-server` find the model's multi-token
-  prediction file by themselves**: of the `.jns` files beside the model,
-  the one whose header fits it - an MTP block of the same architecture,
-  width and experts, or Gemma 4's assistant as wide as the model's output
-  and with its vocabulary - the longest shared start of the name settling
-  a tie. Files over 2 GB (models) are not even opened. `--mtp` still names
-  one, and `--no-mtp` goes without. For programs,
-  `janas_llm_find_mtp()` (and its FreeBASIC declaration); opening a model
-  never looks by itself.
+- **`janas-chat` and `janas-server` find the model's multi-token prediction file by themselves**: of the `.jns` files beside the model, the one whose header fits it - an MTP block of the same architecture, width and experts, or Gemma 4's assistant as wide as the model's output and with its vocabulary - the longest shared start of the name settling a tie. Files over 2 GB (models) are not even opened. `--mtp` still names one, and `--no-mtp` goes without. For programs, `janas_llm_find_mtp()` (and its FreeBASIC declaration); opening a model never looks by itself.
 
 ## [2026-09-27] - Finer activations for weights in blocks of 32
 
-- **Weights stored in blocks of 32 (Q8_0, Q4_0, Q4_1, Q5_1, IQ4_NL) now
-  meet activations with a scale per 32 values**, as llama.cpp gives them,
-  instead of one per 256: a large activation no longer flattens the small
-  ones beside it. The activations are quantized once into both forms; the
-  K types keep theirs. Checked against an exact float64 forward pass of
-  Gemma-4-26B-A4B (all Q8_0 and Q5_1 where it is most sensitive), 200
-  tokens: the likeliest token at 156 positions instead of 147, mean logit
-  error 0.87 instead of 1.39 (llama.cpp: 160, 0.90). Against llama.cpp,
-  mean differences fall by 15-40% on Qwen3.5 in IQ4_NL, Q4_0, Q5_1 and
-  UD-Q4_K_XL (Q5_1: 376 -> 389 of 400). Models made only of K types give
-  the same bits as before.
+- **Weights stored in blocks of 32 (Q8_0, Q4_0, Q4_1, Q5_1, IQ4_NL) now meet activations with a scale per 32 values**, as llama.cpp gives them, instead of one per 256: a large activation no longer flattens the small ones beside it. The activations are quantized once into both forms; the K types keep theirs. Checked against an exact float64 forward pass of Gemma-4-26B-A4B (all Q8_0 and Q5_1 where it is most sensitive), 200 tokens: the likeliest token at 156 positions instead of 147, mean logit error 0.87 instead of 1.39 (llama.cpp: 160, 0.90). Against llama.cpp, mean differences fall by 15-40% on Qwen3.5 in IQ4_NL, Q4_0, Q5_1 and UD-Q4_K_XL (Q5_1: 376 -> 389 of 400). Models made only of K types give the same bits as before.
 
 ## [2026-09-27] - The threads chosen per machine
 
-- **The time left to read a long prompt no longer jumps at its start.**
-  The fitted line of issue #9 rested on two blocks when first used, and
-  their noise could tilt it: an estimate many times too long at 1,024
-  tokens. It now moves from the latest speed to the fitted line over the
-  first sixteen blocks.
+- **The time left to read a long prompt no longer jumps at its start.** The fitted line of issue #9 rested on two blocks when first used, and their noise could tilt it: an estimate many times too long at 1,024 tokens. It now moves from the latest speed to the fitted line over the first sixteen blocks.
 
-- **The engine chooses its threads again, once per machine and model.**
-  Since 26 September it always used every usable thread, which was the
-  fastest on the development laptop; on an i9-14900HX (issue #13) every
-  thread replied at 9.9 tokens/s where the performance cores' 16 gave
-  24.7, and on a 9950X3D one thread per core was 4-15% ahead (#15). The
-  first passes of each kind now try every thread, one per performance core
-  and the performance cores' threads; the threads of the fastest are kept
-  for good, saved with the machine's profile, and only whether the GPU
-  takes part keeps being tried. Tried again later, at a longer context,
-  the thread counts had lost unfairly to costs measured at a short one,
-  which is why they had been fixed. `JANAS_TUNE_THREADS=0` keeps every
-  thread.
+- **The engine chooses its threads again, once per machine and model.** Since 26 September it always used every usable thread, which was the fastest on the development laptop; on an i9-14900HX (issue #13) every thread replied at 9.9 tokens/s where the performance cores' 16 gave 24.7, and on a 9950X3D one thread per core was 4-15% ahead (#15). The first passes of each kind now try every thread, one per performance core and the performance cores' threads; the threads of the fastest are kept for good, saved with the machine's profile, and only whether the GPU takes part keeps being tried. Tried again later, at a longer context, the thread counts had lost unfairly to costs measured at a short one, which is why they had been fixed. `JANAS_TUNE_THREADS=0` keeps every thread.
 
 ## [2026-09-27] - Gemma 4's assistant drafts
 
-- **Gemma 4's assistant is taken as the MTP file** (`--mtp`, converted by
-  `gguf2jns` from `mtp-gemma-4-*.gguf`): a small model of its own - 256
-  wide, four layers with queries only - reading the main model's keys and
-  values, fed the main model's embedding of the last token and its final
-  state, drafting at that token's position and chaining further drafts at
-  the same one, as it was trained. A draft costs about a millisecond.
-- An Italian chat reply of 110 tokens, greedy, the same tokens with and
-  without it (Core Ultra 9 185H, tokens/s): **E2B 34.7 -> 51.0 (1.47x),
-  E4B 18.3 -> 26.3 (1.44x), 12B 8.5 -> 12.9 (1.51x), 26B 16.9 -> 24.5
-  (1.44x)**; 64-83% of the drafts the planner chose to verify were
-  accepted (on E4B llama.cpp with the same assistant accepts 50% of its
-  drafts). The 12B's and 26B's assistants, 1024 wide, give a KV head
-  count per layer, which is read as such.
-- Its drafts are picked, as the MTP blocks' are, from a head of 32768
-  token ids plus those met in the conversation, instead of all 262144: 8
-  MB read a draft instead of 67, for as many accepted.
-- E2B's and E4B's per-layer branch reads its f32 matrices (220 MB a token
-  on E4B) once for all the tokens of a pass, with a vector dot product:
-  passes over a few tokens 17% faster, single tokens 4%.
-  `JANAS_DRAFT_VOCAB` sets the draft head's size, to experiment.
+- **Gemma 4's assistant is taken as the MTP file** (`--mtp`, converted by `gguf2jns` from `mtp-gemma-4-*.gguf`): a small model of its own - 256 wide, four layers with queries only - reading the main model's keys and values, fed the main model's embedding of the last token and its final state, drafting at that token's position and chaining further drafts at the same one, as it was trained. A draft costs about a millisecond.
+- An Italian chat reply of 110 tokens, greedy, the same tokens with and without it (Core Ultra 9 185H, tokens/s): **E2B 34.7 -> 51.0 (1.47x), E4B 18.3 -> 26.3 (1.44x), 12B 8.5 -> 12.9 (1.51x), 26B 16.9 -> 24.5 (1.44x)**; 64-83% of the drafts the planner chose to verify were accepted (on E4B llama.cpp with the same assistant accepts 50% of its drafts). The 12B's and 26B's assistants, 1024 wide, give a KV head count per layer, which is read as such.
+- Its drafts are picked, as the MTP blocks' are, from a head of 32768 token ids plus those met in the conversation, instead of all 262144: 8 MB read a draft instead of 67, for as many accepted.
+- E2B's and E4B's per-layer branch reads its f32 matrices (220 MB a token on E4B) once for all the tokens of a pass, with a vector dot product: passes over a few tokens 17% faster, single tokens 4%. `JANAS_DRAFT_VOCAB` sets the draft head's size, to experiment.
 
 ## [2026-09-27] - janas-try reports only this run
 
-- **A test report carries only the speeds this run measured.** The
-  reports of issues #10 and #11 also showed the bench files earlier runs
-  had left behind - another level, an older commit - as if they were
-  new. They stay in the work directory, out of the report.
+- **A test report carries only the speeds this run measured.** The reports of issues #10 and #11 also showed the bench files earlier runs had left behind - another level, an older commit - as if they were new. They stay in the work directory, out of the report.
 
 ## [2026-09-27] - Why a build has no GPU
 
-- **A build without GPU support says what was missing.** The GPU needs
-  both `glslangValidator` and the Vulkan headers when Janas is built; with
-  the first and not the second (CachyOS without `vulkan-headers`) the build
-  left the GPU out without a word, and `janas-try.sh` reported "built with
-  GPU support". Now `build.sh` prints which piece is missing, the engine's
-  "GPU: none usable" names it, `janas-try.sh` checks for the headers too,
-  and the README gives the Arch packages.
+- **A build without GPU support says what was missing.** The GPU needs both `glslangValidator` and the Vulkan headers when Janas is built; with the first and not the second (CachyOS without `vulkan-headers`) the build left the GPU out without a word, and `janas-try.sh` reported "built with GPU support". Now `build.sh` prints which piece is missing, the engine's "GPU: none usable" names it, `janas-try.sh` checks for the headers too, and the README gives the Arch packages.
 
 ## [2026-09-27] - Gemma 4: E2B and E4B
 
-- **Gemma-4-E2B-it and E4B-it run and chat**, tools included. Each token
-  brings a few numbers for every layer (per-layer embeddings): a row of a
-  table of their own plus a projection of the embedding (bf16), which open
-  a branch of the residual after each feed-forward. The table, half of
-  E2B's file, is never loaded: a token's row, a few kilobytes, is read from
-  the file when it is needed, so E2B runs in 1.5 GB of memory from a 3.1 GB
-  file, E4B in 3.1 GB from 5.0 GB.
-- **The last layers share keys and values**: E2B's last 20 layers and
-  E4B's last 18 compute queries only, and read the cache of the last
-  earlier layer of their kind. E2B's feed-forward widens from 6,144 to
-  12,288 halfway; the engine takes a width per layer.
-- Against llama.cpp, 200 tokens of text: E2B agrees on the most likely
-  token at 191 positions, E4B at 195; prompt blocks give the same bits as
-  token by token.
-- **Without reasoning, E2B and E4B are no longer handed an empty thought
-  channel**: their template does not write one (the 12B's and 26B's do),
-  and given one they reasoned inside the reply. The chat template is now
-  read whole: Gemma 4's is 19 KB, and the part after 16 KB was lost.
+- **Gemma-4-E2B-it and E4B-it run and chat**, tools included. Each token brings a few numbers for every layer (per-layer embeddings): a row of a table of their own plus a projection of the embedding (bf16), which open a branch of the residual after each feed-forward. The table, half of E2B's file, is never loaded: a token's row, a few kilobytes, is read from the file when it is needed, so E2B runs in 1.5 GB of memory from a 3.1 GB file, E4B in 3.1 GB from 5.0 GB.
+- **The last layers share keys and values**: E2B's last 20 layers and E4B's last 18 compute queries only, and read the cache of the last earlier layer of their kind. E2B's feed-forward widens from 6,144 to 12,288 halfway; the engine takes a width per layer.
+- Against llama.cpp, 200 tokens of text: E2B agrees on the most likely token at 191 positions, E4B at 195; prompt blocks give the same bits as token by token.
+- **Without reasoning, E2B and E4B are no longer handed an empty thought channel**: their template does not write one (the 12B's and 26B's do), and given one they reasoned inside the reply. The chat template is now read whole: Gemma 4's is 19 KB, and the part after 16 KB was lost.
 
 ## [2026-09-27] - Gemma 4: tools
 
-- **Gemma 4 calls tools**, in its own notation: the functions declared in
-  the system turn (`<|tool>declaration:name{...}<tool|>`, parameters written
-  as its template writes them, keys sorted), calls `call:name{key:value}`
-  read into JSON, held by a grammar to a declared name and a well-formed
-  value, and the tools' answers written inside the model's own turn, which
-  it then continues. Checked token for token against the template rendered
-  with Jinja: the first prompt with its declarations, a conversation loaded
-  with a call and its answer (as `janas-server` gives it), and the answer
-  appended live. Gemma-4-12B-it called a weather function with the right
-  argument and used its answer.
+- **Gemma 4 calls tools**, in its own notation: the functions declared in the system turn (`<|tool>declaration:name{...}<tool|>`, parameters written as its template writes them, keys sorted), calls `call:name{key:value}` read into JSON, held by a grammar to a declared name and a well-formed value, and the tools' answers written inside the model's own turn, which it then continues. Checked token for token against the template rendered with Jinja: the first prompt with its declarations, a conversation loaded with a call and its answer (as `janas-server` gives it), and the answer appended live. Gemma-4-12B-it called a weather function with the right argument and used its answer.
 
 ## [2026-09-27] - Gemma 4: the 26B mixture, a sliding context, rings
 
-- **Gemma-4-26B-A4B-it runs and chats**: 128 experts (eight a token)
-  beside a dense feed-forward, the two as branches of their own - each
-  normalized on the way in and out, then summed - a router reading its own
-  input, and a scale per expert, folded into its weight. `gguf2jns` splits
-  gate and up, which the file keeps fused, and widens with zeros the
-  feed-forwards that are not a multiple of 256 wide (704 and 2,112 here):
-  every weight type reads zero bytes as zero weights, so the products are
-  unchanged. Files that need no widening convert to the same bytes as
-  before.
+- **Gemma-4-26B-A4B-it runs and chats**: 128 experts (eight a token) beside a dense feed-forward, the two as branches of their own - each normalized on the way in and out, then summed - a router reading its own input, and a scale per expert, folded into its weight. `gguf2jns` splits gate and up, which the file keeps fused, and widens with zeros the feed-forwards that are not a multiple of 256 wide (704 and 2,112 here): every weight type reads zero bytes as zero weights, so the products are unchanged. Files that need no widening convert to the same bytes as before.
 - **The sliding-window layers keep a ring** of the positions they can see
-  - the window and a prefill block, 1,536 for Gemma 4 - instead of the whole
-  context, and attention skips the chunks before the window without reading
-  them. The logits are the same to the bit with and without the ring
-  (`JANAS_SWA_RING=0`), 1,500 tokens past the window; kept conversations,
-  on disk too, come back with the same replies.
-- **A full context slides on Gemma 4 too**: each layer's keys turned back
-  with its own RoPE (two kinds, the full layers with their frequency
-  factors), sixteen-bit keys, the rings. Qwen models slide as before, to
-  the bit.
+  - the window and a prefill block, 1,536 for Gemma 4 - instead of the whole context, and attention skips the chunks before the window without reading them. The logits are the same to the bit with and without the ring (`JANAS_SWA_RING=0`), 1,500 tokens past the window; kept conversations, on disk too, come back with the same replies.
+- **A full context slides on Gemma 4 too**: each layer's keys turned back with its own RoPE (two kinds, the full layers with their frequency factors), sixteen-bit keys, the rings. Qwen models slide as before, to the bit.
 
 ## [2026-09-26] - Gemma 4 in the chat
 
-- **Gemma-4-12B-it chats**: Gemma's format - `<bos>`, turns opened by
-  `<|turn>` and closed by `<turn|>`, the assistant called "model" - with
-  its reasoning on or off: on, `<|think|>` heads the system turn and the
-  model writes its thought channel, shown as reasoning; off, the channel is
-  written empty, as the template does. The prompts were checked token for
-  token against the model's own template rendered with Jinja and tokenized
-  by llama.cpp, with and without reasoning. No tools yet, and a full
-  context stops the chat instead of sliding.
+- **Gemma-4-12B-it chats**: Gemma's format - `<bos>`, turns opened by `<|turn>` and closed by `<turn|>`, the assistant called "model" - with its reasoning on or off: on, `<|think|>` heads the system turn and the model writes its thought channel, shown as reasoning; off, the channel is written empty, as the template does. The prompts were checked token for token against the model's own template rendered with Jinja and tokenized by llama.cpp, with and without reasoning. No tools yet, and a full context stops the chat instead of sliding.
 
 ## [2026-09-26] - Gemma 4: keys and values at sixteen bits
 
-- **Gemma 4 keeps its keys and values at sixteen bits** (integers with the
-  same scale per position and head, some 250 times finer than eight bits);
-  the attention reads them through kernels of their own, the scores over
-  the float query. Qwen models stay at eight bits, bit for bit as before;
-  `JANAS_KV=8` or `16` overrides the choice. Against llama.cpp on 200
-  tokens of prose: 160 most likely tokens in agreement and a mean logit
-  difference of 0.84, against 143 and 1.53 at eight bits.
-- **A trap in the reference**: llama.cpp's logits of Gemma 4 depend on its
-  batch size - with batches of 64 tokens or more, the early positions see
-  later tokens. The comparisons above use batches of 8, which agree with a
-  prompt of two tokens run alone. The earlier figures (175 of 200) were
-  measured against the larger batches.
+- **Gemma 4 keeps its keys and values at sixteen bits** (integers with the same scale per position and head, some 250 times finer than eight bits); the attention reads them through kernels of their own, the scores over the float query. Qwen models stay at eight bits, bit for bit as before; `JANAS_KV=8` or `16` overrides the choice. Against llama.cpp on 200 tokens of prose: 160 most likely tokens in agreement and a mean logit difference of 0.84, against 143 and 1.53 at eight bits.
+- **A trap in the reference**: llama.cpp's logits of Gemma 4 depend on its batch size - with batches of 64 tokens or more, the early positions see later tokens. The comparisons above use batches of 8, which agree with a prompt of two tokens run alone. The earlier figures (175 of 200) were measured against the larger batches.
 
 ## [2026-09-26] - Why there is no GPU
 
-- **"GPU: none usable" now says why**: built without GPU support
-  (`glslangValidator` missing at build time), no Vulkan loader, Vulkan
-  seeing no GPU, the GPU turned down with its name and what its driver
-  lacks (Vulkan below 1.3, a feature, the subgroup size), or turned off
-  (eco mode, `JANAS_GPU=0`). The same reason is in the model's description
-  (`janas_llm_describe`). A tester's RTX 5080 was reported as "none
-  usable" with nothing more to go on.
-- **`janas-try` reports what Vulkan sees** (each device's name, kind and
-  version), whether Janas will be built with GPU support, and whether it
-  runs under WSL, before building and in the report.
+- **"GPU: none usable" now says why**: built without GPU support (`glslangValidator` missing at build time), no Vulkan loader, Vulkan seeing no GPU, the GPU turned down with its name and what its driver lacks (Vulkan below 1.3, a feature, the subgroup size), or turned off (eco mode, `JANAS_GPU=0`). The same reason is in the model's description (`janas_llm_describe`). A tester's RTX 5080 was reported as "none usable" with nothing more to go on.
+- **`janas-try` reports what Vulkan sees** (each device's name, kind and version), whether Janas will be built with GPU support, and whether it runs under WSL, before building and in the report.
 
 ## [2026-09-26] - Gemma 4, first part (not yet usable)
 
-- **Gemma 4 (`gemma4`) runs its forward pass**, on Gemma-4-12B-it: layers
-  with a sliding window of 1,024 positions and every sixth a full one, each
-  kind with its own head size (256 and 512), KV heads and RoPE (the full
-  layers with Google's per-pair frequency factors); V taken from K where a
-  layer has no V projection, and normalized; norms after attention and
-  after the feed-forward, GELU, a scale per layer, soft-capped logits. The
-  attention takes a sliding window and a score scale of its own, heads up
-  to 512, and the KV cache is laid out per layer.
-- **Gemma's tokenizer**: BPE on UTF-8 characters with SentencePiece's
-  spaces and byte tokens, in the same tokenizer as Qwen's. On a mixed text
-  (Italian, English, code, CJK, emoji) it gives llama.cpp's 128 tokens.
-- **Not yet usable**: the chat does not know Gemma's format, and with the
-  eight-bit KV cache the logits drift from llama.cpp's (the most likely
-  token agrees at 175 of 200 positions, mean difference 1.36; llama.cpp
-  agrees with itself at 169 when its cache goes from f16 to eight bits).
-  Every Qwen model gives the same logits as before, to the bit.
+- **Gemma 4 (`gemma4`) runs its forward pass**, on Gemma-4-12B-it: layers with a sliding window of 1,024 positions and every sixth a full one, each kind with its own head size (256 and 512), KV heads and RoPE (the full layers with Google's per-pair frequency factors); V taken from K where a layer has no V projection, and normalized; norms after attention and after the feed-forward, GELU, a scale per layer, soft-capped logits. The attention takes a sliding window and a score scale of its own, heads up to 512, and the KV cache is laid out per layer.
+- **Gemma's tokenizer**: BPE on UTF-8 characters with SentencePiece's spaces and byte tokens, in the same tokenizer as Qwen's. On a mixed text (Italian, English, code, CJK, emoji) it gives llama.cpp's 128 tokens.
+- **Not yet usable**: the chat does not know Gemma's format, and with the eight-bit KV cache the logits drift from llama.cpp's (the most likely token agrees at 175 of 200 positions, mean difference 1.36; llama.cpp agrees with itself at 169 when its cache goes from f16 to eight bits). Every Qwen model gives the same logits as before, to the bit.
 
 ## [2026-09-26] - Long prompts: the expert cache, the tuner, the ETA (issue #9)
 
-- **The expert cache no longer thrashes on large prefill blocks.** A pass
-  asks for experts layer after layer, and when one pass asks for more
-  than the cache holds, least-recently-used eviction throws out exactly the
-  expert wanted again soonest: on a 262K prompt of Qwen3-Next-80B, blocks
-  of 256 read 2.17x the bytes of blocks of 64 (issue #9). In that case the
-  victim is now the expert wanted again latest - the current layer's
-  others, then the layer before, and back from there. Measured on the 80B
-  (4,096 tokens, 12 GB of cache, four bits, blocks of 256): 238 GB read at
-  38.2 token/s before, 172 GB at 45.8 now; blocks of 64 are unchanged.
-- **The tuner tries alternatives ever more rarely while they lose**: at a
-  fixed 128 passes it made one slow block every 32,768 tokens of a long
-  prompt. The gap now doubles up to 1,024 passes and returns to 128 as soon
-  as a try beats the choice.
-- **A prompt's time left follows the cost of a token as the context
-  grows** (`input_eta_seconds`, new at the end of `janas_llm_chat_stats`
-  and in `llm.bi`): a line in the position, fitted on the blocks read and
-  integrated to the end of the prompt, instead of the latest speed, which
-  promised 2.5 times too little at 32K of a 262K prompt.
+- **The expert cache no longer thrashes on large prefill blocks.** A pass asks for experts layer after layer, and when one pass asks for more than the cache holds, least-recently-used eviction throws out exactly the expert wanted again soonest: on a 262K prompt of Qwen3-Next-80B, blocks of 256 read 2.17x the bytes of blocks of 64 (issue #9). In that case the victim is now the expert wanted again latest - the current layer's others, then the layer before, and back from there. Measured on the 80B (4,096 tokens, 12 GB of cache, four bits, blocks of 256): 238 GB read at 38.2 token/s before, 172 GB at 45.8 now; blocks of 64 are unchanged.
+- **The tuner tries alternatives ever more rarely while they lose**: at a fixed 128 passes it made one slow block every 32,768 tokens of a long prompt. The gap now doubles up to 1,024 passes and returns to 128 as soon as a try beats the choice.
+- **A prompt's time left follows the cost of a token as the context grows** (`input_eta_seconds`, new at the end of `janas_llm_chat_stats` and in `llm.bi`): a line in the position, fitted on the blocks read and integrated to the end of the prompt, instead of the latest speed, which promised 2.5 times too little at 32K of a 262K prompt.
 
 ## [2026-09-26] - IQ3_S weights
 
-- **IQ3_S weights**, the last type unsloth's "UD" files of the Qwen
-  family were missing: 256 weights in eight groups, each weight a level of
-  a 512-entry grid, with its sign and a scale per group. A group's eight
-  grid entries come in one gather, the signs go to the activations, and
-  the integer sum is exact, one fma per 256 weights; AVX2 and AVX-VNNI
-  give the reference's bits. The grid is ggml's, copied as data
-  (`src/llm/iq3s_grid.h`, MIT, as ggml is) since it defines the format.
-  The weights match ggml's to the bit on random blocks; Qwen3.5-0.8B
-  requantized to IQ3_S agrees with llama.cpp at a mean logit difference of
-  0.123, the disagreements near-ties.
+- **IQ3_S weights**, the last type unsloth's "UD" files of the Qwen family were missing: 256 weights in eight groups, each weight a level of a 512-entry grid, with its sign and a scale per group. A group's eight grid entries come in one gather, the signs go to the activations, and the integer sum is exact, one fma per 256 weights; AVX2 and AVX-VNNI give the reference's bits. The grid is ggml's, copied as data (`src/llm/iq3s_grid.h`, MIT, as ggml is) since it defines the format. The weights match ggml's to the bit on random blocks; Qwen3.5-0.8B requantized to IQ3_S agrees with llama.cpp at a mean logit difference of 0.123, the disagreements near-ties.
 
 ## [2026-09-26] - Q3_K weights, and unsloth's UD files of Qwen3.5-9B
 
-- **Q3_K weights**: 256 three-bit values in sixteen groups with 6-bit
-  scales. The values are summed unsigned (0-7) and the -4 of each is taken
-  from the activations' block sums, so the integer sum of a block is exact
-  and one fma follows, as for Q4_K; AVX2 and AVX-VNNI give the reference's
-  bits. The weights match ggml's to the bit on random blocks; Qwen3.5-0.8B
-  in Q3_K_M agrees with llama.cpp at a mean logit difference of 0.115.
-- **A DeltaNet's alpha and beta in F16 or BF16** are taken too: unsloth's
-  "UD" files of Qwen3.5-9B keep them so. **Qwen3.5-9B UD-Q4_K_XL** - Q4_K,
-  Q5_K, Q6_K, Q8_0, IQ4_XS and F16 in one file - runs and agrees with
-  llama.cpp at 0.110, as its Q4_K_M does.
+- **Q3_K weights**: 256 three-bit values in sixteen groups with 6-bit scales. The values are summed unsigned (0-7) and the -4 of each is taken from the activations' block sums, so the integer sum of a block is exact and one fma follows, as for Q4_K; AVX2 and AVX-VNNI give the reference's bits. The weights match ggml's to the bit on random blocks; Qwen3.5-0.8B in Q3_K_M agrees with llama.cpp at a mean logit difference of 0.115.
+- **A DeltaNet's alpha and beta in F16 or BF16** are taken too: unsloth's "UD" files of Qwen3.5-9B keep them so. **Qwen3.5-9B UD-Q4_K_XL** - Q4_K, Q5_K, Q6_K, Q8_0, IQ4_XS and F16 in one file - runs and agrees with llama.cpp at 0.110, as its Q4_K_M does.
 
 ## [2026-09-26] - Q4_0, Q4_1 and Q5_1 weights
 
-- **Models quantized in Q4_0, Q4_1 and Q5_1 convert and run** - the types of
-  Google's QAT Gemma files and of many older GGUFs. Q4_0 is IQ4_NL's layout
-  with evenly spaced levels, so it runs IQ4_NL's kernel with another table;
-  Q4_1 and Q5_1 (weights d x q + m, Q5_1 with a fifth bit) share a kernel
-  that takes the minimum's share from the activations' block sums, exactly.
-  On one to eight vectors, AVX2 and AVX-VNNI give the scalar reference's
-  bits. Checked against ggml on 4,096 random blocks of each (the weights
-  identical to the bit), and on Qwen3.5-0.8B against llama.cpp: the Q4_0
-  file (which holds Q4_1 tensors too) at a mean logit difference of 0.109,
-  a Q5_1 one requantized from the Q8_0 at 0.114, the disagreements
-  near-ties.
-- A DeltaNet layer's alpha and beta are taken in any type Janas unpacks
-  (they came in Q5_1 in the requantized file), not only f32 and Q8_0.
+- **Models quantized in Q4_0, Q4_1 and Q5_1 convert and run** - the types of Google's QAT Gemma files and of many older GGUFs. Q4_0 is IQ4_NL's layout with evenly spaced levels, so it runs IQ4_NL's kernel with another table; Q4_1 and Q5_1 (weights d x q + m, Q5_1 with a fifth bit) share a kernel that takes the minimum's share from the activations' block sums, exactly. On one to eight vectors, AVX2 and AVX-VNNI give the scalar reference's bits. Checked against ggml on 4,096 random blocks of each (the weights identical to the bit), and on Qwen3.5-0.8B against llama.cpp: the Q4_0 file (which holds Q4_1 tensors too) at a mean logit difference of 0.109, a Q5_1 one requantized from the Q8_0 at 0.114, the disagreements near-ties.
+- A DeltaNet layer's alpha and beta are taken in any type Janas unpacks (they came in Q5_1 in the requantized file), not only f32 and Q8_0.
 
 ## [2026-09-26] - IQ4_NL and IQ4_XS weights
 
-- **Models quantized in IQ4_NL and IQ4_XS convert and run**: the two 4-bit
-  types whose sixteen levels are spaced unevenly, closer near zero, that
-  many of the most downloaded GGUF files use. Their kernels are Q8_0's with
-  a table lookup in front (one `pshufb` turns 32 indices into 32 weights),
-  on one to eight vectors, AVX2 and AVX-VNNI giving the same bits as the
-  scalar reference; IQ4_XS sums its eight scaled groups exactly and takes
-  one fma per 256 weights. Checked against ggml on 4,096 random blocks of
-  each (the unpacked weights identical to the bit) and on Qwen3.5-0.8B in
-  both types against llama.cpp: mean logit difference 0.11, as the Q4_K_M
-  file of the same model, and where the most likely token differs the two
-  were within 0.46 of each other in llama.cpp's own logits.
-- Not yet: files that mix in IQ3_S or Q3_K (unsloth's "UD"
-  quantizations), and the speed of these kernels, which has not been worked
-  on - reading a prompt, Qwen3.5-0.8B went at 230 tok/s in IQ4_NL and 155 in
-  IQ4_XS against 289 in Q4_K_M.
+- **Models quantized in IQ4_NL and IQ4_XS convert and run**: the two 4-bit types whose sixteen levels are spaced unevenly, closer near zero, that many of the most downloaded GGUF files use. Their kernels are Q8_0's with a table lookup in front (one `pshufb` turns 32 indices into 32 weights), on one to eight vectors, AVX2 and AVX-VNNI giving the same bits as the scalar reference; IQ4_XS sums its eight scaled groups exactly and takes one fma per 256 weights. Checked against ggml on 4,096 random blocks of each (the unpacked weights identical to the bit) and on Qwen3.5-0.8B in both types against llama.cpp: mean logit difference 0.11, as the Q4_K_M file of the same model, and where the most likely token differs the two were within 0.46 of each other in llama.cpp's own logits.
+- Not yet: files that mix in IQ3_S or Q3_K (unsloth's "UD" quantizations), and the speed of these kernels, which has not been worked on - reading a prompt, Qwen3.5-0.8B went at 230 tok/s in IQ4_NL and 155 in IQ4_XS against 289 in Q4_K_M.
 
 ## [2026-09-26] - `janas-bench` measures the drafts as a chat meets them
 
-- **The "with MTP" figures were too high, and this is why.** `janas-bench`
-  measured the prediction block by continuing its own prompt, one paragraph
-  repeated, greedily - and a model continuing prose copies the paragraphs
-  it has seen, which the block guesses almost every time. On Qwen3.5-2B it
-  kept 95% of its drafts there and reported 107 tok/s; a real chat with the
-  same model kept 34-68% and wrote at 43-62. Every "with drafts" figure in
-  the README until today (Qwen3-Next-80B-A3B 30, Qwen3.6-35B-A3B 29,
-  Qwen3.5-9B 26, Qwen3.5-2B 107) came from that measurement.
-- **Now the block is measured on a chat reply**: an ordinary question in the
-  model's chat format, the first 64 tokens of the answer, once greedy and
-  once sampled as the chat samples (temperature 0.7, top-k 20, top-p 0.8,
-  fixed seed), each with the share of drafts kept. The prompt for the
-  reading speed is prose that does not repeat itself; three rounds by
-  default, as the README always said (it was two).
-- What the block is worth depends on the text: on Qwen3.5-2B, 68% of the
-  drafts kept on an English explanation, 34% on Italian prose, where the
-  engine drafts less and the gain all but goes.
-- **The chat runs on the cores `janas-bench` measures**: every usable core,
-  the performance cores with their threads and the efficiency cores, never
-  the low-power island. The tuner used to try one thread per performance
-  core and their threads alone as well, and after a stretch of long context
-  a chat could settle on 12 threads where the bench had reported 20: the
-  same machine, two speeds. Measured on six models, from Qwen3.5-2B to
-  Qwen3-Next-80B-A3B, all the cores were the fastest or level in every kind
-  of pass, and the others lost 5-20% writing; so the threads are fixed now,
-  and the tuner only decides whether the GPU helps. `JANAS_TUNE_THREADS=1`
-  brings the other counts back, to experiment with.
-- **`janas-bench` reports what the engine will run**: its result line is the
-  configuration the engine chose for each kind of pass, as a chat or the
-  server will use it, not the fastest figure of each column.
+- **The "with MTP" figures were too high, and this is why.** `janas-bench` measured the prediction block by continuing its own prompt, one paragraph repeated, greedily - and a model continuing prose copies the paragraphs it has seen, which the block guesses almost every time. On Qwen3.5-2B it kept 95% of its drafts there and reported 107 tok/s; a real chat with the same model kept 34-68% and wrote at 43-62. Every "with drafts" figure in the README until today (Qwen3-Next-80B-A3B 30, Qwen3.6-35B-A3B 29, Qwen3.5-9B 26, Qwen3.5-2B 107) came from that measurement.
+- **Now the block is measured on a chat reply**: an ordinary question in the model's chat format, the first 64 tokens of the answer, once greedy and once sampled as the chat samples (temperature 0.7, top-k 20, top-p 0.8, fixed seed), each with the share of drafts kept. The prompt for the reading speed is prose that does not repeat itself; three rounds by default, as the README always said (it was two).
+- What the block is worth depends on the text: on Qwen3.5-2B, 68% of the drafts kept on an English explanation, 34% on Italian prose, where the engine drafts less and the gain all but goes.
+- **The chat runs on the cores `janas-bench` measures**: every usable core, the performance cores with their threads and the efficiency cores, never the low-power island. The tuner used to try one thread per performance core and their threads alone as well, and after a stretch of long context a chat could settle on 12 threads where the bench had reported 20: the same machine, two speeds. Measured on six models, from Qwen3.5-2B to Qwen3-Next-80B-A3B, all the cores were the fastest or level in every kind of pass, and the others lost 5-20% writing; so the threads are fixed now, and the tuner only decides whether the GPU helps. `JANAS_TUNE_THREADS=1` brings the other counts back, to experiment with.
+- **`janas-bench` reports what the engine will run**: its result line is the configuration the engine chose for each kind of pass, as a chat or the server will use it, not the fastest figure of each column.
 
 ## [2026-09-26] - Qwen3.5 dense models
 
-- **Measured** on the development laptop, idle, `janas-bench`: Qwen3.5-9B
-  reads a prompt at 46 tok/s and writes at 13, **22 with the block** in a
-  chat; Qwen3.5-2B at 215, 49 and **75**. (First published as 26 and 107,
-  with the block measured on repeated text: see the entry above.)
-  llama.cpp on the same 9B file and machine (`llama-bench`, build of 18
-  September) did best at 32 and 9.0.
-  README and MODELS.md list the three dense Qwen3.5 models, their
-  fingerprints and how to get their block (`hf:` with the checkpoint's
-  revision).
-- **The dense Qwen3.5 models run** (`qwen35`: Qwen3.5, 3.6 and 3.8 without
-  experts, half of the GGUF downloads on Hugging Face): the layers of
-  Qwen3.6-35B-A3B with a dense feed-forward, one row of the architecture
-  table. The DeltaNet's alpha and beta come in Q8_0 in these files and are
-  made f32 once, exactly, at load. Checked against llama.cpp on the same
-  files, 400 tokens of Italian prose and 400 of Pascal: Qwen3.5-0.8B agrees
-  on the most likely token at 387 and 386 positions, Qwen3.5-2B at 376 and
-  388, mean logit difference 0.10-0.13, and where they differ the two
-  candidates were within 0.53 of each other in llama.cpp's own logits.
-  Chat and tool calls (XML) work through `janas-chat` and `janas-server`.
-- **`hf2jns_mtp` converts the MTP block of a dense Qwen3.5** too, its
-  feed-forward as the one slot, and takes the block from several shards
-  (`hf2jns_mtp <main.jns> <shard>... <out.jns>`): Qwen3.5-9B spreads it
-  over three. The number and shape of the experts come from the model and
-  the checkpoint instead of Qwen3-Next's written in; its block converts to
-  the same file as before, to the byte. On Qwen3.5-9B the drafts are
-  accepted at 53% (prose) and 68% (code), the text the same as without.
-- **`hf2jns_mtp <main.jns> hf:<owner>/<repo> <out.jns>` reads the MTP
-  block straight from Hugging Face**, with range requests: only the
-  `mtp.*` tensors, 487 MB of Qwen3.5-9B's 14 GB of shards, in under a
-  minute, with no other program (Janas's own HTTPS client, the one of its
-  MCP transport, now following redirects). The file it writes is the same,
-  to the byte, as from the shards on disk. A server that ignores a range
-  stops it, never a whole file downloaded. Qwen3.5-2B's block too: drafts
-  accepted at 78% and 64%. Neighbouring tensors are read in one request (up
-  to 256 MB): Qwen3-Next's block, 1,500 tensors, came in 27 minutes one
-  connection each and comes in 5 now, to the same bytes.
-- The memory counted for the context asks the architecture table which
-  layers have keys and values, instead of two names written in.
+- **Measured** on the development laptop, idle, `janas-bench`: Qwen3.5-9B reads a prompt at 46 tok/s and writes at 13, **22 with the block** in a chat; Qwen3.5-2B at 215, 49 and **75**. (First published as 26 and 107, with the block measured on repeated text: see the entry above.) llama.cpp on the same 9B file and machine (`llama-bench`, build of 18 September) did best at 32 and 9.0. README and MODELS.md list the three dense Qwen3.5 models, their fingerprints and how to get their block (`hf:` with the checkpoint's revision).
+- **The dense Qwen3.5 models run** (`qwen35`: Qwen3.5, 3.6 and 3.8 without experts, half of the GGUF downloads on Hugging Face): the layers of Qwen3.6-35B-A3B with a dense feed-forward, one row of the architecture table. The DeltaNet's alpha and beta come in Q8_0 in these files and are made f32 once, exactly, at load. Checked against llama.cpp on the same files, 400 tokens of Italian prose and 400 of Pascal: Qwen3.5-0.8B agrees on the most likely token at 387 and 386 positions, Qwen3.5-2B at 376 and 388, mean logit difference 0.10-0.13, and where they differ the two candidates were within 0.53 of each other in llama.cpp's own logits. Chat and tool calls (XML) work through `janas-chat` and `janas-server`.
+- **`hf2jns_mtp` converts the MTP block of a dense Qwen3.5** too, its feed-forward as the one slot, and takes the block from several shards (`hf2jns_mtp <main.jns> <shard>... <out.jns>`): Qwen3.5-9B spreads it over three. The number and shape of the experts come from the model and the checkpoint instead of Qwen3-Next's written in; its block converts to the same file as before, to the byte. On Qwen3.5-9B the drafts are accepted at 53% (prose) and 68% (code), the text the same as without.
+- **`hf2jns_mtp <main.jns> hf:<owner>/<repo> <out.jns>` reads the MTP block straight from Hugging Face**, with range requests: only the `mtp.*` tensors, 487 MB of Qwen3.5-9B's 14 GB of shards, in under a minute, with no other program (Janas's own HTTPS client, the one of its MCP transport, now following redirects). The file it writes is the same, to the byte, as from the shards on disk. A server that ignores a range stops it, never a whole file downloaded. Qwen3.5-2B's block too: drafts accepted at 78% and 64%. Neighbouring tensors are read in one request (up to 256 MB): Qwen3-Next's block, 1,500 tensors, came in 27 minutes one connection each and comes in 5 now, to the same bytes.
+- The memory counted for the context asks the architecture table which layers have keys and values, instead of two names written in.
 
 ## [2026-09-26] - Architectures as data
 
-- **What sets one architecture apart from another is a row of a table**
-  (`src/llm/arch.c`): recurrent layers and their layout, a gated query,
-  a shared expert, which norm comes before the feed-forward, how value
-  heads share key heads, MTP layers in the file. The flags `next` and
-  `q35` are gone; a new family is a row plus the code of what it has that
-  no other had. The logits are the same bits as before on Qwen3-4B,
-  Qwen3-30B-A3B, Qwen3.6-35B-A3B and Qwen3-Next-80B-A3B, token by token
-  and in blocks, and so are the MTP drafts of the 35B and the 80B.
-- **`model.c` divided by what it does**: it was 2,597 lines; the passes
-  stay in it, the attention, DeltaNet and feed-forward layers, opening and
-  closing, and the threads with the experts' profile each have a file of
-  their own (`model_attn.c`, `model_rec.c`, `model_ffn.c`, `model_load.c`,
-  `model_tune.c`). Code moved, not changed: the same bits again on the four
-  models.
-- **`build.sh` makes its archives anew** every time: `ar` only adds and
-  replaces, so the object of a source since removed or renamed stayed in
-  `libjanas.a` and was linked twice (going back to an older commit failed
-  to link).
+- **What sets one architecture apart from another is a row of a table** (`src/llm/arch.c`): recurrent layers and their layout, a gated query, a shared expert, which norm comes before the feed-forward, how value heads share key heads, MTP layers in the file. The flags `next` and `q35` are gone; a new family is a row plus the code of what it has that no other had. The logits are the same bits as before on Qwen3-4B, Qwen3-30B-A3B, Qwen3.6-35B-A3B and Qwen3-Next-80B-A3B, token by token and in blocks, and so are the MTP drafts of the 35B and the 80B.
+- **`model.c` divided by what it does**: it was 2,597 lines; the passes stay in it, the attention, DeltaNet and feed-forward layers, opening and closing, and the threads with the experts' profile each have a file of their own (`model_attn.c`, `model_rec.c`, `model_ffn.c`, `model_load.c`, `model_tune.c`). Code moved, not changed: the same bits again on the four models.
+- **`build.sh` makes its archives anew** every time: `ar` only adds and replaces, so the object of a source since removed or renamed stayed in `libjanas.a` and was linked twice (going back to an older commit failed to link).
 
 ## [2026-09-26] - Qwen3-Coder's tool calls, run
 
-- **Qwen3-Coder-Next calls tools through `janas-server`**, in the XML way
-  its template describes: asked for the weather and a list of files, it
-  made both calls at once with valid arguments, and used their answers in
-  the reply; the second turn read 66 new tokens and reused 496. The README
-  no longer calls this way untried.
+- **Qwen3-Coder-Next calls tools through `janas-server`**, in the XML way its template describes: asked for the weather and a list of files, it made both calls at once with valid arguments, and used their answers in the reply; the second turn read 66 new tokens and reused 496. The README no longer calls this way untried.
 
 ## [2026-09-25] - Builds with clang
 
-- **`janas-try.sh` no longer skips a 16 GB machine**: it compared the
-  memory the kernel reports with 16 GiB exactly, and a machine sold with
-  16 GB shows less (the kernel and an integrated GPU keep some), so every
-  one of them lost the medium and full levels, and an 8 GB one the quick
-  level. 85% of the memory a level asks for now counts as enough.
-- **`CC=clang ./build.sh` works** (clang 19, every variant under `-Werror`):
-  two float conversions of `RAND_MAX` in the benchmarks, a string
-  concatenation clang took for a missing comma in `test_grammar`, and the
-  `die` of the two converters marked as not returning. The test suite
-  passes, and the 4B's answer at temperature 0 is the same text built with
-  gcc or clang, with AVX-VNNI or AVX2 kernels.
+- **`janas-try.sh` no longer skips a 16 GB machine**: it compared the memory the kernel reports with 16 GiB exactly, and a machine sold with 16 GB shows less (the kernel and an integrated GPU keep some), so every one of them lost the medium and full levels, and an 8 GB one the quick level. 85% of the memory a level asks for now counts as enough.
+- **`CC=clang ./build.sh` works** (clang 19, every variant under `-Werror`): two float conversions of `RAND_MAX` in the benchmarks, a string concatenation clang took for a missing comma in `test_grammar`, and the `die` of the two converters marked as not returning. The test suite passes, and the 4B's answer at temperature 0 is the same text built with gcc or clang, with AVX-VNNI or AVX2 kernels.
 
 ## [2026-09-25] - `tools/janas-try.sh`: try Janas and report, in one command
 
-- **One command to try Janas on a machine**: it builds and tests, downloads
-  a model (quick 4B, medium 35B-A3B, full 80B-A3B with MTP), checks every
-  file against its SHA-256 and every conversion against MODELS.md,
-  checks the answer at temperature 0 against the text every machine should
-  write (the same with any thread count, AVX2 or AVX-VNNI, GPU or not),
-  measures with `janas-bench`, tries `janas-server`, and writes a report
-  with no names or paths. It asks before each long step and before sending;
-  the issue goes through `gh`, or a link fills the new **test report**
-  form. Nothing to install, no root.
-- **It measures only a machine left to itself**, or says it did not: before
-  the speed test it samples how idle the CPU is for five seconds and, when
-  something else is running, explains that the numbers would not be the
-  machine's and offers to wait, measure all the same or skip. The report
-  says how idle the CPU was and the load average - general figures only,
-  never which programs ran.
-- MODELS.md: the fingerprint of the MTP block is the one of the file
-  `hf2jns_mtp` writes since issue #6.
+- **One command to try Janas on a machine**: it builds and tests, downloads a model (quick 4B, medium 35B-A3B, full 80B-A3B with MTP), checks every file against its SHA-256 and every conversion against MODELS.md, checks the answer at temperature 0 against the text every machine should write (the same with any thread count, AVX2 or AVX-VNNI, GPU or not), measures with `janas-bench`, tries `janas-server`, and writes a report with no names or paths. It asks before each long step and before sending; the issue goes through `gh`, or a link fills the new **test report** form. Nothing to install, no root.
+- **It measures only a machine left to itself**, or says it did not: before the speed test it samples how idle the CPU is for five seconds and, when something else is running, explains that the numbers would not be the machine's and offers to wait, measure all the same or skip. The report says how idle the CPU was and the load average - general figures only, never which programs ran.
+- MODELS.md: the fingerprint of the MTP block is the one of the file `hf2jns_mtp` writes since issue #6.
 
 ## [2026-09-25] - The converter is C: nothing but the build to run Janas
 
-- **`gguf2jns` is now a C program**, built with everything else, in place
-  of the Python script: trying Janas needs a compiler and nothing more. It
-  writes the very same bytes - the SHA-256 fingerprints in MODELS.md,
-  taken from the Python one, come out identical for Qwen3-4B, Qwen3-30B-A3B
-  and Qwen3-Embedding-0.6B.
-- Its GGUF reader (`src/llm/gguf.c`) takes nothing on trust: lengths and
-  counts checked against the bytes there are, every tensor's data against
-  the size of the file; `test_gguf` fuzzes it.
+- **`gguf2jns` is now a C program**, built with everything else, in place of the Python script: trying Janas needs a compiler and nothing more. It writes the very same bytes - the SHA-256 fingerprints in MODELS.md, taken from the Python one, come out identical for Qwen3-4B, Qwen3-30B-A3B and Qwen3-Embedding-0.6B.
+- Its GGUF reader (`src/llm/gguf.c`) takes nothing on trust: lengths and counts checked against the bytes there are, every tensor's data against the size of the file; `test_gguf` fuzzes it.
 
 ## [2026-09-25] - `max_tokens` is the answer's; Open WebUI tried
 
-- **In janas-server's chat completions, `max_tokens` limits the answer
-  alone**, the reasoning not counted; `max_completion_tokens` (and the
-  Responses API's `max_output_tokens`) still counts both, as OpenAI defines
-  it. Open WebUI asks for a chat's title with `max_tokens` 1000, and with a
-  model that reasons at length the reasoning used it all: no title. The
-  library has `max_answer` for it, beside `max_reply`.
-- **Open WebUI 0.11.4 tried against janas-server** through its API:
-  streamed chat, titles, tags, follow-up suggestions, a document indexed
-  with Janas's embeddings and answered from; the conversations kept
-  computed across its side requests. The README says how to run them
-  together (`--think off`).
+- **In janas-server's chat completions, `max_tokens` limits the answer alone**, the reasoning not counted; `max_completion_tokens` (and the Responses API's `max_output_tokens`) still counts both, as OpenAI defines it. Open WebUI asks for a chat's title with `max_tokens` 1000, and with a model that reasons at length the reasoning used it all: no title. The library has `max_answer` for it, beside `max_reply`.
+- **Open WebUI 0.11.4 tried against janas-server** through its API: streamed chat, titles, tags, follow-up suggestions, a document indexed with Janas's embeddings and answered from; the conversations kept computed across its side requests. The README says how to run them together (`--think off`).
 
 ## [2026-09-25] - The MTP block of Qwen3-Next loads again (issue #6)
 
-- **`hf2jns_mtp` wrote a file the engine refused** since model files gained
-  levels (version 3, bit planes): its layer's levels were left at zero, and
-  loading it with `--mtp` failed with `layer 0: bad levels`. It writes them
-  now, and a file it wrote before is read as what it meant (a slot with no
-  planes), so nothing has to be converted again.
+- **`hf2jns_mtp` wrote a file the engine refused** since model files gained levels (version 3, bit planes): its layer's levels were left at zero, and loading it with `--mtp` failed with `layer 0: bad levels`. It writes them now, and a file it wrote before is read as what it meant (a slot with no planes), so nothing has to be converted again.
 - The error of an MTP file now names that file, not the model's.
-- `jns_check` says when a file has such levels, and that converting it
-  again is optional.
+- `jns_check` says when a file has such levels, and that converting it again is optional.
 
 ## [2026-09-25] - MCP: a cancel between rounds, the servers' instructions
 
-- **janas-server**: a `/responses/{id}/cancel` arriving between two MCP
-  rounds of a background response now stops it - the next round is no
-  longer started, and the tool call running is stopped too. Checked under
-  ThreadSanitizer.
-- **janas-mcp works under Claude Code** (2.1.282, which speaks revision
-  2026-07-28): its discover and tools/list results now carry the caching
-  hints that revision requires (`ttlMs`, `cacheScope`), without which Claude
-  Code refused the tool list. generate and embed tried from it.
+- **janas-server**: a `/responses/{id}/cancel` arriving between two MCP rounds of a background response now stops it - the next round is no longer started, and the tool call running is stopped too. Checked under ThreadSanitizer.
+- **janas-mcp works under Claude Code** (2.1.282, which speaks revision 2026-07-28): its discover and tools/list results now carry the caching hints that revision requires (`ttlMs`, `cacheScope`), without which Claude Code refused the tool list. generate and embed tried from it.
 - `JANAS_METRICS` naming a file that cannot be opened is now said on stderr.
-- **Tried against servers of others**: the reference filesystem and git
-  servers over stdio (npx, uvx), DeepWiki over HTTPS from the client and
-  from janas-server's Responses API through the `openai` SDK.
-- **janas-chat `--mcp-instructions`**: what the MCP servers say of their
-  tools goes after the system message, marked as theirs (off by default).
-  `janas_mcp_instructions` in libjanas_mcp gives it to any program.
+- **Tried against servers of others**: the reference filesystem and git servers over stdio (npx, uvx), DeepWiki over HTTPS from the client and from janas-server's Responses API through the `openai` SDK.
+- **janas-chat `--mcp-instructions`**: what the MCP servers say of their tools goes after the system message, marked as theirs (off by default). `janas_mcp_instructions` in libjanas_mcp gives it to any program.
 
 ## [2026-09-25] - A long prompt says how it goes, and what it costs
 
-Asked for in issue #5, after a 262,144-token run that read its prompt for
-fifteen hours without a word.
+Asked for in issue #5, after a 262,144-token run that read its prompt for fifteen hours without a word.
 
-- **The prompt is read a block at a time**: `janas_llm_chat_next` returns an
-  empty piece after each block of 256 tokens, so a program has control
-  while a long prompt is read - to show progress, or to stop (janas-server
-  now stops a cancelled request in the middle of its prompt). Same speed as
-  before, measured.
-- **`janas_llm_chat_stats` says more**, appended to the struct: the stage,
-  the tokens read so far, time to the first token, time building the
-  prompt, processor time of the reading, the threads chosen, the memory of
-  the context and the process's peak, and the prompt by its parts (system
-  message and tools, conversation, last message).
-- **`max_input`** in the chat's parameters, and `--max-input` in
-  janas-server: a longer prompt is refused with its numbers
-  (`JANAS_LLM_ELIMIT`; a 400 `input_limit_exceeded` with `input_tokens`,
-  `max_input_tokens`, `excess_tokens`), never cut. `--warn-input` takes it
-  and says so.
-- **`JANAS_PROGRESS` and `JANAS_METRICS`** for any program on the library:
-  progress lines on stderr, and JSON lines of events (open, prompt,
-  progress, first token, reply, refused), counters only, never text.
-  janas-chat shows the progress in its status line, has `/context` and
-  `--progress`; janas-server has `--metrics` and `--progress`.
-- Documented: the prompt is read in `janas_llm_chat_next`, not when it is
-  sent or loaded; `context_used` holds the token that ended the reply,
-  hence prompt + output + 1.
+- **The prompt is read a block at a time**: `janas_llm_chat_next` returns an empty piece after each block of 256 tokens, so a program has control while a long prompt is read - to show progress, or to stop (janas-server now stops a cancelled request in the middle of its prompt). Same speed as before, measured.
+- **`janas_llm_chat_stats` says more**, appended to the struct: the stage, the tokens read so far, time to the first token, time building the prompt, processor time of the reading, the threads chosen, the memory of the context and the process's peak, and the prompt by its parts (system message and tools, conversation, last message).
+- **`max_input`** in the chat's parameters, and `--max-input` in janas-server: a longer prompt is refused with its numbers (`JANAS_LLM_ELIMIT`; a 400 `input_limit_exceeded` with `input_tokens`, `max_input_tokens`, `excess_tokens`), never cut. `--warn-input` takes it and says so.
+- **`JANAS_PROGRESS` and `JANAS_METRICS`** for any program on the library: progress lines on stderr, and JSON lines of events (open, prompt, progress, first token, reply, refused), counters only, never text. janas-chat shows the progress in its status line, has `/context` and `--progress`; janas-server has `--metrics` and `--progress`.
+- Documented: the prompt is read in `janas_llm_chat_next`, not when it is sent or loaded; `context_used` holds the token that ended the reply, hence prompt + output + 1.
 
 ## [2026-09-25] - MCP servers in janas-server's Responses API
 
-- **Tools of type `mcp` in `POST /v1/responses`**, as OpenAI's API has
-  them: the server reaches the MCP server a request names (`server_url`,
-  `headers`, `authorization`) through libjanas_mcp, starts the output with
-  an `mcp_list_tools` item, and gives the tools to the model as
-  `server_label__tool`. A call needing approval (`require_approval`,
-  `always` by default) ends the response with an `mcp_approval_request`
-  and runs when an `mcp_approval_response` answers it; one that needs none
-  runs at once as an `mcp_call` item and the model goes on in the same
-  response, a round at a time. `allowed_tools`, the approval filters,
-  `tool_choice` of type `mcp`, streamed `response.mcp_*` events, and the
-  items read back from the history. `--no-mcp` refuses them.
+- **Tools of type `mcp` in `POST /v1/responses`**, as OpenAI's API has them: the server reaches the MCP server a request names (`server_url`, `headers`, `authorization`) through libjanas_mcp, starts the output with an `mcp_list_tools` item, and gives the tools to the model as `server_label__tool`. A call needing approval (`require_approval`, `always` by default) ends the response with an `mcp_approval_request` and runs when an `mcp_approval_response` answers it; one that needs none runs at once as an `mcp_call` item and the model goes on in the same response, a round at a time. `allowed_tools`, the approval filters, `tool_choice` of type `mcp`, streamed `response.mcp_*` events, and the items read back from the history. `--no-mcp` refuses them.
 
 ## [2026-09-25] - https:// MCP servers
 
-- **TLS for the MCP client**, on **Mbed TLS 4.2.0** compiled in
-  (`src/third_party/mbedtls`, unmodified, with TF-PSA-Crypto): `https://`
-  servers from libjanas_mcp and janas-chat, TLS 1.2 and 1.3, the server's
-  certificate checked against the system's certificate authorities
-  (`SSL_CERT_FILE` and `SSL_CERT_DIR` override them) and against the host
-  name. Mbed TLS's symbols stay hidden inside libjanas_mcp; libjanas_llm
-  has none of it.
+- **TLS for the MCP client**, on **Mbed TLS 4.2.0** compiled in (`src/third_party/mbedtls`, unmodified, with TF-PSA-Crypto): `https://` servers from libjanas_mcp and janas-chat, TLS 1.2 and 1.3, the server's certificate checked against the system's certificate authorities (`SSL_CERT_FILE` and `SSL_CERT_DIR` override them) and against the host name. Mbed TLS's symbols stay hidden inside libjanas_mcp; libjanas_llm has none of it.
 
 ## [2026-09-25] - MCP servers over HTTP
 
-- **libjanas_mcp reaches servers over Streamable HTTP** (`janas_mcp_open_url`,
-  or `url` and `headers` in the configuration, so janas-chat uses them too):
-  every message a POST, the answer a JSON object or an event stream, the
-  body's fields mirrored into `MCP-Protocol-Version`, `Mcp-Method`,
-  `Mcp-Name` and the `Mcp-Param-*` headers a tool's schema asks for with
-  `x-mcp-header` (base64 where a header cannot carry the value; tools whose
-  marks break the rules are left out). Both eras: a modern server found by
-  its answer to `server/discover`, a legacy one by its refusal, then
-  `initialize` and its session, ended with DELETE. `https://` needs TLS,
-  which is not built in yet.
+- **libjanas_mcp reaches servers over Streamable HTTP** (`janas_mcp_open_url`, or `url` and `headers` in the configuration, so janas-chat uses them too): every message a POST, the answer a JSON object or an event stream, the body's fields mirrored into `MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name` and the `Mcp-Param-*` headers a tool's schema asks for with `x-mcp-header` (base64 where a header cannot carry the value; tools whose marks break the rules are left out). Both eras: a modern server found by its answer to `server/discover`, a legacy one by its refusal, then `initialize` and its session, ended with DELETE. `https://` needs TLS, which is not built in yet.
 
 ## [2026-09-25] - Janas as an MCP server
 
-- **`janas-mcp`**: the model offered to MCP clients (Claude Code, editors,
-  agents) over stdio, as the tools `generate` (a question to the model, its
-  answer back) and `embed` (with `--embedding-model`). Both protocol eras:
-  requests of revision 2026-07-28 served statelessly, and the `initialize`
-  handshake for revisions 2025-11-25 back to 2024-11-05. Pings are answered
-  during a generation, and `notifications/cancelled` stops it.
+- **`janas-mcp`**: the model offered to MCP clients (Claude Code, editors, agents) over stdio, as the tools `generate` (a question to the model, its answer back) and `embed` (with `--embedding-model`). Both protocol eras: requests of revision 2026-07-28 served statelessly, and the `initialize` handshake for revisions 2025-11-25 back to 2024-11-05. Pings are answered during a generation, and `notifications/cancelled` stops it.
 
 ## [2026-09-25] - Tools from MCP servers in the chat
 
-- **janas-chat gives the model the tools of MCP servers**: those listed in
-  `~/.config/janas/mcp.json` (or `--mcp-config FILE`), in the `mcpServers`
-  format of the other clients, started as child processes and spoken to
-  over stdio, in both eras of the protocol - the stateless revision
-  2026-07-28, found by probing with `server/discover`, and the handshake of
-  2025-11-25 for the servers that predate it. Every call is shown and waits
-  for yes, no or always-this-tool; `/mcp auto` and `--mcp-auto` run them
-  without asking, `/mcp` lists servers and tools, `--no-mcp` starts none.
-- **`libjanas_mcp`**, the client as a library of its own
-  (`include/janas/mcp.h`, and `mcp.bi` for FreeBASIC), with nothing of the
-  engine in it.
-- **`janas_llm_chat_send_results`** in `libjanas_llm`: what the tools
-  answered to the calls of the last reply, sent in the conversation the
-  library keeps, the model's reply following as after a message.
-- `tests/mcp_fake_server` and `test_mcp`: the client against a server of
-  each era, and the readers of JSON-RPC lines and configuration files fuzzed.
+- **janas-chat gives the model the tools of MCP servers**: those listed in `~/.config/janas/mcp.json` (or `--mcp-config FILE`), in the `mcpServers` format of the other clients, started as child processes and spoken to over stdio, in both eras of the protocol - the stateless revision 2026-07-28, found by probing with `server/discover`, and the handshake of 2025-11-25 for the servers that predate it. Every call is shown and waits for yes, no or always-this-tool; `/mcp auto` and `--mcp-auto` run them without asking, `/mcp` lists servers and tools, `--no-mcp` starts none.
+- **`libjanas_mcp`**, the client as a library of its own (`include/janas/mcp.h`, and `mcp.bi` for FreeBASIC), with nothing of the engine in it.
+- **`janas_llm_chat_send_results`** in `libjanas_llm`: what the tools answered to the calls of the last reply, sent in the conversation the library keeps, the model's reply following as after a message.
+- `tests/mcp_fake_server` and `test_mcp`: the client against a server of each era, and the readers of JSON-RPC lines and configuration files fuzzed.
 
 ## [2026-09-24] - The memory left to other programs can be chosen
 
-- **`--reserve GIB`** in janas-chat, janas-server and janas-bench, and
-  `janas_llm_params.reserve_bytes` in the library: when the expert cache
-  takes the free memory, how much of it stays free for the rest of the
-  machine. The default is unchanged, a fifth of the memory and at least 2
-  GiB. More keeps a busy desktop out of swap, at the price of a smaller
-  cache on a model larger than the memory: on the 32 GB test machine,
-  Qwen3-Next-80B-A3B's cache went from 20.6 to 18.8 GiB with `--reserve 8`.
-  The conversations kept computed size their automatic ceiling on it too.
+- **`--reserve GIB`** in janas-chat, janas-server and janas-bench, and `janas_llm_params.reserve_bytes` in the library: when the expert cache takes the free memory, how much of it stays free for the rest of the machine. The default is unchanged, a fifth of the memory and at least 2 GiB. More keeps a busy desktop out of swap, at the price of a smaller cache on a model larger than the memory: on the 32 GB test machine, Qwen3-Next-80B-A3B's cache went from 20.6 to 18.8 GiB with `--reserve 8`. The conversations kept computed size their automatic ceiling on it too.
 
 ## [2026-09-24] - Prompts read in blocks of 256 tokens
 
-- **A prompt is now read 256 tokens at a pass instead of 64**, so that a
-  mixture-of-experts model reads each expert once for four times as many
-  tokens, and gives it enough of them to run at full speed. Attention and
-  the recurrent log still work 64 tokens at a time inside the block, and
-  the logits are bit for bit those of reading token by token (checked on
-  Qwen3-4B, Qwen3-30B-A3B and Qwen3-Next-80B-A3B). Reading a 1024-token
-  prompt: Qwen3-Next-80B-A3B 68.4 → 75.1 tokens/s (+9.9%), Qwen3-30B-A3B
-  92.4 → 97.5 (+5.5%), the dense Qwen3-4B unchanged (87.9 → 87.3). Replies
-  are as fast as before. `JANAS_PREFILL_BLOCK` (64 to 4096) sets another
-  size; larger blocks gained nothing more here, and 1024 was slower on
-  Qwen3-4B and on Qwen3-Next-80B-A3B.
+- **A prompt is now read 256 tokens at a pass instead of 64**, so that a mixture-of-experts model reads each expert once for four times as many tokens, and gives it enough of them to run at full speed. Attention and the recurrent log still work 64 tokens at a time inside the block, and the logits are bit for bit those of reading token by token (checked on Qwen3-4B, Qwen3-30B-A3B and Qwen3-Next-80B-A3B). Reading a 1024-token prompt: Qwen3-Next-80B-A3B 68.4 → 75.1 tokens/s (+9.9%), Qwen3-30B-A3B 92.4 → 97.5 (+5.5%), the dense Qwen3-4B unchanged (87.9 → 87.3). Replies are as fast as before. `JANAS_PREFILL_BLOCK` (64 to 4096) sets another size; larger blocks gained nothing more here, and 1024 was slower on Qwen3-4B and on Qwen3-Next-80B-A3B.
 
 ## [2026-09-24] - The chat's cache share moves while it waits; attention's memory counted
 
-- **The share of the expert cache filled, in janas-chat's footer, was drawn
-  only at the start and after each reply**: it showed whatever it was at
-  that moment - 60% at one start, 0% at the next - and kept it. The footer
-  is now drawn again while the editor waits for a key, when the share
-  changes, and the share goes when the filling is over; on
-  Qwen3-Next-80B-A3B it climbed from 0% to 98% in nine seconds and went,
-  with the cursor never leaving the line being written. A filling
-  overtaken by the conversation's own requests (they filled the cache
-  first) now ends: `janas_llm_preload` then gives a total equal to what it
-  loaded, instead of a share stuck below 100%.
-- **The partial results of attention grow with the context** like the
-  keys and values, and were left out when the memory was shared out:
-  1.08 GB at 262,144 tokens of Qwen3-Next-80B-A3B, taken from the margin
-  left to other programs. They are counted now (`janas_attn_part_bytes`).
+- **The share of the expert cache filled, in janas-chat's footer, was drawn only at the start and after each reply**: it showed whatever it was at that moment - 60% at one start, 0% at the next - and kept it. The footer is now drawn again while the editor waits for a key, when the share changes, and the share goes when the filling is over; on Qwen3-Next-80B-A3B it climbed from 0% to 98% in nine seconds and went, with the cursor never leaving the line being written. A filling overtaken by the conversation's own requests (they filled the cache first) now ends: `janas_llm_preload` then gives a total equal to what it loaded, instead of a share stuck below 100%.
+- **The partial results of attention grow with the context** like the keys and values, and were left out when the memory was shared out: 1.08 GB at 262,144 tokens of Qwen3-Next-80B-A3B, taken from the margin left to other programs. They are counted now (`janas_attn_part_bytes`).
 
 ## [2026-09-23] - Conversations kept computed, and a store that outlives the server
 
-- **Conversations kept computed.** The model holds one sequence, so a server
-  whose clients take turns - or one client that asks on the side for titles,
-  tags and suggestions, as Open WebUI does four times a turn - had each
-  conversation read again from the start when it came back. Now the last
-  few are copied out of the model and back in: `janas_llm_chat_keep` in the
-  library, `--keep N` (8) and `--keep-memory GIB` in `janas-server`. The
-  copy is of the keys and values of every attention layer (the prediction
-  block's included) and of the recurrent state of Qwen3-Next and Qwen3.5/3.6.
-  On Qwen3-4B, two conversations taking turns reuse 133 of 160 and 119 of
-  143 tokens at their second turn, against 3; on Qwen3.6-35B-A3B, 133 and
-  119 against 0; the replies are the same text either way.
-- **A second reply to the same prompt** on models with a recurrent state
-  (`n` above 1, a reply asked again) read the whole prompt again, since that
-  state cannot go back. The prompt is now kept before the reply: 143 of 143
-  tokens found computed on Qwen3.6-35B-A3B. The system message is kept on
-  its own too, so that a new conversation with the same one starts from it.
-- **On disk, below the memory**: `janas_llm_chat_keep_disk`, `--keep-disk
-  GIB` (8, never more than a quarter of the free space), in
-  `~/.cache/janas`. A copy of at least 1024 tokens is written when it leaves
-  the memory and when the server stops, never at every turn; a long system
-  message with its tools is then read once, also across restarts. A new
-  chat found 2012 of 2013 tokens computed on Qwen3-4B (a 153 MiB file) and
-  2103 of 2103 on Qwen3.6-35B-A3B.
-- **The store outlives the server.** Stored completions, responses and
-  conversations are written one file each to `~/.local/share/janas/server`
-  (`--store DIR`; `--no-store` keeps them in memory only), readable by
-  their owner alone, one server at a time per directory. A response left
-  running in the background by a killed server is found as failed.
-- **Fixed: the memory a long context takes was counted four times** on
-  Qwen3-Next and Qwen3.5/3.6, whose files give one count of key-value
-  heads for all layers: every layer was counted, not only the attention
-  ones. Opened at 262,144 tokens, Qwen3-Next-80B-A3B set 13.1 GB aside for
-  3.3 GB of keys and values, left its expert cache 6.7 GiB, and fell back
-  to four bits and eight experts; now 13.5 GiB and all ten experts. Reading
-  15,904 tokens went from 22.1 to 30.4 tokens/s and the reply from 14.2 to
-  16.9, with the three facts hidden in the text found either way.
+- **Conversations kept computed.** The model holds one sequence, so a server whose clients take turns - or one client that asks on the side for titles, tags and suggestions, as Open WebUI does four times a turn - had each conversation read again from the start when it came back. Now the last few are copied out of the model and back in: `janas_llm_chat_keep` in the library, `--keep N` (8) and `--keep-memory GIB` in `janas-server`. The copy is of the keys and values of every attention layer (the prediction block's included) and of the recurrent state of Qwen3-Next and Qwen3.5/3.6. On Qwen3-4B, two conversations taking turns reuse 133 of 160 and 119 of 143 tokens at their second turn, against 3; on Qwen3.6-35B-A3B, 133 and 119 against 0; the replies are the same text either way.
+- **A second reply to the same prompt** on models with a recurrent state (`n` above 1, a reply asked again) read the whole prompt again, since that state cannot go back. The prompt is now kept before the reply: 143 of 143 tokens found computed on Qwen3.6-35B-A3B. The system message is kept on its own too, so that a new conversation with the same one starts from it.
+- **On disk, below the memory**: `janas_llm_chat_keep_disk`, `--keep-disk GIB` (8, never more than a quarter of the free space), in `~/.cache/janas`. A copy of at least 1024 tokens is written when it leaves the memory and when the server stops, never at every turn; a long system message with its tools is then read once, also across restarts. A new chat found 2012 of 2013 tokens computed on Qwen3-4B (a 153 MiB file) and 2103 of 2103 on Qwen3.6-35B-A3B.
+- **The store outlives the server.** Stored completions, responses and conversations are written one file each to `~/.local/share/janas/server` (`--store DIR`; `--no-store` keeps them in memory only), readable by their owner alone, one server at a time per directory. A response left running in the background by a killed server is found as failed.
+- **Fixed: the memory a long context takes was counted four times** on Qwen3-Next and Qwen3.5/3.6, whose files give one count of key-value heads for all layers: every layer was counted, not only the attention ones. Opened at 262,144 tokens, Qwen3-Next-80B-A3B set 13.1 GB aside for 3.3 GB of keys and values, left its expert cache 6.7 GiB, and fell back to four bits and eight experts; now 13.5 GiB and all ten experts. Reading 15,904 tokens went from 22.1 to 30.4 tokens/s and the reply from 14.2 to 16.9, with the three facts hidden in the text found either way.
 
 ## [2026-09-23] - It builds with GCC 13 again
 
-- **Ubuntu 24.04's compiler stopped the build** (issue #4): GCC 13 drops a
-  `#pragma GCC unroll` on a loop whose condition holds a `?:` and warns,
-  and `-Werror` made the warning an error. The bound of the two loops is now
-  a constant of its own; with GCC 14 the machine code is the same, byte for
-  byte. Checked with GCC 13.3.0 from Debian's packages, also with the options
-  Ubuntu's GCC turns on by default.
+- **Ubuntu 24.04's compiler stopped the build** (issue #4): GCC 13 drops a `#pragma GCC unroll` on a loop whose condition holds a `?:` and warns, and `-Werror` made the warning an error. The bound of the two loops is now a constant of its own; with GCC 14 the machine code is the same, byte for byte. Checked with GCC 13.3.0 from Debian's packages, also with the options Ubuntu's GCC turns on by default.
 
 ## [2026-09-23] - The first ring of OpenAI's API, whole
 
-Every operation of the API that a local text model can serve now answers:
-27 of the specification's 345, against 4.
+Every operation of the API that a local text model can serve now answers: 27 of the specification's 345, against 4.
 
-- **Tools** in chat and in responses: the tools written into the system
-  message as the model's template writes them, and every call held to a
-  grammar of the functions and their parameters from the moment the model
-  opens it, so its arguments are always valid JSON for the schema;
-  `tool_choice` none, auto, required or a function, parallel calls, the
-  calls of earlier turns and the tools' answers in the history. Tried on
-  Qwen3-4B: two calls at once, their answers sent back, the reply using
-  them, the second turn reusing 304 of its 351 tokens; the XML way of
-  Qwen3.5 and 3.6 on Qwen3.6-35B-A3B the same. Qwen3-Coder's description of
-  the tools is written from its template and not yet run.
-- **JSON output** held to a grammar token by token: a JSON object, or JSON
-  valid against a JSON Schema (types, properties in order, required ones,
-  items and bounds, enum, const, anyOf, $ref with recursion).
-- **Log-probabilities** with up to 20 alternatives; `n`, `best_of`,
-  presence and frequency penalties, `logit_bias`; several prompts, token
-  ids, `echo` and `suffix` in completions.
-- **Stored chat completions**: kept on request, listed with metadata
-  filters and pages, read, changed, deleted, their messages listed.
-- **The Responses API** with its conversations: items in and out,
-  `previous_response_id`, streamed events, responses in the background and
-  their cancelling, input items, token counts, compaction into a summary;
-  the eight operations of `/conversations`.
-- **Embeddings** from a second model (`--embedding-model`, e.g.
-  Qwen3-Embedding-0.6B): against llama.cpp on the same file, a cosine of
-  0.977 to 0.996 between the vectors of the same text.
-- **Moderations** asked of the chat model, with the scores taken from its
-  log-probabilities: a general model with instructions, not a trained
-  classifier.
-- **In the library**, for every program: a sampler of its own with a filter
-  of the tokens that may come next, grammars with the model's special tokens
-  as symbols, JSON Schema as a grammar, a small JSON reader, conversations
-  built message by message with their tool calls, token counts, fill in the
-  middle, embeddings. The text of a reply is unchanged byte for byte where
-  none of it is asked for.
-- **While a request waits**, its stream says where it stands in the line,
-  and the test page shows it.
+- **Tools** in chat and in responses: the tools written into the system message as the model's template writes them, and every call held to a grammar of the functions and their parameters from the moment the model opens it, so its arguments are always valid JSON for the schema; `tool_choice` none, auto, required or a function, parallel calls, the calls of earlier turns and the tools' answers in the history. Tried on Qwen3-4B: two calls at once, their answers sent back, the reply using them, the second turn reusing 304 of its 351 tokens; the XML way of Qwen3.5 and 3.6 on Qwen3.6-35B-A3B the same. Qwen3-Coder's description of the tools is written from its template and not yet run.
+- **JSON output** held to a grammar token by token: a JSON object, or JSON valid against a JSON Schema (types, properties in order, required ones, items and bounds, enum, const, anyOf, $ref with recursion).
+- **Log-probabilities** with up to 20 alternatives; `n`, `best_of`, presence and frequency penalties, `logit_bias`; several prompts, token ids, `echo` and `suffix` in completions.
+- **Stored chat completions**: kept on request, listed with metadata filters and pages, read, changed, deleted, their messages listed.
+- **The Responses API** with its conversations: items in and out, `previous_response_id`, streamed events, responses in the background and their cancelling, input items, token counts, compaction into a summary; the eight operations of `/conversations`.
+- **Embeddings** from a second model (`--embedding-model`, e.g. Qwen3-Embedding-0.6B): against llama.cpp on the same file, a cosine of 0.977 to 0.996 between the vectors of the same text.
+- **Moderations** asked of the chat model, with the scores taken from its log-probabilities: a general model with instructions, not a trained classifier.
+- **In the library**, for every program: a sampler of its own with a filter of the tokens that may come next, grammars with the model's special tokens as symbols, JSON Schema as a grammar, a small JSON reader, conversations built message by message with their tool calls, token counts, fill in the middle, embeddings. The text of a reply is unchanged byte for byte where none of it is asked for.
+- **While a request waits**, its stream says where it stands in the line, and the test page shows it.
 
 ## [2026-09-23] - janas-server: the model behind OpenAI's API
 
-Asked for in issue #3: an HTTP API that clients written for OpenAI's can use,
-so that a model running on this machine can sit behind a chat front end, an
-editor or a script without anything written for Janas.
+Asked for in issue #3: an HTTP API that clients written for OpenAI's can use, so that a model running on this machine can sit behind a chat front end, an editor or a script without anything written for Janas.
 
-- **`janas-server`** answers `GET /v1/models`, `POST /v1/chat/completions`
-  and `POST /v1/completions`, whole or streamed as server-sent events, with
-  the reasoning apart in `reasoning_content` and the counts in `usage`. It
-  listens on this machine only unless told otherwise, asks for a key when
-  given one, and warns when it is opened to the network without one. Requests
-  run one at a time, in the order they came; a client that goes away stops
-  its reply.
-- **The whole of OpenAI's API is in its route table**, generated from the
-  specification (2.3.0, 345 operations) by `tools/openapi_routes.py`: what is
-  not written yet answers 501 and says why, and what a request asks that is
-  not written yet (tools, JSON output, log probabilities) is refused with a
-  400 rather than ignored.
-- **A conversation is not read twice.** OpenAI's API sends the whole
-  conversation with every request; the server reads again only what is new.
-  The replies it wrote are remembered with their reasoning, so the answer a
-  client sends back without it still matches. Checked: three turns through
-  the server and through `janas-chat` give the same words, and the second
-  turn reads 18 tokens of 260 or 19 of 200.
-- **`--test` serves Janas-Chat Web**, a chat page inside the program: the
-  reasoning in grey, the context and the speed under each reply, and the
-  marks a model writes read as `janas-chat` reads them, plus quotes, tables,
-  struck text, six levels of heading and links that ask before they open.
-  *Markdown sample* shows every mark it knows without asking the model.
-- **Two libraries of others, in `janas-server` only**: GNU libmicrohttpd
-  1.0.10 (signature checked) and yyjson 0.13.0, unchanged in
-  `src/third_party/`. `build.sh` compiles them apart and never into
-  `libjanas_llm`.
-- **In the library**: `janas_llm_chat_load` takes a conversation whole,
-  `janas_llm_chat_prompt` continues raw text, `janas_llm_default_system` is
-  the system message both programs now share, and the reply statistics say
-  why a reply ended and how much of its prompt was already computed. The
-  FreeBASIC binding follows, checked with `fbc`.
-- **In `janas-chat`**: the title is *Janas-Chat*; a mark at the very end of a
-  reply (`**bold**`, `` `code` ``) was printed instead of read, and now is
-  read; an underscore alone at the edge of a word is italic, so `**_this_**`
-  works while `snake_case` and `__init__` stay as they are; and the system
-  message asks the model not to introduce itself unless asked, which on
-  Qwen3-4B turned the whole presentation it gave to "Ciao!" into "Ciao! 😊".
-- **Checked**: the unit tests in release, asan and tsan, a test that sends
-  twenty thousand mangled requests to the parser, the engine's logits
-  unchanged byte for byte, and the server under asan and tsan. The only races
-  tsan reports are two inside libmicrohttpd, formal and harmless in the mode
-  it runs in.
+- **`janas-server`** answers `GET /v1/models`, `POST /v1/chat/completions` and `POST /v1/completions`, whole or streamed as server-sent events, with the reasoning apart in `reasoning_content` and the counts in `usage`. It listens on this machine only unless told otherwise, asks for a key when given one, and warns when it is opened to the network without one. Requests run one at a time, in the order they came; a client that goes away stops its reply.
+- **The whole of OpenAI's API is in its route table**, generated from the specification (2.3.0, 345 operations) by `tools/openapi_routes.py`: what is not written yet answers 501 and says why, and what a request asks that is not written yet (tools, JSON output, log probabilities) is refused with a 400 rather than ignored.
+- **A conversation is not read twice.** OpenAI's API sends the whole conversation with every request; the server reads again only what is new. The replies it wrote are remembered with their reasoning, so the answer a client sends back without it still matches. Checked: three turns through the server and through `janas-chat` give the same words, and the second turn reads 18 tokens of 260 or 19 of 200.
+- **`--test` serves Janas-Chat Web**, a chat page inside the program: the reasoning in grey, the context and the speed under each reply, and the marks a model writes read as `janas-chat` reads them, plus quotes, tables, struck text, six levels of heading and links that ask before they open. *Markdown sample* shows every mark it knows without asking the model.
+- **Two libraries of others, in `janas-server` only**: GNU libmicrohttpd 1.0.10 (signature checked) and yyjson 0.13.0, unchanged in `src/third_party/`. `build.sh` compiles them apart and never into `libjanas_llm`.
+- **In the library**: `janas_llm_chat_load` takes a conversation whole, `janas_llm_chat_prompt` continues raw text, `janas_llm_default_system` is the system message both programs now share, and the reply statistics say why a reply ended and how much of its prompt was already computed. The FreeBASIC binding follows, checked with `fbc`.
+- **In `janas-chat`**: the title is *Janas-Chat*; a mark at the very end of a reply (`**bold**`, `` `code` ``) was printed instead of read, and now is read; an underscore alone at the edge of a word is italic, so `**_this_**` works while `snake_case` and `__init__` stay as they are; and the system message asks the model not to introduce itself unless asked, which on Qwen3-4B turned the whole presentation it gave to "Ciao!" into "Ciao! 😊".
+- **Checked**: the unit tests in release, asan and tsan, a test that sends twenty thousand mangled requests to the parser, the engine's logits unchanged byte for byte, and the server under asan and tsan. The only races tsan reports are two inside libmicrohttpd, formal and harmless in the mode it runs in.
 
 ## [2026-09-23] - Tests: two failures on every machine but one
 
-Reported in issue #2 from a Ryzen AI 9 HX 370: `test_expert_cache` could not
-write its file and `test_tuner` found its saved choices missing. Both had the
-same cause, a habit of the development machine leaking into the tests: they
-wrote under `$HOME/tmp`, a directory that exists there and almost nowhere
-else.
+Reported in issue #2 from a Ryzen AI 9 HX 370: `test_expert_cache` could not write its file and `test_tuner` found its saved choices missing. Both had the same cause, a habit of the development machine leaking into the tests: they wrote under `$HOME/tmp`, a directory that exists there and almost nowhere else.
 
-- **`test_expert_cache`** writes its file in `$TMPDIR`, else in `/var/tmp` -
-  a disk, where O_DIRECT works, which it does not on the tmpfs `/tmp` often is.
-  If it cannot, it says so and says what to set.
-- **`test_tuner`** makes a scratch directory of its own with `mkdtemp` and
-  removes it when done.
-- **The engine made only the last two levels of its cache directory.** With
-  `XDG_CACHE_HOME` pointing somewhere that did not exist yet, the tuner and
-  the expert profile were silently not saved. Every missing level is made
-  now.
+- **`test_expert_cache`** writes its file in `$TMPDIR`, else in `/var/tmp` - a disk, where O_DIRECT works, which it does not on the tmpfs `/tmp` often is. If it cannot, it says so and says what to set.
+- **`test_tuner`** makes a scratch directory of its own with `mkdtemp` and removes it when done.
+- **The engine made only the last two levels of its cache directory.** With `XDG_CACHE_HOME` pointing somewhere that did not exist yet, the tuner and the expert profile were silently not saved. Every missing level is made now.
 
-Checked the way it failed: with a `HOME` that has no `tmp` and no `TMPDIR`,
-the old binaries print exactly the two failures of the report and the new ones
-pass.
+Checked the way it failed: with a `HOME` that has no `tmp` and no `TMPDIR`, the old binaries print exactly the two failures of the report and the new ones pass.
 
 ## [2026-09-22] - Janas-LLM: reading a prompt, 8 to 12 per cent faster
 
-Measured before touching anything: while a block of 64 prompt tokens went
-through the model, nineteen of twenty threads spent **9% of the time** on
-Qwen3-4B and **13%** on Qwen3-30B-A3B waiting for the calling thread, which
-did per-token work alone - the norms and the quantization of the
-activations, the normalization and rotation of each head of q and k with the
-eight-bit copy into the attention cache, the router's choice of experts, and
-the sum of the experts' outputs.
+Measured before touching anything: while a block of 64 prompt tokens went through the model, nineteen of twenty threads spent **9% of the time** on Qwen3-4B and **13%** on Qwen3-30B-A3B waiting for the calling thread, which did per-token work alone - the norms and the quantization of the activations, the normalization and rotation of each head of q and k with the eight-bit copy into the attention cache, the router's choice of experts, and the sum of the experts' outputs.
 
-- **All of that now runs on the pool**, token by token or head by head. Each
-  token takes the same operations in the same order as before, including the
-  order in which it adds up its experts, so nothing changes in the result:
-  the logits of Qwen3-4B, Qwen3-30B-A3B and Qwen3-Next-80B-A3B are identical
-  byte for byte to the previous version's, over 256 tokens, both in blocks
-  and one token at a time.
-- **Prefill, 1024 tokens, cache warm, 20 threads**, old and new alternated:
-  Qwen3-4B 82.4 to 88.5 tok/s (+7.6%), Qwen3-30B-A3B 82.7 to 92.6 (+12.1%),
-  Qwen3-Next-80B-A3B 58.3 to 64.1 (+9.9%). The time the calling thread works
-  alone falls to 0.3% and 0.9%.
-- **Decoding**: the heads of q and k are spread over the pool there too, which
-  saves about a third of a millisecond a token: Qwen3-30B-A3B 28.56 to 28.92
-  tok/s over three alternated rounds, Qwen3-4B unchanged within the noise.
+- **All of that now runs on the pool**, token by token or head by head. Each token takes the same operations in the same order as before, including the order in which it adds up its experts, so nothing changes in the result: the logits of Qwen3-4B, Qwen3-30B-A3B and Qwen3-Next-80B-A3B are identical byte for byte to the previous version's, over 256 tokens, both in blocks and one token at a time.
+- **Prefill, 1024 tokens, cache warm, 20 threads**, old and new alternated: Qwen3-4B 82.4 to 88.5 tok/s (+7.6%), Qwen3-30B-A3B 82.7 to 92.6 (+12.1%), Qwen3-Next-80B-A3B 58.3 to 64.1 (+9.9%). The time the calling thread works alone falls to 0.3% and 0.9%.
+- **Decoding**: the heads of q and k are spread over the pool there too, which saves about a third of a millisecond a token: Qwen3-30B-A3B 28.56 to 28.92 tok/s over three alternated rounds, Qwen3-4B unchanged within the noise.
 
 ## [2026-09-22] - Janas-LLM: three ways the chat laid text out wrong
 
-All three found by using it, and all three in the same place: what the chat
-knows about where a line may break.
+All three found by using it, and all three in the same place: what the chat knows about where a line may break.
 
 - **A code block inside a list never closed.** A model asked for examples put a Python block inside a numbered list, so it indented the fence that ends it. The markdown machine closed a block only on a backtick in the very first column, so the fence came out as text and everything after it stayed inside the block - where nothing else is a mark, which is why the rest of the reply arrived with its stars and its bullets as written. Spaces no longer end the start of a line inside a block, which is the rule the rest of the machine already used.
 - **And the indent of that fence stayed on the screen.** A fence that opens is swallowed whole, its line with it, but the spaces before it had already been printed and stayed behind on a line whose end had gone: the first line of code then came out with its own indent added to the fence's. The spaces a line begins with are now held until it is known whether a fence follows them.
@@ -995,13 +322,7 @@ knows about where a line may break.
 
 ## [2026-09-22] - Janas-LLM: the engine was slower with its own speculation on
 
-Four things, found by pulling one thread: what a draft is worth depends on
-what a second token in a pass costs, and nobody had ever measured that. It is
-**6% on a dense model**, where the weights are read once for both tokens, and
-**28% on a mixture**, where two tokens route to different experts. Against
-that, drafts copied from the conversation survive 11% of the time on ordinary
-prose and 64% on a page of tables, and at the temperature a chat actually uses
-they survive 25%. The engine asked for four of them regardless.
+Four things, found by pulling one thread: what a draft is worth depends on what a second token in a pass costs, and nobody had ever measured that. It is **6% on a dense model**, where the weights are read once for both tokens, and **28% on a mixture**, where two tokens route to different experts. Against that, drafts copied from the conversation survive 11% of the time on ordinary prose and 64% on a page of tables, and at the temperature a chat actually uses they survive 25%. The engine asked for four of them regardless.
 
 - **The drafts copied from the context now have a planner**, the one the prediction block already used, with the chance of a draft in each position measured per position rather than guessed and halved every 192 drafts so it follows the text. `spec_k` goes back to being a ceiling on what may be asked for. Before this, on ordinary prose at the chat's own temperature, speculation made the engine **slower than not speculating at all**: 0.97x on Qwen3-4B and **0.78x on Qwen3-30B-A3B**, with the safety net parking the drafts for 137 passes out of 256. After: 24.3 and 26.3 token/s against 21.4 and 22.0, so 13 and 20 per cent recovered.
 - **The sampler sorted thirty-four thousand tokens to use twenty.** Choosing a token collected every logit within thirty times the temperature of the largest - about 34000 of a vocabulary of 151936 - sorted all of them, then kept the twenty `top_k` asks for. It cost 2.4 to 2.9 ms a token on the calling thread while nineteen others waited, five to six per cent of a token of Qwen3-4B, and more with a larger vocabulary (Qwen3.6 has 248320). The twenty largest are now found in one pass with a heap of twenty. Paired against a binary differing only in this: sampling 0.51 s to 0.09 s, decoding 22.3 to 23.7 token/s over three rounds.
@@ -1011,13 +332,7 @@ they survive 25%. The engine asked for four of them regardless.
 
 ## [2026-09-22] - Janas-LLM: the 35B's expert phase was never slow
 
-This project's notes have carried, for two sessions, a figure described as the
-largest thing left open: the routed-expert phase of Qwen3.6-35B running at 40
-GB/s where the same phase of Qwen3-30B runs at 62.4, with the difference
-unexplained after several candidates had been measured and dropped. There was
-nothing to explain. The three models run that phase at **65.3, 65.9 and 63.4
-GB/s** - within four per cent of each other - and the 40 was an accounting
-mistake in three parts.
+This project's notes have carried, for two sessions, a figure described as the largest thing left open: the routed-expert phase of Qwen3.6-35B running at 40 GB/s where the same phase of Qwen3-30B runs at 62.4, with the difference unexplained after several candidates had been measured and dropped. There was nothing to explain. The three models run that phase at **65.3, 65.9 and 63.4 GB/s** - within four per cent of each other - and the 40 was an accounting mistake in three parts.
 
 - **The phase must not be measured whole.** It holds three things with three different rules for counting bytes: the cache, which is a wait on the disk and is 11.9% of the phase on the 35B in decoding and 25.8% on Qwen3-Next-80B; the `gate` and `up` matrices, plain Q4_K read in full every time; and `down`, which is six-bit planes whose byte count depends on a level the engine picks from how much memory there is. The honest number comes from `gate`+`up` alone, where nothing has to be guessed, and `JANAS_EXPTRACE=1` separates them.
 - **The shared expert was not being counted.** `qwen35moe` and `qwen3next` have one, used by every token in every layer on top of the `k` routed ones; `qwen3moe`, which is the 30B, does not. Comparing the two while counting only routed experts takes away from the 35B bytes it really reads.
@@ -1035,12 +350,7 @@ mistake in three parts.
 
 ## [2026-09-22] - Janas-LLM: the pool was not the bottleneck, and now there is a yardstick
 
-This project's own notes opened the session with a plan: 21.2% of decoding
-sits in the thread pool's machinery, the engine makes some 340 dispatches a
-token and each one is a barrier, so fusing the three dispatches of the expert
-phase into one would take away two thirds of them. The premise does not
-survive being measured. What came out of measuring it is worth more than the
-plan was.
+This project's own notes opened the session with a plan: 21.2% of decoding sits in the thread pool's machinery, the engine makes some 340 dispatches a token and each one is a barrier, so fusing the three dispatches of the expert phase into one would take away two thirds of them. The premise does not survive being measured. What came out of measuring it is worth more than the plan was.
 
 - **`JANAS_POOLTRACE=1`** is new and stays: one line per call site - the name comes free from a macro around `janas_pool_run` - with its runs, the threads they used, their wall time, and how much of that thread time was spent at the end of a run waiting for the slowest. What the table deliberately does not hold is the time *between* runs, the caller working alone; that is the difference between the wall of the pass and the sum of the column, and it is printed beside it. Off, it costs one variable read per dispatch.
 - **The barriers cost 2.4% of the thread time, not 21%.** On Qwen3-30B-A3B decoding 256 tokens, the matrix products - 89% of the time inside the pool - waste 1.4%. Work is claimed on demand there, and it shows.
@@ -1060,11 +370,7 @@ plan was.
 
 ## [2026-09-22] - Janas-LLM: the expert phase taken apart
 
-The entry below put the headroom at two per cent and said the engine was
-finished as an implementation. That was argued from the engine measured
-against itself, which settles nothing: it says there is no waste between a
-kernel and the phase around it, not that the kernel is good. Taken apart
-properly, the figure is about seven per cent, and it is in one place.
+The entry below put the headroom at two per cent and said the engine was finished as an implementation. That was argued from the engine measured against itself, which settles nothing: it says there is no waste between a kernel and the phase around it, not that the kernel is good. Taken apart properly, the figure is about seven per cent, and it is in one place.
 
 - **`JANAS_EXPTRACE=1`** is new and stays: it splits the routed-expert phase into its parts - the two grouped products, the activation and its quantization, the final accumulate, the setup, and the cache - and prints them whenever the per-phase times are read, resetting as it goes. That last detail is the point of it. Prefill and decoding are different machines: decoding is **95.5% matrix product** and its cache costs 2.7%, prefill is 67.4% and 29.5%, because prefill really does read from disk. Averaged together they say something true of neither, which is exactly the mistake this entry was written to correct.
 - **There is nothing to take in the glue.** In decoding the whole of the setup, the activation, the accumulate and the cache come to 4.5% of the phase, and the measured wait on the disk is 1% of a token. The 9% quoted earlier was prefill mixed in.
@@ -1075,11 +381,7 @@ properly, the figure is about seven per cent, and it is in one place.
 
 ## [2026-09-22] - Janas-LLM: how much is left, and the answer is very little
 
-The entry below this one closed by saying the engine reaches the metal on one
-phase and asking what the rest could be worth. Measured, the answer is two
-per cent, and the number published earlier today - a third more speed - does
-not survive. What follows is how that was settled, including the two guesses
-that were wrong.
+The entry below this one closed by saying the engine reaches the metal on one phase and asking what the rest could be worth. Measured, the answer is two per cent, and the number published earlier today - a third more speed - does not survive. What follows is how that was settled, including the two guesses that were wrong.
 
 - **There are two yardsticks, not one.** A bare Q4_K product over one contiguous matrix runs at **78.4 GB/s**, 97% of the machine - measured on 1.2 GB, where the level-3 cache is 1% of it and cannot flatter the figure. The same product over expert-sized blocks drawn at random from eight gigabytes runs at **68.4**. Reading scattered costs 12%, and that is the structural price of being a mixture engine, not a fault in the code.
 - **How wrong a yardstick can be:** the same command on a 151 MB matrix reported 84.3 GB/s, above the machine's own read bandwidth, because a sixth of that matrix never leaves the cache between passes. 151 MB reads 84.3, 302 reads 80.8, 604 reads 79.2, 1208 reads 78.4. A benchmark that re-reads its data measures the cache unless it is far larger than one.
@@ -1091,10 +393,7 @@ that were wrong.
 
 ## [2026-09-22] - Janas-LLM: the speed of the thing, measured again
 
-All of it re-measured on an idle machine with the expert cache left to size
-itself, which is what the engine does when nobody tells it otherwise. The
-numbers published before were taken with the cache pinned to 20 GiB by hand -
-a setting the product never chooses on its own.
+All of it re-measured on an idle machine with the expert cache left to size itself, which is what the engine does when nobody tells it otherwise. The numbers published before were taken with the cache pinned to 20 GiB by hand - a setting the product never chooses on its own.
 
 | Model | cache | prefill | decode | with MTP |
 |---|---|---|---|---|
@@ -1109,9 +408,7 @@ a setting the product never chooses on its own.
 
 ## [2026-09-22] - Janas-LLM: the ceiling we measured against was wrong
 
-We have been quoting a number that does not hold, in this file and in the
-project's own notes, since the first week. It is corrected here in full,
-with how it was found and what it changes.
+We have been quoting a number that does not hold, in this file and in the project's own notes, since the first week. It is corrected here in full, with how it was found and what it changes.
 
 - **The claim.** This machine's memory reads at 83.9 GB/s, the engine's kernels reach 84% of that, and the missing 16% is the cost of unpacking 4-bit weights.
 - **What was wrong.** The probe behind that number gave every thread an equal share of the work and waited for all of them. On a CPU with six performance cores, eight efficiency cores and two low-power ones, equal shares on unequal cores measure the slowest core, not the memory. It reported 81.4 GB/s on twelve threads, then a collapse to 69.4 on sixteen - a collapse that does not exist.

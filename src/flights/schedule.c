@@ -220,7 +220,7 @@ int fl_schedule(const char *query, struct fl_sched **v, size_t *n, char *err,
     snprintf(url, sizeof url, BASE "%s&%s", key, query);
     struct janas_buf body = {0};
     char why[256];
-    int status = fl_get(url, NULL, 0, &body, why, sizeof why);
+    int status = janas_https_get(url, NULL, 0, &body, why, sizeof why);
     if (status < 0) {
         /* the address's errors quote it, and it holds the key */
         if (strstr(why, key))

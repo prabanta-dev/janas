@@ -906,12 +906,24 @@ static uint32_t args_rule(struct janas_jsg *j, const struct janas_json *f)
     return janas_jsg_schema(j, p, p);
 }
 
+/* Whether property p of a function's parameters is a required one. */
+static int xml_required(const struct janas_json *req,
+                        const struct janas_json *p)
+{
+    for (const struct janas_json *q = req ? req->child : NULL; q; q = q->next)
+        if (q->type == JANAS_JSON_STRING && q->n == p->key_n &&
+            memcmp(q->s, p->key, q->n) == 0)
+            return 1;
+    return 0;
+}
+
 /*
  * The parameters of an XML call, in the schema's order, the required ones
  * always there: R[i][x] as for a JSON object (schema.c), with no commas.
+ * For the functions with more parameters than XML_ANY_ORDER.
  */
-static uint32_t xml_params_rule(struct janas_gbuild *b, struct janas_jsg *j,
-                                const struct janas_json *f)
+static uint32_t xml_params_in_order(struct janas_gbuild *b, struct janas_jsg *j,
+                                    const struct janas_json *f)
 {
     const struct janas_json *params = janas_json_get(f, "parameters");
     const struct janas_json *props = janas_json_get(params, "properties");
@@ -930,12 +942,7 @@ static uint32_t xml_params_rule(struct janas_gbuild *b, struct janas_jsg *j,
     uint32_t text = janas_gb_until(b, close, strlen(close));
     size_t i = 0;
     for (const struct janas_json *p = props->child; p; p = p->next, i++) {
-        int must = 0;
-        for (const struct janas_json *q = req ? req->child : NULL; q && !must;
-             q = q->next)
-            must = q->type == JANAS_JSON_STRING && q->n == p->key_n &&
-                   memcmp(q->s, p->key, q->n) == 0;
-        if (!must)
+        if (!xml_required(req, p))
             janas_gb_ref(b, janas_gb_alt(b, r[i]), r[i + 1]);
         uint32_t a = janas_gb_alt(b, r[i]);
         janas_gb_lit(b, a, "<parameter=", 11);
@@ -954,6 +961,65 @@ static uint32_t xml_params_rule(struct janas_gbuild *b, struct janas_jsg *j,
     uint32_t first = r[0];
     free(r);
     return first;
+}
+
+/*
+ * The parameters of an XML call in any order, each at most once, the
+ * required ones always there: a model held to the schema's order, having
+ * begun with a later parameter, could no longer write an earlier one, and
+ * at temperature 0 called the tool without it again and again (Qwen3.6
+ * with janas-weather: "days" first, and the place lost). R[S] is "the
+ * parameters of the set S written": 2^n rules, so only up to XML_ANY_ORDER.
+ */
+#define XML_ANY_ORDER 8
+
+static uint32_t xml_params_rule(struct janas_gbuild *b, struct janas_jsg *j,
+                                const struct janas_json *f)
+{
+    const struct janas_json *params = janas_json_get(f, "parameters");
+    const struct janas_json *props = janas_json_get(params, "properties");
+    const struct janas_json *req = janas_json_get(params, "required");
+    if (!props || props->type != JANAS_JSON_OBJECT || props->n == 0)
+        return janas_gb_empty(b);
+    size_t n = props->n;
+    if (n > XML_ANY_ORDER)
+        return xml_params_in_order(b, j, f);
+    uint32_t ws = janas_jsg_ws(j);
+    const char *close = "\n</parameter>";
+    uint32_t text = janas_gb_until(b, close, strlen(close));
+    const struct janas_json *p_of[XML_ANY_ORDER];
+    uint32_t val[XML_ANY_ORDER], must = 0;
+    size_t i = 0;
+    for (const struct janas_json *p = props->child; p; p = p->next, i++) {
+        p_of[i] = p;
+        val[i] = is_text(p) ? text : janas_jsg_schema(j, p, params);
+        if (xml_required(req, p))
+            must |= 1u << i;
+    }
+    uint32_t sets = 1u << n, r[1u << XML_ANY_ORDER];
+    for (uint32_t s = 0; s < sets; s++)
+        r[s] = janas_gb_rule(b);
+    for (uint32_t s = 0; s < sets; s++) {
+        if ((s & must) == must)
+            janas_gb_alt(b, r[s]); /* the end */
+        for (i = 0; i < n; i++) {
+            if (s & (1u << i))
+                continue;
+            const struct janas_json *p = p_of[i];
+            uint32_t a = janas_gb_alt(b, r[s]);
+            janas_gb_lit(b, a, "<parameter=", 11);
+            janas_gb_lit(b, a, p->key, p->key_n);
+            janas_gb_lit(b, a, ">\n", 2);
+            janas_gb_ref(b, a, val[i]);
+            if (val[i] != text) {
+                janas_gb_ref(b, a, ws);
+                janas_gb_lit(b, a, "</parameter>", 12);
+            }
+            janas_gb_ref(b, a, ws);
+            janas_gb_ref(b, a, r[s | (1u << i)]);
+        }
+    }
+    return r[0];
 }
 
 /*

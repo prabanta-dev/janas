@@ -36,14 +36,10 @@ Everything goes to `bin/x86_64-linux/`: `janas-chat`, `janas-server`, `janas-mcp
 
 Janas reads its own file format (`.jns`), converted from a GGUF file. Supported now: **Qwen3.5 and Qwen3.6** (`qwen35moe`, e.g. Qwen3.6-35B-A3B), **Qwen3-Next** (`qwen3next`, e.g. Qwen3-Next-80B-A3B-Instruct and Qwen3-Coder-Next) and **Qwen3 MoE** (`qwen3moe`, e.g. Qwen3-30B-A3B), in the Q4_K, Q5_K, Q6_K and Q8_0 formats (so the usual **Q4_K_M** files).
 
-Keep models in `models/` next to the sources: the tools take a path, so
-anywhere works, but that is where the examples here and in the
-[README](README.md#getting-a-model) put them. The README also lists, for each
-model, which Hugging Face repository to take the GGUF from and how large it is.
+Keep models in `models/` next to the sources: the tools take a path, so anywhere works, but that is where the examples here and in the [README](README.md#getting-a-model) put them. The README also lists, for each model, which Hugging Face repository to take the GGUF from and how large it is.
 
 1. Download a Q4_K_M GGUF of the model from Hugging Face, into `models/gguf/`.
-2. Convert it with the converter the build made (with a model split into
-   several files, give the first):
+2. Convert it with the converter the build made (with a model split into several files, give the first):
 
    ```sh
    bin/x86_64-linux/gguf2jns models/gguf/Qwen3-Next-80B-A3B-Instruct-Q4_K_M.gguf \
@@ -61,8 +57,7 @@ model, which Hugging Face repository to take the GGUF from and how large it is.
 
 Qwen3.5 and Qwen3.6 keep their prediction block inside the model file: it is converted and used with no further step.
 
-Keep the `.jns` files on the NVMe SSD: the experts are read from there while the
-model answers, and a slower disk is felt at every token.
+Keep the `.jns` files on the NVMe SSD: the experts are read from there while the model answers, and a slower disk is felt at every token.
 
 ## Chatting
 

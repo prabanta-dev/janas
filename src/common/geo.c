@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
    Copyright (C) 2026 Maurizio Cammalleri */
 /*
- * geo.c - janas-flights' geography (see geo.h): the generated tables, and a
- * position put into words.
+ * geo.c - the geography of Janas's services (see geo.h): the generated tables,
+ * and a position put into words.
  */
 #include <ctype.h>
 #include <math.h>
@@ -47,6 +47,11 @@ const char *geo_compass(double deg)
 const char *geo_country_name(uint16_t i)
 {
     return i < N_OF(geo_countries) ? geo_countries[i].name : "";
+}
+
+const char *geo_country_iso2(uint16_t i)
+{
+    return i < N_OF(geo_countries) ? geo_countries[i].iso2 : "";
 }
 
 const char *geo_region_name(uint16_t i)
@@ -344,12 +349,10 @@ static void where_of(const struct geo_city *c, struct janas_buf *b)
         janas_buf_puts(b, geo_country_name(c->country));
 }
 
-void geo_describe(double lat, double lon, struct janas_buf *b)
+const struct geo_city *geo_city_near(double lat, double lon, double *km)
 {
-    /* the nearest city, and the nearest of another region that lies the
-       other way: the two the position is between */
-    const struct geo_city *near = NULL, *other = NULL;
-    double d_near = 1e30, d_other = 1e30;
+    const struct geo_city *near = NULL;
+    double d_near = 1e30;
     for (size_t i = 0; i < N_OF(geo_cities); i++) {
         const struct geo_city *c = &geo_cities[i];
         if (fabs(DEG(c->lat) - lat) > 5)
@@ -364,6 +367,17 @@ void geo_describe(double lat, double lon, struct janas_buf *b)
             near = c;
         }
     }
+    *km = d_near;
+    return near;
+}
+
+void geo_describe(double lat, double lon, struct janas_buf *b)
+{
+    /* the nearest city, and the nearest of another region that lies the
+       other way: the two the position is between */
+    const struct geo_city *other = NULL;
+    double d_near, d_other = 1e30;
+    const struct geo_city *near = geo_city_near(lat, lon, &d_near);
     if (!near) {
         janas_buf_printf(b, "at %.2f, %.2f", lat, lon);
         return;

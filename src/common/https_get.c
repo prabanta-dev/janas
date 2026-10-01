@@ -1,21 +1,23 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
    Copyright (C) 2026 Maurizio Cammalleri */
 /*
- * net.c - a GET over HTTPS for janas-flights, with the HTTP client and TLS
- * of the MCP transport (common/mcp_http.c, mcp_tls.c).
+ * https_get.c - a GET over HTTPS for Janas's services, with the HTTP client
+ * and TLS of the MCP transport (common/mcp_http.c, mcp_tls.c).
  */
 #include <stdio.h>
 #include <string.h>
 
+#include "https_get.h"
+
 #include "common/mcp_http.h"
-#include "flights.h"
 
 #define TIMEOUT_MS 15000
 #define MAX_REDIRECTS 4
 #define MAX_BODY (16u << 20)
 
-int fl_get(const char *url, const char *const *headers, size_t n_headers,
-           struct janas_buf *out, char *err, size_t err_len)
+int janas_https_get(const char *url, const char *const *headers,
+                    size_t n_headers, struct janas_buf *out, char *err,
+                    size_t err_len)
 {
     char where[4096];
     snprintf(where, sizeof where, "%s", url);

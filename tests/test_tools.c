@@ -204,6 +204,20 @@ static void test_grammar(void)
     CHECK(!call_ok(JANAS_TOOLS_XML, "<function=get_weather>\n<parameter="
                                     "days>\nx\n</parameter>\n</function>"),
           "grammar xml: bad integer, required missing");
+    CHECK(call_ok(JANAS_TOOLS_XML,
+                  "\n<function=get_weather>\n<parameter=days>\n2\n"
+                  "</parameter>\n<parameter=city>\nRome\n</parameter>\n"
+                  "</function>\n"),
+          "grammar xml: any order");
+    CHECK(!call_ok(JANAS_TOOLS_XML,
+                   "\n<function=get_weather>\n<parameter=city>\nRome\n"
+                   "</parameter>\n<parameter=city>\nOslo\n</parameter>\n"
+                   "</function>\n"),
+          "grammar xml: a parameter twice");
+    CHECK(!call_ok(JANAS_TOOLS_XML,
+                   "\n<function=get_weather>\n<parameter=days>\n2\n"
+                   "</parameter>\n</function>\n"),
+          "grammar xml: required missing");
 }
 
 static uint64_t rng = 0x70015;

@@ -930,6 +930,45 @@ static char *call_part(const janas_llm_chat *c, int32_t i, int args)
  * not, in auto mode or for a tool always allowed), run, and what the tools
  * answered sent back to the model. 1 when a new reply follows.
  */
+/* The calls that failed in this exchange, as "name args": one asked for
+   again is not run (it would fail the same way), and at the second time
+   the exchange stops. A model at temperature 0 can otherwise ask for it
+   until the rounds run out, without ever answering. */
+#define FAILED_MAX 16
+static struct {
+    char *call[FAILED_MAX];
+    int n, again;
+} failed;
+
+static void failed_clear(void)
+{
+    for (int i = 0; i < failed.n; i++)
+        free(failed.call[i]);
+    failed.n = failed.again = 0;
+}
+
+static char *call_key(const char *name, const char *args)
+{
+    size_t a = strlen(name), b = strlen(args);
+    char *k = malloc(a + b + 2);
+    if (k) {
+        memcpy(k, name, a);
+        k[a] = ' ';
+        memcpy(k + a + 1, args, b + 1);
+    }
+    return k;
+}
+
+static int failed_before(const char *key)
+{
+    for (int i = 0; key && i < failed.n; i++)
+        if (strcmp(failed.call[i], key) == 0)
+            return 1;
+    return 0;
+}
+
+/* 1 when the results went back to the model for its next reply, 0 when
+   there is nothing more to do, -1 when the exchange stops here. */
 static int run_calls(janas_llm_chat *c, int autorun)
 {
     int32_t n = janas_llm_chat_calls(c);
@@ -954,7 +993,18 @@ static int run_calls(janas_llm_chat *c, int autorun)
                     T_DIM(&term), "", 400, args,
                     strlen(args) > 400 ? " ..." : "", T_RESET(&term));
         int go = autorun || mcpc_always(name) || mcpc_own(name);
-        if (!go && interrupted) {
+        char *key = call_key(name, args);
+        if (failed_before(key)) {
+            go = 0;
+            failed.again++;
+            term_printf(&term, "%snot run: the same call failed already%s\n",
+                        T_WARN(&term), T_RESET(&term));
+            texts[i] = strdup("Not run: this very call, with the same "
+                              "arguments, failed already in this exchange "
+                              "and would fail again. Do not ask for it "
+                              "again: answer the user with what you have, "
+                              "or ask them for what is missing.");
+        } else if (!go && interrupted) {
             go = 0;
         } else if (!go && !term.tty) {
             term_printf(&term, "not run: on a pipe nobody can say yes "
@@ -968,16 +1018,21 @@ static int run_calls(janas_llm_chat *c, int autorun)
         if (go) {
             footer(idle_llm, c, "running a tool");
             int rc = mcpc_call(name, args, &texts[i]);
+            if (rc != 0 && key && failed.n < FAILED_MAX) {
+                failed.call[failed.n++] = key;
+                key = NULL;
+            }
             const char *t = texts[i] ? texts[i] : "";
             size_t line = strcspn(t, "\n");
             term_printf(
                 &term, "%s%s%.*s%s%s\n", rc ? T_WARN(&term) : T_DIM(&term),
                 rc > 0 ? "tool error: " : "", (int)(line < 200 ? line : 200), t,
                 line < strlen(t) || line > 200 ? " ..." : "", T_RESET(&term));
-        } else {
+        } else if (!texts[i]) {
             texts[i] = strdup("The user did not allow this call: it was "
                               "not run.");
         }
+        free(key);
         free(name);
         free(args);
         if (!texts[i])
@@ -995,6 +1050,13 @@ static int run_calls(janas_llm_chat *c, int autorun)
         free(texts[i]);
     free(texts);
     interrupted = 0;
+    if (sent && failed.again >= 2) {
+        term_printf(&term,
+                    "%sstopped: the model keeps asking for a call that "
+                    "failed%s\n",
+                    T_WARN(&term), T_RESET(&term));
+        return -1;
+    }
     return sent;
 }
 
@@ -1421,12 +1483,14 @@ int main(int argc, char **argv)
             continue;
         }
         /* the reply, and while it calls tools and they answer, the next */
+        failed_clear();
         for (int round = 0; round < 16; round++)
             if (show_reply(llm, c, markdown, stats) != 0 ||
                 run_calls(c, mcp_auto) <= 0)
                 break;
         footer(llm, c, NULL);
     }
+    failed_clear();
     free(msg);
     free(system);
     free(mcp_extra);

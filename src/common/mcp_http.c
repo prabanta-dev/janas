@@ -405,10 +405,13 @@ int janas_http_request(struct janas_http *h, const struct janas_url *u,
     janas_buf_printf(&q, "%s %s HTTP/1.1\r\nHost: %s%s%s%s%s\r\n", method,
                      u->path, v6 ? "[" : "", u->host, v6 ? "]" : "",
                      dflt ? "" : ":", dflt ? "" : u->port);
-    janas_buf_printf(&q,
-                     "Content-Length: %zu\r\nConnection: close\r\n"
-                     "User-Agent: janas\r\n",
-                     n);
+    /* the program's own User-Agent, when it gives one (MET Norway asks
+       for one that names the program and how to reach its authors) */
+    int agent = 0;
+    for (size_t i = 0; i < n_headers; i++)
+        agent |= strncasecmp(headers[i], "User-Agent:", 11) == 0;
+    janas_buf_printf(&q, "Content-Length: %zu\r\nConnection: close\r\n%s", n,
+                     agent ? "" : "User-Agent: janas\r\n");
     for (size_t i = 0; i < n_headers; i++)
         janas_buf_printf(&q, "%s\r\n", headers[i]);
     janas_buf_puts(&q, "\r\n");

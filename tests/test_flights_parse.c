@@ -6,7 +6,7 @@
  * the evening before), a codeshare and an error, made by hand. The times
  * come in the airport's local time marked +00:00: read in its zone.
  * schedule.c belongs to the program, so it is compiled in here, with a
- * fl_get that never goes out and quotes the address in its error.
+ * janas_https_get that never goes out and quotes the address in its error.
  */
 #include <stdio.h>
 #include <string.h>
@@ -14,8 +14,9 @@
 
 #include "flights/schedule.c"
 
-int fl_get(const char *url, const char *const *headers, size_t n_headers,
-           struct janas_buf *out, char *err, size_t err_len)
+int janas_https_get(const char *url, const char *const *headers,
+                    size_t n_headers, struct janas_buf *out, char *err,
+                    size_t err_len)
 {
     (void)headers, (void)n_headers, (void)out;
     /* as the URL parser does: its errors quote the address */

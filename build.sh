@@ -336,6 +336,9 @@ if [ "$VARIANT" = release ]; then
         case "$o" in
         */common_mcp_*.o) mcp_objs+=("$o") ;;
         */common_hf_*.o) ;; # for the tools, with libjanas.a only
+        # the services': the geography's tables, the GET over HTTPS and
+        # where the user is
+        */common_geo.o | */common_https_get.o | */common_locate.o) ;;
         */llm_json.o) mcp_objs+=("$o") llm_objs+=("$o") ;;
         *) llm_objs+=("$o") ;;
         esac

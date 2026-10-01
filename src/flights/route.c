@@ -28,7 +28,7 @@ static int ask(const char *path, struct janas_json_doc **doc,
     char url[256], err[160];
     snprintf(url, sizeof url, BASE "%s", path);
     struct janas_buf body = {0};
-    int status = fl_get(url, NULL, 0, &body, err, sizeof err);
+    int status = janas_https_get(url, NULL, 0, &body, err, sizeof err);
     *doc = NULL;
     if (status == 404) {
         janas_buf_free(&body);

@@ -21,9 +21,10 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "common/locate.h"
 #include "common/mcp_server.h"
 #include "flights.h"
-#include "geo.h"
+#include "common/geo.h"
 
 #define DEG(x) ((x) * 1e-5)
 #define KM_PER_NM 1.852
@@ -103,7 +104,10 @@ void fl_tools_list(void *ctx, struct janas_buf *b)
            "Turin, Milan, Rome) or a latitude and longitude.\", "
            "\"inputSchema\": {\"type\": \"object\", \"properties\": {");
     schema_str(b, "place",
-               "An airport code (TRN, LIMF) or a city name in English.");
+               "An airport code (TRN, LIMF) or a city name in English. "
+               "Leave out place and coordinates only when the user names "
+               "no place: then where the user is (as set on the computer, "
+               "or estimated from the internet connection).");
     janas_buf_puts(
         b, ", \"latitude\": {\"type\": \"number\", \"minimum\": -90, "
            "\"maximum\": 90}, \"longitude\": {\"type\": \"number\", "
@@ -1124,7 +1128,7 @@ static int flights_nearby(const struct janas_json *args, struct janas_buf *b)
         limit = 1;
     if (limit > MAX_LIST)
         limit = MAX_LIST;
-    char where[200] = "";
+    char where[256] = "";
     if (place && *place) {
         const struct geo_airport *ap = geo_airport_find(place);
         const struct geo_city *c = ap ? NULL : geo_city_find(place);
@@ -1148,9 +1152,19 @@ static int flights_nearby(const struct janas_json *args, struct janas_buf *b)
             return 0;
         }
     } else if (lat > 90 || lat < -90 || lon > 180 || lon < -180) {
-        const char *m = "Give a place, or a latitude and longitude.";
-        janas_mcps_text_result(b, m, strlen(m), 1);
-        return 0;
+        struct janas_where w;
+        char why[300];
+        if (janas_where(&w, why, sizeof why) != 0) {
+            char m[400];
+            snprintf(m, sizeof m, "No place given, and %s.", why);
+            janas_mcps_text_result(b, m, strlen(m), 1);
+            return 0;
+        }
+        lat = w.lat;
+        lon = w.lon;
+        snprintf(where, sizeof where, "%s (where the user is, %s)",
+                 w.city[0] ? w.city : "the user's position", w.how);
+        place = where; /* named: no point to put into words */
     } else {
         snprintf(where, sizeof where, "%.3f, %.3f", lat, lon);
     }

@@ -28,7 +28,7 @@ struct server {
    beside it: janas-<name>. They read public data and change nothing, so
    their tools run without asking, and what they say of their tools goes
    to the model. */
-static const char *const SERVICES[] = {"flights"};
+static const char *const SERVICES[] = {"flights", "weather"};
 
 static struct server *servers;
 static size_t n_servers;

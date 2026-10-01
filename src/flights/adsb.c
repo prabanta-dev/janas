@@ -75,7 +75,8 @@ int fl_adsb(const char *query, struct fl_ac **ac, size_t *n,
         char url[512];
         snprintf(url, sizeof url, "%s%s", NETS[k].base, query);
         struct janas_buf body = {0};
-        int status = fl_get(url, NULL, 0, &body, why[k], sizeof why[k]);
+        int status =
+            janas_https_get(url, NULL, 0, &body, why[k], sizeof why[k]);
         if (status != 200) {
             if (status > 0)
                 snprintf(why[k], sizeof why[k], "HTTP %d", status);
