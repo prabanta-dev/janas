@@ -2,6 +2,10 @@
 
 > Curated, user-facing summary of completed work, newest first.
 
+## [2026-10-03] - janas-quakes: the earthquakes
+
+- **janas-quakes**, an MCP service of the earthquakes: the latest near a place, where the user is, or within a sea of the built-in tables (by its polygons), the strongest in the world with the USGS's expected impact and its tsunami flag (told as a flag, not as a tsunami), one in detail (how many felt it, the strongest shaking estimated, the link to the source's page). INGV (CC BY 4.0) for Italy and the seas that reach into it, the USGS (public domain) elsewhere, each the other's fallback; the answers give the model each event's id, to name the one meant. Run over the protocol and in janas-chat; `tests/test_quakes_parse.c` checks the reading of both sources and the layouts.
+
 ## [2026-10-02] - janas-system: this computer
 
 - **janas-system**, an MCP service that only reads and reaches no network: how the computer is (the processor and the kernel's share of it, the memory and the swap, on Linux the pressure, every disk, the battery and its wear, the temperatures a device), what fills a directory (8 seconds and 64 levels at most, never across filesystems or links; "at least" when the time runs out), the programs using the most processor or memory or those of a name, the errors of the logs (the same message but for its numbers counted once, the latest read first) and the services that failed, the updates by the package manager's last list (apt, dnf, pacman; nothing fetched), the network interfaces, the Wi-Fi signal, the gateway. Run over the protocol on the development laptop; `tests/test_system_parse.c` checks the reading of Linux's texts and the layouts.

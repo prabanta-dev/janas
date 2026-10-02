@@ -50,6 +50,8 @@ static const struct {
     {"prices", "prices and finance, for information: currencies, "
                "crypto-assets, shares, inflation, central banks' rates, "
                "electricity, the cheapest fuel near a place"},
+    {"quakes", "earthquakes: the latest near a place or where the user is, "
+               "the strongest in the world, one in detail"},
     {"system", "this computer: how it is (memory, processor, disks, "
                "battery, temperatures), what fills a folder, the programs "
                "running, the errors, the updates, the network"},
