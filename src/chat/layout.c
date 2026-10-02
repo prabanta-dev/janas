@@ -144,7 +144,9 @@ static int comma_lang(const char *l)
 static const char SYSTEM[] =
     "You translate the texts of a program. The text holds markers such as "
     "{7}: keep every marker exactly as it is, once each, where the sense "
-    "puts it; never translate, change, add or drop one. After the line "
+    "puts it; never translate, change, add or drop one. Translate all the "
+    "text between them, however short (\", by \", \", comments: \"). "
+    "After the line "
     "\"=== words\" come words and short phrases, one a line, each after "
     "its number and a colon (\"12: north-east\"): translate what follows "
     "the colon, keeping the numbers and the lines; what is in square "
@@ -213,6 +215,10 @@ static const char *hint(const char *key, size_t n)
              {"dir.", "compass point, abbreviated"},
              {"from.", "wind direction"},
              {"wd.", "day of the week"},
+             {"status.", "the state of one issue or pull request"},
+             {"kind.", "a plural, after a number"},
+             {"change.", "what happened to one file"},
+             {"done.", "what a git command did"},
              {"mon.", "month"}};
     for (size_t i = 0; i < sizeof k / sizeof *k; i++) {
         size_t pn = strlen(k[i].prefix);
@@ -401,7 +407,7 @@ static char *translated(const char *name, const char *en)
     if (dir_of(dir, sizeof dir) != 0)
         return NULL;
     snprintf(path, sizeof path, "%s/%s.%s.%016llx.txt", dir, name, lang,
-             (unsigned long long)glossary_mark(lang, mark(en)));
+             (unsigned long long)glossary_mark(lang, name, mark(en)));
     char *have = read_file(path);
     char why[200];
     if (have && janas_tpl_same_shape(en, strlen(en), have, strlen(have), why,
@@ -412,7 +418,7 @@ static char *translated(const char *name, const char *en)
     if (!translator || encode(en, &c) != 0)
         return NULL;
     struct janas_buf ask = {0};
-    const char *terms = glossary_terms(lang);
+    const char *terms = glossary_terms(lang, name);
     janas_buf_printf(&ask, "Translate into %s%s%s:\n\n%.*s", lang_name(lang),
                      terms ? ", with these terms: " : "", terms ? terms : "",
                      (int)c.text.n, c.text.p);
@@ -422,7 +428,21 @@ static char *translated(const char *name, const char *en)
     char *out = NULL;
     if (r == 0 && ans) {
         unwrap(ans);
-        out = decode(&c, ans, why, sizeof why);
+        /* the text given back as it came: the 35B did so with GitHub's
+           issues, translating only the words. Not kept, so that it is
+           asked again the next time. */
+        const char *w = strstr(ans, "=== words");
+        const char *cw = strstr(c.text.p, "\n=== words");
+        size_t an = w ? (size_t)(w - ans) : strlen(ans);
+        size_t cn = cw ? (size_t)(cw - c.text.p) : c.text.n;
+        while (an && (ans[an - 1] == '\n' || ans[an - 1] == ' '))
+            an--;
+        while (cn && (c.text.p[cn - 1] == '\n' || c.text.p[cn - 1] == ' '))
+            cn--;
+        if (an == cn && memcmp(ans, c.text.p, cn) == 0)
+            snprintf(why, sizeof why, "the text came back untranslated");
+        else
+            out = decode(&c, ans, why, sizeof why);
     } else {
         snprintf(why, sizeof why, "no answer");
     }

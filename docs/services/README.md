@@ -1,16 +1,19 @@
 # Janas's services
 
-A service of Janas is a program that brings data of the world - flights, the weather, roads and places, an encyclopedia - to a model, as tools of the [Model Context Protocol](https://modelcontextprotocol.io) (MCP). Each one is an MCP server of its own, over its standard input and output, so that any MCP client can use it: `janas-chat`, and the assistants of others.
+A service of Janas is a program that brings data of the world - flights, the weather, roads and places, an encyclopedia, GitHub's projects, the git repositories of your computer - to a model, as tools of the [Model Context Protocol](https://modelcontextprotocol.io) (MCP). Each one is an MCP server of its own, over its standard input and output, so that any MCP client can use it: `janas-chat`, and the assistants of others.
 
 | Service | What it answers | Key |
 |---|---|---|
 | [`janas-flights`](flights.md) | where a flight is and what it is doing, its times, the flights of a route, what flies over a sea or near a place | none for live data; a free one of your own for schedules |
+| [`janas-git`](git.md) | the git repositories of this computer: what has changed, the commits, the branches, a diff; a commit, pull, push or switch of branch, each asked of you first | none |
+| [`janas-github`](github.md) | a project's issues and pull requests (the new ones), its latest releases, its recent commits, what it is | none; the gh command's token when you have one |
 | [`janas-maps`](maps.md) | a route by car, bike or on foot, step by step; journeys by public transport; what is near a place; where an address is | none |
 | [`janas-weather`](weather.md) | the weather now (a model's and a station's), the forecast, the sea and its waves, the warnings in force | none |
 | [`janas-wiki`](wiki.md) | Wikipedia's search, its pages as text, the pages about what lies around a place | none |
 
 What every service does the same way:
 
+- **Reading by default.** Every tool only reads, but those of `janas-git` that commit, pull, push or switch branch; they say so, and nothing that throws work away is offered.
 - **Facts already worked out.** The answers are text for the model, with places, distances and times already computed and put into words, so that the model telling them has nothing to compute; what is not known is said to be not known.
 - **Open data first.** Questions about an area or a list are answered from open sources only; a source with a small quota (a key of yours) is kept for questions about one thing.
 - **It says when to use it.** A service tells the client's model when its tools apply: a question on the subject is enough, the tools need not be named, and the model is told not to name them in its answers.
@@ -22,7 +25,7 @@ What every service does the same way:
 
 ## In janas-chat
 
-`janas-chat` starts by itself the services it finds beside it (in the same directory as the program) and runs their calls without asking: they read public data and change nothing. Their tools are not written into the system message: it holds a catalog, a line a service, and the model opens a service when a question needs it, getting its instructions and tools then (`--all-tools` writes them all at the start instead). A call shows as a dimmed line. Nothing to configure, nothing to name: ask your question.
+`janas-chat` starts by itself the services it finds beside it (in the same directory as the program) and runs without asking the calls of the tools that only read. A tool that changes something - `janas-git`'s commit, pull, push, switch - says so (MCP's `readOnlyHint` false), and its call is shown whole and asked of you every time, with `--mcp-auto` too; on a pipe it is not run. Their tools are not written into the system message: it holds a catalog, a line a service, and the model opens a service when a question needs it, getting its instructions and tools then (`--all-tools` writes them all at the start instead). A call shows as a dimmed line. Nothing to configure, nothing to name: ask your question.
 
 - `/mcp` lists the servers running, the services marked as Janas's.
 - `--no-services` starts none of them; `--no-mcp` no server at all.

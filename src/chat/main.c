@@ -22,6 +22,7 @@
 #include <sys/stat.h>
 #include <signal.h>
 #include <stdarg.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1193,11 +1194,16 @@ static int run_calls(janas_llm_chat *c, int autorun)
         }
         term_gap(&term);
         /* a service of Janas's runs by itself: its call is only noted */
+        /* one that changes something (janas-git's commit, push) is asked
+           for every time, even with --mcp-auto: never "always"; shown
+           whole, since the user says yes to what it holds */
+        int writes = mcpc_writes(name);
+        int cut = writes ? INT_MAX : 400;
         term_printf(&term, "%s→ %s%s %s%.*s%s%s\n",
-                    mcpc_own(name) ? T_DIM(&term) : T_CMD(&term), name,
-                    T_DIM(&term), "", 400, args,
-                    strlen(args) > 400 ? " ..." : "", T_RESET(&term));
-        int go = autorun || mcpc_always(name) || mcpc_own(name);
+                    mcpc_own(name) && !writes ? T_DIM(&term) : T_CMD(&term),
+                    name, T_DIM(&term), "", cut, args,
+                    strlen(args) > (size_t)cut ? " ..." : "", T_RESET(&term));
+        int go = !writes && (autorun || mcpc_always(name) || mcpc_own(name));
         char *key = call_key(name, args);
         if (failed_before(key)) {
             go = 0;
@@ -1212,8 +1218,12 @@ static int run_calls(janas_llm_chat *c, int autorun)
         } else if (!go && interrupted) {
             go = 0;
         } else if (!go && !term.tty) {
-            term_printf(&term, "not run: on a pipe nobody can say yes "
-                               "(--mcp-auto runs them)\n");
+            term_printf(&term, "not run: on a pipe nobody can say yes%s\n",
+                        writes ? " (it changes something: always asked)"
+                               : " (--mcp-auto runs them)");
+        } else if (!go && writes) {
+            int k = ask_key("it changes something: run it? [y]es, [n]o");
+            go = k == 'y';
         } else if (!go) {
             int k = ask_key("run it? [y]es, [n]o, [a]lways this tool");
             go = k == 'y' || k == 'a';

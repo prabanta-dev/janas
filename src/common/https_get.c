@@ -6,6 +6,7 @@
  */
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 
 #include "https_get.h"
 
@@ -27,12 +28,25 @@ int janas_https_get_ms(const char *url, const char *const *headers,
                        size_t n_headers, int timeout_ms, struct janas_buf *out,
                        char *err, size_t err_len)
 {
-    char where[4096];
+    char where[4096], first[256] = "";
     snprintf(where, sizeof where, "%s", url);
+    const char *kept[16];
     for (int hop = 0; hop <= MAX_REDIRECTS; hop++) {
         struct janas_url u;
         if (janas_url_parse(where, &u, err, err_len) != 0)
             return -1;
+        if (!hop)
+            snprintf(first, sizeof first, "%s", u.host);
+        /* sent to another host, a redirect loses the credentials (as curl
+           does): a token for one server is not for the next */
+        if (hop && strcasecmp(first, u.host) != 0 && headers) {
+            size_t k = 0;
+            for (size_t i = 0; i < n_headers && k < 16; i++)
+                if (strncasecmp(headers[i], "Authorization:", 14) != 0)
+                    kept[k++] = headers[i];
+            headers = kept;
+            n_headers = k;
+        }
         struct janas_http h;
         if (janas_http_request(&h, &u, "GET", headers, n_headers, NULL, 0,
                                timeout_ms, NULL, err, err_len) != 0)

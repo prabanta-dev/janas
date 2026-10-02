@@ -9,6 +9,7 @@
  * The sources belong to the program, so they are compiled in here.
  */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -37,7 +38,10 @@ static const char EN[] = "Wind {{wind}} km/h ({{bft|bft}}), sea "
 static char asked[4096];
 static int calls;
 
-/* The text back as it came: "Translate into ...:\n\n" cut off. */
+/* The text back as it came ("Translate into ...:\n\n" cut off), with
+   "Wind" put into Italian unless asked not to. */
+static int translate_wind = 1;
+
 static int echo(const char *name, const char *system, const char *text,
                 char **out)
 {
@@ -46,8 +50,17 @@ static int echo(const char *name, const char *system, const char *text,
     calls++;
     snprintf(asked, sizeof asked, "%s", text);
     const char *t = strstr(text, "\n\n");
-    *out = strdup(t ? t + 2 : text);
-    return *out ? 0 : -1;
+    t = t ? t + 2 : text;
+    const char *w = translate_wind ? strstr(t, "Wind") : NULL;
+    size_t n = strlen(t);
+    *out = malloc(n + 2);
+    if (!*out)
+        return -1;
+    if (w)
+        snprintf(*out, n + 2, "%.*sVento%s", (int)(w - t), t, w + 4);
+    else
+        memcpy(*out, t, n + 1);
+    return 0;
 }
 
 int main(void)
@@ -62,10 +75,16 @@ int main(void)
               !glossary_word("it", "sea.1x", 6) &&
               !glossary_word("it", "wd.Mon", 6) &&
               !glossary_word("en", "bft.1", 5) &&
-              !glossary_word("xx", "bft.1", 5),
+              !glossary_word("xx", "bft.1", 5) &&
+              strcmp(glossary_word("it", "status.open", 11), "aperta") == 0 &&
+              !glossary_word("it", "status.ope", 10),
           "words the glossary has not");
-    CHECK(glossary_mark("it", 1) != glossary_mark("fr", 1) &&
-              glossary_mark("en", 1) == 1,
+    CHECK(glossary_mark("it", "x", 1) != glossary_mark("fr", "x", 1) &&
+              glossary_mark("en", "x", 1) == 1 &&
+              glossary_mark("it", "git_status", 1) !=
+                  glossary_mark("it", "x", 1) &&
+              strstr(glossary_terms("it", "github_issues"), "branch = ramo") &&
+              !strstr(glossary_terms("it", "weather_now"), "branch"),
           "the glossary's mark");
 
     char dir[512];
@@ -83,7 +102,7 @@ int main(void)
     char *it = translated("test", EN);
     CHECK(it != NULL, "no layout");
     if (it) {
-        CHECK(strstr(it, "Wind {{wind}} km/h ({{bft|bft}}), sea {{wave}} m "
+        CHECK(strstr(it, "Vento {{wind}} km/h ({{bft|bft}}), sea {{wave}} m "
                          "({{code|sea}}).") == it,
               "the tags back in place:\n%s", it);
         CHECK(strstr(it, "bft.1 = bava di vento\n") &&
@@ -103,6 +122,19 @@ int main(void)
           "the layout kept (%d requests)", calls);
     free(again);
     free(it);
+
+    /* the text given back untranslated: not used, not kept */
+    translate_wind = 0;
+    static const char EN2[] = "Rain {{mm}} mm.\n";
+    int before = calls;
+    char *same = translated("test2", EN2);
+    char p2[1200];
+    snprintf(p2, sizeof p2, "%s/janas/layouts/test2.it.%016llx.txt", dir,
+             (unsigned long long)glossary_mark("it", "test2", mark(EN2)));
+    CHECK(!same && calls == before + 1 && access(p2, F_OK) != 0,
+          "an untranslated text refused");
+    free(same);
+    translate_wind = 1;
 
     /* lines added by the model between two tags are not kept: those
        between tags alone come from English */
@@ -127,7 +159,7 @@ int main(void)
     /* tidy up: the one file and the two directories made here */
     char path[1200];
     snprintf(path, sizeof path, "%s/janas/layouts/test.it.%016llx.txt", dir,
-             (unsigned long long)glossary_mark("it", mark(EN)));
+             (unsigned long long)glossary_mark("it", "test", mark(EN)));
     CHECK(unlink(path) == 0, "no file at %s", path);
     snprintf(path, sizeof path, "%s/janas/layouts", dir);
     rmdir(path);

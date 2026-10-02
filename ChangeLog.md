@@ -2,6 +2,14 @@
 
 > Curated, user-facing summary of completed work, newest first.
 
+## [2026-10-02] - janas-github and janas-git
+
+- **janas-github**, GitHub as an MCP service that only reads: a repository's issues and pull requests (`new`: those opened since the last time asked, kept in `~/.config/janas/github-seen.txt`), its latest releases (its tags when it has none), a branch's recent commits, what it is. A name alone is looked for among the user's repositories, else the one with the most stars, and the answer says which. The token of `GH_TOKEN`, `GITHUB_TOKEN` or `gh auth token`, kept in memory only; without one, 60 requests an hour. Layouts for every answer; `tests/test_github_parse.c` on answers of 2 October.
+- **janas-git**, the computer's git repositories: `git_status`, `git_log`, `git_diff`, `git_branches` read; `git_commit`, `git_pull` (fast-forward only), `git_push` (never by force), `git_switch` change something and say so (`readOnlyHint` false). Nothing that throws work away; git without a shell, without a terminal, with a time limit; no argument of the model's taken as an option. `tests/test_git_parse.c`.
+- **janas-chat asks every time for a tool that changes something**, with `--mcp-auto` too and never "always", showing the call whole; on a pipe it is not run (`mcpc_writes`).
+- **Translations of layouts**: a text given back untranslated is refused and asked again the next time; git's and GitHub's layouts get the terms of the craft from the glossary (commit, branch, stage...), the others keep theirs; the states of an issue ("aperta", not the "aperte" the model wrote for one) from the glossary in Italian, French, Spanish and German.
+- **A redirect to another host loses the `Authorization` header** (`janas_https_get`), as curl does.
+
 ## [2026-10-02] - janas-maps: roads and places
 
 - **janas-maps**, roads and places as an MCP service, from OpenStreetMap's data through free services with no key: a route by car, bike or on foot between two places or through a third, avoiding tolls, motorways or ferries when asked, with its length, time without traffic, main roads, up to two other ways, the way step by step in the computer's language and a link to the map (`maps_route`: Valhalla on FOSSGIS' servers, OSRM's route without steps when Valhalla does not answer); journeys by public transport leaving or arriving at a time, leg by leg (`maps_transit`: Transitous, over the operators' open timetables); the places of a kind around a place, nearest first, from a list of twenty kinds (`maps_nearby`: Overpass); where a place or an address is (`maps_find`: Nominatim, Photon when it does not answer). Every answer is data with a layout: the user sees the steps and the journeys, the model reads a brief. `janas-chat` starts it by itself; [docs/services/maps.md](docs/services/maps.md).

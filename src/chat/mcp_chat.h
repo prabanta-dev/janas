@@ -24,6 +24,9 @@ int mcpc_start_services(void);
    services: they run without asking. */
 int mcpc_own(const char *tool);
 int mcpc_is_own(size_t i);
+/* Whether a tool of Janas's own services changes something (it says it
+   does not only read): it is asked for every time, --mcp-auto or not. */
+int mcpc_writes(const char *tool);
 void mcpc_stop(void);
 
 /* Janas's services as a catalog in the system message, opened by the model

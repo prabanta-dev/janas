@@ -29,15 +29,21 @@ struct server {
 };
 
 /* The services of Janas that janas-chat starts by itself when they are
-   beside it: janas-<name>. They read public data and change nothing, so
-   their tools run without asking, and what they say of their tools goes
-   to the model. */
+   beside it: janas-<name>. Their tools that only read run without asking;
+   those that change something (readOnlyHint false: janas-git's commit,
+   push...) are asked for every time (mcpc_writes). What they say of their
+   tools goes to the model. */
 static const struct {
     const char *name, *about; /* for the catalog */
 } SERVICES[] = {
     {"flights", "flights and aircraft: where a flight is and what it is "
                 "doing, today's flights of a route, what flies over a sea "
                 "or near a place"},
+    {"git", "the git repositories of this computer: what has changed, "
+            "the commits, the branches, a diff; a commit, pull, push or "
+            "switch of branch, each confirmed by the user"},
+    {"github", "GitHub: a project's issues and pull requests (the new "
+               "ones), its latest release, its recent commits, what it is"},
     {"maps", "roads and places: a route by car, bike or on foot, public "
              "transport between places, what is near (fuel, a pharmacy...), "
              "where an address is"},
@@ -413,6 +419,16 @@ int mcpc_own(const char *tool)
     for (size_t i = 0; i < n_servers; i++)
         if (strncmp(tool, servers[i].prefix, strlen(servers[i].prefix)) == 0)
             return servers[i].own;
+    return 0;
+}
+
+int mcpc_writes(const char *tool)
+{
+    for (size_t i = 0; i < n_servers; i++) {
+        size_t n = strlen(servers[i].prefix);
+        if (servers[i].own && strncmp(tool, servers[i].prefix, n) == 0)
+            return janas_mcp_tool_read_only(servers[i].m, tool + n, -1) == 0;
+    }
     return 0;
 }
 

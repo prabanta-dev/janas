@@ -13,16 +13,17 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* The term of the word key (n bytes: "bft.4", "sea.3") in lang; NULL when
-   the glossary has none. */
+/* The term of the word key (n bytes: "bft.4", "sea.3", "status.open")
+   in lang; NULL when the glossary has none. */
 const char *glossary_word(const char *lang, const char *key, size_t n);
 
-/* The terms of the running text in lang, for the request to the model
-   ("swell = mare lungo; ..."); NULL when there are none. */
-const char *glossary_terms(const char *lang);
+/* The terms of the running text in lang for the layout name, for the
+   request to the model ("swell = mare lungo; ..."; those of git's craft
+   for git_* and github_*); NULL when there are none. */
+const char *glossary_terms(const char *lang, const char *name);
 
-/* h carried on (FNV-1a) over the glossary of lang: a layout kept on disk
-   is translated again when the glossary changes. */
-uint64_t glossary_mark(const char *lang, uint64_t h);
+/* h carried on (FNV-1a) over the glossary of lang for the layout name: a
+   layout kept on disk is translated again when the glossary changes. */
+uint64_t glossary_mark(const char *lang, const char *name, uint64_t h);
 
 #endif
