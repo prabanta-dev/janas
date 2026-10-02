@@ -50,6 +50,9 @@ static const struct {
     {"prices", "prices and finance, for information: currencies, "
                "crypto-assets, shares, inflation, central banks' rates, "
                "electricity, the cheapest fuel near a place"},
+    {"system", "this computer: how it is (memory, processor, disks, "
+               "battery, temperatures), what fills a folder, the programs "
+               "running, the errors, the updates, the network"},
     {"weather", "the weather now and the forecast, the sea and its waves, "
                 "weather warnings"},
     {"wiki", "Wikipedia, when the user asks for it: a page shown to the "

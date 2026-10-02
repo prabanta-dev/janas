@@ -417,36 +417,47 @@ static char *translated(const char *name, const char *en)
     struct coded c;
     if (!translator || encode(en, &c) != 0)
         return NULL;
-    struct janas_buf ask = {0};
     const char *terms = glossary_terms(lang, name);
-    janas_buf_printf(&ask, "Translate into %s%s%s:\n\n%.*s", lang_name(lang),
-                     terms ? ", with these terms: " : "", terms ? terms : "",
-                     (int)c.text.n, c.text.p);
-    char *ans = NULL;
-    int r = ask.oom ? -1 : translator(name, SYSTEM, ask.p, &ans);
-    janas_buf_free(&ask);
     char *out = NULL;
-    if (r == 0 && ans) {
-        unwrap(ans);
-        /* the text given back as it came: the 35B did so with GitHub's
-           issues, translating only the words. Not kept, so that it is
-           asked again the next time. */
-        const char *w = strstr(ans, "=== words");
-        const char *cw = strstr(c.text.p, "\n=== words");
-        size_t an = w ? (size_t)(w - ans) : strlen(ans);
-        size_t cn = cw ? (size_t)(cw - c.text.p) : c.text.n;
-        while (an && (ans[an - 1] == '\n' || ans[an - 1] == ' '))
-            an--;
-        while (cn && (c.text.p[cn - 1] == '\n' || c.text.p[cn - 1] == ' '))
-            cn--;
-        if (an == cn && memcmp(ans, c.text.p, cn) == 0)
-            snprintf(why, sizeof why, "the text came back untranslated");
-        else
-            out = decode(&c, ans, why, sizeof why);
-    } else {
-        snprintf(why, sizeof why, "no answer");
+    /* the text given back as it came: the 35B did so with GitHub's issues
+       and with janas-system's status, dense with markers, translating only
+       the words. Asked once more, told so; else not kept, so that it is
+       asked again the next time. */
+    for (int again = 0; again < 2 && !out; again++) {
+        struct janas_buf ask = {0};
+        janas_buf_printf(&ask, "%sTranslate into %s%s%s:\n\n%.*s",
+                         again ? "The text came back as it was, untranslated: "
+                                 "this time translate every word of it, "
+                                 "between the markers too. "
+                               : "",
+                         lang_name(lang), terms ? ", with these terms: " : "",
+                         terms ? terms : "", (int)c.text.n, c.text.p);
+        char *ans = NULL;
+        int r = ask.oom ? -1 : translator(name, SYSTEM, ask.p, &ans);
+        janas_buf_free(&ask);
+        int same = 0;
+        if (r == 0 && ans) {
+            unwrap(ans);
+            const char *w = strstr(ans, "=== words");
+            const char *cw = strstr(c.text.p, "\n=== words");
+            size_t an = w ? (size_t)(w - ans) : strlen(ans);
+            size_t cn = cw ? (size_t)(cw - c.text.p) : c.text.n;
+            while (an && (ans[an - 1] == '\n' || ans[an - 1] == ' '))
+                an--;
+            while (cn && (c.text.p[cn - 1] == '\n' || c.text.p[cn - 1] == ' '))
+                cn--;
+            same = an == cn && memcmp(ans, c.text.p, cn) == 0;
+            if (same)
+                snprintf(why, sizeof why, "the text came back untranslated");
+            else
+                out = decode(&c, ans, why, sizeof why);
+        } else {
+            snprintf(why, sizeof why, "no answer");
+        }
+        free(ans);
+        if (!same)
+            break; /* asked again only for that */
     }
-    free(ans);
     coded_free(&c);
     if (out && !janas_tpl_same_shape(en, strlen(en), out, strlen(out), why,
                                      sizeof why)) {

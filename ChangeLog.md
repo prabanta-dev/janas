@@ -2,6 +2,13 @@
 
 > Curated, user-facing summary of completed work, newest first.
 
+## [2026-10-02] - janas-system: this computer
+
+- **janas-system**, an MCP service that only reads and reaches no network: how the computer is (the processor and the kernel's share of it, the memory and the swap, on Linux the pressure, every disk, the battery and its wear, the temperatures a device), what fills a directory (8 seconds and 64 levels at most, never across filesystems or links; "at least" when the time runs out), the programs using the most processor or memory or those of a name, the errors of the logs (the same message but for its numbers counted once, the latest read first) and the services that failed, the updates by the package manager's last list (apt, dnf, pacman; nothing fetched), the network interfaces, the Wi-Fi signal, the gateway. Run over the protocol on the development laptop; `tests/test_system_parse.c` checks the reading of Linux's texts and the layouts.
+- **A Windows part** for it, on the Win32 API (memory, processor, drives, power, processes, event log, services, IP Helper, WLAN): compiled and linked with MinGW-w64 and run under Wine; not yet on Windows, and Janas itself is not built for Windows yet.
+- **A layout that comes back untranslated is asked once more** in `janas-chat`, the model told so: Qwen3.6-35B-A3B gave janas-system's status back as it was the first time; run again, it came in Italian.
+- **The services run a program the same way**: `janas-git`'s runner (no shell, no terminal, a time limit) moves to `src/services/common/run.c`.
+
 ## [2026-10-02] - The services under one directory
 
 - **The MCP services in `src/services/`**: each in `src/services/<service>/` (flights, git, github, maps, prices, weather, wiki), what they share in `src/services/common/` (the geography's tables, the GET over HTTPS, where the user is, the layouts of the answers). The programs keep their names.

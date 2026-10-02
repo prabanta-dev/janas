@@ -9,7 +9,6 @@
  * made for the purpose.
  * The sources belong to the program, so they are compiled in here.
  */
-#define _GNU_SOURCE /* run.c's pipe2 */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

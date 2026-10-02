@@ -123,7 +123,8 @@ int main(void)
     free(again);
     free(it);
 
-    /* the text given back untranslated: not used, not kept */
+    /* the text given back untranslated: asked once more, told so; then not
+       used, not kept */
     translate_wind = 0;
     static const char EN2[] = "Rain {{mm}} mm.\n";
     int before = calls;
@@ -131,8 +132,10 @@ int main(void)
     char p2[1200];
     snprintf(p2, sizeof p2, "%s/janas/layouts/test2.it.%016llx.txt", dir,
              (unsigned long long)glossary_mark("it", "test2", mark(EN2)));
-    CHECK(!same && calls == before + 1 && access(p2, F_OK) != 0,
-          "an untranslated text refused");
+    CHECK(!same && calls == before + 2 && access(p2, F_OK) != 0 &&
+              strstr(asked, "The text came back as it was, untranslated"),
+          "an untranslated text asked again, then refused (%d requests)",
+          calls - before);
     free(same);
     translate_wind = 1;
 
