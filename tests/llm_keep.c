@@ -17,7 +17,8 @@
  * (janas_llm_chat_prepare), as janas-chat does while its user writes: the
  * reply to the first message is the same as without it, the message
  * finds the system message computed, a new chat finds it on the disk at
- * once, and a new system message set after it drops it. The disk is a
+ * once, and a new system message set after it drops it - with a system
+ * message over 1024 tokens and with one under. The disk is a
  * directory of the test's own (XDG_CACHE_HOME), removed at the end.
  *
  * Usage: llm_keep <model.jns> [mtp=<file>] [draft=<file>]
@@ -240,11 +241,17 @@ static int prepare_all(janas_llm_chat *c, int *first, int *steps, int32_t *done,
     return rc;
 }
 
-static int run_prepare(janas_llm *llm)
+/* rules: how long the system message is - 90 rules are over 1024 tokens,
+   25 under (janas-chat's with its services' catalog is 767: the disk kept
+   none so short until 2 Oct 2026); min: the tokens it must have at least */
+static int run_prepare(janas_llm *llm, int rules, int32_t min)
 {
     static char sys[32768];
-    size_t n = (size_t)snprintf(sys, sizeof(sys), "Read ahead.\n");
-    for (int i = 1; i <= 90; i++)
+    /* a start of its own: a dense model would take the other's from the
+       disk, the first rules being the same */
+    size_t n =
+        (size_t)snprintf(sys, sizeof(sys), "Read ahead, %d rules.\n", rules);
+    for (int i = 1; i <= rules; i++)
         n += (size_t)snprintf(sys + n, sizeof(sys) - n,
                               "Rule %d: answer briefly, in English, and "
                               "never mention the number %d.\n",
@@ -278,13 +285,14 @@ static int run_prepare(janas_llm *llm)
         send_reply(c, A1, &other) == 0;
     if (c)
         janas_llm_chat_destroy(c);
-    printf("prepare: %d steps, %d of %d tokens; prompt/cached %u/%u (without "
-           "it %u/%u); a new chat: %d steps (first %d), %d of %d, %u/%u; "
-           "another system message: %u/%u\n",
-           steps, done, total, ahead.prompt, ahead.cached, plain.prompt,
-           plain.cached, steps2, first2, done2, total2, again.prompt,
-           again.cached, other.prompt, other.cached);
-    if (done != total || total < 1024 || steps < 1) {
+    printf(
+        "prepare (%d rules): %d steps, %d of %d tokens; prompt/cached %u/%u (without "
+        "it %u/%u); a new chat: %d steps (first %d), %d of %d, %u/%u; "
+        "another system message: %u/%u\n",
+        rules, steps, done, total, ahead.prompt, ahead.cached, plain.prompt,
+        plain.cached, steps2, first2, done2, total2, again.prompt, again.cached,
+        other.prompt, other.cached);
+    if (done != total || total < min || steps < 1) {
         printf("FAIL: prepare: not read to the end\n");
         fail = 1;
     }
@@ -375,10 +383,12 @@ int main(int argc, char **argv)
              tmp && *tmp ? tmp : "/tmp", (int)getpid());
     if (!fail) {
         setenv("XDG_CACHE_HOME", dir, 1);
-        fail = run_disk(llm) != 0 || run_prepare(llm) != 0;
-        nftw(dir, rm_one, 16, FTW_DEPTH | FTW_PHYS);
+        fail = run_disk(llm) != 0 || run_prepare(llm, 90, 1024) != 0 ||
+               run_prepare(llm, 25, 256) != 0;
     }
-    janas_llm_close(llm);
+    janas_llm_close(llm); /* it writes its tuning into the cache too */
+    if (getenv("XDG_CACHE_HOME") && !strcmp(getenv("XDG_CACHE_HOME"), dir))
+        nftw(dir, rm_one, 16, FTW_DEPTH | FTW_PHYS);
     printf("%s\n", fail ? "FAIL"
                         : "OK: same replies, first turns kept, system "
                           "message read ahead");

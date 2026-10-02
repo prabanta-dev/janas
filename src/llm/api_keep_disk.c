@@ -30,8 +30,14 @@
 #include "llm/jns.h"
 #include "llm/chat.h"
 
-/* shorter copies are not worth a file: reading them again is quick */
+/* shorter copies are not worth a file: reading them again is quick. Not
+   so the system message read ahead (a prefix), read again at every start:
+   since the services' tools are given when needed it is under a thousand
+   tokens (767 with seven services), and kept by DISK_MIN it was never
+   written - 14 s of Qwen3.6-35B-A3B at each start, and a conversation of
+   a recurrent model cannot be cut back to it. */
 #define DISK_MIN 1024
+#define DISK_MIN_PREFIX 64
 
 static int path_of(const janas_llm_chat *c, const char *name, char *buf,
                    size_t len)
@@ -232,7 +238,7 @@ void janas_api_disk_put(janas_llm_chat *c, const struct janas_llm_saved *sv,
 {
     const int32_t *tok;
     uint32_t n_kv, n = janas_llm_saved_tokens(sv, &tok, &n_kv);
-    if (!c->disk_dir || n_kv < DISK_MIN)
+    if (!c->disk_dir || n_kv < (prefix ? DISK_MIN_PREFIX : DISK_MIN))
         return;
     uint64_t h = janas_fnv1a(tok, n * sizeof(int32_t), JANAS_FNV_INIT);
     h = janas_fnv1a(&n_kv, sizeof(n_kv), h);

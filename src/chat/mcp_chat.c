@@ -47,6 +47,9 @@ static const struct {
     {"maps", "roads and places: a route by car, bike or on foot, public "
              "transport between places, what is near (fuel, a pharmacy...), "
              "where an address is"},
+    {"prices", "prices and finance, for information: currencies, "
+               "crypto-assets, shares, inflation, central banks' rates, "
+               "electricity, the cheapest fuel near a place"},
     {"weather", "the weather now and the forecast, the sea and its waves, "
                 "weather warnings"},
     {"wiki", "Wikipedia, when the user asks for it: a page shown to the "

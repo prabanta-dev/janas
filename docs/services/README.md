@@ -1,6 +1,6 @@
 # Janas's services
 
-A service of Janas is a program that brings data of the world - flights, the weather, roads and places, an encyclopedia, GitHub's projects, the git repositories of your computer - to a model, as tools of the [Model Context Protocol](https://modelcontextprotocol.io) (MCP). Each one is an MCP server of its own, over its standard input and output, so that any MCP client can use it: `janas-chat`, and the assistants of others.
+A service of Janas is a program that brings data of the world - flights, the weather, roads and places, an encyclopedia, prices and finance, GitHub's projects, the git repositories of your computer - to a model, as tools of the [Model Context Protocol](https://modelcontextprotocol.io) (MCP). Each one is an MCP server of its own, over its standard input and output, so that any MCP client can use it: `janas-chat`, and the assistants of others.
 
 | Service | What it answers | Key |
 |---|---|---|
@@ -8,6 +8,7 @@ A service of Janas is a program that brings data of the world - flights, the wea
 | [`janas-git`](git.md) | the git repositories of this computer: what has changed, the commits, the branches, a diff; a commit, pull, push or switch of branch, each asked of you first | none |
 | [`janas-github`](github.md) | a project's issues and pull requests (the new ones), its latest releases, its recent commits, what it is | none; the gh command's token when you have one |
 | [`janas-maps`](maps.md) | a route by car, bike or on foot, step by step; journeys by public transport; what is near a place; where an address is | none |
+| [`janas-prices`](prices.md) | for information: currencies, crypto-assets, shares, inflation, central banks' rates, electricity, the cheapest fuel near a place | none; a free one of your own for shares |
 | [`janas-weather`](weather.md) | the weather now (a model's and a station's), the forecast, the sea and its waves, the warnings in force | none |
 | [`janas-wiki`](wiki.md) | Wikipedia's search, its pages as text, the pages about what lies around a place | none |
 
