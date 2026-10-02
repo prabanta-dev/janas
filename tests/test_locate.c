@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
    Copyright (C) 2026 Maurizio Cammalleri */
 /*
- * test_locate.c - where the user is (src/common/locate.c), without the
+ * test_locate.c - where the user is (src/services/common/locate.c), without the
  * network: the answers of GeoJS and ipwho.is as they come (numbers as
  * strings in the first, a nested zone in the second), the broken ones, and
  * JANAS_LOCATION as a city, a point, "off" and nonsense.
@@ -11,7 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "common/locate.h"
+#include "services/common/locate.h"
 
 static int failures;
 

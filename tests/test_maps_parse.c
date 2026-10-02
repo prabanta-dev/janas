@@ -13,11 +13,11 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "common/template.h"
-#include "maps/data.c"
-#include "maps/layouts.c"
-#include "maps/nearby.c"
-#include "maps/read.c"
+#include "services/common/template.h"
+#include "services/maps/data.c"
+#include "services/maps/layouts.c"
+#include "services/maps/nearby.c"
+#include "services/maps/read.c"
 
 static int failures;
 

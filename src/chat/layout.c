@@ -14,7 +14,7 @@
 #include <string.h>
 #include <sys/stat.h>
 
-#include "common/template.h"
+#include "services/common/template.h"
 #include "glossary.h"
 
 #define META "dev.prabanta.janas/layout"

@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
    Copyright (C) 2026 Maurizio Cammalleri */
 /*
- * test_template.c - layouts filled with data (src/common/template.c):
+ * test_template.c - layouts filled with data (src/services/common/template.c):
  * fields, words, lists and their numbers, parts shown or not, lines of a
  * part's tag left out, the decimal point of the words, what is wrong in a
  * layout, and a translation's shape against its original.
@@ -9,7 +9,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "common/template.h"
+#include "services/common/template.h"
 
 static int failures;
 

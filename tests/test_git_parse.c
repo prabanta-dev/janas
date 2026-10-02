@@ -14,12 +14,12 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "common/template.h"
-#include "git/data.c"
-#include "git/layouts.c"
-#include "git/read.c"
-#include "git/repo.c"
-#include "git/run.c"
+#include "services/common/template.h"
+#include "services/git/data.c"
+#include "services/git/layouts.c"
+#include "services/git/read.c"
+#include "services/git/repo.c"
+#include "services/git/run.c"
 
 static int failures;
 

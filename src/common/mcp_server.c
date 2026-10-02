@@ -34,7 +34,7 @@ static void result(struct janas_mcps *s, const struct janas_json *id,
     janas_json_write(&b, id);
     janas_buf_puts(&b, ",\"result\":{");
     /* the server's own _meta, and the tool's when it gave one (a layout,
-       common/template.h): one object, a key may not come twice */
+       services/common/template.h): one object, a key may not come twice */
     struct janas_buf all = {0};
     janas_buf_puts(&all, "{");
     janas_buf_put(&all, members, n);

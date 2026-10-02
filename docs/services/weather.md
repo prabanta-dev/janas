@@ -19,7 +19,7 @@ A place is a name in Italian or English ("Trapani", "Firenze", "Florence"), with
 2. **The internet connection's position**, from [GeoJS](https://www.geojs.io), or [ipwho.is](https://ipwho.is) when it does not answer: free and with no key, but the address seen is the connection's, so the town can be the provider's rather than yours (a town nearby, more often than not). Asked once an hour at most.
 3. **The city of the computer's time zone** (`Europe/Rome`: Rome), a rough guess, when neither answers.
 
-The same applies to `janas-flights`' `flights_nearby`; the code is shared (`src/common/locate.c`), for the services to come. `janas-chat` passes its environment to the services it starts, so `JANAS_LOCATION` set for the chat reaches them.
+The same applies to `janas-flights`' `flights_nearby`; the code is shared (`src/services/common/locate.c`), for the services to come. `janas-chat` passes its environment to the services it starts, so `JANAS_LOCATION` set for the chat reaches them.
 
 ## Where the data comes from
 

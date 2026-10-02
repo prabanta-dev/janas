@@ -12,7 +12,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "flights/schedule.c"
+#include "services/flights/schedule.c"
 
 int janas_https_get(const char *url, const char *const *headers,
                     size_t n_headers, struct janas_buf *out, char *err,

@@ -15,11 +15,11 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "common/template.h"
-#include "github/data.c"
-#include "github/layouts.c"
-#include "github/read.c"
-#include "github/seen.c"
+#include "services/common/template.h"
+#include "services/github/data.c"
+#include "services/github/layouts.c"
+#include "services/github/read.c"
+#include "services/github/seen.c"
 
 static int failures;
 

@@ -17,12 +17,12 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "weather/alerts.c"
-#include "weather/fetch.c"
-#include "weather/metar.c"
-#include "weather/metno.c"
-#include "weather/openmeteo.c"
-#include "weather/words.c"
+#include "services/weather/alerts.c"
+#include "services/weather/fetch.c"
+#include "services/weather/metar.c"
+#include "services/weather/metno.c"
+#include "services/weather/openmeteo.c"
+#include "services/weather/words.c"
 
 static int failures;
 

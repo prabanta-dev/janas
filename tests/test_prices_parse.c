@@ -16,11 +16,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "common/template.h"
-#include "prices/data.c"
-#include "prices/layouts.c"
-#include "prices/read.c"
-#include "prices/read_fuel.c"
+#include "services/common/template.h"
+#include "services/prices/data.c"
+#include "services/prices/layouts.c"
+#include "services/prices/read.c"
+#include "services/prices/read_fuel.c"
 
 static int failures;
 

@@ -2,6 +2,10 @@
 
 > Curated, user-facing summary of completed work, newest first.
 
+## [2026-10-02] - The services under one directory
+
+- **The MCP services in `src/services/`**: each in `src/services/<service>/` (flights, git, github, maps, prices, weather, wiki), what they share in `src/services/common/` (the geography's tables, the GET over HTTPS, where the user is, the layouts of the answers). The programs keep their names.
+
 ## [2026-10-02] - janas-prices: prices and finance, for information
 
 - **janas-prices**, an MCP service for information only: an amount in other currencies at the ECB's reference rates (Frankfurter; the ECB's file when it does not answer), a crypto-asset's price (CoinGecko's keyless API; Coinbase when it does not answer), a share's (Alpha Vantage, with a free key of the user's: the only tool that needs one), inflation (Eurostat monthly for the EU, Iceland and Norway, the World Bank yearly for every other country), the rates of the ECB, the Fed, the Bank of England and the SNB, the wholesale price of electricity hour by hour (energy-charts, only the bidding zones it gives under CC BY: northern Italy yes, Sicily no), the cheapest fuel near a place (Italy's MIMIT, France's live flow, Spain's ministry, Austria's E-Control; another country is said not to be covered; a price not told for over eight days is left out and counted: a station's of two months before had come first in Palermo). Every answer says its source, its date, and "for information only, not advice". Layouts for every answer; `tests/test_prices_parse.c` on answers of 2 October.

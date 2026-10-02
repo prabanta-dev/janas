@@ -55,7 +55,8 @@ Actions
 Output
   Objects and the static library go to lib/<cpu>-<os>-<variant>/,
   programs to bin/<cpu>-<os>/, with a -<variant> suffix for every
-  variant but release. Each src/<tool>/main.c becomes janas-<tool>, with
+  variant but release. Each src/<tool>/main.c and each
+  src/services/<tool>/main.c becomes janas-<tool>, with
   the other .c files of its directory; the libraries of others in
   src/third_party/ go into the programs that use them; every other .c
   under src/ goes into the library. The release build
@@ -312,7 +313,7 @@ MBEDTLS_INC=($(tp_flags mbedtls))
 
 # A directory with a main.c is a program: its other .c files are its own.
 # Every other .c under src/ goes into the library.
-tool_dirs=$(for m in src/*/main.c; do dirname "$m"; done)
+tool_dirs=$(for m in src/*/main.c src/services/*/main.c; do dirname "$m"; done)
 objs=()
 while IFS= read -r src; do
     grep -qx "$(dirname "$src")" <<<"$tool_dirs" && continue
@@ -336,10 +337,8 @@ if [ "$VARIANT" = release ]; then
         case "$o" in
         */common_mcp_*.o) mcp_objs+=("$o") ;;
         */common_hf_*.o) ;; # for the tools, with libjanas.a only
-        # the services': the geography's tables, the GET over HTTPS,
-        # where the user is and the layouts of their answers
-        */common_geo.o | */common_https_get.o | */common_locate.o | \
-            */common_template.o) ;;
+        # what the services share (src/services/common/): theirs only
+        */services_*.o) ;;
         */llm_json.o) mcp_objs+=("$o") llm_objs+=("$o") ;;
         *) llm_objs+=("$o") ;;
         esac
@@ -356,7 +355,7 @@ THIRD=()
 [ -f "$OBJ/libjanas_third.a" ] && THIRD=("$OBJ/libjanas_third.a")
 
 # test and benchmark programs, and the C tools
-for src in tests/*.c tools/*.c src/*/main.c; do
+for src in tests/*.c tools/*.c src/*/main.c src/services/*/main.c; do
     exe="$BIN/$(basename "${src%.c}")$SUFFIX"
     own=()
     if [ "$(basename "$src")" = main.c ]; then

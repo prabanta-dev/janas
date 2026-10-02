@@ -12,7 +12,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "wiki/read.c"
+#include "services/wiki/read.c"
 
 static int failures;
 

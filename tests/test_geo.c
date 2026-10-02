@@ -10,7 +10,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "common/geo.c"
+#include "services/common/geo.c"
 
 static int failures;
 

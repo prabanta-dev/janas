@@ -2,7 +2,7 @@
    Copyright (C) 2026 Maurizio Cammalleri */
 /*
  * layout.h - the layouts of the services' answers in janas-chat
- * (common/template.h): an answer that brings its data and an English
+ * (services/common/template.h): an answer that brings its data and an English
  * layout is shown to the user filled in the user's language, and the model
  * reads only its brief. The layout in another language is asked of the
  * model once, checked against the English one and kept in
