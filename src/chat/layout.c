@@ -157,6 +157,8 @@ static const char SYSTEM[] =
 struct coded {
     struct janas_buf text; /* for the model */
     char **tags;           /* {N}: tags[N - 1] */
+    char **gaps;           /* gaps[N - 1]: the spaces and lines after {N} */
+    char *to_tag;          /* to_tag[N - 1]: {N + 1} comes right after */
     size_t n_tags;
     char **keys; /* word N: keys[N - 1], and its English text */
     char **english;
@@ -166,14 +168,18 @@ struct coded {
 static void coded_free(struct coded *c)
 {
     janas_buf_free(&c->text);
-    for (size_t i = 0; i < c->n_tags; i++)
+    for (size_t i = 0; i < c->n_tags; i++) {
         free(c->tags[i]);
+        free(c->gaps ? c->gaps[i] : NULL);
+    }
+    free(c->to_tag);
     for (size_t i = 0; i < c->n_keys; i++)
         free(c->keys[i]);
     for (size_t i = 0; i < c->n_english; i++)
         free(c->english[i]);
     free(c->english);
     free(c->tags);
+    free(c->gaps);
     free(c->keys);
 }
 
@@ -235,7 +241,22 @@ static int encode(const char *en, struct coded *c)
         if (!close)
             return -1;
         size_t end = (size_t)(close - en) + 2;
+        size_t nt = c->n_tags;
+        char **g = realloc(c->gaps, (nt + 1) * sizeof *g);
+        char *t = g ? realloc(c->to_tag, nt + 1) : NULL;
+        if (g)
+            c->gaps = g;
+        if (!t)
+            return -1;
+        c->to_tag = t;
+        g[nt] = NULL;
         if (push(&c->tags, &c->n_tags, open, end - upto) != 0)
+            return -1;
+        size_t sp = end;
+        while (sp < ln && (en[sp] == ' ' || en[sp] == '\n'))
+            sp++;
+        t[nt] = sp + 1 < ln && en[sp] == '{' && en[sp + 1] == '{';
+        if (!(g[nt] = strndup(en + end, sp - end)))
             return -1;
         janas_buf_printf(&c->text, "{%zu}", c->n_tags);
         i = end;
@@ -296,6 +317,22 @@ static char *decode(const struct coded *c, const char *ans, char *why,
                 }
                 janas_buf_puts(&out, c->tags[k - 1]);
                 i = (size_t)(end - ans) + 1;
+                /* the lines after a tag are the English ones: the 35B
+                   added blank lines between the legs of a journey. So are
+                   the spaces between two tags with nothing else between
+                   them; those within a sentence are the language's. */
+                size_t j = i;
+                int nl = 0;
+                while (j < tn &&
+                       (ans[j] == ' ' || ans[j] == '\n' || ans[j] == '\r'))
+                    nl |= ans[j++] != ' ';
+                const char *g = c->gaps[k - 1];
+                if ((c->to_tag[k - 1] && j < tn && ans[j] == '{' &&
+                     strtoul(ans + j + 1, &end, 10) == k + 1 && *end == '}') ||
+                    (nl && strchr(g, '\n'))) {
+                    janas_buf_puts(&out, g);
+                    i = j;
+                }
                 continue;
             }
         }

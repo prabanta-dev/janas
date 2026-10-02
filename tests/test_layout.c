@@ -104,6 +104,26 @@ int main(void)
     free(again);
     free(it);
 
+    /* lines added by the model between two tags are not kept: those
+       between tags alone come from English */
+    {
+        static const char LEGS[] = "Trips:\n{{#legs}}\n- {{to}}\n{{/legs}}\n"
+                                   "{{#cut}} and {{cut}} more{{/cut}}\n";
+        struct coded c;
+        CHECK(encode(LEGS, &c) == 0, "encode");
+        char why[200] = "";
+        char *d = decode(&c,
+                         "Viaggi:\n{1}\n\n- {2}\n{3}\n\n\n{4} e altri {5} "
+                         "{6}\n=== words\n",
+                         why, sizeof why);
+        CHECK(d && strcmp(d, "Viaggi:\n{{#legs}}\n- {{to}}\n{{/legs}}\n"
+                             "{{#cut}} e altri {{cut}} {{/cut}}\n---\n"
+                             "decimal = ,\n") == 0,
+              "the lines between tags:\n%s%s", d ? d : "NULL ", why);
+        free(d);
+        coded_free(&c);
+    }
+
     /* tidy up: the one file and the two directories made here */
     char path[1200];
     snprintf(path, sizeof path, "%s/janas/layouts/test.it.%016llx.txt", dir,

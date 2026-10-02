@@ -38,6 +38,9 @@ static const struct {
     {"flights", "flights and aircraft: where a flight is and what it is "
                 "doing, today's flights of a route, what flies over a sea "
                 "or near a place"},
+    {"maps", "roads and places: a route by car, bike or on foot, public "
+             "transport between places, what is near (fuel, a pharmacy...), "
+             "where an address is"},
     {"weather", "the weather now and the forecast, the sea and its waves, "
                 "weather warnings"},
     {"wiki", "Wikipedia, when the user asks for it: a page shown to the "

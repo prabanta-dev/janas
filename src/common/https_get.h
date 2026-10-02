@@ -16,5 +16,10 @@
 int janas_https_get(const char *url, const char *const *headers,
                     size_t n_headers, struct janas_buf *out, char *err,
                     size_t err_len);
+/* The same, waiting at most timeout_ms for each part of the answer
+   (janas_https_get: 15 s). */
+int janas_https_get_ms(const char *url, const char *const *headers,
+                       size_t n_headers, int timeout_ms, struct janas_buf *out,
+                       char *err, size_t err_len);
 
 #endif

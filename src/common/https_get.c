@@ -19,6 +19,14 @@ int janas_https_get(const char *url, const char *const *headers,
                     size_t n_headers, struct janas_buf *out, char *err,
                     size_t err_len)
 {
+    return janas_https_get_ms(url, headers, n_headers, TIMEOUT_MS, out, err,
+                              err_len);
+}
+
+int janas_https_get_ms(const char *url, const char *const *headers,
+                       size_t n_headers, int timeout_ms, struct janas_buf *out,
+                       char *err, size_t err_len)
+{
     char where[4096];
     snprintf(where, sizeof where, "%s", url);
     for (int hop = 0; hop <= MAX_REDIRECTS; hop++) {
@@ -27,7 +35,7 @@ int janas_https_get(const char *url, const char *const *headers,
             return -1;
         struct janas_http h;
         if (janas_http_request(&h, &u, "GET", headers, n_headers, NULL, 0,
-                               TIMEOUT_MS, NULL, err, err_len) != 0)
+                               timeout_ms, NULL, err, err_len) != 0)
             return -1;
         int status = h.head.status;
         if (status >= 300 && status < 400 && h.head.location[0]) {
@@ -37,7 +45,7 @@ int janas_https_get(const char *url, const char *const *headers,
         }
         out->n = 0;
         int r;
-        while ((r = janas_http_body(&h, out, TIMEOUT_MS)) == 1)
+        while ((r = janas_http_body(&h, out, timeout_ms)) == 1)
             if (out->n > MAX_BODY) {
                 r = -1;
                 break;
