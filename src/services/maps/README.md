@@ -1,6 +1,6 @@
 # janas-maps
 
-Roads and places for `janas-chat` or any other MCP client (see [the services](README.md)): a route by car, bike or on foot, journeys by public transport, what is near a place, where a place or an address is. OpenStreetMap's data through free services: no key, no account.
+Roads and places for `janas-chat` or any other MCP client (see [the services](../README.md)): a route by car, bike or on foot, journeys by public transport, what is near a place, where a place or an address is. OpenStreetMap's data through free services: no key, no account.
 
 ## The tools
 
@@ -9,11 +9,11 @@ Roads and places for `janas-chat` or any other MCP client (see [the services](RE
 - **`maps_nearby`** - the places of a kind within a radius of a place (2 km unless asked, up to 10), nearest first, at most ten, with how far and which way, their address, opening hours and phone when mapped. The kinds are a list, so that the model picks one and never writes a query: fuel, charging, parking, pharmacy, hospital, doctor, atm, bank, post_office, police, supermarket, restaurant, cafe, bar, hotel, toilets, train_station, bus_stop, museum, attraction.
 - **`maps_find`** - where a place or an address is: its full address, its coordinates, what it is on the map, and a link to it; for a point, what is there.
 
-A place is a name or an address, best with its town ("Via Roma 10, Trapani", "Stazione Centrale, Palermo", "Colosseo"), or `lat,lon`. The second place of a route is looked for near the first, so that "Stazione Centrale" on the way from Trapani is Palermo's. With no start named, the start is where the user is, as for the weather ([details](weather.md#when-no-place-is-named)), and the answer says so.
+A place is a name or an address, best with its town ("Via Roma 10, Trapani", "Stazione Centrale, Palermo", "Colosseo"), or `lat,lon`. The second place of a route is looked for near the first, so that "Stazione Centrale" on the way from Trapani is Palermo's. With no start named, the start is where the user is, as for the weather ([details](../weather/README.md#when-no-place-is-named)), and the answer says so.
 
 ## The answers
 
-Every answer is data with a layout (see [the services](README.md)): `janas-chat` shows the user the whole of it in the user's language - the steps, the journeys leg by leg, the list of places - and gives the model only a brief of the figures, from which it answers in a line or two. A route of a hundred steps costs the model the same as one of ten.
+Every answer is data with a layout (see [the services](../README.md)): `janas-chat` shows the user the whole of it in the user's language - the steps, the journeys leg by leg, the list of places - and gives the model only a brief of the figures, from which it answers in a line or two. A route of a hundred steps costs the model the same as one of ten.
 
 ## Where the data comes from
 

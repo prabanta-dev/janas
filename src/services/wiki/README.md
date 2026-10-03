@@ -1,12 +1,12 @@
 # janas-wiki
 
-Wikipedia for `janas-chat` or any other MCP client (see [the services](README.md)), when the user asks for it: its search, a page shown as it is, and the pages about what lies around a place. Wikipedia's own API: no key, no account.
+Wikipedia for `janas-chat` or any other MCP client (see [the services](../README.md)), when the user asks for it: its search, a page shown as it is, and the pages about what lies around a place. Wikipedia's own API: no key, no account.
 
 ## The tools
 
 - **`wiki_search`** - the pages that match some words, best first: their titles, each with what it is about in a line (Wikidata's description).
 - **`wiki_page`** - shows the user a page as it is: a short page whole, a long one its introduction and the names of its sections, or the section asked for, by its name or the start of it (a section longer than 10,000 characters is cut at a paragraph, and the answer names its parts). A title that leads to another page is followed and said; a disambiguation page comes as the list of the pages it leads to. The model gets a note of it, not its text: the page's address, how many words were shown, its sections.
-- **`wiki_nearby`** - the pages about what lies around a place, nearest first, with how far and which way ("Palazzo D'Alì: 170 m NW"), within up to 10 km. The place is a page's title (its point is the page's), `lat,lon`, or none: then where the user is, as for the weather ([details](weather.md#when-no-place-is-named)).
+- **`wiki_nearby`** - the pages about what lies around a place, nearest first, with how far and which way ("Palazzo D'Alì: 170 m NW"), within up to 10 km. The place is a page's title (its point is the page's), `lat,lon`, or none: then where the user is, as for the weather ([details](../weather/README.md#when-no-place-is-named)).
 
 Every tool takes `language`, the Wikipedia to ask: the model gives the user's (`it`, `en`, `fr`...), and the English one when the first has nothing; when it gives none, the computer's language is taken (`LANG=it_IT.UTF-8`: `it`), else English.
 

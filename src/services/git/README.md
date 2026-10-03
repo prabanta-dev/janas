@@ -1,6 +1,6 @@
 # janas-git
 
-The git repositories of your computer for `janas-chat` or any other MCP client (see [the services](README.md)): what has changed, the latest commits, the branches, a diff; and, asked of you every time, a commit, a pull, a push, a switch of branch. Nothing that throws work away is offered.
+The git repositories of your computer for `janas-chat` or any other MCP client (see [the services](../README.md)): what has changed, the latest commits, the branches, a diff; and, asked of you every time, a commit, a pull, a push, a switch of branch. Nothing that throws work away is offered.
 
 ## The tools
 
@@ -28,7 +28,7 @@ A call that changes something shows whole, highlighted, and waits for your `y` -
 
 ## The answers
 
-Every answer is data with a layout (see [the services](README.md)): the list of files, the commits, the diff are shown to you in your language, and the model reads a brief. After a command that changed something, the answer is git's own words.
+Every answer is data with a layout (see [the services](../README.md)): the list of files, the commits, the diff are shown to you in your language, and the model reads a brief. After a command that changed something, the answer is git's own words.
 
 ## Running it
 

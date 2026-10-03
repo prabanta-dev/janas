@@ -1,6 +1,6 @@
 # janas-github
 
-GitHub for `janas-chat` or any other MCP client (see [the services](README.md)): a project's issues and pull requests (the new ones since you last asked), its latest releases, its recent commits, what it is. It only reads: nothing on GitHub is changed.
+GitHub for `janas-chat` or any other MCP client (see [the services](../README.md)): a project's issues and pull requests (the new ones since you last asked), its latest releases, its recent commits, what it is. It only reads: nothing on GitHub is changed.
 
 ## The tools
 
@@ -13,7 +13,7 @@ A repository is `owner/name`, a github.com link, or a name alone ("Janas", "llam
 
 ## The answers
 
-Every answer is data with a layout (see [the services](README.md)): `janas-chat` shows the user the list in the user's language - titles, messages and notes as their authors wrote them - and gives the model only a brief, from which it answers in a line or two. The terms of the craft (commit, branch, pull request, release...) come from the glossary of `janas-chat`, so that the translation does not turn them into words of everyday speech.
+Every answer is data with a layout (see [the services](../README.md)): `janas-chat` shows the user the list in the user's language - titles, messages and notes as their authors wrote them - and gives the model only a brief, from which it answers in a line or two. The terms of the craft (commit, branch, pull request, release...) come from the glossary of `janas-chat`, so that the translation does not turn them into words of everyday speech.
 
 ## The token
 

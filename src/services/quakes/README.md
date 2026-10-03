@@ -1,6 +1,6 @@
 # janas-quakes
 
-The earthquakes for `janas-chat` or any other MCP client (see [the services](README.md)): the latest near a place or where you are, the strongest in the world, one in detail. It only reads, from open sources, without a key.
+The earthquakes for `janas-chat` or any other MCP client (see [the services](../README.md)): the latest near a place or where you are, the strongest in the world, one in detail. It only reads, from open sources, without a key.
 
 ## The tools
 
@@ -24,7 +24,7 @@ The earthquakes for `janas-chat` or any other MCP client (see [the services](REA
 
 ## The answers
 
-Every answer is data with a layout (see [the services](README.md)): `janas-chat` shows you the whole list in your language, and gives the model only a brief, from which it answers in a line or two.
+Every answer is data with a layout (see [the services](../README.md)): `janas-chat` shows you the whole list in your language, and gives the model only a brief, from which it answers in a line or two.
 
 ## Running it
 

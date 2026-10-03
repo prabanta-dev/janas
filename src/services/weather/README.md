@@ -1,6 +1,6 @@
 # janas-weather
 
-The weather now and in the next days, the sea and its waves, and the weather warnings in force - for `janas-chat` or any other MCP client (see [the services](README.md)). Free sources only: no key, no account.
+The weather now and in the next days, the sea and its waves, and the weather warnings in force - for `janas-chat` or any other MCP client (see [the services](../README.md)). Free sources only: no key, no account.
 
 ## The tools
 

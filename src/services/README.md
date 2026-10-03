@@ -4,15 +4,15 @@ A service of Janas is a program that brings data of the world - flights, the wea
 
 | Service | What it answers | Key |
 |---|---|---|
-| [`janas-flights`](flights.md) | where a flight is and what it is doing, its times, the flights of a route, what flies over a sea or near a place | none for live data; a free one of your own for schedules |
-| [`janas-git`](git.md) | the git repositories of this computer: what has changed, the commits, the branches, a diff; a commit, pull, push or switch of branch, each asked of you first | none |
-| [`janas-github`](github.md) | a project's issues and pull requests (the new ones), its latest releases, its recent commits, what it is | none; the gh command's token when you have one |
-| [`janas-maps`](maps.md) | a route by car, bike or on foot, step by step; journeys by public transport; what is near a place; where an address is | none |
-| [`janas-prices`](prices.md) | for information: currencies, crypto-assets, shares, inflation, central banks' rates, electricity, the cheapest fuel near a place | none; a free one of your own for shares |
-| [`janas-quakes`](quakes.md) | the earthquakes near a place or where you are, the strongest in the world, one in detail | none |
-| [`janas-system`](system.md) | this computer: how it is (memory, processor, disks, battery, temperatures), what fills a directory, the programs running, the errors, the updates, the network | none; nothing reaches the network |
-| [`janas-weather`](weather.md) | the weather now (a model's and a station's), the forecast, the sea and its waves, the warnings in force | none |
-| [`janas-wiki`](wiki.md) | Wikipedia's search, its pages as text, the pages about what lies around a place | none |
+| [`janas-flights`](flights/README.md) | where a flight is and what it is doing, its times, the flights of a route, what flies over a sea or near a place | none for live data; a free one of your own for schedules |
+| [`janas-git`](git/README.md) | the git repositories of this computer: what has changed, the commits, the branches, a diff; a commit, pull, push or switch of branch, each asked of you first | none |
+| [`janas-github`](github/README.md) | a project's issues and pull requests (the new ones), its latest releases, its recent commits, what it is | none; the gh command's token when you have one |
+| [`janas-maps`](maps/README.md) | a route by car, bike or on foot, step by step; journeys by public transport; what is near a place; where an address is | none |
+| [`janas-prices`](prices/README.md) | for information: currencies, crypto-assets, shares, inflation, central banks' rates, electricity, the cheapest fuel near a place | none; a free one of your own for shares |
+| [`janas-quakes`](quakes/README.md) | the earthquakes near a place or where you are, the strongest in the world, one in detail | none |
+| [`janas-system`](system/README.md) | this computer: how it is (memory, processor, disks, battery, temperatures), what fills a directory, the programs running, the errors, the updates, the network | none; nothing reaches the network |
+| [`janas-weather`](weather/README.md) | the weather now (a model's and a station's), the forecast, the sea and its waves, the warnings in force | none |
+| [`janas-wiki`](wiki/README.md) | Wikipedia's search, its pages as text, the pages about what lies around a place | none |
 
 What every service does the same way:
 
@@ -24,7 +24,7 @@ What every service does the same way:
 - **Only what was asked.** A service's tools are used for its subject when the user asks about it, and never because of another's answer: no weather or flights for the town a page names, unless the user asks for them.
 - **Data and a layout.** The longest answers - the aircraft over a sea or near a place, the weather now, the forecast, the sea, the routes and journeys and places of the maps - come as data with a layout (MCP's `structuredContent`, the layout in `_meta`) besides their English text. `janas-chat` fills the layout in the user's language and shows it, and gives the model only a brief: the figures it needs to answer in a line or two. A list of forty aircraft cost the model 3,000 tokens to read and as many to write again; it now reads about a hundred. The layout in another language than English is asked of the model once, on the side of the conversation: it gets the text with the layout's tags as numbered markers and its words numbered one a line, never the tags themselves, which are put back and checked (a word it leaves out stays English; a marker left out, and the English layout is used). The terms of the scales - the Beaufort forces, the Douglas sea states - are not asked: in Italian, French, Spanish and German they come from a glossary in `janas-chat`, with the names the national weather services give them, and the request gives the model the terms of the sea for the rest of the text. It is kept in `~/.config/janas/layouts`, one file a layout and language, where it can be corrected by hand; a new version of a layout is translated anew. The language is the computer's (`LANG`).
 - **What is the user's goes to the user.** A page of Wikipedia is shown as it is, and the model reads only a note of it: MCP marks each part of an answer with its audience, and `janas-chat` shows the parts meant for the user alone instead of giving them to the model. A client that does not heed the audience gives the model both.
-- **Here, when no place is named.** A question about "here" takes where the user is: `JANAS_LOCATION` when set (a city, `lat,lon`, or `off`), else the internet connection's position (GeoJS, ipwho.is), else the city of the computer's time zone; the answer says which, so the model can say it is a guess ([details](weather.md#when-no-place-is-named)).
+- **Here, when no place is named.** A question about "here" takes where the user is: `JANAS_LOCATION` when set (a city, `lat,lon`, or `off`), else the internet connection's position (GeoJS, ipwho.is), else the city of the computer's time zone; the answer says which, so the model can say it is a guess ([details](weather/README.md#when-no-place-is-named)).
 
 ## In janas-chat
 

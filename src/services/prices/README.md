@@ -1,6 +1,6 @@
 # janas-prices
 
-Prices and finance for `janas-chat` or any other MCP client (see [the services](README.md)), for information only: what a currency is worth, a crypto-asset, a share, inflation, a central bank's rates, the wholesale price of electricity, the cheapest fuel near a place. Open data without a key, for as many countries as each kind of data covers; only shares need a free key of yours.
+Prices and finance for `janas-chat` or any other MCP client (see [the services](../README.md)), for information only: what a currency is worth, a crypto-asset, a share, inflation, a central bank's rates, the wholesale price of electricity, the cheapest fuel near a place. Open data without a key, for as many countries as each kind of data covers; only shares need a free key of yours.
 
 ## The tools
 
@@ -14,7 +14,7 @@ Prices and finance for `janas-chat` or any other MCP client (see [the services](
 
 ## The answers
 
-Every answer is data with a layout (see [the services](README.md)): `janas-chat` shows the user the whole of it in the user's language - every rate, month, hour or station - and gives the model only a brief, from which it answers in a line or two. Every answer says where its figures come from, their date, and that they are for information only, not advice to buy or sell.
+Every answer is data with a layout (see [the services](../README.md)): `janas-chat` shows the user the whole of it in the user's language - every rate, month, hour or station - and gives the model only a brief, from which it answers in a line or two. Every answer says where its figures come from, their date, and that they are for information only, not advice to buy or sell.
 
 ## Where the data comes from
 

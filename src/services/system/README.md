@@ -1,6 +1,6 @@
 # janas-system
 
-This computer for `janas-chat` or any other MCP client (see [the services](README.md)): how it is, its disks and what fills a directory, the programs running, its errors, its updates, its network. It only reads, and none of its tools reaches the network: what it reads leaves the computer only in its answers.
+This computer for `janas-chat` or any other MCP client (see [the services](../README.md)): how it is, its disks and what fills a directory, the programs running, its errors, its updates, its network. It only reads, and none of its tools reaches the network: what it reads leaves the computer only in its answers.
 
 ## The tools
 
@@ -31,7 +31,7 @@ This computer for `janas-chat` or any other MCP client (see [the services](READM
 
 ## The answers
 
-Every answer is data with a layout (see [the services](README.md)): `janas-chat` shows you the whole of it in your language - every disk, process, error, package - and gives the model only a brief, from which it answers in a line or two; for the status, it is told to say only what is wrong (a disk nearly full, memory short, a temperature near its limit, a worn battery), or that all is well. Sizes, percentages and times are worked out by the service, so that the model does no sums.
+Every answer is data with a layout (see [the services](../README.md)): `janas-chat` shows you the whole of it in your language - every disk, process, error, package - and gives the model only a brief, from which it answers in a line or two; for the status, it is told to say only what is wrong (a disk nearly full, memory short, a temperature near its limit, a worn battery), or that all is well. Sizes, percentages and times are worked out by the service, so that the model does no sums.
 
 ## Running it
 

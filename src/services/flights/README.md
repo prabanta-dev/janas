@@ -1,13 +1,13 @@
 # janas-flights
 
-Where a flight is and what it is doing, its scheduled and actual times, the flights of a route, what flies over a sea or near a place - for `janas-chat` or any other MCP client (see [the services](README.md)). The live data needs no key and no account; the schedules need a free key of your own.
+Where a flight is and what it is doing, its scheduled and actual times, the flights of a route, what flies over a sea or near a place - for `janas-chat` or any other MCP client (see [the services](../README.md)). The live data needs no key and no account; the schedules need a free key of your own.
 
 ## The tools
 
 - **`flight_status`** - a flight by its number (`VY1595`, `AZ1631`) or its callsign (`VLG1595`). With a key: scheduled, estimated and actual departure and arrival, in each airport's local time and in UTC, delay, terminal, gate and baggage belt. On the ground: parked, taxiing or on the runway, and at which airport. In the air: altitude, speed, climbing or descending, where it is in words ("over the Tyrrhenian Sea, between Sicily, Italy and Campania, Italy; 86 km NNE of Palermo"), its route, and an arrival time estimated from its speed, next to the airline's.
 - **`flights_between`** - the flights from one airport to another, today's and the latest ones, each with its times and, if in the air, where it is now. Needs the key.
 - **`flights_over`** - how many and which aircraft fly now over a sea, by its name in English or Italian ("Tyrrhenian Sea", "Tirreno", "mar Ligure"), one line each: callsign, aircraft, altitude, speed, heading, where, and its route when one on record fits its position.
-- **`flights_nearby`** - what flies now near an airport (`TRN`, `LICT`, "Birgi"), a city ("Turin") or a point, nearest first; with none of them, near where the user is (`JANAS_LOCATION`, or the internet connection's position: [as for the weather](weather.md#when-no-place-is-named)).
+- **`flights_nearby`** - what flies now near an airport (`TRN`, `LICT`, "Birgi"), a city ("Turin") or a point, nearest first; with none of them, near where the user is (`JANAS_LOCATION`, or the internet connection's position: [as for the weather](../weather/README.md#when-no-place-is-named)).
 
 Airports are found by IATA or ICAO code, by city, or by the names people use ("Trapani-Birgi", "Birgi", "Fiumicino").
 
