@@ -172,6 +172,35 @@ static void test_config(void)
                                      sizeof(err)) != 0,
               "bad config %zu accepted", i);
     }
+    /* a key a letter from one of ours is refused, with the one meant;
+       the other clients' keys and keys far from ours are left alone */
+    const char *typo = "{\"mcpServers\": {\"a\": {\"command\": \"x\", "
+                       "\"arg\": [\"-v\"]}}}";
+    CHECK(janas_mcp_config_parse(typo, strlen(typo), &c, &n, err,
+                                 sizeof(err)) != 0 &&
+              strstr(err, "\"arg\" is not a key (did you mean \"args\"?)"),
+          "arg: %s", err);
+    const char *evn = "{\"mcpServers\": {\"a\": {\"command\": \"x\", "
+                      "\"evn\": {\"A\": \"b\"}}}}";
+    CHECK(janas_mcp_config_parse(evn, strlen(evn), &c, &n, err, sizeof(err)) !=
+                  0 &&
+              strstr(err, "did you mean \"env\"?"),
+          "evn: %s", err);
+    const char *theirs =
+        "{\"mcpServers\": {\"a\": {\"command\": \"x\", \"autoApprove\": [], "
+        "\"cwd\": \"/\", \"envFile\": \".env\", \"headersHelper\": \"h\", "
+        "\"dev\": {}, \"somethingElse\": 1}}}";
+    rc = janas_mcp_config_parse(theirs, strlen(theirs), &c, &n, err,
+                                sizeof(err));
+    CHECK(rc == 0 && n == 1, "other clients' keys: %s", err);
+    if (rc == 0)
+        janas_mcp_config_free(c, n);
+    const char *off = "{\"mcpServers\": {\"a\": {\"command\": \"x\", "
+                      "\"disabled\": \"true\"}}}";
+    CHECK(janas_mcp_config_parse(off, strlen(off), &c, &n, err, sizeof(err)) !=
+                  0 &&
+              strstr(err, "disabled is true or false"),
+          "disabled as a string: %s", err);
     char text[1024];
     size_t len = strlen(CONFIG);
     for (int it = 0; it < 20000; it++) {

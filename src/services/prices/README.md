@@ -42,7 +42,7 @@ Alpha Vantage gives a free key ("it takes fewer than 20 seconds", it says): <htt
 alphavantage_key = YOUR_KEY
 ```
 
-or in `JANAS_ALPHAVANTAGE_KEY`. The free key allows 25 requests a day (Alpha Vantage lifts the limit for verified open-source projects); a question costs one or two. Without a key, `prices_stock` answers how to get one. The prices may be delayed.
+or in `JANAS_ALPHAVANTAGE_KEY`. The free key allows 25 requests a day (Alpha Vantage lifts the limit for verified open-source projects); a question costs one or two. Without a key, `prices_stock` answers how to get one. The prices may be delayed. A line of the file naming no setting (`alphavantage = ...`) is told when the service starts, with the name meant, and in the answer that says there is no key.
 
 ## Running it
 

@@ -20,6 +20,7 @@
 #include <sys/statvfs.h>
 
 #include "catalog.h"
+#include "common/env_names.h"
 #include "common/sysinfo.h"
 #include "steps.h"
 
@@ -201,6 +202,7 @@ static int from_hf(const char *spec, const char *dir, int keep)
 
 int main(int argc, char **argv)
 {
+    janas_env_check("janas-get");
     if (argc < 2) {
         usage();
         return 2;

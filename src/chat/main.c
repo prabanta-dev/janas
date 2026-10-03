@@ -29,7 +29,9 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "common/env_names.h"
 #include "common/sysinfo.h"
+#include "common/words.h"
 #include "edit.h"
 #include "layout.h"
 #include "janas/llm.h"
@@ -799,10 +801,66 @@ struct chat_opts { /* where the words land: main keeps them, this names them */
     int *all_tools;
 };
 
-static int take_options(int n, char **w, struct chat_opts *o)
+/* every option, for the nearest to one mistyped: the first twelve stand
+   alone, the others take a value */
+static const char *const OPTIONS[] = {
+    "--no-spec",     "--stats",     "--no-markdown", "--no-gpu",
+    "--no-preload",  "--no-recap",  "--no-mtp",      "--no-mcp",
+    "--no-services", "--all-tools", "--mcp-auto",    "--mcp-instructions",
+    "--mtp",         "--draft",     "--think",       "--mode",
+    "--ctx",         "--cache",     "--reserve",     "--bits",
+    "--attention",   "--system",    "--mcp-config",  "--progress",
+    "--temp",        "--top-k",     "--top-p",       "--min-p",
+    "--seed",        "--max"};
+#define N_OPTIONS (sizeof OPTIONS / sizeof *OPTIONS)
+
+/* v of option a as a whole number or a number within limits; on a
+   mistake, the reason into why and -1 */
+static int opt_int(const char *a, const char *v, long long lo, long long hi,
+                   long long *x, char *why, size_t why_len)
 {
+    char r[160];
+    if (janas_word_int(v, lo, hi, x, r, sizeof r) == 0)
+        return 0;
+    snprintf(why, why_len, "%s: %s", a, r);
+    return -1;
+}
+
+static int opt_real(const char *a, const char *v, double lo, double hi,
+                    double *x, char *why, size_t why_len)
+{
+    char r[160];
+    if (janas_word_real(v, lo, hi, x, r, sizeof r) == 0)
+        return 0;
+    snprintf(why, why_len, "%s: %s", a, r);
+    return -1;
+}
+
+static int opt_choice(const char *a, const char *v, const char *const *names,
+                      size_t n, char *why, size_t why_len)
+{
+    char r[300];
+    int k = janas_word_choice(v, names, n, r, sizeof r);
+    if (k < 0)
+        snprintf(why, why_len, "%s: %s", a, r);
+    return k;
+}
+
+/* The words of a command line or of the settings file. 0, or -1 with what
+   was wrong in why: an option not known (with the nearest), a value that
+   is not one. */
+static int take_options(int n, char **w, struct chat_opts *o, char *why,
+                        size_t why_len)
+{
+    static const char *const ON_OFF[] = {"off", "on"};
+    static const char *const MODES[] = {"auto", "eco", "max"};
+    static const char *const ATTN[] = {"auto", "exact", "fast"};
+    static const char *const BITS[] = {"2", "4", "6"};
     for (int i = 0; i < n; i++) {
         const char *a = w[i], *v = i + 1 < n ? w[i + 1] : NULL;
+        long long x;
+        double r;
+        int k;
         if (strcmp(a, "--no-spec") == 0) {
             o->cp->speculate = 0;
             continue;
@@ -851,7 +909,16 @@ static int take_options(int n, char **w, struct chat_opts *o)
             *o->mcp_instructions = 1;
             continue;
         }
+        int valued = 0;
+        for (size_t j = 12; j < N_OPTIONS && !valued; j++)
+            valued = strcmp(a, OPTIONS[j]) == 0;
+        if (!valued) {
+            janas_unknown_word(why, why_len, a, "an option", OPTIONS,
+                               N_OPTIONS);
+            return -1;
+        }
         if (!v) {
+            snprintf(why, why_len, "%s wants a value", a);
             return -1;
         }
         i++;
@@ -859,44 +926,70 @@ static int take_options(int n, char **w, struct chat_opts *o)
             o->mp->mtp_path = v;
         else if (strcmp(a, "--draft") == 0)
             o->mp->draft_path = v;
-        else if (strcmp(a, "--think") == 0)
-            o->cp->thinking = strcmp(v, "off") == 0 ? 0 : 1;
-        else if (strcmp(a, "--mode") == 0)
-            o->mp->mode = strcmp(v, "eco") == 0   ? JANAS_LLM_MODE_ECO
-                          : strcmp(v, "max") == 0 ? JANAS_LLM_MODE_MAX
-                                                  : JANAS_LLM_MODE_AUTO;
-        else if (strcmp(a, "--ctx") == 0)
-            o->mp->n_ctx = (uint32_t)atol(v);
-        else if (strcmp(a, "--cache") == 0)
-            o->mp->cache_bytes = (uint64_t)(atof(v) * (1 << 30));
-        else if (strcmp(a, "--reserve") == 0)
-            o->mp->reserve_bytes = (uint64_t)(atof(v) * (1 << 30));
-        else if (strcmp(a, "--bits") == 0)
-            o->mp->expert_bits = atoi(v);
-        else if (strcmp(a, "--attention") == 0)
-            o->mp->attn_scores = strcmp(v, "exact") == 0  ? JANAS_LLM_ATTN_EXACT
-                                 : strcmp(v, "fast") == 0 ? JANAS_LLM_ATTN_FAST
-                                                          : JANAS_LLM_ATTN_AUTO;
-        else if (strcmp(a, "--system") == 0)
+        else if (strcmp(a, "--think") == 0) {
+            if ((k = opt_choice(a, v, ON_OFF, 2, why, why_len)) < 0)
+                return -1;
+            o->cp->thinking = k;
+        } else if (strcmp(a, "--mode") == 0) {
+            if ((k = opt_choice(a, v, MODES, 3, why, why_len)) < 0)
+                return -1;
+            o->mp->mode = k == 1   ? JANAS_LLM_MODE_ECO
+                          : k == 2 ? JANAS_LLM_MODE_MAX
+                                   : JANAS_LLM_MODE_AUTO;
+        } else if (strcmp(a, "--ctx") == 0) {
+            if (opt_int(a, v, 0, UINT32_MAX, &x, why, why_len) != 0)
+                return -1;
+            o->mp->n_ctx = (uint32_t)x;
+        } else if (strcmp(a, "--cache") == 0) {
+            if (opt_real(a, v, 0, 1 << 20, &r, why, why_len) != 0)
+                return -1;
+            o->mp->cache_bytes = (uint64_t)(r * (1 << 30));
+        } else if (strcmp(a, "--reserve") == 0) {
+            if (opt_real(a, v, 0, 1 << 20, &r, why, why_len) != 0)
+                return -1;
+            o->mp->reserve_bytes = (uint64_t)(r * (1 << 30));
+        } else if (strcmp(a, "--bits") == 0) {
+            if ((k = opt_choice(a, v, BITS, 3, why, why_len)) < 0)
+                return -1;
+            o->mp->expert_bits = 2 + 2 * k;
+        } else if (strcmp(a, "--attention") == 0) {
+            if ((k = opt_choice(a, v, ATTN, 3, why, why_len)) < 0)
+                return -1;
+            o->mp->attn_scores = k == 1   ? JANAS_LLM_ATTN_EXACT
+                                 : k == 2 ? JANAS_LLM_ATTN_FAST
+                                          : JANAS_LLM_ATTN_AUTO;
+        } else if (strcmp(a, "--system") == 0)
             *o->system_arg = v;
         else if (strcmp(a, "--mcp-config") == 0)
             *o->mcp_config = v;
-        else if (strcmp(a, "--progress") == 0)
+        else if (strcmp(a, "--progress") == 0) {
+            if (opt_real(a, v, 0, 86400, &r, why, why_len) != 0)
+                return -1;
             setenv("JANAS_PROGRESS", v, 1);
-        else if (strcmp(a, "--temp") == 0)
-            o->cp->temperature = (float)atof(v);
-        else if (strcmp(a, "--top-k") == 0)
-            o->cp->top_k = atoi(v);
-        else if (strcmp(a, "--top-p") == 0)
-            o->cp->top_p = (float)atof(v);
-        else if (strcmp(a, "--min-p") == 0)
-            o->cp->min_p = (float)atof(v);
-        else if (strcmp(a, "--seed") == 0)
-            o->cp->seed = strtoull(v, NULL, 10);
-        else if (strcmp(a, "--max") == 0)
-            o->cp->max_reply = atoi(v);
-        else {
-            return -1;
+        } else if (strcmp(a, "--temp") == 0) {
+            if (opt_real(a, v, 0, 100, &r, why, why_len) != 0)
+                return -1;
+            o->cp->temperature = (float)r;
+        } else if (strcmp(a, "--top-k") == 0) {
+            if (opt_int(a, v, 0, INT32_MAX, &x, why, why_len) != 0)
+                return -1;
+            o->cp->top_k = (int32_t)x;
+        } else if (strcmp(a, "--top-p") == 0) {
+            if (opt_real(a, v, 0, 1, &r, why, why_len) != 0)
+                return -1;
+            o->cp->top_p = (float)r;
+        } else if (strcmp(a, "--min-p") == 0) {
+            if (opt_real(a, v, 0, 1, &r, why, why_len) != 0)
+                return -1;
+            o->cp->min_p = (float)r;
+        } else if (strcmp(a, "--seed") == 0) {
+            if (opt_int(a, v, 0, LLONG_MAX, &x, why, why_len) != 0)
+                return -1;
+            o->cp->seed = (uint64_t)x;
+        } else if (strcmp(a, "--max") == 0) {
+            if (opt_int(a, v, 0, INT32_MAX, &x, why, why_len) != 0)
+                return -1;
+            o->cp->max_reply = (int32_t)x;
         }
     }
     return 0;
@@ -1397,6 +1490,7 @@ static int show_reply(const janas_llm *llm, janas_llm_chat *c, int markdown,
 
 int main(int argc, char **argv)
 {
+    janas_env_check("janas-chat");
     /* wcwidth() answers for the locale's character set, and in the C locale
        it answers -1 to everything past ASCII: ask for the user's own */
     setlocale(LC_CTYPE, "");
@@ -1439,14 +1533,21 @@ int main(int argc, char **argv)
         int cn = 0;
         char **cw = conf_read(cpath, &cn, &conf_text);
         if (cw) {
-            if (take_options(cn, cw, &o) != 0)
-                fprintf(stderr, "janas-chat: %s has a word it does not know\n",
-                        cpath);
+            char why[400];
+            int bad = take_options(cn, cw, &o, why, sizeof why) != 0;
             free(cw);
+            if (bad) {
+                fprintf(stderr, "janas-chat: %s: %s\n", cpath, why);
+                free(conf_text);
+                return 2;
+            }
         }
     }
-    if (take_options(argc - 2, argv + 2, &o) != 0) {
-        usage();
+    char why[400];
+    if (take_options(argc - 2, argv + 2, &o, why, sizeof why) != 0) {
+        fprintf(stderr, "janas-chat: %s\n", why);
+        fprintf(stderr, "janas-chat --help lists the options\n");
+        free(conf_text);
         return 2;
     }
 
@@ -1614,8 +1715,9 @@ int main(int argc, char **argv)
                     term_printf(&term, "no %s to read\n", cpath);
                     free(text);
                 } else {
-                    if (take_options(cn, cw, &o) != 0)
-                        term_printf(&term, "a word in it is not known\n");
+                    char bad[400];
+                    if (take_options(cn, cw, &o, bad, sizeof bad) != 0)
+                        term_printf(&term, "%s: %s\n", cpath, bad);
                     free(cw);
                     free(conf_text); /* the older words are let go */
                     conf_text = text;

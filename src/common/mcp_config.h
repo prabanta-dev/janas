@@ -13,8 +13,11 @@
  *               "headers": {"Authorization": "Bearer ..."}}}}
  *
  * "servers" (VS Code's name) is read as well as "mcpServers"; "disabled":
- * true leaves a server out; "type" may say "stdio", "http" or "sse". The
- * default file is $XDG_CONFIG_HOME/janas/mcp.json, or ~/.config/janas/.
+ * true leaves a server out; "type" may say "stdio", "http" or "sse". A key
+ * a letter or two from one of these is refused as mistyped, with the one
+ * meant; the keys of the other clients (autoApprove, cwd...) are left to
+ * them. The default file is $XDG_CONFIG_HOME/janas/mcp.json, or
+ * ~/.config/janas/.
  */
 #ifndef JANAS_MCP_CONFIG_H
 #define JANAS_MCP_CONFIG_H

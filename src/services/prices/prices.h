@@ -32,6 +32,8 @@ void pr_url_put(struct janas_buf *b, const char *s);
    "alphavantage_key = KEY" of the file); NULL when none. */
 void pr_key_config(const char *path);
 const char *pr_key(void);
+/* a line of the settings file not understood, or "" */
+const char *pr_key_problem(void);
 
 /* ---- place.c ---- */
 

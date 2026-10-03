@@ -2,6 +2,13 @@
 
 > Curated, user-facing summary of completed work, newest first.
 
+## [2026-10-03] - Strict settings
+
+- **A word not known is refused, with the one nearest to it.** `janas-chat` (command line and `chat.conf`), `janas-server`, `janas-mcp` and `janas-bench` refuse an option mistyped ("--tmep is not an option (did you mean --temp?)") and a value that is not one: numbers are read whole and within their limits (`--ctx 32k` was 32 tokens, `--temp 0,7` was 0, `--port 70000` wrapped), choices are one of theirs (`--think of` turned reasoning on, `--mode ecco` was auto). `janas-bench` left an unknown option and a last one without its value aside, and measured something else than asked. The chat's file said "a word it does not know" without saying which, and went on.
+- **mcp.json**: a key a letter or two from one Janas reads (`arg`, `evn`) is refused with the one meant, `disabled` must be `true` or `false`; the keys of the other clients are left to them.
+- **The services' settings files** (`flights.conf`, `prices.conf`): a line naming no setting is told at the start and in the answer that says the key is missing; `aviationstack_key_old = ...` is no longer read as the key.
+- **The variables of the environment**: a `JANAS_` one Janas does not read is told when a program starts, with the name meant; `tests/test_words.c` checks the table of names against every one the sources read.
+
 ## [2026-10-03] - The services' pages beside their code
 
 - **src/services/README.md** sums up the services and links each one's page, now `src/services/<service>/README.md` beside its code (they were in `docs/services/`); the main README links the summary.

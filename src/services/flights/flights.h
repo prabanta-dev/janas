@@ -84,6 +84,8 @@ struct fl_sched {
 /* The key, from JANAS_AVIATIONSTACK_KEY or the line "aviationstack_key =
    ..." of the file at path: 1 when there is one. */
 int fl_sched_config(const char *path);
+/* a line of the settings file not understood, or "" */
+const char *fl_sched_problem(void);
 int fl_sched_have(void);
 
 /* The flights of a query of /v1/flights ("flight_iata=FR5904",

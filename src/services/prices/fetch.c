@@ -14,6 +14,7 @@
 #include <string.h>
 #include <time.h>
 
+#include "services/common/conf.h"
 #include "services/common/https_get.h"
 #include "prices.h"
 
@@ -37,6 +38,7 @@ static struct {
 } hosts[N_HOSTS];
 
 static char key[128];
+static char conf_problem[300]; /* a line of the file not understood */
 
 static double since(const struct timespec *t)
 {
@@ -148,23 +150,17 @@ void pr_key_config(const char *path)
     take(getenv("JANAS_ALPHAVANTAGE_KEY"));
     if (key[0] || !path)
         return;
-    FILE *f = fopen(path, "r");
-    if (!f)
-        return;
-    char line[512];
-    while (!key[0] && fgets(line, sizeof line, f)) {
-        if (strncmp(line, "alphavantage_key", 16) != 0)
-            continue;
-        const char *v = strchr(line, '=');
-        if (v) {
-            v++;
-            while (*v == ' ' || *v == '\t')
-                v++;
-            take(v);
-        }
-    }
-    memset(line, 0, sizeof line);
-    fclose(f);
+    static const char *const names[] = {"alphavantage_key"};
+    char v[160];
+    if (janas_conf_get(path, names, 1, names[0], v, sizeof v, conf_problem,
+                       sizeof conf_problem))
+        take(v);
+    memset(v, 0, sizeof v);
+}
+
+const char *pr_key_problem(void)
+{
+    return conf_problem;
 }
 
 const char *pr_key(void)

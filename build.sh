@@ -339,7 +339,8 @@ if [ "$VARIANT" = release ]; then
         */common_hf_*.o) ;; # for the tools, with libjanas.a only
         # what the services share (src/services/common/): theirs only
         */services_*.o) ;;
-        */llm_json.o) mcp_objs+=("$o") llm_objs+=("$o") ;;
+        # the JSON reader and the strict reading of words: both
+        */llm_json.o | */common_words.o) mcp_objs+=("$o") llm_objs+=("$o") ;;
         *) llm_objs+=("$o") ;;
         esac
     done

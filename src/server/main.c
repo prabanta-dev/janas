@@ -7,7 +7,11 @@
  */
 #include "server.h"
 
+#include "common/env_names.h"
+#include "common/words.h"
+
 #include <netdb.h>
+#include <limits.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -100,6 +104,64 @@ static const char *arg(int argc, char **argv, int *i)
     return argv[++*i];
 }
 
+/* every option, for the nearest to one mistyped */
+static const char *const OPTIONS[] = {"--help",       "--version",
+                                      "--host",       "--port",
+                                      "--api-key",    "--name",
+                                      "--ctx",        "--reserve",
+                                      "--cache",      "--mtp",
+                                      "--draft",      "--mode",
+                                      "--think",      "--embedding-model",
+                                      "--no-mtp",     "--no-gpu",
+                                      "--keep",       "--keep-memory",
+                                      "--keep-disk",  "--store",
+                                      "--no-store",   "--queue",
+                                      "--max-body",   "--connections",
+                                      "--max-input",  "--warn-input",
+                                      "--fim-prefix", "--fim-suffix",
+                                      "--fim-max",    "--metrics",
+                                      "--progress",   "--no-mcp",
+                                      "--test",       "--verbose"};
+
+/* the value of option argv[*i], read whole within [lo, hi]; a mistake
+   ends the program, as a missing value does */
+static long long num(int argc, char **argv, int *i, long long lo, long long hi)
+{
+    const char *a = argv[*i], *v = arg(argc, argv, i);
+    long long x;
+    char why[160];
+    if (janas_word_int(v, lo, hi, &x, why, sizeof why) != 0) {
+        fprintf(stderr, "janas-server: %s: %s\n", a, why);
+        exit(2);
+    }
+    return x;
+}
+
+static double real(int argc, char **argv, int *i, double lo, double hi)
+{
+    const char *a = argv[*i], *v = arg(argc, argv, i);
+    double x;
+    char why[160];
+    if (janas_word_real(v, lo, hi, &x, why, sizeof why) != 0) {
+        fprintf(stderr, "janas-server: %s: %s\n", a, why);
+        exit(2);
+    }
+    return x;
+}
+
+static int choice(int argc, char **argv, int *i, const char *const *names,
+                  size_t n)
+{
+    const char *a = argv[*i], *v = arg(argc, argv, i);
+    char why[300];
+    int k = janas_word_choice(v, names, n, why, sizeof why);
+    if (k < 0) {
+        fprintf(stderr, "janas-server: %s: %s\n", a, why);
+        exit(2);
+    }
+    return k;
+}
+
 /* Where the store goes when --store does not say: $XDG_DATA_HOME/janas/
    server, or ~/.local/share/janas/server. 0, or -1 with no home. */
 static int default_store(char *buf, size_t len)
@@ -125,6 +187,7 @@ static char *model_name(const char *path)
 
 int main(int argc, char **argv)
 {
+    janas_env_check("janas-server");
     struct srv s = {0};
     struct srv_config *c = &s.cfg;
     janas_llm_params_default(&c->llm);
@@ -152,35 +215,32 @@ int main(int argc, char **argv)
         } else if (!strcmp(a, "--host")) {
             c->host = arg(argc, argv, &i);
         } else if (!strcmp(a, "--port")) {
-            c->port = (uint16_t)atoi(arg(argc, argv, &i));
+            c->port = (uint16_t)num(argc, argv, &i, 1, 65535);
         } else if (!strcmp(a, "--api-key")) {
             c->api_key = arg(argc, argv, &i);
         } else if (!strcmp(a, "--name")) {
             c->model_id = arg(argc, argv, &i);
         } else if (!strcmp(a, "--ctx")) {
-            c->llm.n_ctx = (uint32_t)atoi(arg(argc, argv, &i));
+            c->llm.n_ctx = (uint32_t)num(argc, argv, &i, 0, UINT32_MAX);
         } else if (!strcmp(a, "--reserve")) {
             c->llm.reserve_bytes =
-                (uint64_t)(atof(arg(argc, argv, &i)) * (1 << 30));
+                (uint64_t)(real(argc, argv, &i, 0, 1 << 20) * (1 << 30));
         } else if (!strcmp(a, "--cache")) {
             c->llm.cache_bytes =
-                (uint64_t)(atof(arg(argc, argv, &i)) * (1 << 30));
+                (uint64_t)(real(argc, argv, &i, 0, 1 << 20) * (1 << 30));
         } else if (!strcmp(a, "--mtp")) {
             c->llm.mtp_path = arg(argc, argv, &i);
         } else if (!strcmp(a, "--draft")) {
             c->llm.draft_path = arg(argc, argv, &i);
         } else if (!strcmp(a, "--mode")) {
-            const char *m = arg(argc, argv, &i);
-            c->llm.mode = !strcmp(m, "eco")   ? JANAS_LLM_MODE_ECO
-                          : !strcmp(m, "max") ? JANAS_LLM_MODE_MAX
-                                              : JANAS_LLM_MODE_AUTO;
+            static const char *const modes[] = {"auto", "eco", "max"};
+            int m = choice(argc, argv, &i, modes, 3);
+            c->llm.mode = m == 1   ? JANAS_LLM_MODE_ECO
+                          : m == 2 ? JANAS_LLM_MODE_MAX
+                                   : JANAS_LLM_MODE_AUTO;
         } else if (!strcmp(a, "--think")) {
-            const char *v = arg(argc, argv, &i);
-            if (strcmp(v, "on") && strcmp(v, "off")) {
-                fprintf(stderr, "janas-server: --think is on or off\n");
-                return 2;
-            }
-            c->thinking = strcmp(v, "off") ? 1 : 0;
+            static const char *const on_off[] = {"off", "on"};
+            c->thinking = choice(argc, argv, &i, on_off, 2);
         } else if (!strcmp(a, "--embedding-model")) {
             c->embed_path = arg(argc, argv, &i);
         } else if (!strcmp(a, "--no-mtp")) {
@@ -188,36 +248,39 @@ int main(int argc, char **argv)
         } else if (!strcmp(a, "--no-gpu")) {
             c->no_gpu = 1;
         } else if (!strcmp(a, "--keep")) {
-            c->keep = atoi(arg(argc, argv, &i));
+            c->keep = (int)num(argc, argv, &i, 0, 1 << 20);
         } else if (!strcmp(a, "--keep-memory")) {
-            c->keep_bytes = (uint64_t)(atof(arg(argc, argv, &i)) * (1 << 30));
+            c->keep_bytes =
+                (uint64_t)(real(argc, argv, &i, 0, 1 << 20) * (1 << 30));
         } else if (!strcmp(a, "--keep-disk")) {
-            c->keep_disk = (uint64_t)(atof(arg(argc, argv, &i)) * (1 << 30));
+            c->keep_disk =
+                (uint64_t)(real(argc, argv, &i, 0, 1 << 20) * (1 << 30));
         } else if (!strcmp(a, "--store")) {
             c->store_dir = arg(argc, argv, &i);
             no_store = 0;
         } else if (!strcmp(a, "--no-store")) {
             no_store = 1;
         } else if (!strcmp(a, "--queue")) {
-            c->max_queue = (uint32_t)atoi(arg(argc, argv, &i));
+            c->max_queue = (uint32_t)num(argc, argv, &i, 0, 1 << 20);
         } else if (!strcmp(a, "--max-body")) {
-            c->max_body = (size_t)atoi(arg(argc, argv, &i)) << 20;
+            c->max_body = (size_t)num(argc, argv, &i, 1, 1 << 14) << 20;
         } else if (!strcmp(a, "--connections")) {
-            c->max_connections = atoi(arg(argc, argv, &i));
+            c->max_connections = (int)num(argc, argv, &i, 1, 1 << 16);
         } else if (!strcmp(a, "--max-input")) {
-            c->max_input = (uint32_t)atol(arg(argc, argv, &i));
+            c->max_input = (uint32_t)num(argc, argv, &i, 0, UINT32_MAX);
         } else if (!strcmp(a, "--warn-input")) {
-            c->warn_input = (uint32_t)atol(arg(argc, argv, &i));
+            c->warn_input = (uint32_t)num(argc, argv, &i, 0, UINT32_MAX);
         } else if (!strcmp(a, "--fim-prefix")) {
-            c->fim_prefix = (uint32_t)atol(arg(argc, argv, &i));
+            c->fim_prefix = (uint32_t)num(argc, argv, &i, 0, UINT32_MAX);
         } else if (!strcmp(a, "--fim-suffix")) {
-            c->fim_suffix = (uint32_t)atol(arg(argc, argv, &i));
+            c->fim_suffix = (uint32_t)num(argc, argv, &i, 0, UINT32_MAX);
         } else if (!strcmp(a, "--fim-max")) {
-            c->fim_max = (uint32_t)atol(arg(argc, argv, &i));
+            c->fim_max = (uint32_t)num(argc, argv, &i, 0, UINT32_MAX);
         } else if (!strcmp(a, "--metrics")) {
             setenv("JANAS_METRICS", arg(argc, argv, &i), 1);
         } else if (!strcmp(a, "--progress")) {
-            setenv("JANAS_PROGRESS", arg(argc, argv, &i), 1);
+            real(argc, argv, &i, 0, 86400);
+            setenv("JANAS_PROGRESS", argv[i], 1);
         } else if (!strcmp(a, "--no-mcp")) {
             c->no_mcp = 1;
         } else if (!strcmp(a, "--test")) {
@@ -226,8 +289,11 @@ int main(int argc, char **argv)
             c->verbose = 1;
             setenv("JANAS_PROGRESS", "30", 0); /* unless one is asked */
         } else if (a[0] == '-') {
-            fprintf(stderr, "janas-server: unknown option %s\n", a);
-            usage(stderr);
+            char why[200];
+            janas_unknown_word(why, sizeof why, a, "an option", OPTIONS,
+                               sizeof OPTIONS / sizeof *OPTIONS);
+            fprintf(stderr, "janas-server: %s\n", why);
+            fprintf(stderr, "janas-server --help lists the options\n");
             return 2;
         } else if (!c->model_path) {
             c->model_path = a;

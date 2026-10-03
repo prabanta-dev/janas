@@ -30,7 +30,9 @@
 #include <sys/utsname.h>
 #include <time.h>
 
+#include "common/env_names.h"
 #include "common/sysinfo.h"
+#include "common/words.h"
 #include "janas/llm.h"
 #include "llm/api_internal.h"
 #include "llm/expert_cache.h"
@@ -173,6 +175,7 @@ static int measure_chat(janas_llm *llm, uint32_t n_gen, int sampled,
 
 int main(int argc, char **argv)
 {
+    janas_env_check("janas-bench");
     if (argc < 2 || argv[1][0] == '-') {
         fprintf(stderr, "usage: janas-bench <model.jns> [--mtp <file>] "
                         "[--prompt <tokens>] [--gen <tokens>] [--ctx <tokens>] "
@@ -185,21 +188,43 @@ int main(int argc, char **argv)
     p.n_ctx = 4096;
     uint32_t n_prompt = 256, n_gen = 64;
     int rounds = 3;
-    for (int i = 2; i + 1 < argc; i += 2) {
-        if (strcmp(argv[i], "--mtp") == 0)
-            p.mtp_path = argv[i + 1];
-        else if (strcmp(argv[i], "--prompt") == 0)
-            n_prompt = (uint32_t)atoi(argv[i + 1]);
-        else if (strcmp(argv[i], "--gen") == 0)
-            n_gen = (uint32_t)atoi(argv[i + 1]);
-        else if (strcmp(argv[i], "--ctx") == 0)
-            p.n_ctx = (uint32_t)atoi(argv[i + 1]);
-        else if (strcmp(argv[i], "--rounds") == 0)
-            rounds = atoi(argv[i + 1]) > 0 ? atoi(argv[i + 1]) : 1;
-        else if (strcmp(argv[i], "--cache") == 0)
-            p.cache_bytes = (uint64_t)(atof(argv[i + 1]) * (1 << 30));
-        else if (strcmp(argv[i], "--reserve") == 0)
-            p.reserve_bytes = (uint64_t)(atof(argv[i + 1]) * (1 << 30));
+    static const char *const options[] = {"--mtp",    "--prompt", "--gen",
+                                          "--ctx",    "--rounds", "--cache",
+                                          "--reserve"};
+    for (int i = 2; i < argc; i += 2) {
+        const char *a = argv[i], *v = i + 1 < argc ? argv[i + 1] : NULL;
+        char why[200] = "";
+        long long x = 0;
+        double r = 0;
+        if (strcmp(a, "--mtp") == 0 && v)
+            p.mtp_path = v;
+        else if (strcmp(a, "--prompt") == 0 || strcmp(a, "--gen") == 0 ||
+                 strcmp(a, "--ctx") == 0 || strcmp(a, "--rounds") == 0) {
+            if (janas_word_int(v, 1, UINT32_MAX, &x, why, sizeof why) == 0) {
+                if (a[2] == 'p')
+                    n_prompt = (uint32_t)x;
+                else if (a[2] == 'g')
+                    n_gen = (uint32_t)x;
+                else if (a[2] == 'c')
+                    p.n_ctx = (uint32_t)x;
+                else
+                    rounds = x < 1000 ? (int)x : 1000;
+            }
+        } else if (strcmp(a, "--cache") == 0 || strcmp(a, "--reserve") == 0) {
+            if (janas_word_real(v, 0, 1 << 20, &r, why, sizeof why) == 0)
+                *(a[2] == 'c' ? &p.cache_bytes : &p.reserve_bytes) =
+                    (uint64_t)(r * (1 << 30));
+        } else {
+            janas_unknown_word(why, sizeof why, a, "an option", options,
+                               sizeof options / sizeof *options);
+            fprintf(stderr, "janas-bench: %s\n", why);
+            return 2;
+        }
+        if (why[0] || !v) {
+            fprintf(stderr, "janas-bench: %s: %s\n", a,
+                    why[0] ? why : "a value is missing");
+            return 2;
+        }
     }
     if (n_prompt < 2 || n_gen < 1 || n_prompt + 2 * n_gen + 64 > p.n_ctx) {
         fprintf(stderr, "janas-bench: prompt and generation must fit the "

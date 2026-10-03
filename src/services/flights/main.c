@@ -97,6 +97,8 @@ int main(int argc, char **argv)
             "janas-flights: ready, tools: flight_status flights_between "
             "flights_over flights_nearby; schedules: %s\n",
             sched ? "AviationStack" : "none (no key)");
+    if (fl_sched_problem()[0])
+        fprintf(stderr, "janas-flights: %s\n", fl_sched_problem());
     janas_mcps_run(&srv);
     fl_sched_free();
     fprintf(stderr, "janas-flights: the client has gone\n");

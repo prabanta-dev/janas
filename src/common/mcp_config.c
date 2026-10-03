@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "common/words.h"
 #include "llm/json.h"
 
 #define CONFIG_MAX_BYTES ((size_t)4 << 20)
@@ -51,6 +52,42 @@ static const char *plain(const struct janas_json *v)
     return s && strlen(s) == v->n ? s : NULL;
 }
 
+/* the keys read here */
+static const char *const KEYS[] = {"command", "args",     "env", "url",
+                                   "headers", "disabled", "type"};
+/* keys of the other clients, left to them: not a mistyped one of ours */
+static const char *const THEIRS[] = {
+    "autoApprove",   "alwaysAllow",  "disabledTools", "enabledTools",
+    "includeTools",  "excludeTools", "timeout",       "transport",
+    "transportType", "cwd",          "envFile",       "headersHelper",
+    "oauth",         "description",  "serverUrl",     "trust",
+    "dev",           "name",         "enabled",       "tools"};
+
+/* a key near one of ours and not another client's: a mistake to say */
+static int mistyped(const struct janas_json *k, const char *server, char *err,
+                    size_t err_len)
+{
+    char key[64];
+    if (k->key_n >= sizeof key || memchr(k->key, 0, k->key_n))
+        return 0;
+    memcpy(key, k->key, k->key_n);
+    key[k->key_n] = 0;
+    for (size_t i = 0; i < sizeof KEYS / sizeof *KEYS; i++)
+        if (strcmp(key, KEYS[i]) == 0)
+            return 0;
+    for (size_t i = 0; i < sizeof THEIRS / sizeof *THEIRS; i++)
+        if (strcmp(key, THEIRS[i]) == 0)
+            return 0;
+    const char *near = janas_closest(key, KEYS, sizeof KEYS / sizeof *KEYS);
+    if (!near)
+        return 0;
+    snprintf(err, err_len,
+             "server %s: \"%s\" is not a key (did you mean "
+             "\"%s\"?)",
+             server, key, near);
+    return 1;
+}
+
 static int one(const struct janas_json *s, struct janas_mcp_conf *c, char *err,
                size_t err_len)
 {
@@ -60,7 +97,16 @@ static int one(const struct janas_json *s, struct janas_mcp_conf *c, char *err,
         return -1;
     }
     c->name = dup_n(s->key, s->key_n);
+    if (!c->name)
+        goto oom;
+    for (const struct janas_json *k = s->child; k; k = k->next)
+        if (mistyped(k, c->name, err, err_len))
+            return -1;
     const struct janas_json *d = janas_json_get(s, "disabled");
+    if (d && d->type != JANAS_JSON_TRUE && d->type != JANAS_JSON_FALSE) {
+        snprintf(err, err_len, "server %s: disabled is true or false", c->name);
+        return -1;
+    }
     c->disabled = d && d->type == JANAS_JSON_TRUE;
     const struct janas_json *type = janas_json_get(s, "type");
     const struct janas_json *url = janas_json_get(s, "url");

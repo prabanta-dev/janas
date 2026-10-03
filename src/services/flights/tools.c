@@ -805,10 +805,15 @@ static int flights_between(const struct janas_json *args, struct janas_buf *b)
         return 0;
     }
     if (!fl_sched_have()) {
-        const char *m = "This server has no AviationStack key, so it knows "
-                        "no schedules: flights_between is not available. "
-                        "flights_nearby shows what flies near an airport "
-                        "now.";
+        char m[600];
+        snprintf(m, sizeof m,
+                 "This server has no AviationStack key, so it knows no "
+                 "schedules: flights_between is not available. "
+                 "flights_nearby shows what flies near an airport now.%s%s",
+                 fl_sched_problem()[0] ? " Its settings file has a line it "
+                                         "does not know: "
+                                       : "",
+                 fl_sched_problem());
         janas_mcps_text_result(b, m, strlen(m), 1);
         return 0;
     }

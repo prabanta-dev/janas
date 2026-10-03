@@ -32,7 +32,7 @@ Register at [aviationstack.com](https://aviationstack.com) for the free plan: 10
 aviationstack_key = YOUR_KEY
 ```
 
-or in another file named by `--config FILE` or `JANAS_FLIGHTS_CONFIG`, or in the variable `JANAS_AVIATIONSTACK_KEY` (which wins). Without a key the service runs on open data only; `flight_status` then tells where a flight is, not its times.
+or in another file named by `--config FILE` or `JANAS_FLIGHTS_CONFIG`, or in the variable `JANAS_AVIATIONSTACK_KEY` (which wins). Without a key the service runs on open data only; `flight_status` then tells where a flight is, not its times. A line of the file naming no setting (`aviationstak_key`) is told when the service starts, with the name meant, and in the answer that says there is no key.
 
 ## What it does with AviationStack's answers
 

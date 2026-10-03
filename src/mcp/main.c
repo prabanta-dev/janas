@@ -20,6 +20,8 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "common/env_names.h"
+#include "common/words.h"
 #include "serve.h"
 
 #ifndef JANAS_VERSION
@@ -84,6 +86,7 @@ static janas_llm *open_model(const char *path, const struct janas_llm_params *p,
 
 int main(int argc, char **argv)
 {
+    janas_env_check("janas-mcp");
     struct mcpd d = {.call_seconds = 600};
     struct janas_llm_params mp;
     janas_llm_params_default(&mp);
@@ -97,31 +100,60 @@ int main(int argc, char **argv)
             model = a;
             continue;
         }
-        if (strcmp(a, "-h") == 0 || strcmp(a, "--help") == 0 || !v) {
+        static const char *const options[] = {
+            "--embedding-model", "--mtp",  "--ctx", "--cache",
+            "--reserve",         "--temp", "--max", "--think",
+            "--timeout",         "--help"};
+        if (strcmp(a, "-h") == 0 || strcmp(a, "--help") == 0) {
             usage();
-            return strcmp(a, "-h") == 0 || strcmp(a, "--help") == 0 ? 0 : 2;
+            return 0;
+        }
+        char why[300] = "";
+        long long x = 0;
+        double r = 0;
+        int known = 0;
+        for (size_t k = 0; k + 1 < sizeof options / sizeof *options; k++)
+            known |= strcmp(a, options[k]) == 0;
+        if (!known)
+            janas_unknown_word(why, sizeof why, a, "an option", options,
+                               sizeof options / sizeof *options);
+        else if (!v)
+            snprintf(why, sizeof why, "%s wants a value", a);
+        if (why[0]) {
+            fprintf(stderr, "janas-mcp: %s\n", why);
+            return 2;
         }
         i++;
         if (strcmp(a, "--embedding-model") == 0)
             emb = v;
         else if (strcmp(a, "--mtp") == 0)
             mp.mtp_path = v;
-        else if (strcmp(a, "--ctx") == 0)
-            mp.n_ctx = (uint32_t)atol(v);
-        else if (strcmp(a, "--cache") == 0)
-            mp.cache_bytes = (uint64_t)(atof(v) * (1 << 30));
-        else if (strcmp(a, "--reserve") == 0)
-            mp.reserve_bytes = (uint64_t)(atof(v) * (1 << 30));
-        else if (strcmp(a, "--temp") == 0)
-            d.cp.temperature = (float)atof(v);
-        else if (strcmp(a, "--max") == 0)
-            d.cp.max_reply = atoi(v);
-        else if (strcmp(a, "--think") == 0)
-            d.cp.thinking = strcmp(v, "on") == 0;
-        else if (strcmp(a, "--timeout") == 0)
-            d.call_seconds = atoi(v);
-        else {
-            usage();
+        else if (strcmp(a, "--ctx") == 0) {
+            if (janas_word_int(v, 0, UINT32_MAX, &x, why, sizeof why) == 0)
+                mp.n_ctx = (uint32_t)x;
+        } else if (strcmp(a, "--cache") == 0) {
+            if (janas_word_real(v, 0, 1 << 20, &r, why, sizeof why) == 0)
+                mp.cache_bytes = (uint64_t)(r * (1 << 30));
+        } else if (strcmp(a, "--reserve") == 0) {
+            if (janas_word_real(v, 0, 1 << 20, &r, why, sizeof why) == 0)
+                mp.reserve_bytes = (uint64_t)(r * (1 << 30));
+        } else if (strcmp(a, "--temp") == 0) {
+            if (janas_word_real(v, 0, 100, &r, why, sizeof why) == 0)
+                d.cp.temperature = (float)r;
+        } else if (strcmp(a, "--max") == 0) {
+            if (janas_word_int(v, 0, INT32_MAX, &x, why, sizeof why) == 0)
+                d.cp.max_reply = (int32_t)x;
+        } else if (strcmp(a, "--think") == 0) {
+            static const char *const on_off[] = {"off", "on"};
+            int k = janas_word_choice(v, on_off, 2, why, sizeof why);
+            if (k >= 0)
+                d.cp.thinking = k;
+        } else if (strcmp(a, "--timeout") == 0) {
+            if (janas_word_int(v, 0, 86400 * 7, &x, why, sizeof why) == 0)
+                d.call_seconds = (int)x;
+        }
+        if (why[0]) {
+            fprintf(stderr, "janas-mcp: %s: %s\n", a, why);
             return 2;
         }
     }

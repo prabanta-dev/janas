@@ -213,11 +213,14 @@ int pr_tool_stock(const struct janas_json *args, struct janas_buf *b)
         return pr_fail(b, "No share named.");
     if (!pr_key())
         return pr_fail(
-            b, "Share prices need a free key of Alpha Vantage, which the user "
-               "has not given: it is had at "
-               "https://www.alphavantage.co/support/#api-key and goes in "
-               "~/.config/janas/prices.conf as the line  alphavantage_key = "
-               "KEY  (or in JANAS_ALPHAVANTAGE_KEY). Tell the user so.");
+            b,
+            "Share prices need a free key of Alpha Vantage, which the user "
+            "has not given: it is had at "
+            "https://www.alphavantage.co/support/#api-key and goes in "
+            "~/.config/janas/prices.conf as the line  alphavantage_key = "
+            "KEY  (or in JANAS_ALPHAVANTAGE_KEY).%s%s Tell the user so.",
+            pr_key_problem()[0] ? " That file has a line not understood: " : "",
+            pr_key_problem());
     struct pr_quote q;
     char err[400] = "";
     memset(&q, 0, sizeof q);

@@ -83,6 +83,8 @@ int main(int argc, char **argv)
     }
     fprintf(stderr, "janas-prices %s: ready, 7 tools; shares: %s\n",
             JANAS_VERSION, pr_key() ? "Alpha Vantage" : "none (no key)");
+    if (pr_key_problem()[0])
+        fprintf(stderr, "janas-prices: %s\n", pr_key_problem());
     janas_mcps_run(&srv);
     pr_fetch_free();
     return 0;

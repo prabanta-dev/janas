@@ -14,12 +14,14 @@
 #include <time.h>
 
 #include "flights.h"
+#include "services/common/conf.h"
 
 #define BASE "https://api.aviationstack.com/v1/flights?access_key="
 #define KEEP_S 600 /* how long an answer is kept */
 #define N_KEPT 16
 
 static char key[128];
+static char conf_problem[300]; /* a line of the file not understood */
 
 static struct {
     char query[128];
@@ -44,25 +46,21 @@ int fl_sched_config(const char *path)
         trim(key);
         return 1;
     }
-    FILE *f = path ? fopen(path, "r") : NULL;
-    if (!f)
-        return 0;
-    char line[512];
-    while (fgets(line, sizeof line, f)) {
-        trim(line);
-        if (strncmp(line, "aviationstack_key", 17) != 0)
-            continue;
-        char *v = line + 17;
-        v += strspn(v, " \t=");
-        snprintf(key, sizeof key, "%s", v);
-    }
-    fclose(f);
+    static const char *const names[] = {"aviationstack_key"};
+    janas_conf_get(path, names, 1, names[0], key, sizeof key, conf_problem,
+                   sizeof conf_problem);
+    trim(key);
     return key[0] != 0;
 }
 
 int fl_sched_have(void)
 {
     return key[0] != 0;
+}
+
+const char *fl_sched_problem(void)
+{
+    return conf_problem;
 }
 
 /* "2026-09-30T18:25:00+00:00" in the zone tz. AviationStack writes the
