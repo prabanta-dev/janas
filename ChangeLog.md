@@ -2,6 +2,13 @@
 
 > Curated, user-facing summary of completed work, newest first.
 
+## [2026-10-06] - A long prompt reads the next layer's experts ahead
+
+- **The prefill reads ahead too.** Block by block, the next layer's router is applied to the whole block before the current layer's experts, and the experts most of its tokens will want are read from the disk while the current layer computes; until now each layer waited for the disk chunk by chunk. On after a block whose layers missed more than 32 experts each, off where the experts fit. Qwen3-Next-80B-A3B, 4,096 tokens, every bit: 36.8 to 42.0 tokens/s with a 4 GiB cache (time waited for the disk 40.8 to 20.7 s), 48.5 to 50.0 with 16 GiB, the 256 tokens written after it 21.8 to 21.5 tokens/s; Qwen3-30B-A3B in a cache that holds it, even. The cost is the router applied once more, about 1.1 ms a token. `JANAS_PREFETCH_PREFILL=0` never, `=2` always. The idea is Strata's (github.com/Niko1221/Strata), which streams the next layer's experts to its graphics card.
+- **The experts read ahead are kept until their layer is done.** A prefill block asks the cache for its experts 64 at a time, and the first request let go of every expert read ahead for the layer, so those read for the later chunks were thrown out before they were asked for: 42% of the reads ahead were used, 82-89% now.
+- `tests/bench_long` counts the experts read ahead as read from the disk, as the chat's statistics do; it counted them as found in memory.
+- **Tried and left out**: drafts copied from the context weighed against the MTP block's, as Strata does. On Qwen3.5-9B the MTP drafts already kept 95-99% where a reply copies its prompt (a function renamed, a table), and the copies, kept 20% of the time, only took their place.
+
 ## [2026-10-03] - Strict settings
 
 - **A word not known is refused, with the one nearest to it.** `janas-chat` (command line and `chat.conf`), `janas-server`, `janas-mcp` and `janas-bench` refuse an option mistyped ("--tmep is not an option (did you mean --temp?)") and a value that is not one: numbers are read whole and within their limits (`--ctx 32k` was 32 tokens, `--temp 0,7` was 0, `--port 70000` wrapped), choices are one of theirs (`--think of` turned reasoning on, `--mode ecco` was auto). `janas-bench` left an unknown option and a last one without its value aside, and measured something else than asked. The chat's file said "a word it does not know" without saying which, and went on.

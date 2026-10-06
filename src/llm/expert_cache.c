@@ -27,8 +27,10 @@
 #define URING_BATCH 4
 /* and again from this many times the threads of the I/O pool on */
 #define URING_DEEP_TIMES 4
-/* reads ahead at most, for one layer */
-#define PF_MAX 64
+/* reads ahead at most, for one layer (a prefill block's), and never more
+   than an eighth of the cache: kept until their layer asks, they must not
+   leave the layer before too few slots to work with */
+#define PF_MAX 256
 
 struct read_job {
     uint64_t offset;
@@ -887,6 +889,8 @@ int janas_expert_cache_prefetch(struct janas_expert_cache *c, uint32_t layer,
     pf_settle(c, p); /* a set left over (its layer never asked) */
     size_t base = (size_t)layer * c->j->h.n_expert, count = 0;
     uint64_t bytes = c->j->layers[layer].level_bytes[c->level - 1];
+    if (max > c->n_slots / 8)
+        max = c->n_slots / 8;
     for (size_t i = 0; i < n && count < max && count < PF_MAX; i++) {
         if (ids[i] >= c->j->h.n_expert || c->where[base + ids[i]] != NONE)
             continue;
@@ -955,8 +959,12 @@ int janas_expert_cache_begin(struct janas_expert_cache *c, uint32_t layer,
     c->cur_layer = layer;
     c->pass_asked += n;
     /* reads ahead for this layer (or for one it went past): wait for them;
-       counted as used where this request asks for them, then settled. The
-       set of a later layer stays as it is, still in flight. */
+       counted as used where a request asks for them. This layer's set is
+       kept until the layer is done: a prefill block asks for its experts
+       64 at a time, and settling the set at the first request left the
+       slots read for the later chunks free to go before those asked (6 Oct
+       2026: 42% of the reads ahead used, the cache poorer for the decoding
+       after). The set of a later layer stays as it is, still in flight. */
     int pf_here[2];
     for (int p = 0; p < 2; p++) {
         pf_here[p] = c->pf_n[p] && layer >= c->pf_layer[p];
@@ -974,18 +982,21 @@ int janas_expert_cache_begin(struct janas_expert_cache *c, uint32_t layer,
         s[i] = c->where[base + ids[i]];
         ready[i] = s[i] != NONE;
         if (s[i] != NONE) {
-            /* a read ahead for this very layer: its set is settled here */
+            /* a read ahead for this very layer: counted once */
             if (c->pf_flag[s[i]] == 1 && pf_here[layer & 1] &&
                 c->pf_layer[layer & 1] == layer) {
                 c->st.prefetch_used++;
-                c->pf_flag[s[i]] = 2; /* counted once */
+                c->pf_flag[s[i]] = 2;
             }
             touch(c, s[i]);
             c->st.hits++;
         }
     }
+    /* settled too: a set more than one layer ahead, which is of the pass
+       before (the last layer's, when this pass reads nothing ahead) */
     for (int p = 0; p < 2; p++)
-        if (pf_here[p])
+        if (c->pf_n[p] &&
+            (c->pf_layer[p] < layer || c->pf_layer[p] > layer + 1))
             pf_settle(c, p); /* the unused ones: last in line, free to go */
     int queued = 0;
     for (size_t i = 0; i < n; i++)

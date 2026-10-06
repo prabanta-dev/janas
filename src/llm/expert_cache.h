@@ -134,7 +134,8 @@ int janas_expert_cache_finish(struct janas_expert_cache *c);
 
 /*
  * Reads ahead up to max of the experts ids of the layer that are not in the
- * cache, in the order given (the most likely first), while the caller goes
+ * cache (256 at most, and an eighth of the cache's slots), in the order
+ * given (the most likely first), while the caller goes
  * on: for a layer that will ask soon. They take the least recently used
  * slots and stay last in line, and until that layer's next request they are
  * never taken back (a read in flight must not land in a slot given to

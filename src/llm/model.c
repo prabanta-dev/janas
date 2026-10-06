@@ -344,6 +344,27 @@ static int forward(struct janas_llm_model *m, const int32_t *tokens, uint32_t n,
 #define PF_ON 60
 #define PF_OFF 40
 
+/*
+ * Reading ahead in prefill blocks (unless JANAS_PREFETCH_PREFILL=0 or 2):
+ * on after a block whose layers would have missed more than PFB_ON experts
+ * each, as a rule (the misses and those the reads ahead spared); only for
+ * blocks of PFB_MIN_N tokens or more, the passes that verify drafts being
+ * decoding. It costs layer l + 1's router once more on every token (1.1
+ * ms a token on Qwen3-Next-80B) and spares half the time waited for the
+ * disk where the cache is small for the model (6 Oct 2026).
+ */
+#define PFB_MIN_N 32
+#define PFB_ON 32
+
+static void prefetch_block_decide(struct janas_llm_model *m,
+                                  const struct janas_expert_cache_stats *a,
+                                  const struct janas_expert_cache_stats *b)
+{
+    uint64_t would =
+        (b->misses - a->misses) + (b->prefetch_used - a->prefetch_used);
+    m->pfb_on = would > (uint64_t)PFB_ON * m->n_layer;
+}
+
 static void prefetch_decide(struct janas_llm_model *m,
                             const struct janas_expert_cache_stats *a,
                             const struct janas_expert_cache_stats *b)
@@ -385,6 +406,8 @@ int janas_llm_model_forward(struct janas_llm_model *m, const int32_t *tokens,
         janas_tuner_record(&m->tuner, cls, cand, dt / n);
     if (r == 0 && n == 1 && m->pf_mode == 1)
         prefetch_decide(m, &c0, &c1);
+    if (r == 0 && n >= PFB_MIN_N && m->pfb_mode == 1)
+        prefetch_block_decide(m, &c0, &c1);
     janas_m_arena_to_gpu(m);
     return r;
 }
@@ -456,6 +479,8 @@ static int forward(struct janas_llm_model *m, const int32_t *tokens, uint32_t n,
             return -1;
         if (m->pf_on && n == 1 && l + 1 < m->n_layer)
             janas_m_prefetch(m, l);
+        else if (m->pfb_on && n >= PFB_MIN_N && l + 1 < m->n_layer)
+            janas_m_prefetch_block(m, l, n);
         janas_m_norm_quant(m, f32(m, ly->ffn_norm), 0, n);
         trace_row(m, "post_norm", m->xn + (size_t)(n - 1) * dm, dm);
         if (ly->post_ffn) {

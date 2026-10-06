@@ -1018,6 +1018,15 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
             m->pf_mode = 2;
             m->pf_on = 1;
         }
+        /* and in prefill blocks, where they pay (model.c): Qwen3-Next-80B
+           with a 4 GiB cache read 4096 tokens at 41.0 token/s against 34.6
+           without (6 Oct 2026); JANAS_PREFETCH_PREFILL=0 never, =2 always */
+        const char *pfb = getenv("JANAS_PREFETCH_PREFILL");
+        m->pfb_mode = 1;
+        if (pfb && strcmp(pfb, "0") == 0)
+            m->pfb_mode = 0;
+        else if (pfb && strcmp(pfb, "2") == 0)
+            m->pfb_mode = m->pfb_on = 2;
     }
     /* fill the cache with the experts this machine used most, before the
        first reply has to find them one token at a time. A caller that does

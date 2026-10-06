@@ -319,6 +319,43 @@ void janas_m_prefetch(struct janas_llm_model *m, uint32_t l)
     m->phase[JANAS_PH_ROUTER] += now() - t0;
 }
 
+static int by_votes(const void *a, const void *b)
+{
+    uint64_t x = *(const uint64_t *)a, y = *(const uint64_t *)b;
+    return (x < y) - (x > y); /* descending */
+}
+
+/*
+ * Reads ahead for layer l + 1 of a prefill block, as Strata does for its
+ * graphics card (github.com/Niko1221/Strata): layer l + 1's router on the
+ * whole block, before layer l's experts, and the experts most of its tokens
+ * would choose read first, while layer l's experts are computed. Without
+ * it a layer whose experts are not in the cache waits for the disk chunk by
+ * chunk, with only the experts already in to compute meanwhile.
+ */
+void janas_m_prefetch_block(struct janas_llm_model *m, uint32_t l, uint32_t n)
+{
+    double t0 = now();
+    uint32_t k = m->k_use, ne = m->n_expert;
+    uint32_t *ids = malloc((size_t)n * k * sizeof(*ids));
+    if (ids && janas_m_route_rank(m, l + 1, n, k, ids) == 0) {
+        uint32_t votes[4096] = {0}; /* n_expert <= 4096, checked at load */
+        for (size_t p = 0; p < (size_t)n * k; p++)
+            votes[ids[p]]++;
+        uint64_t key[4096];
+        uint32_t nk = 0;
+        for (uint32_t e = 0; e < ne; e++)
+            if (votes[e])
+                key[nk++] = (uint64_t)votes[e] << 32 | e;
+        qsort(key, nk, sizeof(*key), by_votes);
+        for (uint32_t i = 0; i < nk; i++)
+            ids[i] = (uint32_t)key[i];
+        janas_expert_cache_prefetch(m->cache, l + 1, ids, nk, nk);
+    }
+    free(ids);
+    m->phase[JANAS_PH_ROUTER] += now() - t0;
+}
+
 /* The router's choice for token j: softmax, top-k, normalized weights. */
 static void route_tok(struct janas_llm_model *m, uint32_t j)
 {

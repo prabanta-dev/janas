@@ -281,6 +281,10 @@ struct janas_llm_model {
     int pf_mode, pf_on;
     uint32_t pf_tokens;
     uint64_t pf_would;
+    /* reads ahead in a prefill block (janas_m_prefetch_block): pfb_mode 0
+       never, 1 after a block that missed many experts (pfb_on), 2 always
+       (JANAS_PREFETCH_PREFILL=0, unset, =2) */
+    int pfb_mode, pfb_on;
     uint64_t warm_experts; /* experts preloaded at open from the profile */
     double warm_seconds;
 
@@ -409,6 +413,8 @@ int janas_m_route_rank(struct janas_llm_model *m, uint32_t l, uint32_t n,
                        uint32_t k, uint32_t *ids);
 /* Reads ahead for layer l + 1 of a single token (JANAS_PREFETCH). */
 void janas_m_prefetch(struct janas_llm_model *m, uint32_t l);
+/* The same for a prefill block of n tokens (JANAS_PREFETCH_PREFILL). */
+void janas_m_prefetch_block(struct janas_llm_model *m, uint32_t l, uint32_t n);
 int janas_m_moe_block(struct janas_llm_model *m, const struct layer *ly,
                       struct janas_expert_cache *cache,
                       const struct janas_jns_layer *jl, uint32_t l, uint32_t n,

@@ -178,10 +178,19 @@ int main(int argc, char **argv)
     long long d1 = disk_busy_ms(argv[1]);
     janas_llm_model_phases(m, ph[1]);
     janas_expert_cache_stats(c, &cs);
+    /* the experts read ahead were read from the disk too, though the
+       requests then find them: counted as read, not as in RAM */
     printf("prefill %u tokens: %.1f s (%.1f token/s); experts %.1f%% from "
            "RAM, %.2f GB read, %.1f s waited\n",
-           np, t1 - t0, np / (t1 - t0), 100.0 * cs.hits / cs.requests,
-           cs.bytes_read / 1e9, cs.wait_seconds);
+           np, t1 - t0, np / (t1 - t0),
+           100.0 * (cs.hits - cs.prefetch_used) / cs.requests,
+           (cs.bytes_read + cs.prefetch_bytes) / 1e9, cs.wait_seconds);
+    if (cs.prefetch_reads)
+        printf("prefill, read ahead: %llu experts, %llu of them asked for "
+               "(%.0f%%)\n",
+               (unsigned long long)cs.prefetch_reads,
+               (unsigned long long)cs.prefetch_used,
+               100.0 * cs.prefetch_used / cs.prefetch_reads);
     if (d0 >= 0 && d1 >= 0)
         printf("prefill, disk busy: %.2f s (%.0f%%)\n", (d1 - d0) / 1e3,
                100.0 * (d1 - d0) / 1e3 / (t1 - t0));
@@ -209,8 +218,10 @@ int main(int argc, char **argv)
     janas_expert_cache_stats(c, &cs);
     printf("decode %u tokens after %u: %.2f s (%.2f token/s); experts "
            "%.1f%% from RAM, %.2f GB read (%.1f MB/token), %.2f s waited\n",
-           nn, np, t2 - t1, nn / (t2 - t1), 100.0 * cs.hits / cs.requests,
-           cs.bytes_read / 1e9, cs.bytes_read / 1e6 / nn, cs.wait_seconds);
+           nn, np, t2 - t1, nn / (t2 - t1),
+           100.0 * (cs.hits - cs.prefetch_used) / cs.requests,
+           (cs.bytes_read + cs.prefetch_bytes) / 1e9,
+           (cs.bytes_read + cs.prefetch_bytes) / 1e6 / nn, cs.wait_seconds);
     if (d1 >= 0 && d2 >= 0)
         printf("decode, disk busy: %.2f s (%.0f%%)\n", (d2 - d1) / 1e3,
                100.0 * (d2 - d1) / 1e3 / (t2 - t1));
