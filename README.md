@@ -546,7 +546,7 @@ Close what you can before running it: it measures the machine you give it, and a
 | `tools/gen_geo` | the services' tables of airports, cities and seas, from OurAirports, GeoNames and Natural Earth |
 | `mcp_fake_server` | an MCP server over stdio in either era of the protocol, for trying a client without anybody else's server |
 | `llm_eval` | compares the engine's logits against a reference dump |
-| `bench_gemm`, `bench_attn`, `bench_long`, ... | the pieces measured on their own |
+| `bench_kernels`, `bench_gemm`, `bench_attn`, `bench_long`, ... | the pieces measured on their own |
 
 They are built into `bin/x86_64-linux/` along with everything else.
 

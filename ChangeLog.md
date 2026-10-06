@@ -2,6 +2,12 @@
 
 > Curated, user-facing summary of completed work, newest first.
 
+## [2026-10-06] - Q3_K, IQ4_XS and IQ3_S weights read at full speed
+
+- **The products of Q3_K, IQ4_XS and IQ3_S weights were six to thirteen times slower than they should have been.** Their kernels converted each block's 16-bit scale by calling a function, inside the vector loop, where the others use the processor's own conversion; now they do too, with the same result to the bit. On one core, a 4096 x 2048 matrix: Q3_K 3.38 to 0.43 ms, IQ4_XS 3.26 to 0.25, IQ3_S 3.45 to 0.56. Unsloth's UD files mix these types in: Qwen3.8-27B UD-Q4_K_XL, 3.3 GB of whose 17.5 are of them, writes 3.6 tokens/s where it wrote 1.7-1.8, and reads a prompt at 8.2 tokens/s where it read 6.4.
+- **`tests/bench_kernels`**: every weight type's product on one core and on many, over 1 to 8 vectors, in GB/s of weights, to set beside the memory's bandwidth. On the development machine, one vector on 12 threads: Q8_0 84 GB/s, Q6_K 73, Q4_K 69, the 4- and 5-bit types 61-68, Q3_K 33 and IQ3_S 25 - those two still bound by their arithmetic.
+- **Where the time of a token goes, against the bandwidth** (bytes each phase reads, over its time): on Qwen3-Next-80B-A3B, Qwen3.6-35B-A3B, Qwen3-30B-A3B and the 27B, every phase that reads weights runs at 60-70 GB/s, 59-62 on average - three quarters of the 81 GB/s the memory gives, nine tenths of what the kernels do alone.
+
 ## [2026-10-06] - A long prompt reads the next layer's experts ahead
 
 - **The prefill reads ahead too.** Block by block, the next layer's router is applied to the whole block before the current layer's experts, and the experts most of its tokens will want are read from the disk while the current layer computes; until now each layer waited for the disk chunk by chunk. On after a block whose layers missed more than 32 experts each, off where the experts fit. Qwen3-Next-80B-A3B, 4,096 tokens, every bit: 36.8 to 42.0 tokens/s with a 4 GiB cache (time waited for the disk 40.8 to 20.7 s), 48.5 to 50.0 with 16 GiB, the 256 tokens written after it 21.8 to 21.5 tokens/s; Qwen3-30B-A3B in a cache that holds it, even. The cost is the router applied once more, about 1.1 ms a token. `JANAS_PREFETCH_PREFILL=0` never, `=2` always. The idea is Strata's (github.com/Niko1221/Strata), which streams the next layer's experts to its graphics card.

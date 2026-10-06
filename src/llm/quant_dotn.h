@@ -738,7 +738,7 @@ DOTN(iq4xs_dotn_body)(const struct janas_block_iq4xs *w,
             aq[g] = _mm256_abs_epi8(q[g]);
             sc[g] = _mm256_set1_epi16((short)iq4xs_scale(&w[b], g));
         }
-        float d = janas_fp16_to_fp32(w[b].d);
+        float d = _cvtsh_ss(w[b].d);
         _Pragma("GCC unroll 8") for (int v = 0; v < nv; v++)
         {
             const struct janas_block_q8k *xb = x + (size_t)v * xs + b;
@@ -1299,7 +1299,7 @@ DOTN(q3k_dotn_body)(const struct janas_block_q3k *w,
                               _mm_set1_epi16(sc[2 * k + 1]));
         __m256i scall =
             _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i *)sc));
-        float d = janas_fp16_to_fp32(w[b].d);
+        float d = _cvtsh_ss(w[b].d);
         _Pragma("GCC unroll 8") for (int v = 0; v < nv; v++)
         {
             const struct janas_block_q8k *xb = x + (size_t)v * xs + b;
@@ -1397,7 +1397,7 @@ DOTN(iq3s_dotn_body)(const struct janas_block_iq3s *w,
             sg[g] = _mm256_or_si256(m, one); /* -1 where the sign bit is set */
             sc[g] = _mm256_set1_epi16((short)iq3s_scale(&w[b], g));
         }
-        float d = janas_fp16_to_fp32(w[b].d);
+        float d = _cvtsh_ss(w[b].d);
         _Pragma("GCC unroll 8") for (int v = 0; v < nv; v++)
         {
             const struct janas_block_q8k *xb = x + (size_t)v * xs + b;
