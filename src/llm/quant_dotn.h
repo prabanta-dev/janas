@@ -54,8 +54,10 @@ DOTN(q4k_dotn_body)(const struct janas_block_q4k *w,
                     float *out, const int nv)
 {
     const __m256i low4 = _mm256_set1_epi8(0x0f);
-    /* up to 2 vectors: lanes acc0, acc1, accm0, accm1 */
-    __m128 acc4 = _mm_setzero_ps();
+    /* up to 2 vectors: lanes acc0, acc1, accm0, accm1; 3 or 4: one lane
+       each in acc4n and accm4n */
+    __m128 acc4 = _mm_setzero_ps(), acc4n = _mm_setzero_ps(),
+           accm4n = _mm_setzero_ps();
     __m256 acc8 = _mm256_setzero_ps(), accm8 = _mm256_setzero_ps();
     for (size_t b = 0; b < nb; b++) {
         uint32_t u[4];
@@ -105,10 +107,8 @@ DOTN(q4k_dotn_body)(const struct janas_block_q4k *w,
             pm[v] = _mm_setzero_si128();
             if (v < nv) {
                 const struct janas_block_q8k *xb = x + (size_t)v * xs + b;
-                __m128i bs_lo = _mm_loadu_si128((const __m128i *)xb->bsums);
-                __m128i bs_hi =
-                    _mm_loadu_si128((const __m128i *)(xb->bsums + 8));
-                pm[v] = _mm_madd_epi16(mins16, _mm_hadd_epi16(bs_lo, bs_hi));
+                pm[v] = _mm_madd_epi16(
+                    mins16, _mm_loadu_si128((const __m128i *)xb->bsums2));
             }
         }
         if (nv <= 2) {
@@ -124,6 +124,20 @@ DOTN(q4k_dotn_body)(const struct janas_block_q4k *w,
             __m128 d8 = _mm_setr_ps(d80, d81, d80, d81);
             __m128 dd = _mm_setr_ps(dw, dw, dmw, dmw);
             acc4 = _mm_fmadd_ps(_mm_mul_ps(dd, d8), _mm_cvtepi32_ps(t), acc4);
+        } else if (nv <= 4) {
+            /* the sums of four vectors, one lane each: half the reduction */
+            __m256i t = _mm256_hadd_epi32(_mm256_hadd_epi32(sumi[0], sumi[1]),
+                                          _mm256_hadd_epi32(sumi[2], sumi[3]));
+            __m128i is4 = _mm_add_epi32(_mm256_castsi256_si128(t),
+                                        _mm256_extracti128_si256(t, 1));
+            __m128i im4 = _mm_hadd_epi32(_mm_hadd_epi32(pm[0], pm[1]),
+                                         _mm_hadd_epi32(pm[2], pm[3]));
+            __m128 d8 = _mm_setr_ps(x[b].d, x[xs + b].d, x[2 * xs + b].d,
+                                    nv == 4 ? x[3 * xs + b].d : 0.0f);
+            acc4n = _mm_fmadd_ps(_mm_mul_ps(_mm_set1_ps(dw), d8),
+                                 _mm_cvtepi32_ps(is4), acc4n);
+            accm4n = _mm_fmadd_ps(_mm_mul_ps(_mm_set1_ps(dmw), d8),
+                                  _mm_cvtepi32_ps(im4), accm4n);
         } else {
             /* the sums of the eight vectors, one lane each */
             __m256i s01 = _mm256_hadd_epi32(sumi[0], sumi[1]);
@@ -156,6 +170,10 @@ DOTN(q4k_dotn_body)(const struct janas_block_q4k *w,
         out[0] = r[0] - r[2];
         if (nv == 2)
             out[1] = r[1] - r[3];
+    } else if (nv <= 4) {
+        float r[4];
+        _mm_storeu_ps(r, _mm_sub_ps(acc4n, accm4n));
+        _Pragma("GCC unroll 4") for (int v = 0; v < nv; v++) out[v] = r[v];
     } else {
         float r[8];
         _mm256_storeu_ps(r, _mm256_sub_ps(acc8, accm8));
@@ -231,10 +249,8 @@ DOTN(q5k_dotn_body)(const struct janas_block_q5k *w,
             pm[v] = _mm_setzero_si128();
             if (v < nv) {
                 const struct janas_block_q8k *xb = x + (size_t)v * xs + b;
-                __m128i bs_lo = _mm_loadu_si128((const __m128i *)xb->bsums);
-                __m128i bs_hi =
-                    _mm_loadu_si128((const __m128i *)(xb->bsums + 8));
-                pm[v] = _mm_madd_epi16(mins16, _mm_hadd_epi16(bs_lo, bs_hi));
+                pm[v] = _mm_madd_epi16(
+                    mins16, _mm_loadu_si128((const __m128i *)xb->bsums2));
             }
         }
         if (nv <= 2) {

@@ -124,6 +124,9 @@ static void q8k_quantize_ref(const float *x, struct janas_block_q8k *y,
                 s += y[b].qs[g * 16 + i];
             y[b].bsums[g] = (int16_t)s;
         }
+        for (int k = 0; k < JANAS_QK / 32; k++)
+            y[b].bsums2[k] =
+                (int16_t)(y[b].bsums[2 * k] + y[b].bsums[2 * k + 1]);
         q8_32_ref(x, &y[b], 0);
     }
 }
@@ -149,6 +152,9 @@ static void q8k_quantize_det_ref(const float *x, struct janas_block_q8k *y,
                 s += y[b].qs[g * 16 + i];
             y[b].bsums[g] = (int16_t)s;
         }
+        for (int k = 0; k < JANAS_QK / 32; k++)
+            y[b].bsums2[k] =
+                (int16_t)(y[b].bsums[2 * k] + y[b].bsums[2 * k + 1]);
         q8_32_ref(x, &y[b], 1);
     }
 }
@@ -225,6 +231,9 @@ __attribute__((target("avx2,fma"))) static void
 q8k_block_avx2(const float *x, struct janas_block_q8k *y, float id, int det)
 {
     q8_groups_avx2(x, y->qs, y->bsums, JANAS_QK / 16, id);
+    __m128i lo = _mm_loadu_si128((const __m128i *)y->bsums),
+            hi = _mm_loadu_si128((const __m128i *)(y->bsums + 8));
+    _mm_storeu_si128((__m128i *)y->bsums2, _mm_hadd_epi16(lo, hi));
     for (int k = 0; k < 8; k++) {
         float amax = q8_amax32(x + 32 * k);
         float d = det ? amax * 0.007874015718698502f : amax / 127.0f;

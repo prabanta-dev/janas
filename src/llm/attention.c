@@ -160,7 +160,70 @@ f32_body(const float *const *q, const int8_t *K, const float *ks, uint32_t nt,
          uint32_t hd, float scale, float *const *sc, const int8_t *pf,
          const int ns)
 {
-    for (uint32_t t = 0; t < nt; t++) {
+    uint32_t t = 0;
+    /*
+     * Eight rows at a time, from four slots on: the rows converted once into
+     * a buffer, then for each slot one accumulator a row and the eight sums
+     * reduced together. The reduction of one row alone below cost as many
+     * instructions as its products, on the same ports; done for eight it
+     * costs a third of one. Each row's sum is the same tree as below - the
+     * halves, then lanes 0 + 2 and 1 + 3, then the two - so the scores are
+     * the same to the bit.
+     */
+    if (ns >= 4 && hd <= 256 && hd % 8 == 0) {
+        float kb[8 * 256] __attribute__((aligned(32)));
+        const __m256i order = _mm256_setr_epi32(0, 4, 1, 5, 2, 6, 3, 7);
+        for (; t + 8 <= nt; t += 8) {
+            if (pf)
+                for (uint32_t r = 0; r < 8; r++)
+                    for (uint32_t i = 0; i < hd; i += 32)
+                        _mm_prefetch(
+                            (const char *)(pf + (size_t)(t + r) * hd + i),
+                            _MM_HINT_T1);
+            for (uint32_t r = 0; r < 8; r++)
+                for (uint32_t i = 0; i < hd; i += 8)
+                    _mm256_store_ps(
+                        kb + r * hd + i,
+                        _mm256_cvtepi32_ps(_mm256_cvtepi8_epi32(_mm_loadl_epi64(
+                            (const __m128i *)(K + (size_t)(t + r) * hd + i)))));
+            const __m256 ksv = _mm256_loadu_ps(ks + t);
+            for (int s = 0; s < ns; s++) {
+                __m256 acc[8];
+                _Pragma("GCC unroll 8") for (int r = 0; r < 8; r++) acc[r] =
+                    _mm256_setzero_ps();
+                for (uint32_t i = 0; i < hd; i += 8) {
+                    __m256 qv = _mm256_loadu_ps(q[s] + i);
+                    _Pragma("GCC unroll 8") for (int r = 0; r < 8; r++) acc[r] =
+                        _mm256_fmadd_ps(qv, _mm256_load_ps(kb + r * hd + i),
+                                        acc[r]);
+                }
+                /* each row's halves added: rows r and r + 1 in one register */
+                __m256 h[4];
+                _Pragma("GCC unroll 4") for (int r = 0; r < 4; r++) h[r] =
+                    _mm256_add_ps(_mm256_permute2f128_ps(acc[2 * r],
+                                                         acc[2 * r + 1], 0x20),
+                                  _mm256_permute2f128_ps(acc[2 * r],
+                                                         acc[2 * r + 1], 0x31));
+                /* lanes 0 + 2 and 1 + 3 of each row's four */
+                __m256 g01 = _mm256_add_ps(
+                    _mm256_shuffle_ps(h[0], h[1], _MM_SHUFFLE(1, 0, 1, 0)),
+                    _mm256_shuffle_ps(h[0], h[1], _MM_SHUFFLE(3, 2, 3, 2)));
+                __m256 g23 = _mm256_add_ps(
+                    _mm256_shuffle_ps(h[2], h[3], _MM_SHUFFLE(1, 0, 1, 0)),
+                    _mm256_shuffle_ps(h[2], h[3], _MM_SHUFFLE(3, 2, 3, 2)));
+                /* then the two: rows 0 2 4 6 | 1 3 5 7, put in order */
+                __m256 sum = _mm256_add_ps(
+                    _mm256_shuffle_ps(g01, g23, _MM_SHUFFLE(2, 0, 2, 0)),
+                    _mm256_shuffle_ps(g01, g23, _MM_SHUFFLE(3, 1, 3, 1)));
+                sum = _mm256_permutevar8x32_ps(sum, order);
+                _mm256_storeu_ps(
+                    sc[s] + t,
+                    _mm256_mul_ps(_mm256_mul_ps(sum, _mm256_set1_ps(scale)),
+                                  ksv));
+            }
+        }
+    }
+    for (; t < nt; t++) {
         const int8_t *k = K + (size_t)t * hd;
         /* the values pass reads V by columns, which the hardware prefetcher
            does not follow: bring its rows into L2 in order, now */

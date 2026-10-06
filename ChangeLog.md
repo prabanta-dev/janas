@@ -2,6 +2,13 @@
 
 > Curated, user-facing summary of completed work, newest first.
 
+## [2026-10-07] - Small gains, kept: blocks of tokens and long contexts
+
+- **The activations' sums of 32 are made once.** The Q4_K and Q5_K products over several vectors - a prompt read in blocks, the drafts checked - weigh the sums of each 32 activations by the block's mins, and added them up again for every row of every matrix; the activation's quantization now leaves them beside the sums of 16 (16 bytes more a block of 256). 5-6% on those products.
+- **Three or four vectors reduced in four lanes**, where they were reduced in eight, half of them empty: the size of the check of a few drafts. 2% on 12 threads, 5% on one core.
+- **Attention's scores eight keys at a time.** The sum of each key's products was reduced on its own, with as many instructions as the products and on the same ports; eight are reduced together now, in the same order of additions, so the scores are the same to the bit. 5-8% off the attention of a layer at 8,000 positions.
+- Together, on Qwen3-30B-A3B in memory, a prompt of 1,900 tokens: read at 70.1-70.5 tokens/s where it was 67.4-67.5 (+4%), the 128 tokens after it 25.8-26.0 where 25.4-25.5 (+1.5%), attention 6.5 ms a token where 6.9. Every result the same to the bit (`test_quant` on AVX2 and AVX-VNNI, `test_attention`'s checksum unchanged).
+
 ## [2026-10-06] - Q3_K, IQ4_XS and IQ3_S weights read at full speed
 
 - **The products of Q3_K, IQ4_XS and IQ3_S weights were six to thirteen times slower than they should have been.** Their kernels converted each block's 16-bit scale by calling a function, inside the vector loop, where the others use the processor's own conversion; now they do too, with the same result to the bit. On one core, a 4096 x 2048 matrix: Q3_K 3.38 to 0.43 ms, IQ4_XS 3.26 to 0.25, IQ3_S 3.45 to 0.56. Unsloth's UD files mix these types in: Qwen3.8-27B UD-Q4_K_XL, 3.3 GB of whose 17.5 are of them, writes 3.6 tokens/s where it wrote 1.7-1.8, and reads a prompt at 8.2 tokens/s where it read 6.4.

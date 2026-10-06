@@ -903,6 +903,9 @@ static void q8k_ref(const float *x, struct janas_block_q8k *y, size_t n,
                 s += y[b].qs[g * 16 + i];
             y[b].bsums[g] = (int16_t)s;
         }
+        for (int k = 0; k < JANAS_QK / 32; k++)
+            y[b].bsums2[k] =
+                (int16_t)(y[b].bsums[2 * k] + y[b].bsums[2 * k + 1]);
         for (int k = 0; k < 8; k++) {
             float m = 0.0f;
             for (int i = 0; i < 32; i++)

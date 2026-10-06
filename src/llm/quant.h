@@ -166,6 +166,9 @@ struct janas_block_q8k {
     float d32[8];
     int8_t qs32[JANAS_QK];
     int16_t bsums32[JANAS_QK / 16];
+    /* bsums two by two: the sums of 32, which the Q4_K and Q5_K products
+       weigh by their mins, made once here instead of for every row */
+    int16_t bsums2[JANAS_QK / 32];
 };
 
 _Static_assert(sizeof(struct janas_block_q4k) == 144, "q4k block size");
@@ -180,7 +183,7 @@ _Static_assert(sizeof(struct janas_block_q5_1) == 24, "q5_1 block size");
 _Static_assert(sizeof(struct janas_block_q4_1) == 20, "q4_1 block size");
 _Static_assert(sizeof(struct janas_block_q3k) == 110, "q3k block size");
 _Static_assert(sizeof(struct janas_block_iq3s) == 110, "iq3_s block size");
-_Static_assert(sizeof(struct janas_block_q8k) == 612, "q8k block size");
+_Static_assert(sizeof(struct janas_block_q8k) == 628, "q8k block size");
 
 /* Quantization types, numbered as in GGUF (ggml_type). */
 enum janas_qtype {
