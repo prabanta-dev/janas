@@ -1261,6 +1261,27 @@ static DOTN_TARGET float DOTN(q4_1_dot)(const struct janas_block_q4_1 *w,
     return r;
 }
 
+/* The 16 scales of a Q3_K block, -32..31, as q3k_scales() gives them,
+   unpacked in a register: the low and high nibbles of the first eight
+   bytes, and the two bits of the last four each group takes. */
+static inline DOTN_TARGET __attribute__((always_inline)) __m128i
+DOTN(q3k_scales16)(const uint8_t *q)
+{
+    uint64_t a01;
+    uint32_t a2;
+    memcpy(&a01, q, 8);
+    memcpy(&a2, q + 8, 4);
+    const __m128i m0f = _mm_set1_epi8(0x0f), m03 = _mm_set1_epi8(3);
+    __m128i v = _mm_cvtsi64_si128((long long)a01);
+    __m128i nib = _mm_unpacklo_epi64(_mm_and_si128(v, m0f),
+                                     _mm_and_si128(_mm_srli_epi16(v, 4), m0f));
+    __m128i top = _mm_and_si128(
+        _mm_srlv_epi32(_mm_set1_epi32((int)a2), _mm_setr_epi32(0, 2, 4, 6)),
+        m03);
+    return _mm_sub_epi8(_mm_or_si128(nib, _mm_slli_epi16(top, 4)),
+                        _mm_set1_epi8(32));
+}
+
 /*
  * Q3_K: per 128 weights the 32 bytes of qs and the 32 of hmask give four
  * registers of values u = low two bits | third bit << 2, 0-7, unsigned, so
@@ -1274,11 +1295,9 @@ DOTN(q3k_dotn_body)(const struct janas_block_q3k *w,
                     const struct janas_block_q8k *x, size_t xs, size_t nb,
                     float *out, const int nv)
 {
-    const __m256i three = _mm256_set1_epi8(3), one = _mm256_set1_epi8(1);
+    const __m256i three = _mm256_set1_epi8(3), four = _mm256_set1_epi8(4);
     float acc[8] = {0};
     for (size_t b = 0; b < nb; b++) {
-        int8_t sc[16];
-        q3k_scales(w[b].scales, sc);
         __m256i u[8], sc16[8];
         __m256i hm = _mm256_loadu_si256((const __m256i *)w[b].hmask);
         _Pragma("GCC unroll 2") for (int n = 0; n < 2; n++)
@@ -1289,16 +1308,25 @@ DOTN(q3k_dotn_body)(const struct janas_block_q3k *w,
             {
                 __m256i lo =
                     _mm256_and_si256(_mm256_srli_epi16(qs, 2 * j), three);
-                __m256i hi =
-                    _mm256_and_si256(_mm256_srli_epi16(hm, j + 4 * n), one);
-                u[4 * n + j] = _mm256_or_si256(lo, _mm256_slli_epi16(hi, 2));
+                /* bit j + 4n of hmask moved to bit 2, within its byte */
+                const int sh = j + 4 * n - 2;
+                __m256i hs = sh > 0   ? _mm256_srli_epi16(hm, sh)
+                             : sh < 0 ? _mm256_slli_epi16(hm, -sh)
+                                      : hm;
+                u[4 * n + j] = _mm256_or_si256(lo, _mm256_and_si256(hs, four));
             }
         }
+        /* register k holds groups 2k (low lane) and 2k + 1 (high): the
+           scales as int16, the even ones in the low lane and the odd ones in
+           the high, then word k of each lane spread over it */
+        __m128i s8 = DOTN(q3k_scales16)(w[b].scales);
+        __m256i eo = _mm256_cvtepi8_epi16(
+            _mm_shuffle_epi8(s8, _mm_setr_epi8(0, 2, 4, 6, 8, 10, 12, 14, 1, 3,
+                                               5, 7, 9, 11, 13, 15)));
         _Pragma("GCC unroll 8") for (int k = 0; k < 8; k++) sc16[k] =
-            _mm256_setr_m128i(_mm_set1_epi16(sc[2 * k]),
-                              _mm_set1_epi16(sc[2 * k + 1]));
-        __m256i scall =
-            _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i *)sc));
+            _mm256_shuffle_epi8(
+                eo, _mm256_set1_epi16((short)((2 * k + 1) << 8 | 2 * k)));
+        __m256i scall = _mm256_cvtepi8_epi16(s8);
         float d = _cvtsh_ss(w[b].d);
         _Pragma("GCC unroll 8") for (int v = 0; v < nv; v++)
         {
@@ -1312,7 +1340,8 @@ DOTN(q3k_dotn_body)(const struct janas_block_q3k *w,
             }
             __m256i corr = _mm256_madd_epi16(
                 _mm256_loadu_si256((const __m256i *)xb->bsums), scall);
-            int32_t sumi = DOTN(hsum_epi32)(sum) - 4 * DOTN(hsum_epi32)(corr);
+            int32_t sumi = DOTN(hsum_epi32)(
+                _mm256_sub_epi32(sum, _mm256_slli_epi32(corr, 2)));
             acc[v] = fmaf(d * xb->d, (float)sumi, acc[v]);
         }
     }
