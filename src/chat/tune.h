@@ -3,8 +3,8 @@
 /*
  * tune.h - janas-chat's measure of a model on this machine: the levers that
  * depend on it (where the drafts come from, whether to draft at all, the
- * output head's bits in the fast profile) tried on one fixed reply each, the
- * fastest kept in a file of its own - a layer between the catalog's profile
+ * output head's bits in the fast profile) tried on three fixed replies each,
+ * the fastest kept in a file of its own - a layer between the catalog's profile
  * and the user's settings, never written by /save-config.
  */
 #ifndef JANAS_CHAT_TUNE_H

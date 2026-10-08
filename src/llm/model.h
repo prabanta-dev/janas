@@ -92,9 +92,12 @@ void janas_llm_model_head_requant(const struct janas_llm_model *m,
 int janas_llm_model_attn_scores(const struct janas_llm_model *m);
 int janas_llm_model_attn_scores_auto(const struct janas_llm_model *m);
 
-/* Whether the engine also chose how many experts a token uses, because the
-   cache holds too small a share of the model to use them all at speed. */
+/* Whether the engine also chose to leave out the light experts that are not
+   in RAM, because the cache holds too small a share of the model to read
+   them all at speed; and the weight below which it does (0: never). Setting
+   the number of experts (janas_llm_model_set_experts) turns it off. */
 int janas_llm_model_experts_auto(const struct janas_llm_model *m);
+float janas_llm_model_miss_skip(const struct janas_llm_model *m);
 
 /*
  * The experts the engine means to preload when the model is opened (from the

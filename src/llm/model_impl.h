@@ -264,7 +264,11 @@ struct janas_llm_model {
     int exp_planes; /* some layer keeps its down matrix in planes */
     int exp_auto;   /* the level was chosen from the memory available */
     int k_auto;     /* and so was the number of experts per token */
-    int warm_use;   /* preload the most used experts, and count them */
+    /* an expert not in RAM that every token of the block weighs below this
+       is left out, not read (see skip_misses); 0: never. And how many were */
+    float miss_skip;
+    uint64_t skip_asked, skip_left;
+    int warm_use;        /* preload the most used experts, and count them */
     uint32_t *use_count; /* experts used this session, n_layer * n_expert */
     uint64_t head_before, head_after; /* output head requantized (head_bits) */
     /* the caller's CPUs before the load pinned it (a cpu_set_t), given

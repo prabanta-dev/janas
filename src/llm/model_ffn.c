@@ -417,6 +417,72 @@ static void axpy_worker(void *arg, int tid, int n_threads)
         }
 }
 
+/*
+ * Cache-conditional routing (Skliar et al., "Mixture of Cache-Conditional
+ * Experts", TMLR 2025): an expert that is not in RAM and that every token
+ * of the block weighs below m->miss_skip is left out instead of read, and
+ * each token's other weights are renormalized, as with fewer experts per
+ * token. Unlike fewer experts per token, which drops the lightest whether
+ * they are in RAM or not, only what would cost a read goes. Simulated on
+ * Qwen3-Next-80B's routing over seven kinds of text (8 Oct 2026): below the
+ * lightest quarter of the weights (0.06 of ten), a third fewer experts read
+ * with a cache of 10-30% of them, for 1-4% of what the experts add.
+ * Returns the pairs left, compacted in place, token by token.
+ */
+static uint32_t skip_misses(struct janas_llm_model *m,
+                            struct janas_expert_cache *cache, uint32_t l,
+                            uint32_t n, uint32_t k)
+{
+    uint32_t np = n * k;
+    float th = m->miss_skip, wmax[4096];
+    uint8_t mark[4096]; /* 1: light, asked of the cache; 2: light and out */
+    for (uint32_t p = 0; p < np; p++) {
+        wmax[m->pair_exp[p]] = 0.0f;
+        mark[m->pair_exp[p]] = 0;
+    }
+    for (uint32_t p = 0; p < np; p++)
+        if (m->pair_w[p] > wmax[m->pair_exp[p]])
+            wmax[m->pair_exp[p]] = m->pair_w[p];
+    uint32_t light[256];
+    uint8_t in[256];
+    size_t nl = 0;
+    for (uint32_t p = 0; p <= np; p++) {
+        if (p < np) {
+            uint32_t e = m->pair_exp[p];
+            if (wmax[e] >= th || mark[e])
+                continue;
+            mark[e] = 1;
+            light[nl++] = e;
+        }
+        if (nl && (nl == 256 || p == np)) {
+            janas_expert_cache_present(cache, l, light, nl, in);
+            for (size_t i = 0; i < nl; i++)
+                if (!in[i])
+                    mark[light[i]] = 2;
+            nl = 0;
+        }
+    }
+    uint32_t q = 0;
+    for (uint32_t j = 0; j < n; j++) {
+        float kept = 0.0f;
+        for (uint32_t i = 0; i < k; i++)
+            if (mark[m->pair_exp[j * k + i]] != 2)
+                kept += m->pair_w[j * k + i];
+        for (uint32_t i = 0; i < k; i++) {
+            uint32_t p = j * k + i;
+            if (mark[m->pair_exp[p]] == 2)
+                continue;
+            m->pair_tok[q] = j;
+            m->pair_exp[q] = m->pair_exp[p];
+            m->pair_w[q] = m->pair_w[p] / kept;
+            q++;
+        }
+    }
+    m->skip_asked += np;
+    m->skip_left += q;
+    return q;
+}
+
 /* Routed (and shared) experts of a block, added to x. The routed experts
    are layer l of the file behind the cache (the main model or the MTP). */
 int janas_m_moe_block(struct janas_llm_model *m, const struct layer *ly,
@@ -427,6 +493,7 @@ int janas_m_moe_block(struct janas_llm_model *m, const struct layer *ly,
     double t0 = now();
     uint32_t dm = m->d_model, ne = m->n_expert;
     uint32_t k = part == MOE_SHARED ? 0 : m->k_use;
+    uint32_t np = n * k;
     if (k) {
         struct router_job rj = {m, ly->router16, n};
         janas_pool_run(m->compute, router_worker, &rj);
@@ -443,9 +510,11 @@ int janas_m_moe_block(struct janas_llm_model *m, const struct layer *ly,
                 m->pair_w[p] *= ly->exp_scale[m->pair_exp[p]];
         if (m->route_fn && cache == m->cache)
             m->route_fn(m->route_ctx, l, n, k, m->pair_exp);
+        /* the weights must be the router's own, summing to one a token */
+        if (m->miss_skip > 0 && cache && !ly->exp_scale)
+            np = skip_misses(m, cache, l, n, k);
     }
     /* counting sort of the pairs by expert */
-    uint32_t np = n * k;
     memset(m->count, 0, (ne + 1) * sizeof(uint32_t));
     for (uint32_t p = 0; p < np; p++)
         m->count[m->pair_exp[p] + 1]++;

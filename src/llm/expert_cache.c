@@ -1019,6 +1019,19 @@ int janas_expert_cache_begin(struct janas_expert_cache *c, uint32_t layer,
     return queued;
 }
 
+void janas_expert_cache_present(struct janas_expert_cache *c, uint32_t layer,
+                                const uint32_t *ids, size_t n, uint8_t *in)
+{
+    uint32_t ne = c->j->h.n_expert;
+    size_t base = (size_t)layer * ne;
+    /* the background filling changes the map under this lock */
+    pthread_mutex_lock(&c->api_lock);
+    for (size_t i = 0; i < n; i++)
+        in[i] = layer < c->j->h.n_layer && ids[i] < ne &&
+                c->where[base + ids[i]] != NONE;
+    pthread_mutex_unlock(&c->api_lock);
+}
+
 int janas_expert_cache_finish(struct janas_expert_cache *c)
 {
     double t0 = now();

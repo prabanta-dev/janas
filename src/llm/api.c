@@ -494,18 +494,22 @@ int32_t janas_llm_open(const char *path, const struct janas_llm_params *pp,
     if (warm_n)
         snprintf(warm, sizeof(warm), ", %llu experts loading in the background",
                  (unsigned long long)warm_n);
-    char bits[128] = "";
+    char bits[192] = "";
     int nb = janas_llm_model_expert_bits(llm->m);
-    uint32_t used = janas_llm_model_experts(llm->m, NULL);
+    uint32_t most = 0, used = janas_llm_model_experts(llm->m, &most);
     int w = 0;
     if (nb != 6)
         w = snprintf(bits, sizeof(bits), ", down matrix at %d bits%s", nb,
                      janas_llm_model_expert_bits_auto(llm->m) ? " (memory)"
                                                               : "");
-    if (janas_llm_model_experts_auto(llm->m) && w >= 0 &&
+    if (used < most && w >= 0 && (size_t)w < sizeof(bits))
+        w += snprintf(bits + w, sizeof(bits) - (size_t)w,
+                      ", %u experts per token", used);
+    if (janas_llm_model_miss_skip(llm->m) > 0 && w >= 0 &&
         (size_t)w < sizeof(bits))
         w += snprintf(bits + w, sizeof(bits) - (size_t)w,
-                      ", %u experts per token (memory)", used);
+                      ", light experts not in RAM left out%s",
+                      janas_llm_model_experts_auto(llm->m) ? " (memory)" : "");
     uint64_t d0, d1;
     janas_llm_model_head_requant(llm->m, &d0, &d1);
     if (d0 && w >= 0 && (size_t)w < sizeof(bits))

@@ -960,32 +960,39 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
     }
     m->k_use = m->k;
     /*
-     * How many experts a token uses: all of them while the cache holds a
-     * fair share of the model, fewer only where it does not and the machine
-     * would wait for the disk at every token. Measured on 20 Sep 2026 with
-     * Qwen3-Next (400 tokens of C, four bits): with a cache of 26% of the
-     * experts, using six instead of ten gains 14%; with 13%, 24%; with 6%,
-     * 46%. The quality given up is the same everywhere (in Italian prose,
-     * 22 most-likely tokens in 400 with eight experts and 55 with six), so
-     * it is only worth it where the gain is large.
+     * Where the cache holds too small a share of the experts and the machine
+     * would wait for the disk at every token, the light experts that are not
+     * in RAM are left out (skip_misses): below 0.95/k of a token's weight
+     * with a cache of less than a tenth of the experts, below 0.8/k with
+     * less than a fifth. Until 8 Oct 2026 the lightest experts were left out
+     * whether in RAM or not - six of ten, or eight - which gave up more for
+     * less. Qwen3-Next-80B, four bits, 400 tokens against llama.cpp (most
+     * likely token agreeing, mean |logit difference|, tokens/s):
+     *   C, 2 GiB    all ten 393 0.17 11.0, six 383 0.53 20.9, skip 380
+     * 0.44 26.4 C, 4 GiB    all ten 393 0.17 20.7, six 383 0.53 27.6, skip 384
+     * 0.36 27.7 C, 8 GiB    all ten 393 0.17 26.0, eight 385 0.32 28.1, skip
+     * 391 0.25 27.1 Italian, 4  all ten 382 0.14 13.7, six 333 0.46 18.9,
+     * (0.8/k) 359 0.23 19.4 Italian, 8  all ten 382 0.14 18.7, eight 361
+     * 0.26 21.4, skip 372 0.23 23.7
      */
     if (o->cache_bytes && m->j.h.experts_bytes) {
         double cover = (double)o->cache_bytes / (double)m->j.h.experts_bytes;
-        uint32_t k = m->k;
-        if (cover < 0.10)
-            k = m->k * 6 / 10;
-        else if (cover < 0.20)
-            k = m->k * 8 / 10;
-        if (k < 1)
-            k = 1;
-        if (k != m->k) {
-            janas_llm_model_set_experts(m, k);
+        if (cover < 0.20) {
+            m->miss_skip = (cover < 0.10 ? 0.95f : 0.8f) / (float)m->k;
             m->k_auto = 1;
         }
     }
-    if (getenv("JANAS_EXPERTS")) { /* fewer experts per token, for measures */
+    if (getenv("JANAS_EXPERTS")) /* experts per token, for measures */
         janas_llm_model_set_experts(m, (uint32_t)atoi(getenv("JANAS_EXPERTS")));
-        m->k_auto = 0;
+    {
+        /* experts not in RAM left out below this weight, for measures (0:
+           never); at least one expert a token always stays, since the
+           heaviest weighs 1/k or more */
+        const char *ms = getenv("JANAS_MISS_SKIP");
+        if (ms)
+            m->miss_skip = (float)atof(ms);
+        if (m->miss_skip >= 1.0f / (float)m->k)
+            m->miss_skip = 0.0f;
     }
     {
         const char *vm = getenv("JANAS_VMAP");
@@ -1187,6 +1194,15 @@ void janas_llm_model_free(struct janas_llm_model *m)
 {
     if (janas_m_exp_tracing())
         janas_m_exp_report();
+    if (m && m->skip_asked && (getenv("JANAS_MISS_SKIP") || m->trace))
+        fprintf(stderr,
+                "janas: experts not in RAM below %.3f left out: %llu of %llu "
+                "routed (%.1f%%)\n",
+                m->miss_skip,
+                (unsigned long long)(m->skip_asked - m->skip_left),
+                (unsigned long long)m->skip_asked,
+                100.0 * (double)(m->skip_asked - m->skip_left) /
+                    (double)m->skip_asked);
     if (!m)
         return;
     if (m->caller_pinned)
@@ -1305,6 +1321,11 @@ int janas_llm_model_set_experts(struct janas_llm_model *m, uint32_t n)
     if (n > m->k)
         return 0;
     m->k_use = n;
+    /* asked for a number: that many, none left out by the engine */
+    if (m->k_auto) {
+        m->miss_skip = 0.0f;
+        m->k_auto = 0;
+    }
     return 1;
 }
 
@@ -1379,6 +1400,11 @@ void janas_llm_model_head_requant(const struct janas_llm_model *m,
 int janas_llm_model_experts_auto(const struct janas_llm_model *m)
 {
     return m->k_auto;
+}
+
+float janas_llm_model_miss_skip(const struct janas_llm_model *m)
+{
+    return m->miss_skip;
 }
 
 uint64_t janas_llm_model_warm(const struct janas_llm_model *m, double *seconds)

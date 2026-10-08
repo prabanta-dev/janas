@@ -151,6 +151,14 @@ int janas_expert_cache_prefetch(struct janas_expert_cache *c, uint32_t layer,
 /* Whether this cache can read ahead at all (the kernel has io_uring). */
 int janas_expert_cache_can_prefetch(const struct janas_expert_cache *c);
 
+/*
+ * in[i] = 1 where expert ids[i] of the layer is in the cache (or being read
+ * into it), 0 where a request would read it. Nothing is touched: a question,
+ * not a request. Between requests, not between begin and finish.
+ */
+void janas_expert_cache_present(struct janas_expert_cache *c, uint32_t layer,
+                                const uint32_t *ids, size_t n, uint8_t *in);
+
 void janas_expert_cache_stats(const struct janas_expert_cache *c,
                               struct janas_expert_cache_stats *s);
 void janas_expert_cache_reset_stats(struct janas_expert_cache *c);

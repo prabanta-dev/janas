@@ -4,10 +4,11 @@
  * tune.c - janas-chat's measure of a model on this machine (see tune.h).
  *
  * Each way is a model opened anew - the prediction file and the head's bits
- * are taken when it opens - one reply to warm its caches, then three
- * replies of different kinds measured together: output tokens over output
- * seconds, at temperature 0, so every way writes the same text. Drafting off is measured on the first
- * opening, since it only takes a parameter of the chat.
+ * are taken when it opens - a reply to each prompt to warm its caches, then
+ * three replies of different kinds measured together: output tokens over
+ * output seconds, at temperature 0, so every way writes the same text.
+ * Drafting off is measured on the first opening, since it only takes a
+ * parameter of the chat, one prompt at a time beside drafting on.
  */
 #include "tune.h"
 
@@ -19,7 +20,7 @@
 
 #define TUNE_REPLY 128
 /* a way other than the one the model starts with has to be this much
-   faster: one reply is measured, and a couple of per cent is its noise
+   faster: a couple of per cent is the noise of the measure
    (Qwen3-0.6B: 154.6 and 154.7 drafting, 157.2 and 156.3 without) */
 #define TUNE_MARGIN 1.03
 /* three kinds of reply - prose, code, a list - since how far ahead the
@@ -80,6 +81,56 @@ static double reply(janas_llm_chat *c)
     return tok / sec;
 }
 
+/*
+ * Every prompt once, unmeasured. The first reply to a kind of text is slow
+ * on a mixture of experts - its experts are touched for the first time -
+ * and warming on the first prompt alone left the code and the list cold for
+ * whichever way came first: Qwen3-30B-A3B wrote the code at 27.9 tokens/s
+ * the first time and 34.5 the second, drafting or not, and since drafting
+ * always came first the tuning chose --no-spec on a difference of 10% that
+ * was all order (8 Oct 2026: 31.4 drafting and 34.4 without, 34.5 and 31.9
+ * with the order swapped).
+ */
+static int warm(janas_llm_chat *c)
+{
+    double tok = 0, sec = 0;
+    for (size_t i = 0; i < N_PROMPTS; i++)
+        if (reply1(c, PROMPTS[i], &tok, &sec) != 0)
+            return -1;
+    return 0;
+}
+
+/* One reply to prompt with drafting as spec says, added to tok and sec. */
+static int reply_way(janas_llm_chat *c, struct janas_llm_chat_params *q,
+                     int spec, const char *prompt, double *tok, double *sec)
+{
+    q->speculate = spec;
+    if (janas_llm_chat_set_params(c, q) != JANAS_LLM_OK)
+        return -1;
+    return reply1(c, prompt, tok, sec);
+}
+
+/*
+ * Drafting on and off, prompt by prompt, which goes first taking turns:
+ * the caches go on warming while a model is measured - most of all on a
+ * mixture larger than its expert cache - and two series one after the
+ * other gave the second the warmer machine.
+ */
+static int both(janas_llm_chat *c, struct janas_llm_chat_params *q, double *on,
+                double *off)
+{
+    double tok[2] = {0, 0}, sec[2] = {0, 0}; /* without, with drafts */
+    for (size_t i = 0; i < N_PROMPTS; i++)
+        for (int j = 0; j < 2; j++) {
+            int spec = (int)((i + (size_t)j) % 2 == 0);
+            if (reply_way(c, q, spec, PROMPTS[i], &tok[spec], &sec[spec]))
+                return -1;
+        }
+    *on = tok[1] / sec[1];
+    *off = tok[0] / sec[0];
+    return 0;
+}
+
 /* One way: opened, warmed, measured drafting (*on) and, if off is given,
    without drafting. 0, or -1. */
 static int measure(const char *path, const struct janas_llm_params *mp,
@@ -102,16 +153,11 @@ static int measure(const char *path, const struct janas_llm_params *mp,
     if (!gpu)
         janas_llm_set_gpu(llm, 0);
     int rc = -1;
-    double wt = 0, ws = 0; /* the first prompt once, to warm the caches */
-    if (janas_llm_chat_create(llm, &q, &c) == JANAS_LLM_OK &&
-        reply1(c, PROMPTS[0], &wt, &ws) == 0 && (*on = reply(c)) > 0) {
-        rc = 0;
-        if (off) {
-            q.speculate = 0;
-            if (janas_llm_chat_set_params(c, &q) != JANAS_LLM_OK ||
-                (*off = reply(c)) <= 0)
-                rc = -1;
-        }
+    if (janas_llm_chat_create(llm, &q, &c) == JANAS_LLM_OK && warm(c) == 0) {
+        if (off)
+            rc = both(c, &q, on, off);
+        else
+            rc = (*on = reply(c)) > 0 ? 0 : -1;
     }
     janas_llm_chat_destroy(c);
     janas_llm_close(llm);
@@ -189,11 +235,12 @@ int chat_tune_run(const char *path, const struct janas_llm_params *mp,
     char when[32];
     time_t t = time(NULL);
     strftime(when, sizeof(when), "%Y-%m-%d %H:%M", localtime(&t));
-    fprintf(f,
-            "# janas-chat: measured on this machine, %s, %zu replies of up "
-            "to %d tokens\n# at temperature 0 each way (tokens/s): drafting from "
-            "%s %.1f",
-            when, N_PROMPTS, TUNE_REPLY, src, on);
+    fprintf(
+        f,
+        "# janas-chat: measured on this machine, %s, %zu replies of up "
+        "to %d tokens\n# at temperature 0 each way (tokens/s): drafting from "
+        "%s %.1f",
+        when, N_PROMPTS, TUNE_REPLY, src, on);
     if (dims.spec)
         fprintf(f, ", without drafts %.1f", off);
     if (alt)

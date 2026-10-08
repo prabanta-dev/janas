@@ -193,7 +193,9 @@ JANAS_LLM_API int32_t janas_llm_tuning(const janas_llm *llm, char *buf,
  * out are those the router weights least. With Qwen3-Next-80B-A3B, eight of
  * its ten keep the most likely token in 387 positions of 400 against 394 for
  * all ten. n of 0 restores the model's own count; the change applies from the
- * next reply.
+ * next reply. Where the cache holds less than a fifth of the experts, the
+ * engine leaves out on its own the light experts that are not in RAM rather
+ * than read them; setting a number here, 0 included, turns that off.
  */
 JANAS_LLM_API int32_t janas_llm_experts(const janas_llm *llm, int32_t *used,
                                         int32_t *most);

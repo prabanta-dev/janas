@@ -2,6 +2,14 @@
 
 > Curated, user-facing summary of completed work, newest first.
 
+## [2026-10-08] - Light experts not in memory left out, not the lightest of all
+
+- **With a small expert cache, only what would cost a read is given up.** When the cache holds less than a fifth of a model's experts, the engine used to drop the lightest experts of every token, six of ten or eight, whether they were in memory or not. Now it keeps every expert in memory and leaves out only the light ones it would have to read from disk (below 0.8/k of a token's weight, 0.95/k under a tenth), the other experts taking their share. Qwen3-Next-80B against llama.cpp, 400 tokens: with a 2 GiB cache 26.4 tokens/s instead of 20.9 at about the same agreement (380 against 383 most likely tokens); with 4 GiB the same speed (27.7) with a mean logit difference of 0.36 instead of 0.53; on Italian prose with 8 GiB 372 tokens agreeing instead of 361, and faster (23.7 against 21.4 tokens/s). On Qwen3-30B-A3B and Qwen3.6-35B-A3B with 1.5-3.5 GiB of cache it was 9-37% faster than the old way on code and on Italian prose, as close to llama.cpp or closer in most cases. `/experts n` asks for an exact number again and turns it off; `JANAS_MISS_SKIP` sets the weight for measures.
+
+## [2026-10-08] - The machine's measure without a head start
+
+- **The measure on this machine no longer favours whichever way goes second.** It warmed the model on the prose prompt alone and then measured drafting first, so the code and the list ran on cold experts with the drafts and on warm ones without: Qwen3-30B-A3B looked 10% slower drafting from the conversation (31.4 tokens/s against 34.8) and was set to `--no-spec`; with the order swapped it was 9% faster. Now every prompt warms the model, and drafting and not drafting are measured prompt by prompt, taking turns at going first: 33.5 and 34.3, twice alike, under the 3% a change needs, so the 30B keeps its drafts. Run `janas-chat <model> --tune` to measure again a model tuned before.
+
 ## [2026-10-08] - Qwen3.5-0.8B is a test model
 
 - **The catalog says what each small model is for.** Qwen3.5-0.8B is a test model of the Qwen3.5 architecture, not for chatting: asked for twenty actions, it called the right tool 7 times out of 15 and made facts up ("Bologna founded in 1177"). janas-chat leaves it out of its list and opens it by name with a warning; `janas-get list` says so. Qwen3.5-2B, which called the right tool 14 times out of 15, is described as the small one that calls tools well; Qwen3-0.6B stays the draft of Qwen3-4B.

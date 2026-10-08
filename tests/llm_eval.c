@@ -156,8 +156,8 @@ int main(int argc, char **argv)
             janas_llm_model_decode(m, tokens[p], (uint32_t)p, seq + p * nv);
         double pb0[JANAS_PH_COUNT], pb1[JANAS_PH_COUNT];
         janas_llm_model_phases(m, pb0);
-        double tb = now(), maxd = 0;
-        size_t same = 0;
+        double tb = now(), maxd = 0, sumd = 0;
+        size_t same = 0, top = 0;
         for (size_t p0 = 0; p0 < nn; p0 += (size_t)block) {
             uint32_t b =
                 (uint32_t)(nn - p0 < (size_t)block ? nn - p0 : (size_t)block);
@@ -173,9 +173,11 @@ int main(int argc, char **argv)
                     double d = fabs((double)a[i] - c[i]);
                     if (d > maxd)
                         maxd = d;
+                    sumd += d;
                     eq &= a[i] == c[i];
                 }
                 same += eq;
+                top += argmax(a, nv) == argmax(c, nv);
             }
         }
         double tbs = now() - tb;
@@ -185,6 +187,9 @@ int main(int argc, char **argv)
             "blocks of %d: %zu/%zu positions bit-identical to token by token, "
             "max |diff| %g; %.1f ms/token in blocks (%.1f token/s)\n",
             block, same, nn, maxd, tbs / nn * 1e3, nn / tbs);
+        printf("blocks of %d: most likely token as token by token at %zu/%zu, "
+               "mean |diff| %.4f\n",
+               block, top, nn, sumd / ((double)nn * nv));
         free(seq);
         free(blk);
     }
