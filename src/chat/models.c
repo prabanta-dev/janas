@@ -66,7 +66,7 @@ static void list(const char *dir)
     int k = 0;
     for (int i = 0; i < janas_catalog_n; i++) {
         const struct janas_model_entry *m = &janas_catalog[i];
-        if (m->not_chat)
+        if (m->not_chat || m->test_only)
             continue;
         char p[4200];
         snprintf(p, sizeof(p), "%s/%s", dir, m->out);
@@ -83,7 +83,8 @@ static void list(const char *dir)
 static const struct janas_model_entry *nth(int k)
 {
     for (int i = 0; i < janas_catalog_n; i++)
-        if (!janas_catalog[i].not_chat && --k == 0)
+        if (!janas_catalog[i].not_chat && !janas_catalog[i].test_only &&
+            --k == 0)
             return &janas_catalog[i];
     return NULL;
 }
@@ -189,12 +190,18 @@ int chat_model_resolve(const char *arg, struct chat_model *cm)
                 return -1;
             int k = atoi(b);
             m = k > 0 ? nth(k) : janas_catalog_find(b);
-            if (m && m->not_chat)
+            if (m && (m->not_chat || m->test_only))
                 m = NULL;
             if (!m)
                 fprintf(stderr, "not in the list: %s\n", b);
         }
     }
+    if (m->test_only)
+        fprintf(stderr,
+                "note: %s is a test model of the engine, not for chatting: "
+                "its answers are often wrong (janas-chat with no model lists "
+                "the others)\n",
+                m->name);
     cm->entry = m;
     set_key(cm, m->name);
     snprintf(cm->path, sizeof(cm->path), "%s/%s", cm->dir, m->out);
@@ -244,8 +251,7 @@ int chat_words_any(int n, char *const *w, const char *const *opts)
     return 0;
 }
 
-const char *chat_model_mtp(const struct chat_model *cm, char *buf,
-                           size_t len)
+const char *chat_model_mtp(const struct chat_model *cm, char *buf, size_t len)
 {
     if (cm->entry) {
         if (cm->entry->extra == JANAS_EXTRA_NONE || !cm->entry->extra_out)
@@ -253,8 +259,7 @@ const char *chat_model_mtp(const struct chat_model *cm, char *buf,
         snprintf(buf, len, "%s/%s", cm->dir, cm->entry->extra_out);
         return is_file(buf) ? buf : NULL;
     }
-    return janas_llm_find_mtp(cm->path, buf, len) == JANAS_LLM_OK ? buf
-                                                                   : NULL;
+    return janas_llm_find_mtp(cm->path, buf, len) == JANAS_LLM_OK ? buf : NULL;
 }
 
 const char *chat_words_last(int n, char *const *w, const char *opt)

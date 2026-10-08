@@ -2,6 +2,10 @@
 
 > Curated, user-facing summary of completed work, newest first.
 
+## [2026-10-08] - Qwen3.5-0.8B is a test model
+
+- **The catalog says what each small model is for.** Qwen3.5-0.8B is a test model of the Qwen3.5 architecture, not for chatting: asked for twenty actions, it called the right tool 7 times out of 15 and made facts up ("Bologna founded in 1177"). janas-chat leaves it out of its list and opens it by name with a warning; `janas-get list` says so. Qwen3.5-2B, which called the right tool 14 times out of 15, is described as the small one that calls tools well; Qwen3-0.6B stays the draft of Qwen3-4B.
+
 ## [2026-10-08] - Cities by their Italian names; each model's own layouts
 
 - **Roma, Torino, Londra, Parigi are cities to the flights and weather services.** The tables name cities in English, and an Italian name went astray: "Roma" was the airport of Roma in Queensland (0 aircraft within 50 km of it, for a question about Rome), Torino, Londra and Parigi nothing at all. The Italian names of the cities most asked for, Italy's and abroad, now lead to theirs, each in its country (Siracusa stays in Sicily); an airport found by a city's name has to be within 100 km of the largest city so called ("Florence" is Peretola, not Florence Regional in South Carolina). Asked again: Roma, 17 aircraft within 50 km of Ciampino. `test_geo` checks them.

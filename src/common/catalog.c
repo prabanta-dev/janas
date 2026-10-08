@@ -11,7 +11,9 @@
  * disk). Not
  * --head 4 on Qwen3.5-0.8B, which then answered "3" to "2+3"; nothing on
  * Gemma 4, whose keys are sixteen-bit, heads not six-bit and experts not
- * in planes.
+ * in planes. Qwen3.5-0.8B is a test model: asked for actions on 8 Oct
+ * 2026 it chose the right tool 7 times out of 15 and made facts up
+ * ("Bologna founded in 1177"), where Qwen3.5-2B chose it 14 times.
  */
 #include <errno.h>
 #include <stdio.h>
@@ -50,7 +52,8 @@ const struct janas_model_entry janas_catalog[] = {
      .draft = "qwen3-0.6b",
      .fast = "--head 4 --attention fast"},
     {.name = "qwen3.5-0.8b",
-     .what = "Qwen3.5-0.8B, dense",
+     .what = "Qwen3.5-0.8B, dense - a test model of the Qwen3.5 architecture, "
+             "not for chatting",
      .repo = "unsloth/Qwen3.5-0.8B-GGUF",
      .parts = {"Qwen3.5-0.8B-Q4_K_M.gguf"},
      .part_sha =
@@ -60,9 +63,11 @@ const struct janas_model_entry janas_catalog[] = {
      .flat_sha =
          "75a3b62c4a10cad87a7ce64bf89485cfcc564fa949f2c5af8c7051615dc26124",
      .ram_gb = 2,
-     .fast = "--attention fast"},
+     .fast = "--attention fast",
+     .test_only = 1},
     {.name = "qwen3.5-2b",
-     .what = "Qwen3.5-2B, dense, with its MTP block",
+     .what = "Qwen3.5-2B, dense, with its MTP block - the small one that "
+             "calls tools well",
      .repo = "unsloth/Qwen3.5-2B-GGUF",
      .parts = {"Qwen3.5-2B-Q4_K_M.gguf"},
      .part_sha =

@@ -40,6 +40,9 @@ struct janas_model_entry {
     const char *extra_sha;
     int ram_gb;        /* the smallest machine it is meant for */
     int not_chat;      /* 1: not a chat model (embeddings) */
+    int test_only;     /* 1: for testing the engine, not for chatting: left
+                          out of janas-chat's list, opened by name with a
+                          word of warning */
     const char *draft; /* the catalog model that guesses its tokens, when
                           that beats its own prediction file */
     /* janas-chat's options for the "fast" profile, on top of the default
