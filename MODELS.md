@@ -79,6 +79,13 @@ fadc3e5f8d42bf7e894a785b05082e47daee4df26680389817e2093056f088ad  Qwen3-Coder-30
 bee7d25509e911a195cbf05a157e69bb05a62d2241cca2c4fdcfef269dcb2bdd  qwen3-coder-30b-a3b-q4km.jns   (gguf2jns)
 ```
 
+**Qwen3-0.6B**, from [`unsloth/Qwen3-0.6B-GGUF`](https://huggingface.co/unsloth/Qwen3-0.6B-GGUF) (the Qwen team's own repository no longer has a Q4_K_M), dense, and the model that guesses Qwen3-4B's tokens (`--draft`). Converted in one step; two conversions give the same bytes.
+
+```
+ac2d97712095a558e31573f62f466a3f9d93990898b0ec79d7c974c1780d524a  Qwen3-0.6B-Q4_K_M.gguf
+9174da760919b16b9f3a4ae8738c2d53605412f40bb2c0fe68d60174bf8a4fb5  qwen3-0.6b-q4km.jns   (gguf2jns)
+```
+
 **Qwen3-4B**, from [`Qwen/Qwen3-4B-GGUF`](https://huggingface.co/Qwen/Qwen3-4B-GGUF). This one is dense: it has no experts to route, so its feed-forward becomes the single slot of each layer, and half its layers keep a `down` matrix in Q4_K, which has no planes to cut.
 
 ```

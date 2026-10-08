@@ -29,7 +29,9 @@
  * floating point. INT16 reads it as sixteen-bit integers with a scale of its
  * own per token and head: the dot product is then an exact integer sum, which
  * the machine does sixteen products at a time instead of eight - about twice
- * as fast - at the cost of the query's quantization, a relative 3e-5. AUTO
+ * as fast - at the cost of the query's quantization, a relative 3e-5; and it
+ * weighs the values with sixteen-bit integers too, a chunk's weights with one
+ * scale (attention.c, att_wquant_ref): a few 1e-4 on an output at most. AUTO
  * takes INT16 when the instructions for it are there and the caller asked
  * for a context longer than the usual one (more than 16384 positions), where
  * attention is the greater part of a token; FLOAT otherwise, since below that

@@ -341,6 +341,7 @@ static int line_read(struct janas_term *t, const char *prompt, char *buf,
             pos = len;
         } else if (c == 12) { /* Ctrl-L: a clean window */
             printf("\033[2J\033[H");
+            t->cleared++;
             term_region(t);
             printf("\0337");
         } else if (c == 27) { /* a key that arrives as an escape sequence */

@@ -49,6 +49,10 @@ struct janas_llm_options {
                         choice to the engine: every bit when the experts fit
                         in cache_bytes, four otherwise (environment
                         JANAS_EXPERT_BITS overrides) */
+    int head_bits;   /* 4: the output head, if the file holds it at six bits
+                        (Q6_K), requantized to four (Q4_K) at load - faster, a
+                        little less accurate; 0 or 6: as in the file
+                        (environment JANAS_HEAD_BITS overrides) */
 };
 
 struct janas_llm_model;
@@ -79,6 +83,10 @@ int janas_llm_model_cache_file(const struct janas_llm_model *m,
    whether that was chosen by the engine from the memory available. */
 int janas_llm_model_expert_bits(const struct janas_llm_model *m);
 int janas_llm_model_expert_bits_auto(const struct janas_llm_model *m);
+/* The bytes of the output head requantized at load (head_bits 4), before
+   and after; 0 and 0 if it was not. */
+void janas_llm_model_head_requant(const struct janas_llm_model *m,
+                                  uint64_t *before, uint64_t *after);
 /* How the attention scores are computed (janas_attn_scores), and whether the
    engine chose it. */
 int janas_llm_model_attn_scores(const struct janas_llm_model *m);

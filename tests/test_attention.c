@@ -5,11 +5,17 @@
  * softmax over the same eight-bit keys and values, and blocks against
  * token-by-token calls (bit for bit).
  *
- * The engine reads the query as sixteen-bit integers, so the scores rest on
- * an exact integer sum and the only error left is that quantization: a
- * relative 3e-5, which on these outputs shows as about 7e-5 absolute. The
- * eight-bit keys and values the reference shares already carry a relative
- * 4e-3, sixty times more, so the threshold below is set at 1e-4.
+ * The exact path sums in floating point: its threshold is 1e-5. The fast
+ * one reads the query as sixteen-bit integers, so the scores rest on an
+ * exact integer sum and the error there is that quantization, a relative
+ * 3e-5; and it weighs the values with sixteen-bit integers too (7 Oct 2026),
+ * whose rounding, half a step of the largest weight of a chunk, adds up over
+ * its positions: with the random scores here, whose weights crowd on a few
+ * positions, the worst output is 2-6e-4 off. The eight-bit keys and values
+ * the reference shares already carry a relative 4e-3, so the threshold of
+ * the fast path is 1e-3; on Qwen3-30B-A3B against llama.cpp (400 tokens of
+ * C) the fast path gave a mean logit difference of 0.2865 against 0.2893
+ * with float weights and 0.2871 exact.
  *
  * The checksum printed at the end covers every output of the run: the AVX2
  * and the AVX-VNNI paths must print the same one (JANAS_KERNELS=avx2 asks
@@ -134,10 +140,10 @@ static void run(struct janas_pool *pool, uint32_t n_head, uint32_t n_kv,
           "heads %u/%u, pos0 %u, n %u: block differs from token by "
           "token",
           n_head, n_kv, pos0, n);
-    /* the exact query keeps the float sum's own error; the sixteen-bit one
-       adds its quantization, a relative 3e-5 on the scores */
+    /* the exact path keeps the float sum's own error; the fast one adds the
+       sixteen-bit query's and weights' quantization (see the top) */
     int fast = janas_attn_scores_mode(a) == JANAS_ATTN_INT16;
-    double limit = fast ? 1e-4 : 1e-5;
+    double limit = fast ? 1e-3 : 1e-5;
     CHECK(worst < limit, "heads %u/%u, pos0 %u, n %u, %s: error %g", n_head,
           n_kv, pos0, n, fast ? "fast" : "exact", worst);
     printf("heads %2u/%u dim %3u, positions %4u..%4u, %-5s: error %.2e, "

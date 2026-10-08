@@ -8,6 +8,8 @@
 #include "model.h"
 
 #include <math.h>
+#include <pthread.h>
+#include <sched.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -171,6 +173,84 @@ static int rows_f32(struct janas_llm_model *m, const struct janas_jns *j,
     }
     *out = *own;
     return 0;
+}
+
+/*
+ * head_bits 4: the output head, when the file holds it at six bits (Q6_K),
+ * requantized to Q4_K once, at load, before anything takes its type: the
+ * largest matrix read whole at every token, a seventh of Qwen3.5-9B's
+ * token. Into a buffer of its own, then copied where it was: the smaller
+ * copy fits there. Only the head: on Qwen3.5-9B, 400 tokens of Italian
+ * prose against llama.cpp, the most likely token agreed 375 times where
+ * 383 with the head requantized, 368 with every other six-bit matrix -
+ * attention, the shared experts - which gave next to no speed (7 Oct 2026).
+ * Where the head is the token embeddings (Qwen3-0.6B and 4B, Qwen3.5-0.8B
+ * and 2B) the table is requantized in place, so the embeddings read at four
+ * bits too, as in the larger models' files: Qwen3.5-2B +9%, the most
+ * likely token 352 where 376 (8 Oct 2026).
+ */
+struct rq_job {
+    const uint8_t *src;
+    uint8_t *dst;
+    size_t first, count; /* blocks of JANAS_QK weights */
+};
+
+static void *rq_worker(void *arg)
+{
+    struct rq_job *r = arg;
+    float buf[JANAS_QK * 16];
+    size_t sb = janas_qtype_block_size(JANAS_Q6_K),
+           db = janas_qtype_block_size(JANAS_Q4_K);
+    for (size_t b = r->first; b < r->first + r->count; b += 16) {
+        size_t nb = r->first + r->count - b < 16 ? r->first + r->count - b : 16;
+        janas_dequantize(JANAS_Q6_K, r->src + b * sb, buf, nb * JANAS_QK);
+        janas_q4k_quantize_fast(
+            buf, (struct janas_block_q4k *)(r->dst + b * db), nb * JANAS_QK);
+    }
+    return NULL;
+}
+
+static void requant_head(struct janas_llm_model *m)
+{
+    /* tied embeddings (the small Qwen): the table is the head */
+    struct janas_jns_tensor *t =
+        (struct janas_jns_tensor *)janas_jns_tensor(&m->j, "output.weight");
+    if (!t)
+        t = (struct janas_jns_tensor *)janas_jns_tensor(&m->j,
+                                                        "token_embd.weight");
+    if (!t || t->type != JANAS_Q6_K || t->dims[0] % JANAS_QK ||
+        t->offset < m->j.h.resident_offset ||
+        t->offset + t->bytes > m->j.h.resident_offset + m->j.h.resident_bytes)
+        return;
+    enum { NT = 16 };
+    long cpus = sysconf(_SC_NPROCESSORS_ONLN);
+    int nt = cpus < 1 ? 1 : cpus > NT ? NT : (int)cpus;
+    size_t nb = t->bytes / janas_qtype_block_size(JANAS_Q6_K);
+    uint8_t *src = (uint8_t *)data(m, t);
+    uint8_t *dst = malloc(nb * janas_qtype_block_size(JANAS_Q4_K));
+    if (!dst)
+        return;
+    pthread_t th[NT];
+    struct rq_job jb[NT];
+    int started = 0;
+    for (int k = 0; k < nt; k++) {
+        size_t a = nb * k / nt, b = nb * (k + 1) / nt;
+        jb[k] =
+            (struct rq_job){.src = src, .dst = dst, .first = a, .count = b - a};
+        if (pthread_create(&th[k], NULL, rq_worker, &jb[k]) == 0)
+            started |= 1 << k;
+        else
+            rq_worker(&jb[k]);
+    }
+    for (int k = 0; k < nt; k++)
+        if (started & 1 << k)
+            pthread_join(th[k], NULL);
+    m->head_before = t->bytes;
+    t->type = JANAS_Q4_K;
+    t->bytes = nb * janas_qtype_block_size(JANAS_Q4_K);
+    memcpy(src, dst, t->bytes);
+    m->head_after = t->bytes;
+    free(dst);
 }
 
 static int load_layer(struct janas_llm_model *m, const struct janas_jns *j,
@@ -637,6 +717,9 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
         }
         done += (uint64_t)r;
     }
+    const char *hbe = getenv("JANAS_HEAD_BITS");
+    if ((hbe ? atoi(hbe) : o->head_bits) == 4 && !m->resident_gpu)
+        requant_head(m);
 
     uint32_t dm = m->d_model, qd = m->n_head * m->hd_max, kvd = m->kvd_max,
              ff = m->d_ff;
@@ -994,8 +1077,15 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
                                        err_len) != 0 ||
                    janas_m_assist_head(m, dvocab) != 0))
         goto fail;
-    if (pin >= 0)
+    /* the caller pinned for the time the model lives, and given its CPUs
+       back when it goes: a model opened after another in the same process
+       (the chat measuring, a reload) would otherwise see one CPU */
+    _Static_assert(sizeof(cpu_set_t) <= sizeof(m->caller_cpus), "cpu set");
+    if (pin >= 0) {
+        m->caller_pinned = sched_getaffinity(0, sizeof(cpu_set_t),
+                                             (cpu_set_t *)m->caller_cpus) == 0;
         janas_pin_current_thread(pin);
+    }
     m->cache = janas_expert_cache_create(&m->j, o->cache_bytes, m->exp_level,
                                          m->io, err, err_len);
     if (!m->cache)
@@ -1099,6 +1189,8 @@ void janas_llm_model_free(struct janas_llm_model *m)
         janas_m_exp_report();
     if (!m)
         return;
+    if (m->caller_pinned)
+        sched_setaffinity(0, sizeof(cpu_set_t), (cpu_set_t *)m->caller_cpus);
     if (m->tune_key[0])
         janas_tuner_save(&m->tuner, m->tune_key);
     if (m->use_count) {
@@ -1275,6 +1367,13 @@ int janas_llm_model_expert_bits(const struct janas_llm_model *m)
 int janas_llm_model_expert_bits_auto(const struct janas_llm_model *m)
 {
     return m->exp_auto;
+}
+
+void janas_llm_model_head_requant(const struct janas_llm_model *m,
+                                  uint64_t *before, uint64_t *after)
+{
+    *before = m->head_before;
+    *after = m->head_after;
 }
 
 int janas_llm_model_experts_auto(const struct janas_llm_model *m)

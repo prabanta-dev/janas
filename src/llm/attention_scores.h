@@ -5,7 +5,8 @@
  * (private to attention.c, which includes it once per instruction set).
  *
  * The query is read as 16-bit integers with a scale of its own, the keys are
- * the eight-bit ones of the cache: the dot product is an exact integer sum,
+ * the eight-bit ones of the cache (and, further down, the weights of the
+ * values the same way): the dot product is an exact integer sum,
  * and the float arithmetic that follows is one multiply per score. The
  * includer defines:
  *   SCORES(name)          the name with the instruction-set suffix
@@ -95,5 +96,62 @@ SCORES(att_scores)(const int16_t *const *q, const int8_t *K, const float *ks,
         break;
     default:
         SCORES(scores_body)(q, K, ks, nt, hd, qsc, scale, sc, pf, 1);
+    }
+}
+
+/*
+ * The values weighted by sixteen-bit weights, for the scores' sixteen-bit
+ * path: wp[s] holds a slot's weights two positions a word (the even one in
+ * the low half), wsc[s] their scale. Two value rows interleaved byte by byte
+ * and widened give each lane a pair of numbers, one per position, which
+ * SCORES_ACC multiplies by the pair of weights and adds: an exact integer
+ * sum per number (at most 256 positions of 32767 x 127: below 2^31), then
+ * one multiply. vpdpwssd does sixteen products an instruction where the
+ * float FMA does eight.
+ */
+static inline SCORES_TARGET __attribute__((always_inline)) void
+SCORES(values_body)(const int32_t *const *wp, const float *wsc, const int8_t *V,
+                    uint32_t nt, uint32_t hd, float *const *out, const int ns)
+{
+    const uint32_t np = (nt + 1) / 2;
+    for (uint32_t i = 0; i < hd; i += 8) {
+        __m256i acc[8];
+        _Pragma("GCC unroll 8") for (int s = 0; s < ns; s++) acc[s] =
+            _mm256_setzero_si256();
+        for (uint32_t p = 0; p < np; p++) {
+            __m128i r0 = _mm_loadl_epi64(
+                (const __m128i *)(V + (size_t)(2 * p) * hd + i));
+            __m128i r1 =
+                2 * p + 1 < nt
+                    ? _mm_loadl_epi64(
+                          (const __m128i *)(V + (size_t)(2 * p + 1) * hd + i))
+                    : _mm_setzero_si128();
+            __m256i v = _mm256_cvtepi8_epi16(_mm_unpacklo_epi8(r0, r1));
+            _Pragma("GCC unroll 8") for (int s = 0; s < ns; s++) acc[s] =
+                SCORES_ACC(acc[s], v, _mm256_set1_epi32(wp[s][p]));
+        }
+        _Pragma("GCC unroll 8") for (int s = 0; s < ns; s++) _mm256_storeu_ps(
+            out[s] + i,
+            _mm256_mul_ps(_mm256_cvtepi32_ps(acc[s]), _mm256_set1_ps(wsc[s])));
+    }
+}
+
+static SCORES_TARGET void SCORES(att_values)(const int32_t *const *wp,
+                                             const float *wsc, const int8_t *V,
+                                             uint32_t nt, uint32_t hd,
+                                             float *const *out, int ns)
+{
+    switch (ns) {
+    case 8:
+        SCORES(values_body)(wp, wsc, V, nt, hd, out, 8);
+        break;
+    case 4:
+        SCORES(values_body)(wp, wsc, V, nt, hd, out, 4);
+        break;
+    case 2:
+        SCORES(values_body)(wp, wsc, V, nt, hd, out, 2);
+        break;
+    default:
+        SCORES(values_body)(wp, wsc, V, nt, hd, out, 1);
     }
 }

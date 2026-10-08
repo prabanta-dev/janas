@@ -39,6 +39,28 @@ DOTN(hsum128_epi32)(__m128i s)
 }
 
 /*
+ * The weights asked for ahead of the product, PF_AHEAD bytes on, into L1:
+ * one prefetch per cache line of what a step of the loop reads, on one or
+ * two vectors (on more the product is bound by its arithmetic, and the
+ * extra instructions cost a little). The hardware prefetcher alone kept
+ * too few lines in flight: on 12 threads Q4_K read 70 GB/s where Q8_0,
+ * which asks for its bytes faster, read 84; with 2 KB ahead Q4_K read 82
+ * (1, 4 and 8 KB gave 81-82, and 4-8 KB slowed a single core down: 7 Oct
+ * 2026). Rows follow one another in memory, so past a row's end the lines
+ * are the next row's.
+ */
+#ifndef PF_AHEAD
+#define PF_AHEAD 2048
+#endif
+static inline DOTN_TARGET __attribute__((always_inline)) void
+DOTN(prefetch_ahead)(const void *at, size_t size)
+{
+    const char *p = (const char *)at + PF_AHEAD;
+    for (size_t i = 0; i < size; i += 64)
+        _mm_prefetch(p + i, _MM_HINT_T0);
+}
+
+/*
  * Q4_K: the per-block integer-sum scheme. For each block and vector the
  * integer sums are exact: isum = sum of scale x (weight . activation) over
  * the eight 32-weight pieces, imin = sum of min x activation pair sums; then
@@ -60,6 +82,8 @@ DOTN(q4k_dotn_body)(const struct janas_block_q4k *w,
            accm4n = _mm_setzero_ps();
     __m256 acc8 = _mm256_setzero_ps(), accm8 = _mm256_setzero_ps();
     for (size_t b = 0; b < nb; b++) {
+        if (nv <= 2)
+            DOTN(prefetch_ahead)(&w[b], sizeof(w[b]));
         uint32_t u[4];
         unpack_scales_u32(w[b].scales, u);
         __m128i sm = _mm_loadu_si128((const __m128i *)u);
@@ -192,6 +216,8 @@ DOTN(q5k_dotn_body)(const struct janas_block_q5k *w,
     __m128 acc4 = _mm_setzero_ps();
     __m256 acc8 = _mm256_setzero_ps(), accm8 = _mm256_setzero_ps();
     for (size_t b = 0; b < nb; b++) {
+        if (nv <= 2)
+            DOTN(prefetch_ahead)(&w[b], sizeof(w[b]));
         uint32_t u[4];
         unpack_scales_u32(w[b].scales, u);
         __m128i sm = _mm_loadu_si128((const __m128i *)u);
@@ -321,6 +347,8 @@ DOTN(q8_0_dotn_body)(const struct janas_block_q8_0 *w,
     _Pragma("GCC unroll 8") for (int v = 0; v < nv; v++) acc[v] =
         _mm256_setzero_ps();
     for (size_t b = 0; b < nb; b++) {
+        if (nv <= 2)
+            DOTN(prefetch_ahead)(w + 8 * b, 8 * sizeof(*w));
         const struct janas_block_q8_0 *wb = w + 8 * b;
         __m256 dk = _mm256_cvtph_ps(_mm_setr_epi16(
             (short)wb[0].d, (short)wb[1].d, (short)wb[2].d, (short)wb[3].d,
@@ -390,6 +418,8 @@ DOTN(q6k_dotn_body)(const struct janas_block_q6k *w,
     __m128 acc4 = _mm_setzero_ps();
     __m256 acc8 = _mm256_setzero_ps();
     for (size_t b = 0; b < nb; b++) {
+        if (nv <= 2)
+            DOTN(prefetch_ahead)(&w[b], sizeof(w[b]));
         const int8_t *sc = w[b].scales;
         /* the sixteen scales once, as int16, and the two halves spread over
            both lanes so that one shuffle builds a quarter's pair */
@@ -690,6 +720,8 @@ DOTN(nib_dotn_body)(const struct janas_block_iq4nl *w,
     _Pragma("GCC unroll 8") for (int v = 0; v < nv; v++) acc[v] =
         _mm256_setzero_ps();
     for (size_t b = 0; b < nb; b++) {
+        if (nv <= 2)
+            DOTN(prefetch_ahead)(w + 8 * b, 8 * sizeof(*w));
         const struct janas_block_iq4nl *wb = w + 8 * b;
         __m256 dk = _mm256_cvtph_ps(_mm_setr_epi16(
             (short)wb[0].d, (short)wb[1].d, (short)wb[2].d, (short)wb[3].d,
@@ -747,6 +779,8 @@ DOTN(iq4xs_dotn_body)(const struct janas_block_iq4xs *w,
     const __m256i levels = DOTN(iq4_levels)();
     float acc[8] = {0};
     for (size_t b = 0; b < nb; b++) {
+        if (nv <= 2)
+            DOTN(prefetch_ahead)(&w[b], sizeof(w[b]));
         __m256i q[8], aq[8], sc[8];
         _Pragma("GCC unroll 8") for (int g = 0; g < 8; g++)
         {
@@ -893,6 +927,15 @@ DOTN(q6kp_dotn_body)(const struct janas_block_q6kp *w, const uint8_t *p1,
     __m128 acc4 = _mm_setzero_ps();
     __m256 acc8 = _mm256_setzero_ps();
     for (size_t b = 0; b < nb; b++) {
+        if (nv <= 2) {
+            DOTN(prefetch_ahead)(&w[b], sizeof(w[b]));
+            if (level >= 2)
+                DOTN(prefetch_ahead)(p1 + b * JANAS_Q6KP_PLANE,
+                                     JANAS_Q6KP_PLANE);
+            if (level >= 3)
+                DOTN(prefetch_ahead)(p0 + b * JANAS_Q6KP_PLANE,
+                                     JANAS_Q6KP_PLANE);
+        }
         const int8_t *sc = w[b].scales;
         /* the sixteen scales once, as int16, and the two halves spread over
            both lanes so that one shuffle builds a quarter's pair */
@@ -1141,6 +1184,8 @@ DOTN(dm_dotn_body)(const uint8_t *w, const size_t size, const int five,
         accm[v] = _mm256_setzero_ps();
     }
     for (size_t b = 0; b < nb; b++) {
+        if (nv <= 2)
+            DOTN(prefetch_ahead)(w + 8 * b * size, 8 * size);
         const uint8_t *wb = w + 8 * b * size;
         uint16_t d[8], m[8];
         _Pragma("GCC unroll 8") for (int k = 0; k < 8; k++)
@@ -1314,6 +1359,8 @@ DOTN(q3k_dotn_body)(const struct janas_block_q3k *w,
     const __m256i three = _mm256_set1_epi8(3), four = _mm256_set1_epi8(4);
     float acc[8] = {0};
     for (size_t b = 0; b < nb; b++) {
+        if (nv <= 2)
+            DOTN(prefetch_ahead)(&w[b], sizeof(w[b]));
         __m256i u[8], sc16[8];
         __m256i hm = _mm256_loadu_si256((const __m256i *)w[b].hmask);
         _Pragma("GCC unroll 2") for (int n = 0; n < 2; n++)
@@ -1424,6 +1471,8 @@ DOTN(iq3s_dotn_body)(const struct janas_block_iq3s *w,
     const __m256i one = _mm256_set1_epi8(1);
     float acc[8] = {0};
     for (size_t b = 0; b < nb; b++) {
+        if (nv <= 2)
+            DOTN(prefetch_ahead)(&w[b], sizeof(w[b]));
         __m256i lv[8], sg[8], sc[8];
         _Pragma("GCC unroll 8") for (int g = 0; g < 8; g++)
         {
@@ -1501,3 +1550,34 @@ static DOTN_TARGET float DOTN(iq3s_dot)(const struct janas_block_iq3s *w,
     DOTN(iq3s_dotn_body)(w, x, 0, nb, &r, 1);
     return r;
 }
+
+/*
+ * Rows after rows of one type, one vector: the loop of a matrix-vector
+ * product here, beside the kernels, so that a row costs one direct call.
+ * Called row by row through janas_dot, each row chose its type, went
+ * through a wrapper and a function pointer, and matvec.c worked out its
+ * task's sizes again: 6% of the cycles of a token of Qwen3-30B-A3B (7 Oct
+ * 2026), whose rows are short. Each row is the same function as before, so
+ * the same bits.
+ */
+#define DOTN_ROWS(name, T)                                                     \
+    static DOTN_TARGET void DOTN(name##_rows)(                                 \
+        const void *w, size_t row_bytes, const struct janas_block_q8k *x,      \
+        size_t nb, size_t rows, float *y)                                      \
+    {                                                                          \
+        for (size_t r = 0; r < rows; r++)                                      \
+            y[r] = DOTN(name##_dot)(                                           \
+                (const T *)((const char *)w + r * row_bytes), x, nb);          \
+    }
+DOTN_ROWS(q4k, struct janas_block_q4k)
+DOTN_ROWS(q6k, struct janas_block_q6k)
+DOTN_ROWS(q5k, struct janas_block_q5k)
+DOTN_ROWS(q8_0, struct janas_block_q8_0)
+DOTN_ROWS(iq4nl, struct janas_block_iq4nl)
+DOTN_ROWS(iq4xs, struct janas_block_iq4xs)
+DOTN_ROWS(q4_0, struct janas_block_q4_0)
+DOTN_ROWS(q5_1, struct janas_block_q5_1)
+DOTN_ROWS(q4_1, struct janas_block_q4_1)
+DOTN_ROWS(q3k, struct janas_block_q3k)
+DOTN_ROWS(iq3s, struct janas_block_iq3s)
+#undef DOTN_ROWS

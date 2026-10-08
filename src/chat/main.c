@@ -37,6 +37,8 @@
 #include "janas/llm.h"
 #include "markdown.h"
 #include "mcp_chat.h"
+#include "models.h"
+#include "tune.h"
 #include "scroll.h"
 #include "term.h"
 
@@ -236,7 +238,19 @@ static void usage(void)
 {
     fprintf(
         stderr,
-        "usage: janas-chat <model.jns> [options]\n"
+        "usage: janas-chat [model] [options]\n"
+        "  model            a .jns file, or a name of the catalog (none: the\n"
+        "                   list, to choose one; a model not here yet is\n"
+        "                   downloaded and converted, after asking)\n"
+        "  --profile <quality|fast>\n"
+        "                   quality (default): answers as the file gives\n"
+        "                   them; fast: also what was measured faster on\n"
+        "                   this model at a small cost to its answers\n"
+        "  --models <dir>   where the models are (default: JANAS_MODELS,\n"
+        "                   or ~/.local/share/janas/models)\n"
+        "  --tune           measure again how this model runs fastest on\n"
+        "                   this machine (asked once, on its first start)\n"
+        "  --no-tune        neither ask nor use that measure\n"
         "  --mtp <file>     multi-token prediction file: an MTP block or\n"
         "                   Gemma 4's assistant (faster replies); without\n"
         "                   it, the one beside the model that fits it\n"
@@ -252,6 +266,10 @@ static void usage(void)
         "  --bits <2|4|6>   bits per weight of the experts' down matrix\n"
         "                   (files that hold it in planes; default: the\n"
         "                   memory decides)\n"
+        "  --head <4|6>     bits per weight of the output head: 4\n"
+        "                   requantizes a six-bit one at start, 2-5%%\n"
+        "                   faster and a little less exact (default: 6,\n"
+        "                   as in the file)\n"
         "  --attention <exact|fast>\n"
         "                   the attention scores: the query as it is, or\n"
         "                   to sixteen bits with an exact integer sum,\n"
@@ -334,10 +352,13 @@ static const struct {
     {"/mcp auto [on|off]",
      "run the tools the model calls without asking first (off by default: "
      "every call is shown and waits for y, n or a - always that tool)"},
-    {"/save-config",
-     "keep these settings for the next start (asks to overwrite)"},
-    {"/load-config", "read them back, losing the current ones (asks first)"},
-    {"/del-config", "forget them: the next start uses the chat's own"},
+    {"/save-config [global]",
+     "keep these settings for this model's next start (asks to overwrite); "
+     "global: for every model"},
+    {"/load-config [global]",
+     "read them back, losing the current ones (asks first)"},
+    {"/del-config [global]",
+     "forget them: the next start uses the catalog's and the chat's own"},
     {"/quit", "exit (also Ctrl-D)"},
     {NULL, "A backslash and Enter add a line to the message (the backslash "
            "is not sent); Enter alone sends it. Ctrl-C stops a reply."},
@@ -799,19 +820,23 @@ struct chat_opts { /* where the words land: main keeps them, this names them */
     int *no_mtp;
     const char *mtp_found; /* the MTP file found, not asked for: unsaved */
     int *all_tools;
+    int *profile; /* 1: the catalog's fast profile */
+    int *tune;    /* 1: measure again (--tune), -1: never (--no-tune) */
 };
 
-/* every option, for the nearest to one mistyped: the first twelve stand
+/* every option, for the nearest to one mistyped: the first N_ALONE stand
    alone, the others take a value */
+#define N_ALONE 14
 static const char *const OPTIONS[] = {
     "--no-spec",     "--stats",     "--no-markdown", "--no-gpu",
     "--no-preload",  "--no-recap",  "--no-mtp",      "--no-mcp",
     "--no-services", "--all-tools", "--mcp-auto",    "--mcp-instructions",
-    "--mtp",         "--draft",     "--think",       "--mode",
-    "--ctx",         "--cache",     "--reserve",     "--bits",
-    "--attention",   "--system",    "--mcp-config",  "--progress",
-    "--temp",        "--top-k",     "--top-p",       "--min-p",
-    "--seed",        "--max"};
+    "--tune",        "--no-tune",   "--mtp",         "--draft",
+    "--think",       "--mode",      "--ctx",         "--cache",
+    "--reserve",     "--bits",      "--attention",   "--system",
+    "--mcp-config",  "--progress",  "--temp",        "--top-k",
+    "--top-p",       "--min-p",     "--seed",        "--max",
+    "--head",        "--profile",   "--models"};
 #define N_OPTIONS (sizeof OPTIONS / sizeof *OPTIONS)
 
 /* v of option a as a whole number or a number within limits; on a
@@ -856,6 +881,8 @@ static int take_options(int n, char **w, struct chat_opts *o, char *why,
     static const char *const MODES[] = {"auto", "eco", "max"};
     static const char *const ATTN[] = {"auto", "exact", "fast"};
     static const char *const BITS[] = {"2", "4", "6"};
+    static const char *const HEAD[] = {"4", "6"};
+    static const char *const PROFILES[] = {"quality", "fast"};
     for (int i = 0; i < n; i++) {
         const char *a = w[i], *v = i + 1 < n ? w[i + 1] : NULL;
         long long x;
@@ -909,8 +936,12 @@ static int take_options(int n, char **w, struct chat_opts *o, char *why,
             *o->mcp_instructions = 1;
             continue;
         }
+        if (strcmp(a, "--tune") == 0 || strcmp(a, "--no-tune") == 0) {
+            *o->tune = a[2] == 't' ? 1 : -1;
+            continue;
+        }
         int valued = 0;
-        for (size_t j = 12; j < N_OPTIONS && !valued; j++)
+        for (size_t j = N_ALONE; j < N_OPTIONS && !valued; j++)
             valued = strcmp(a, OPTIONS[j]) == 0;
         if (!valued) {
             janas_unknown_word(why, why_len, a, "an option", OPTIONS,
@@ -952,6 +983,16 @@ static int take_options(int n, char **w, struct chat_opts *o, char *why,
             if ((k = opt_choice(a, v, BITS, 3, why, why_len)) < 0)
                 return -1;
             o->mp->expert_bits = 2 + 2 * k;
+        } else if (strcmp(a, "--profile") == 0) {
+            if ((k = opt_choice(a, v, PROFILES, 2, why, why_len)) < 0)
+                return -1;
+            *o->profile = k;
+        } else if (strcmp(a, "--models") == 0) {
+            setenv("JANAS_MODELS", v, 1); /* read when the model is found */
+        } else if (strcmp(a, "--head") == 0) {
+            if ((k = opt_choice(a, v, HEAD, 2, why, why_len)) < 0)
+                return -1;
+            o->mp->head_bits = k == 0 ? 4 : 0;
         } else if (strcmp(a, "--attention") == 0) {
             if ((k = opt_choice(a, v, ATTN, 3, why, why_len)) < 0)
                 return -1;
@@ -1023,7 +1064,9 @@ static int ask_yes(const char *question)
     return yes;
 }
 
-static int conf_path(char *buf, size_t n, int create)
+/* The settings file: the chat's own (key NULL), or a model's - key its
+   catalog name or its file's - in models/ beside it. */
+static int conf_path(char *buf, size_t n, int create, const char *key)
 {
     const char *xdg = getenv("XDG_CONFIG_HOME"), *home = getenv("HOME");
     char dir[768];
@@ -1042,8 +1085,16 @@ static int conf_path(char *buf, size_t n, int create)
             mkdir(up, 0700);
         }
         mkdir(dir, 0700);
+        if (key) {
+            char md[800];
+            snprintf(md, sizeof(md), "%s/models", dir);
+            mkdir(md, 0700);
+        }
     }
-    snprintf(buf, n, "%s/chat.conf", dir);
+    if (key)
+        snprintf(buf, n, "%s/models/%s.conf", dir, key);
+    else
+        snprintf(buf, n, "%s/chat.conf", dir);
     return 0;
 }
 
@@ -1124,6 +1175,8 @@ static void conf_write(const char *path, const struct chat_opts *o)
         fprintf(f, "--reserve %.2f\n", (double)m->reserve_bytes / (1 << 30));
     if (m->expert_bits)
         fprintf(f, "--bits %d\n", m->expert_bits);
+    if (m->head_bits == 4)
+        fprintf(f, "--head 4\n");
     if (m->attn_scores == JANAS_LLM_ATTN_EXACT)
         fprintf(f, "--attention exact\n");
     else if (m->attn_scores == JANAS_LLM_ATTN_FAST)
@@ -1158,6 +1211,8 @@ static void conf_write(const char *path, const struct chat_opts *o)
         fprintf(f, "--mcp-auto\n");
     if (*o->mcp_instructions)
         fprintf(f, "--mcp-instructions\n");
+    if (*o->profile)
+        fprintf(f, "--profile fast\n");
     fclose(f);
     term_printf(&term, "written to %s (the system message is not kept)\n",
                 path);
@@ -1494,10 +1549,14 @@ int main(int argc, char **argv)
     /* wcwidth() answers for the locale's character set, and in the C locale
        it answers -1 to everything past ASCII: ask for the user's own */
     setlocale(LC_CTYPE, "");
-    if (argc < 2 || argv[1][0] == '-') {
-        usage();
-        return 2;
-    }
+    for (int i = 1; i < argc; i++)
+        if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
+            usage();
+            return 0;
+        }
+    /* the model first, if given: a path or a name of the catalog */
+    const char *marg = argc >= 2 && argv[1][0] != '-' ? argv[1] : NULL;
+    int oi = marg ? 2 : 1;
     if (janas_llm_abi_version() != JANAS_LLM_ABI_VERSION) {
         fprintf(stderr, "janas-chat: library ABI %d, expected %d\n",
                 janas_llm_abi_version(), JANAS_LLM_ABI_VERSION);
@@ -1520,31 +1579,87 @@ int main(int argc, char **argv)
     int gpu = 1;      /* the GPU may be given work, if there is one */
     const char *mcp_config = NULL; /* NULL: the default file */
     int mcp = 1, mcp_auto = 0, mcp_instructions = 0, services = 1, no_mtp = 0;
-    int all_tools = 0;
+    int all_tools = 0, profile = 0, tune = 0;
     static char mtp_found[4096];
     struct chat_opts o = {
-        &mp,       &cp,         &system_arg, &stats,    &markdown,
-        &gpu,      &mcp_config, &mcp,        &mcp_auto, &mcp_instructions,
-        &services, &no_mtp,     mtp_found,   &all_tools};
-    /* the file first, the command line after it: what is typed wins */
+        &mp,       &cp,         &system_arg, &stats,     &markdown,
+        &gpu,      &mcp_config, &mcp,        &mcp_auto,  &mcp_instructions,
+        &services, &no_mtp,     mtp_found,   &all_tools, &profile,
+        &tune};
+    /*
+     * The settings in layers, each over the one before: the catalog's
+     * profile for the model, the chat's own file, the model's file, the
+     * command line. Only /save-config writes, and only the model's file
+     * (or, asked, the chat's): the catalog is never changed.
+     */
     char cpath[1024];
-    char *conf_text = NULL;
-    if (conf_path(cpath, sizeof(cpath), 0) == 0) {
-        int cn = 0;
-        char **cw = conf_read(cpath, &cn, &conf_text);
-        if (cw) {
-            char why[400];
-            int bad = take_options(cn, cw, &o, why, sizeof why) != 0;
-            free(cw);
-            if (bad) {
-                fprintf(stderr, "janas-chat: %s: %s\n", cpath, why);
-                free(conf_text);
+    char *conf_text = NULL, *mconf_text = NULL;
+    int cn = 0, mn = 0;
+    char **cw = conf_path(cpath, sizeof(cpath), 0, NULL) == 0
+                    ? conf_read(cpath, &cn, &conf_text)
+                    : NULL;
+    const char *where = chat_words_last(argc - oi, argv + oi, "--models");
+    if (!where)
+        where = chat_words_last(cn, cw, "--models");
+    if (where)
+        setenv("JANAS_MODELS", where, 1);
+    struct chat_model cm;
+    if (chat_model_resolve(marg, &cm) != 0)
+        return 1;
+    char mpath[1024];
+    char **mw = conf_path(mpath, sizeof(mpath), 0, cm.key) == 0
+                    ? conf_read(mpath, &mn, &mconf_text)
+                    : NULL;
+    const char *pv = chat_words_last(argc - oi, argv + oi, "--profile");
+    if (!pv)
+        pv = chat_words_last(mn, mw, "--profile");
+    if (!pv)
+        pv = chat_words_last(cn, cw, "--profile");
+    char why[400];
+    if (pv && strcmp(pv, "fast") == 0) {
+        const char *fw = cm.entry ? cm.entry->fast : NULL;
+        if (!fw)
+            fprintf(stderr, "profile fast: nothing measured faster on this "
+                            "model yet, so the same as quality\n");
+        else {
+            /* the catalog's words, split on spaces */
+            static char fbuf[256];
+            char *pw[16];
+            int pn = 0;
+            snprintf(fbuf, sizeof(fbuf), "%s", fw);
+            for (char *t = strtok(fbuf, " "); t && pn < 16;
+                 t = strtok(NULL, " "))
+                pw[pn++] = t;
+            if (take_options(pn, pw, &o, why, sizeof why) != 0) {
+                fprintf(stderr, "janas-chat: catalog: %s\n", why);
                 return 2;
             }
+            fprintf(stderr, "profile fast: %s\n", fw);
         }
     }
-    char why[400];
-    if (take_options(argc - 2, argv + 2, &o, why, sizeof why) != 0) {
+    /* the levers the user set, in any file or typed: the measure leaves
+       them alone */
+    static const char *const SPEC_OPTS[] = {"--mtp", "--draft", "--no-mtp",
+                                            "--no-spec", NULL};
+    static const char *const HEAD_OPTS[] = {"--head", NULL};
+    int spec_user = chat_words_any(cn, cw, SPEC_OPTS) ||
+                    chat_words_any(mn, mw, SPEC_OPTS) ||
+                    chat_words_any(argc - oi, argv + oi, SPEC_OPTS);
+    int head_user = chat_words_any(cn, cw, HEAD_OPTS) ||
+                    chat_words_any(mn, mw, HEAD_OPTS) ||
+                    chat_words_any(argc - oi, argv + oi, HEAD_OPTS);
+    const char *bad_in = NULL;
+    if (cw && take_options(cn, cw, &o, why, sizeof why) != 0)
+        bad_in = cpath;
+    else if (mw && take_options(mn, mw, &o, why, sizeof why) != 0)
+        bad_in = mpath;
+    free(cw);
+    free(mw);
+    if (bad_in) {
+        fprintf(stderr, "janas-chat: %s: %s\n", bad_in, why);
+        return 2;
+    }
+    if (take_options(argc - oi, argv + oi, &o, why, sizeof why) != 0) {
         fprintf(stderr, "janas-chat: %s\n", why);
         fprintf(stderr, "janas-chat --help lists the options\n");
         free(conf_text);
@@ -1559,9 +1674,79 @@ int main(int argc, char **argv)
     int tty = term.tty;
     /* the model's MTP block or assistant, when not named: the one beside
        it that fits (--no-mtp: none) */
-    if (!mp.mtp_path && !no_mtp &&
-        janas_llm_find_mtp(argv[1], mtp_found, sizeof(mtp_found)) ==
-            JANAS_LLM_OK) {
+    /* the measure of this model on this machine: a layer of its own over
+       the catalog's, for the levers the user left alone */
+    struct chat_tune_dims dims = {
+        .spec = !spec_user,
+        .head = profile && cm.entry && cm.entry->fast &&
+                strstr(cm.entry->fast, "--head 4") && !head_user};
+    char tpath[2300];
+    if (tune >= 0 && (dims.spec || dims.head) &&
+        chat_tune_path(tpath, sizeof(tpath), cm.key, profile) == 0) {
+        int have = access(tpath, F_OK) == 0;
+        int go = tune == 1;
+        if (!go && !have && isatty(STDIN_FILENO) && isatty(STDERR_FILENO)) {
+            go = chat_ask_yes("Measure how this model runs fastest on this "
+                              "machine (a reply or two each way, a minute "
+                              "or so on a large model)?");
+            if (!go) { /* asked once: the answer is kept */
+                FILE *f = fopen(tpath, "w");
+                if (f) {
+                    fprintf(f, "# janas-chat: not measured (declined); "
+                               "janas-chat --tune measures it\n");
+                    fclose(f);
+                }
+            }
+        }
+        if (go) {
+            struct janas_llm_params probe = mp;
+            static char probe_mtp[4096], probe_draft[4096];
+            if (!probe.mtp_path && !probe.draft_path && !no_mtp &&
+                !(probe.draft_path = chat_model_draft(&cm, probe_draft,
+                                                      sizeof(probe_draft))))
+                probe.mtp_path =
+                    chat_model_mtp(&cm, probe_mtp, sizeof(probe_mtp));
+            chat_tune_run(cm.path, &probe, &cp, gpu, dims, tpath);
+        }
+        int tn = 0;
+        char *ttext = NULL; /* kept: the words point into it */
+        char **tw = conf_read(tpath, &tn, &ttext);
+        char *keep[16];
+        int kn = 0;
+        for (int i = 0; tw && i < tn && kn < 15; i++) {
+            int head = strcmp(tw[i], "--head") == 0;
+            if (head ? !dims.head : !dims.spec) {
+                i += head; /* skip the value too */
+                continue;
+            }
+            keep[kn++] = tw[i];
+            if (head && i + 1 < tn)
+                keep[kn++] = tw[++i];
+        }
+        if (kn) {
+            if (take_options(kn, keep, &o, why, sizeof why) != 0)
+                fprintf(stderr, "janas-chat: %s: %s\n", tpath, why);
+            else {
+                fprintf(stderr, "measured on this machine:");
+                for (int i = 0; i < kn; i++)
+                    fprintf(stderr, " %s", keep[i]);
+                fprintf(stderr, " (--no-tune: without)\n");
+            }
+        }
+        free(tw);
+    }
+    static char draft_found[4096];
+    /* no drafting, no prediction file or draft to load */
+    if (!cp.speculate)
+        no_mtp = 1;
+    if (!mp.mtp_path && !mp.draft_path && !no_mtp &&
+        (mp.draft_path =
+             chat_model_draft(&cm, draft_found, sizeof(draft_found))))
+        fprintf(stderr,
+                "drafts from %s, as the catalog says (--no-mtp: without)\n",
+                cm.entry->draft);
+    if (!mp.mtp_path && !mp.draft_path && !no_mtp &&
+        chat_model_mtp(&cm, mtp_found, sizeof(mtp_found))) {
         mp.mtp_path = mtp_found;
         const char *b = strrchr(mtp_found, '/');
         fprintf(stderr,
@@ -1569,12 +1754,12 @@ int main(int argc, char **argv)
                 "(--no-mtp: without)\n",
                 b ? b + 1 : mtp_found);
     }
-    fprintf(stderr, "loading %s ...\n", argv[1]);
+    fprintf(stderr, "loading %s ...\n", cm.path);
     janas_llm *llm = NULL;
     janas_llm_chat *c = NULL; /* only written when the open succeeded, which
                                  a compiler looking across the whole program
                                  cannot always see */
-    if (janas_llm_open(argv[1], &mp, &llm) != JANAS_LLM_OK ||
+    if (janas_llm_open(cm.path, &mp, &llm) != JANAS_LLM_OK ||
         janas_llm_chat_create(llm, &cp, &c) != JANAS_LLM_OK) {
         fprintf(stderr, "janas-chat: %s\n", janas_llm_last_error());
         return 1;
@@ -1620,7 +1805,7 @@ int main(int argc, char **argv)
     char name[96] = "";
     janas_llm_name(llm, name, sizeof(name), &dl);
     if (term.tty) {
-        term_banner(&term, "Janas-Chat", name[0] ? name : argv[1],
+        term_banner(&term, "Janas-Chat", name[0] ? name : cm.path,
                     "/help for the commands, /quit to leave");
         term_printf(&term, "%s%s%s\n\n", T_DIM(&term), desc, T_RESET(&term));
         char hp[512];
@@ -1680,7 +1865,8 @@ int main(int argc, char **argv)
                     fputs(page, stdout);
                 free(page);
             } else if (strcmp(msg, "/save-config") == 0) {
-                if (conf_path(cpath, sizeof(cpath), 1) != 0)
+                const char *key = strcmp(arg, "global") == 0 ? NULL : cm.key;
+                if (conf_path(cpath, sizeof(cpath), 1, key) != 0)
                     term_printf(&term, "nowhere to write it\n");
                 /* only when there is something to lose: asking about an
                    empty place is noise, and noise is what makes people
@@ -1689,15 +1875,16 @@ int main(int argc, char **argv)
                          ask_yes("overwrite the saved settings?"))
                     conf_write(cpath, &o);
             } else if (strcmp(msg, "/del-config") == 0) {
-                if (conf_path(cpath, sizeof(cpath), 0) != 0)
+                const char *key = strcmp(arg, "global") == 0 ? NULL : cm.key;
+                if (conf_path(cpath, sizeof(cpath), 0, key) != 0)
                     term_printf(&term, "nowhere to look for it\n");
                 else if (access(cpath, F_OK) != 0)
                     term_printf(&term, "there is no %s\n", cpath);
                 else if (ask_yes("delete the saved settings?")) {
                     if (remove(cpath) == 0)
                         term_printf(&term,
-                                    "%s deleted: the next start uses the "
-                                    "chat's own settings\n",
+                                    "%s deleted: the next start goes without "
+                                    "it\n",
                                     cpath);
                     else
                         term_printf(&term, "cannot delete %s\n", cpath);
@@ -1708,7 +1895,8 @@ int main(int argc, char **argv)
                 struct janas_llm_params was = mp;
                 int cn = 0;
                 char *text = NULL;
-                char **cw = conf_path(cpath, sizeof(cpath), 0) == 0
+                const char *key = strcmp(arg, "global") == 0 ? NULL : cm.key;
+                char **cw = conf_path(cpath, sizeof(cpath), 0, key) == 0
                                 ? conf_read(cpath, &cn, &text)
                                 : NULL;
                 if (!cw) {
@@ -1730,6 +1918,7 @@ int main(int argc, char **argv)
                     if (was.n_ctx != mp.n_ctx ||
                         was.cache_bytes != mp.cache_bytes ||
                         was.expert_bits != mp.expert_bits ||
+                        was.head_bits != mp.head_bits ||
                         was.attn_scores != mp.attn_scores ||
                         was.mtp_path != mp.mtp_path)
                         term_printf(&term,
@@ -1766,7 +1955,7 @@ int main(int argc, char **argv)
             } else if (strcmp(msg, "/reset") == 0) {
                 restart(c, system);
                 if (term.tty) { /* a clean window, as at the start */
-                    term_banner(&term, "Janas-Chat", name[0] ? name : argv[1],
+                    term_banner(&term, "Janas-Chat", name[0] ? name : cm.path,
                                 "/help for the commands, /quit to leave");
                     footer(llm, c, NULL);
                 } else

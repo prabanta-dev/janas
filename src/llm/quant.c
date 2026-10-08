@@ -319,10 +319,12 @@ void janas_q4k_dequantize(const struct janas_block_q4k *x, float *y, size_t n)
 /*
  * Affine fit of one sub-block: x ~ a * q - b with q in 0..15, a >= 0 and
  * b >= 0 (Q4_K stores the offset as a subtracted min). Candidate ranges
- * shrink the data range from either end; for each, q is rounded and (a, b)
- * refit by least squares. Returns the squared error of the best candidate.
+ * shrink the data range from either end by 0 to shrink 64ths; for each, q
+ * is rounded and (a, b) refit by least squares. Returns the squared error
+ * of the best candidate.
  */
-static double q4k_fit_sub(const float *x, int n, float *a_out, float *b_out)
+static double q4k_fit_sub(const float *x, int n, int shrink, float *a_out,
+                          float *b_out)
 {
     float lo = 0.0f, hi = x[0];
     for (int i = 0; i < n; i++) {
@@ -339,8 +341,8 @@ static double q4k_fit_sub(const float *x, int n, float *a_out, float *b_out)
         return 0.0;
     double best = INFINITY;
     float step = (hi - lo) / 64.0f;
-    for (int i = 0; i <= 6; i++)
-        for (int j = 0; j <= 6; j++) {
+    for (int i = 0; i <= shrink; i++)
+        for (int j = 0; j <= shrink; j++) {
             float l = lo + i * step, h = hi - j * step;
             if (h <= l)
                 continue;
@@ -382,12 +384,13 @@ static double q4k_fit_sub(const float *x, int n, float *a_out, float *b_out)
     return best;
 }
 
-void janas_q4k_quantize(const float *x, struct janas_block_q4k *y, size_t n)
+static void q4k_quantize(const float *x, struct janas_block_q4k *y, size_t n,
+                         int shrink)
 {
     for (size_t b = 0; b < n / JANAS_QK; b++, x += JANAS_QK) {
         float a[8], mn[8], amax = 0.0f, bmax = 0.0f;
         for (int s = 0; s < 8; s++) {
-            q4k_fit_sub(x + 32 * s, 32, &a[s], &mn[s]);
+            q4k_fit_sub(x + 32 * s, 32, shrink, &a[s], &mn[s]);
             if (a[s] > amax)
                 amax = a[s];
             if (mn[s] > bmax)
@@ -457,6 +460,17 @@ void janas_q4k_quantize(const float *x, struct janas_block_q4k *y, size_t n)
                     *qb = q[32 * s + k];
             }
     }
+}
+
+void janas_q4k_quantize(const float *x, struct janas_block_q4k *y, size_t n)
+{
+    q4k_quantize(x, y, n, 6);
+}
+
+void janas_q4k_quantize_fast(const float *x, struct janas_block_q4k *y,
+                             size_t n)
+{
+    q4k_quantize(x, y, n, 0);
 }
 
 float janas_q4k_dot_ref(const struct janas_block_q4k *w,
@@ -1426,6 +1440,61 @@ void janas_axpy_f32(float *y, float a, const float *x, size_t n)
     }
 #endif
     axpy_f32_ref(y, a, x, n);
+}
+
+void janas_dot_rows(int type, const void *w, size_t row_bytes,
+                    const struct janas_block_q8k *x, size_t nb, size_t rows,
+                    float *y)
+{
+#if defined(__x86_64__)
+    if (use_avx2_fma && __builtin_cpu_supports("f16c")) {
+        typedef void (*rows_fn)(const void *, size_t,
+                                const struct janas_block_q8k *, size_t, size_t,
+                                float *);
+        rows_fn f = NULL;
+        switch (type) {
+        case JANAS_Q4_K:
+            f = use_vnni ? q4k_rows_vnni : q4k_rows_avx2;
+            break;
+        case JANAS_Q6_K:
+            f = use_vnni ? q6k_rows_vnni : q6k_rows_avx2;
+            break;
+        case JANAS_Q5_K:
+            f = use_vnni ? q5k_rows_vnni : q5k_rows_avx2;
+            break;
+        case JANAS_Q8_0:
+            f = use_vnni ? q8_0_rows_vnni : q8_0_rows_avx2;
+            break;
+        case JANAS_IQ4_NL:
+            f = use_vnni ? iq4nl_rows_vnni : iq4nl_rows_avx2;
+            break;
+        case JANAS_IQ4_XS:
+            f = use_vnni ? iq4xs_rows_vnni : iq4xs_rows_avx2;
+            break;
+        case JANAS_Q4_0:
+            f = use_vnni ? q4_0_rows_vnni : q4_0_rows_avx2;
+            break;
+        case JANAS_Q5_1:
+            f = use_vnni ? q5_1_rows_vnni : q5_1_rows_avx2;
+            break;
+        case JANAS_Q4_1:
+            f = use_vnni ? q4_1_rows_vnni : q4_1_rows_avx2;
+            break;
+        case JANAS_Q3_K:
+            f = use_vnni ? q3k_rows_vnni : q3k_rows_avx2;
+            break;
+        case JANAS_IQ3_S:
+            f = use_vnni ? iq3s_rows_vnni : iq3s_rows_avx2;
+            break;
+        }
+        if (f) {
+            f(w, row_bytes, x, nb, rows, y);
+            return;
+        }
+    }
+#endif
+    for (size_t r = 0; r < rows; r++)
+        y[r] = janas_dot(type, (const char *)w + r * row_bytes, x, nb);
 }
 
 void janas_dot_multi(int type, const void *w, const struct janas_block_q8k *x,

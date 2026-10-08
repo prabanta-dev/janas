@@ -103,30 +103,44 @@ static void group_worker(void *arg, int tid, int n_threads)
         if (g0 >= total)
             break;
         /* a thread's claims grow, whatever the size: the task index only
-           goes forward */
-        for (size_t g = g0; g < g1; g++) {
-            while (job->first_row[t + 1] <= g)
+           goes forward. A claim may span tasks: each part with its task's
+           sizes worked out once, and on one vector all its rows in one
+           call (janas_dot_rows) */
+        while (g0 < g1) {
+            while (job->first_row[t + 1] <= g0)
                 t++;
             const struct janas_matvec_task *k = &job->tasks[t];
-            size_t r = g - job->first_row[t];
+            size_t r0 = g0 - job->first_row[t];
+            size_t end =
+                job->first_row[t + 1] < g1 ? job->first_row[t + 1] : g1;
+            size_t nr = end - g0;
             size_t nb = k->cols / JANAS_QK;
             size_t row_bytes = nb * janas_qtype_block_size(k->type);
-            const void *row = (const char *)k->w + r * row_bytes;
+            const char *w0 = (const char *)k->w + r0 * row_bytes;
             size_t nv = k->n_vec ? k->n_vec : 1;
             size_t xs = k->x_stride ? k->x_stride : nb;
             size_t ys = k->y_stride ? k->y_stride : k->rows;
             if (k->type == JANAS_Q6_K_P) {
                 size_t pb = nb * JANAS_Q6KP_PLANE;
-                const uint8_t *p1 =
-                    k->plane[0] ? (const uint8_t *)k->plane[0] + r * pb : NULL;
-                const uint8_t *p0 =
-                    k->plane[1] ? (const uint8_t *)k->plane[1] + r * pb : NULL;
-                janas_q6kp_dot_multi(row, p1, p0, k->x, xs, nv, nb, k->y + r,
-                                     ys);
-            } else if (nv == 1)
-                k->y[r] = janas_dot(k->type, row, k->x, nb);
-            else
-                janas_dot_multi(k->type, row, k->x, xs, nv, nb, k->y + r, ys);
+                for (size_t r = r0; r < r0 + nr; r++) {
+                    const void *row = (const char *)k->w + r * row_bytes;
+                    const uint8_t *p1 =
+                        k->plane[0] ? (const uint8_t *)k->plane[0] + r * pb
+                                    : NULL;
+                    const uint8_t *p0 =
+                        k->plane[1] ? (const uint8_t *)k->plane[1] + r * pb
+                                    : NULL;
+                    janas_q6kp_dot_multi(row, p1, p0, k->x, xs, nv, nb,
+                                         k->y + r, ys);
+                }
+            } else if (nv == 1) {
+                janas_dot_rows(k->type, w0, row_bytes, k->x, nb, nr, k->y + r0);
+            } else {
+                for (size_t i = 0; i < nr; i++)
+                    janas_dot_multi(k->type, w0 + i * row_bytes, k->x, xs, nv,
+                                    nb, k->y + r0 + i, ys);
+            }
+            g0 = end;
         }
     }
 }

@@ -371,14 +371,16 @@ static void test_matvec_multi(void)
 /*
  * Q4_K quantization: round trip on Gaussian-like and heavy-tailed weights.
  * The error relative to the weights' spread must stay near what 4 bits with
- * 6-bit sub-block scales allow, and below a plain min/max rounding.
+ * 6-bit sub-block scales allow, and below a plain min/max rounding - also
+ * for the fast way, which takes each sub-block's range as it is.
  */
 static void test_quantize_q4k(void)
 {
     enum { N = 256 * 64 };
     float *x = malloc(N * sizeof(float)), *y = malloc(N * sizeof(float));
     struct janas_block_q4k *q = malloc(N / JANAS_QK * sizeof(*q));
-    for (int kind = 0; kind < 2; kind++) {
+    for (int k2 = 0; k2 < 4; k2++) {
+        int kind = k2 & 1, fast = k2 >> 1;
         double var = 0, err = 0, naive = 0;
         for (int i = 0; i < N; i++) {
             /* sum of uniforms ~ Gaussian; its cube is heavy-tailed */
@@ -386,7 +388,10 @@ static void test_quantize_q4k(void)
             x[i] = 0.02f * (kind ? g * g * g : g);
             var += (double)x[i] * x[i];
         }
-        janas_q4k_quantize(x, q, N);
+        if (fast)
+            janas_q4k_quantize_fast(x, q, N);
+        else
+            janas_q4k_quantize(x, q, N);
         janas_q4k_dequantize(q, y, N);
         for (int i = 0; i < N; i++)
             err += ((double)y[i] - x[i]) * (y[i] - x[i]);
@@ -404,12 +409,13 @@ static void test_quantize_q4k(void)
             }
         }
         double rel = sqrt(err / var), rel_naive = sqrt(naive / var);
-        printf("q4k quantize, %s weights: relative rms error %.4f (min/max "
+        printf("q4k quantize%s, %s weights: relative rms error %.4f (min/max "
                "rounding %.4f)\n",
-               kind ? "heavy-tailed" : "Gaussian", rel, rel_naive);
+               fast ? " fast" : "", kind ? "heavy-tailed" : "Gaussian", rel,
+               rel_naive);
         CHECK(rel < (kind ? 0.20 : 0.11) && rel < rel_naive,
-              "q4k quantize %d: relative error %.4f, naive %.4f", kind, rel,
-              rel_naive);
+              "q4k quantize %d%s: relative error %.4f, naive %.4f", kind,
+              fast ? " fast" : "", rel, rel_naive);
     }
     free(x);
     free(y);

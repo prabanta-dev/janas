@@ -39,6 +39,14 @@ struct janas_scroll {
     char sgr[SCROLL_SGR_MAX];
     size_t sgr_n;
     int back; /* rows above the end the window sits at; 0: at the end */
+    /* the bytes each row of the window was last drawn with, for the partial
+       redraw of scroll_sink: trusted while the window's size and the
+       terminal's count of clears are those of that drawing */
+    char **shown;
+    size_t *shown_n;
+    int shown_view, shown_cols; /* 0: nothing known */
+    int shown_full;             /* every row of the window had text */
+    unsigned shown_cleared;
 };
 
 static void scroll_init(struct janas_scroll *s)
@@ -52,6 +60,10 @@ static void scroll_free(struct janas_scroll *s)
         free(s->line[i]);
     free(s->line);
     free(s->pend);
+    for (int r = 0; r < s->shown_view; r++)
+        free(s->shown[r]);
+    free(s->shown);
+    free(s->shown_n);
     memset(s, 0, sizeof(*s));
 }
 
@@ -221,20 +233,44 @@ static int sc_collect(const struct janas_scroll *s, int cols, int back,
     return got;
 }
 
+/* A growing buffer of bytes. */
+struct sc_buf {
+    char *b;
+    size_t n, cap;
+};
+
+static void sc_put(struct sc_buf *o, const char *p, size_t n)
+{
+    if (o->n + n > o->cap) {
+        size_t cap = o->cap ? o->cap * 2 : 256;
+        while (cap < o->n + n)
+            cap *= 2;
+        char *b = realloc(o->b, cap);
+        if (!b)
+            return;
+        o->b = b;
+        o->cap = cap;
+    }
+    memcpy(o->b + o->n, p, n);
+    o->n += n;
+}
+
 /*
  * One row, with the colours it inherits: a row that starts in the middle of
  * a written line would otherwise lose the escape that coloured it, so the
  * escapes before it are sent again, and nothing else of what they preceded.
+ * Into o, which then holds exactly what the row is drawn with.
  */
-static void sc_put_row(const char *text, const struct sc_row *r)
+static void sc_put_row(struct sc_buf *o, const char *text,
+                       const struct sc_row *r, int cols)
 {
     size_t n = strlen(text);
-    if (r->hang > 0)
-        printf("%*s", r->hang, "");
+    for (int k = 0; k < r->hang; k++)
+        sc_put(o, " ", 1);
     for (size_t i = 0; i < (size_t)r->off && i < n;) {
         size_t e = sc_esc(text + i, n - i);
         if (e) {
-            fwrite(text + i, 1, e, stdout);
+            sc_put(o, text + i, e);
             i += e;
         } else {
             size_t bytes;
@@ -242,15 +278,46 @@ static void sc_put_row(const char *text, const struct sc_row *r)
             i += bytes ? bytes : 1;
         }
     }
+    /* no further than the window's edge: a row is wrapped to fit, but the
+       space it was broken after can stay at its end, one column past the
+       edge, where the terminal would wrap it again - on the region's last
+       row by moving the whole window up one */
     size_t from = (size_t)r->off;
     size_t to = r->end < 0 ? n : (size_t)r->end;
-    if (from < to)
-        fwrite(text + from, 1, to - from, stdout);
+    int used = r->hang;
+    for (size_t i = from; i < to;) {
+        size_t e = sc_esc(text + i, to - i);
+        if (e) {
+            sc_put(o, text + i, e);
+            i += e;
+            continue;
+        }
+        size_t bytes;
+        int w = term_char_cols(text + i, to - i, &bytes);
+        if (!bytes)
+            bytes = 1;
+        if (used + w <= cols) {
+            sc_put(o, text + i, bytes);
+            used += w;
+        }
+        i += bytes;
+    }
 }
 
-/* The window, drawn over the scrolling region. Returns the columns the
-   bottom row holds, which is where the next text goes. */
-static int scroll_draw(struct janas_term *t, const struct janas_scroll *s)
+/*
+ * The window, drawn over the scrolling region. Returns the columns the
+ * bottom row holds, which is where the next text goes. With `partial`, the
+ * rows the terminal already shows are left alone: while a reply streams in,
+ * a piece of it changes the row being written and, when the text wraps, moves
+ * every row up. Redrawing the whole window for each piece sent 12 KB a token
+ * to the terminal and cost Konsole 3% of the reply's speed (2 Oct 2026). Each
+ * row is laid out into the bytes it is drawn with; a row whose bytes are
+ * those it was drawn with last time is not sent again, and when the rows
+ * match those shown k rows lower the terminal moves them itself - a newline
+ * on the region's last row - and only the rows that are new are drawn.
+ */
+static int scroll_draw_rows(struct janas_term *t, struct janas_scroll *s,
+                            int partial)
 {
     if (!t->tty)
         return 0;
@@ -258,8 +325,12 @@ static int scroll_draw(struct janas_term *t, const struct janas_scroll *s)
     if (view < 1)
         view = 1;
     struct sc_row *rows = malloc((size_t)view * sizeof(*rows));
-    if (!rows)
+    struct sc_buf *now = calloc((size_t)view, sizeof(*now));
+    if (!rows || !now) {
+        free(rows);
+        free(now);
         return 0;
+    }
     int got = sc_collect(s, t->cols, s->back, view, rows);
     /*
      * A window that is not full fills from the top, as a terminal does: the
@@ -267,15 +338,81 @@ static int scroll_draw(struct janas_term *t, const struct janas_scroll *s)
      * under it, not pushed to the bottom of the screen.
      */
     int bottom = got < view ? got : view;
-    printf("\0337"); /* the box and the footer keep their cursor */
     for (int r = 1; r <= view; r++) {
-        printf("\033[%d;1H\033[K\033[0m", r);
         int i = bottom - r; /* rows[0] is the newest, and sits at bottom */
         if (i >= 0 && i < got)
-            sc_put_row(sc_text(s, rows[i].line), &rows[i]);
+            sc_put_row(&now[r - 1], sc_text(s, rows[i].line), &rows[i],
+                       t->cols);
     }
+    int known = partial && s->shown && s->shown_view == view &&
+                s->shown_cols == t->cols && s->shown_cleared == t->cleared;
+    if (!known) { /* everything drawn, and remembered from here */
+        for (int r = 0; r < s->shown_view; r++)
+            free(s->shown[r]);
+        free(s->shown);
+        free(s->shown_n);
+        s->shown = calloc((size_t)view, sizeof(*s->shown));
+        s->shown_n = calloc((size_t)view, sizeof(*s->shown_n));
+        s->shown_view = s->shown && s->shown_n ? view : 0;
+        s->shown_cols = t->cols;
+        s->shown_cleared = t->cleared;
+    }
+    printf("\0337"); /* the box and the footer keep their cursor */
+    /* a window that was not full held its rows at the top, with room
+       below: a move is a move only from full to full */
+    if (known && got >= view && s->shown_full) {
+        int best = 0, most = -1;
+        for (int k = 0; k <= 4 && k < view; k++) {
+            int match = 0;
+            for (int r = 1; r + k <= view; r++)
+                match +=
+                    s->shown[r + k - 1] &&
+                    s->shown_n[r + k - 1] == now[r - 1].n &&
+                    !memcmp(s->shown[r + k - 1], now[r - 1].b, now[r - 1].n);
+            if (match > most) { /* ties: the smaller move */
+                most = match;
+                best = k;
+            }
+        }
+        if (best > 0) {
+            /* the region again, should anything have reset it: a newline
+               outside one would scroll the box and the footer away too */
+            printf("\033[1;%dr\033[%d;1H", view, view);
+            for (int k = 0; k < best; k++)
+                putchar('\n');
+            for (int r = 0; r < best; r++)
+                free(s->shown[r]);
+            memmove(s->shown, s->shown + best,
+                    (size_t)(view - best) * sizeof(*s->shown));
+            memmove(s->shown_n, s->shown_n + best,
+                    (size_t)(view - best) * sizeof(*s->shown_n));
+            for (int r = view - best; r < view; r++) {
+                s->shown[r] = NULL; /* blank now: a row unknown */
+                s->shown_n[r] = 0;
+            }
+        }
+    }
+    for (int r = 1; r <= view; r++) {
+        struct sc_buf *o = &now[r - 1];
+        if (known && s->shown[r - 1] && s->shown_n[r - 1] == o->n &&
+            !memcmp(s->shown[r - 1], o->b, o->n))
+            continue; /* the terminal shows these bytes already */
+        printf("\033[%d;1H\033[K\033[0m", r);
+        if (o->n)
+            fwrite(o->b, 1, o->n, stdout);
+        if (s->shown_view) {
+            free(s->shown[r - 1]);
+            s->shown[r - 1] = o->b ? o->b : calloc(1, 1);
+            s->shown_n[r - 1] = o->n;
+            o->b = NULL; /* kept */
+        }
+    }
+    for (int r = 0; r < view; r++)
+        free(now[r].b);
+    free(now);
     printf("\033[0m\0338");
     fflush(stdout);
+    s->shown_full = got >= view;
     int cols = 0;
     if (got > 0) { /* the bottom row: what is written there already */
         const char *text = sc_text(s, rows[0].line);
@@ -297,12 +434,17 @@ static int scroll_draw(struct janas_term *t, const struct janas_scroll *s)
     return cols;
 }
 
+static int scroll_draw(struct janas_term *t, struct janas_scroll *s)
+{
+    return scroll_draw_rows(t, s, 0);
+}
+
 /*
  * The same, and the place the conversation writes from put back where the
  * window now ends: the scrolling region moves when the box grows, and the
  * cursor the conversation had saved may be under it by then.
  */
-static void scroll_anchor(struct janas_term *t, const struct janas_scroll *s)
+static void scroll_anchor(struct janas_term *t, struct janas_scroll *s)
 {
     int cols = scroll_draw(t, s);
     if (!t->tty)
@@ -375,7 +517,7 @@ static void scroll_sink(void *arg, const char *text, size_t n)
      * made narrower.
      */
     if (s->back == 0 && s->t)
-        scroll_draw(s->t, s);
+        scroll_draw_rows(s->t, s, 1);
 }
 
 static void scroll_attach(struct janas_term *t, struct janas_scroll *s)

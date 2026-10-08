@@ -444,7 +444,8 @@ int32_t janas_llm_open(const char *path, const struct janas_llm_params *pp,
         .use_gpu = p.mode != JANAS_LLM_MODE_ECO,
         .warm = !p.no_preload,
         .expert_bits = p.expert_bits,
-        .attn_scores = p.attn_scores};
+        .attn_scores = p.attn_scores,
+        .head_bits = p.head_bits};
     llm->m = janas_llm_model_load(path, &mo, err, sizeof(err));
     if (!llm->m) {
         janas_tokenizer_destroy(llm->tok);
@@ -493,7 +494,7 @@ int32_t janas_llm_open(const char *path, const struct janas_llm_params *pp,
     if (warm_n)
         snprintf(warm, sizeof(warm), ", %llu experts loading in the background",
                  (unsigned long long)warm_n);
-    char bits[96] = "";
+    char bits[128] = "";
     int nb = janas_llm_model_expert_bits(llm->m);
     uint32_t used = janas_llm_model_experts(llm->m, NULL);
     int w = 0;
@@ -503,8 +504,14 @@ int32_t janas_llm_open(const char *path, const struct janas_llm_params *pp,
                                                               : "");
     if (janas_llm_model_experts_auto(llm->m) && w >= 0 &&
         (size_t)w < sizeof(bits))
+        w += snprintf(bits + w, sizeof(bits) - (size_t)w,
+                      ", %u experts per token (memory)", used);
+    uint64_t d0, d1;
+    janas_llm_model_head_requant(llm->m, &d0, &d1);
+    if (d0 && w >= 0 && (size_t)w < sizeof(bits))
         snprintf(bits + w, sizeof(bits) - (size_t)w,
-                 ", %u experts per token (memory)", used);
+                 ", output head at 4 bits (%.0f -> %.0f MB)", d0 / 1e6,
+                 d1 / 1e6);
     llm->cache_bytes = cache;
     llm->reserve_bytes = reserve;
     llm->kv_token = kv_token;

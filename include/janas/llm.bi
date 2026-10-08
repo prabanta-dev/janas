@@ -62,6 +62,8 @@ type janas_llm_params
     expert_bits as long      '' 2, 4 or 6; 0: the engine chooses
     attn_scores as long      '' JANAS_LLM_ATTN_*; 0: the engine chooses
     reserve_bytes as ulongint '' memory left to other programs (0: a fifth)
+    head_bits   as long      '' 4: a six-bit output head read at four
+                              '' (faster, less exact); 0 or 6: as in the file
 end type
 
 type janas_llm_chat_params

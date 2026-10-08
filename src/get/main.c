@@ -9,6 +9,10 @@
  *   janas-get <model> [--dir DIR] [--keep] [--no-mtp]
  *   janas-get hf:<owner>/<repo>/<file.gguf> [--dir DIR] [--keep]
  *
+ * The models go where janas-chat looks for them (janas_models_dir: the
+ * environment's JANAS_MODELS, or ~/.local/share/janas/models), unless
+ * --dir says otherwise. A model with a draft in the catalog brings it.
+ *
  * A download stopped halfway resumes where it stopped; a file already
  * there is checked, not fetched again. The GGUF goes once converted,
  * unless --keep.
@@ -19,7 +23,7 @@
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 
-#include "catalog.h"
+#include "common/catalog.h"
 #include "common/env_names.h"
 #include "common/sysinfo.h"
 #include "steps.h"
@@ -31,16 +35,17 @@ static void usage(void)
             "       janas-get <model> [--dir DIR] [--keep] [--no-mtp]\n"
             "       janas-get hf:<owner>/<repo>/<file.gguf> [--dir DIR] "
             "[--keep]\n"
-            "  --dir DIR   where the models go (default: models)\n"
+            "  --dir DIR   where the models go (default: JANAS_MODELS, or\n"
+            "              ~/.local/share/janas/models)\n"
             "  --keep      keep the downloaded GGUF once converted\n"
-            "  --no-mtp    without the model's prediction file\n");
+            "  --no-mtp    without the model's prediction file or draft\n");
 }
 
 static void list(void)
 {
     printf("%-22s %8s %7s  %s\n", "model", "download", "memory", "");
-    for (int i = 0; i < get_catalog_n; i++) {
-        const struct get_model *m = &get_catalog[i];
+    for (int i = 0; i < janas_catalog_n; i++) {
+        const struct janas_model_entry *m = &janas_catalog[i];
         printf("%-22s %6.1f GB %4d GB  %s\n", m->name, m->gguf_gb, m->ram_gb,
                m->what);
     }
@@ -78,8 +83,8 @@ static int convert(const char *first, const char *out)
     return get_run("gguf2jns", argv) == 0 ? 0 : -1;
 }
 
-static int from_catalog(const struct get_model *m, const char *dir, int keep,
-                        int no_mtp)
+static int from_catalog(const struct janas_model_entry *m, const char *dir,
+                        int keep, int no_mtp)
 {
     char out[4096], first[4096], flat[4200];
     snprintf(out, sizeof(out), "%s/%s", dir, m->out);
@@ -108,7 +113,7 @@ static int from_catalog(const struct get_model *m, const char *dir, int keep,
             return 1;
         }
         printf("== %s: downloading\n", m->name);
-        for (int p = 0; p < GET_MAX_PARTS && m->parts[p]; p++)
+        for (int p = 0; p < JANAS_CATALOG_PARTS && m->parts[p]; p++)
             if (get_fetch(m->repo, m->parts[p], dir, m->part_sha[p]) != 0)
                 return 1;
         snprintf(flat, sizeof(flat), "%s.flat", out);
@@ -117,7 +122,7 @@ static int from_catalog(const struct get_model *m, const char *dir, int keep,
             check(conv, m->flat_sha, "gguf2jns") != 0)
             return 1;
         if (!keep)
-            for (int p = 0; p < GET_MAX_PARTS && m->parts[p]; p++) {
+            for (int p = 0; p < JANAS_CATALOG_PARTS && m->parts[p]; p++) {
                 char part[4096];
                 get_local(part, sizeof(part), dir, m->parts[p]);
                 remove(part);
@@ -132,12 +137,12 @@ static int from_catalog(const struct get_model *m, const char *dir, int keep,
             remove(flat);
         }
     }
-    if (m->extra != EXTRA_NONE && !no_mtp) {
+    if (m->extra != JANAS_EXTRA_NONE && !no_mtp) {
         char xout[4096];
         snprintf(xout, sizeof(xout), "%s/%s", dir, m->extra_out);
         if (exists(xout) && get_same(xout, m->extra_sha) == 1) {
             printf("%s: already here, fingerprint checked\n", xout);
-        } else if (m->extra == EXTRA_GGUF) {
+        } else if (m->extra == JANAS_EXTRA_GGUF) {
             char src[4096];
             printf("== its assistant\n");
             if (get_fetch(m->repo, m->extra_src, dir, m->extra_src_sha) != 0)
@@ -158,7 +163,6 @@ static int from_catalog(const struct get_model *m, const char *dir, int keep,
                 return 1;
         }
     }
-    printf("\nReady: %s\nChat with it: janas-chat %s\n", out, out);
     return 0;
 }
 
@@ -207,7 +211,8 @@ int main(int argc, char **argv)
         usage();
         return 2;
     }
-    const char *dir = "models";
+    static char home_dir[4096];
+    const char *dir = NULL;
     int keep = 0, no_mtp = 0;
     for (int i = 2; i < argc; i++) {
         if (strcmp(argv[i], "--dir") == 0 && i + 1 < argc)
@@ -229,14 +234,34 @@ int main(int argc, char **argv)
         usage();
         return 0;
     }
-    mkdir(dir, 0755);
+    if (!dir) {
+        if (janas_models_dir(home_dir, sizeof(home_dir)) != 0) {
+            fprintf(stderr, "janas-get: no home directory: use --dir\n");
+            return 2;
+        }
+        dir = home_dir;
+    }
+    if (janas_mkdirs(dir) != 0) {
+        fprintf(stderr, "janas-get: cannot make %s\n", dir);
+        return 1;
+    }
     if (strncmp(argv[1], "hf:", 3) == 0)
         return from_hf(argv[1], dir, keep);
-    const struct get_model *m = get_find(argv[1]);
+    const struct janas_model_entry *m = janas_catalog_find(argv[1]);
     if (!m) {
         fprintf(stderr, "janas-get: no model called %s (janas-get list)\n",
                 argv[1]);
         return 2;
     }
-    return from_catalog(m, dir, keep, no_mtp);
+    int r = from_catalog(m, dir, keep, no_mtp);
+    const struct janas_model_entry *d =
+        m->draft && !no_mtp ? janas_catalog_find(m->draft) : NULL;
+    if (r == 0 && d) {
+        printf("== its draft, %s\n", d->name);
+        r = from_catalog(d, dir, keep, 1);
+    }
+    if (r == 0)
+        printf("\nReady: %s/%s\nChat with it: janas-chat %s\n", dir, m->out,
+               m->name);
+    return r;
 }

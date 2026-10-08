@@ -266,6 +266,11 @@ struct janas_llm_model {
     int k_auto;     /* and so was the number of experts per token */
     int warm_use;   /* preload the most used experts, and count them */
     uint32_t *use_count; /* experts used this session, n_layer * n_expert */
+    uint64_t head_before, head_after; /* output head requantized (head_bits) */
+    /* the caller's CPUs before the load pinned it (a cpu_set_t), given
+       back when the model is freed */
+    unsigned char caller_cpus[128];
+    int caller_pinned;
     janas_llm_route_fn route_fn; /* janas_llm_model_route_observer */
     void *route_ctx;
     janas_llm_route_fn pred_fn; /* janas_llm_model_route_predictor */

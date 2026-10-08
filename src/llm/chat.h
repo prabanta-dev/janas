@@ -57,7 +57,7 @@ struct janas_llm {
        whether the GPU is given work is a thing that changes */
     uint64_t cache_bytes, reserve_bytes;
     int n_compute;
-    char arch[32], bits[96], warm[64];
+    char arch[32], bits[128], warm[64];
     char name[96];
     int32_t mode;
     int gpu_wanted;    /* the caller's say, on top of what the mode decides */

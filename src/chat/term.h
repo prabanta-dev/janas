@@ -42,6 +42,9 @@ struct janas_term {
        through it, they are drawn where they are and kept nowhere. */
     void (*sink)(void *, const char *, size_t);
     void *sink_arg;
+    /* how many times the screen has been cleared: the store's partial
+       redraw (scroll.h) trusts what it drew only while this stays put */
+    unsigned cleared;
     struct termios saved;
 };
 
@@ -808,6 +811,7 @@ static void term_pager(struct janas_term *t, const char *text)
     term_raw(t, 1);
     for (;;) {
         printf("\033[2J\033[H");
+        t->cleared++;
         for (int i = 0; i < page && top + i < n; i++)
             printf("%.*s%s\n", row[top + i].len, row[top + i].s, T_RESET(t));
         /* the way out, said as fully as the window lets it be said */
@@ -865,6 +869,7 @@ static void term_page_begin(struct janas_term *t)
 {
     if (t->tty) {
         printf("\033[?1049h\033[r\033[2J\033[H");
+        t->cleared++;
         fflush(stdout);
     }
 }
@@ -1010,6 +1015,7 @@ static void term_banner(struct janas_term *t, const char *product,
     const char *text[2] = {product, line3};
     const char *face[2] = {T_BOLD(t), T_DIM(t)};
     printf("\033[2J\033[H"); /* the cursor at the top: the banner goes there */
+    t->cleared++;
     term_region(t);
     printf("\033[1;1H");
     term_beside(t, text, face, 2, t->rows - t->footer_rows - 1, 0);

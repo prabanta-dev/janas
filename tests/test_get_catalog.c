@@ -11,7 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "../src/get/catalog.c"
+#include "common/catalog.h"
 
 static int failures;
 
@@ -58,26 +58,33 @@ int main(void)
                "repository's root)\n");
         return 1;
     }
-    for (int i = 0; i < get_catalog_n; i++) {
-        const struct get_model *m = &get_catalog[i];
-        for (int p = 0; p < GET_MAX_PARTS && m->parts[p]; p++)
+    for (int i = 0; i < janas_catalog_n; i++) {
+        const struct janas_model_entry *m = &janas_catalog[i];
+        for (int p = 0; p < JANAS_CATALOG_PARTS && m->parts[p]; p++)
             digest(models, m->name, m->part_sha[p]);
         digest(models, m->name, m->flat_sha);
         digest(models, m->name, m->jns_sha);
         digest(models, m->name, m->extra_src_sha);
         digest(models, m->name, m->extra_sha);
-        if (!m->flat_sha || (m->extra != EXTRA_NONE && !m->extra_sha)) {
+        if (!m->flat_sha || (m->extra != JANAS_EXTRA_NONE && !m->extra_sha)) {
             printf("FAIL %s: a fingerprint missing\n", m->name);
             failures++;
         }
+        const struct janas_model_entry *d =
+            m->draft ? janas_catalog_find(m->draft) : NULL;
+        if (m->draft && (!d || d->not_chat || d == m)) {
+            printf("FAIL %s: draft %s is not a chat model of the catalog\n",
+                   m->name, m->draft);
+            failures++;
+        }
         for (int k = 0; k < i; k++)
-            if (strcmp(get_catalog[k].name, m->name) == 0) {
+            if (strcmp(janas_catalog[k].name, m->name) == 0) {
                 printf("FAIL %s: twice in the catalog\n", m->name);
                 failures++;
             }
     }
     free(models);
     printf("test_get_catalog: %s (%d models)\n", failures ? "FAILED" : "ok",
-           get_catalog_n);
+           janas_catalog_n);
     return failures ? 1 : 0;
 }

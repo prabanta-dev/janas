@@ -224,6 +224,15 @@ float janas_dot(int type, const void *w, const struct janas_block_q8k *x,
 void janas_dequantize(int type, const void *w, float *y, size_t n);
 
 /*
+ * The dot products of `rows` consecutive weight rows (row r at w + r *
+ * row_bytes) with one vector: y[r]. The same bits as janas_dot row by row,
+ * with the type chosen once.
+ */
+void janas_dot_rows(int type, const void *w, size_t row_bytes,
+                    const struct janas_block_q8k *x, size_t nb, size_t rows,
+                    float *y);
+
+/*
  * The dot products of one weight row with nv vectors (vector v at x + v *
  * x_stride blocks), result v at out[v * out_stride]. Bit-identical to calling
  * janas_dot for each vector, but unpacks the weights once per four vectors.
@@ -254,6 +263,12 @@ void janas_q8k_quantize_det(const float *x, struct janas_block_q8k *y,
  * 6-bit sub-block scales. For offline conversion, not for the hot path.
  */
 void janas_q4k_quantize(const float *x, struct janas_block_q4k *y, size_t n);
+/* The same with each sub-block's range taken as it is, not searched: nine
+   times faster, for requantizing at load (Qwen3.5-9B's output head, a
+   billion weights: 2.5 s against 22 s to open), and on that head the mean
+   logit difference against llama.cpp 0.157 where 0.154 (7 Oct 2026). */
+void janas_q4k_quantize_fast(const float *x, struct janas_block_q4k *y,
+                             size_t n);
 
 /* Dequantizes n weights (n multiple of JANAS_QK). */
 void janas_q4k_dequantize(const struct janas_block_q4k *x, float *y, size_t n);

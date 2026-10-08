@@ -103,16 +103,30 @@ struct janas_llm_params {
        2 GiB (default). More keeps a busy desktop out of swap, at the price
        of a smaller cache on a model larger than the memory */
     uint64_t reserve_bytes;
+    /* bits per weight of the output head, the largest matrix read whole at
+       every token. 4: when the file holds it at six bits (Q6_K), it is
+       requantized to four (Q4_K) as the model opens - a second or two - for
+       a few per cent more tokens a second and answers a little less close
+       to the original weights. On 400 tokens against llama.cpp the most
+       likely token agreed 372 times where 383 on Qwen3.5-9B (Italian prose;
+       4.6% faster), 372 where 382 on Qwen3-Next-80B-A3B (Italian prose;
+       2.8% faster), 387 where 392 on Qwen3-30B-A3B (C source). Where the
+       head is the token embeddings, as in the small Qwen, the table is
+       requantized for both: Qwen3.5-2B 9% faster, 352 where 376. 0 or 6:
+       as in the file (default) */
+    int32_t head_bits;
 };
 
 /*
  * How the attention scores are computed. EXACT reads the query as it is and
  * sums in floating point. FAST reads it as sixteen-bit integers with a scale
  * of its own: the sum is then an exact integer one, which the machine does
- * about twice as fast, and the only error left is the query's quantization -
- * a relative 3e-5, against the 4e-3 the eight-bit keys and values already
- * carry. AUTO takes FAST when the machine has the arithmetic for it and the
- * caller asked for more than the usual 16384 tokens of context, where
+ * about twice as fast, and the error it adds is the query's quantization - a
+ * relative 3e-5, against the 4e-3 the eight-bit keys and values already
+ * carry. FAST also weighs the values with sixteen-bit integers, whose
+ * rounding adds at most a few 1e-4 to an output (no difference measured on
+ * a model's logits). AUTO takes FAST when the machine has the arithmetic for it
+ * and the caller asked for more than the usual 16384 tokens of context, where
  * attention is the greater part of a token; below that it takes EXACT, since
  * a conversation that stays short would pay the quantization for a gain it
  * never sees. The environment variable JANAS_ATTN (float, int16, auto)

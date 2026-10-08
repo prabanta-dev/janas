@@ -114,12 +114,12 @@ sudo pacman -S vulkan-headers glslang vulkan-tools           # the same, Arch
 
 ## Getting a model
 
-**The short way: `janas-get`.** One command downloads a model from Hugging Face, checks the SHA-256 of every file against [MODELS.md](MODELS.md), converts it and makes its prediction file beside it (an MTP block, or Gemma 4's assistant), which the chat then finds by itself:
+**The short way: `janas-get`.** One command downloads a model from Hugging Face, checks the SHA-256 of every file against [MODELS.md](MODELS.md), converts it and makes its prediction file beside it (an MTP block, Gemma 4's assistant, or for Qwen3-4B the small Qwen3-0.6B that guesses its tokens), which the chat then finds by itself. The models go to `~/.local/share/janas/models`, or wherever `JANAS_MODELS` or `--dir` says:
 
 ```sh
 bin/x86_64-linux/janas-get list                  # the models it knows
-bin/x86_64-linux/janas-get gemma-4-e4b           # into models/
-bin/x86_64-linux/janas-chat models/gemma-4-e4b-it-q4km.jns
+bin/x86_64-linux/janas-get gemma-4-e4b           # into ~/.local/share/janas/models
+bin/x86_64-linux/janas-chat ~/.local/share/janas/models/gemma-4-e4b-it-q4km.jns
 ```
 
 A download stopped halfway resumes where it stopped, a file already there is checked rather than fetched again, and the GGUF goes once converted (`--keep` keeps it). Any other GGUF: `janas-get hf:<owner>/<repo>/<file.gguf>`, checked against the SHA-256 Hugging Face lists for it. The memory column of `janas-get list` is the smallest machine each model is meant for. The rest of this section is the same by hand.
@@ -228,11 +228,36 @@ The first start reads the model's resident weights (a couple of GB) and then fil
 ## Using the chat
 
 ```
-janas-chat <model.jns> [options]
+janas-chat [model] [options]
 ```
+
+The model is a `.jns` file, or the name of a model of the catalog (`janas-get list` shows them): `janas-chat qwen3-30b-a3b` looks for it in `~/.local/share/janas/models` (or `JANAS_MODELS`, or `--models`), and if it is not there yet offers to download and convert it, with its prediction file or draft, through `janas-get`. With no model at all the chat lists the catalog, marks what is already there, and asks which one. The first download proposes the folder and takes another if you type one; janas-chat then finds the models there only when told (`--models` or `JANAS_MODELS`).
+
+The settings come in layers, each over the one before: the model's profile in the catalog, the measure of the model on this machine, the chat's own file (`~/.config/janas/chat.conf`), the model's file (`~/.config/janas/models/<name>.conf`), the command line. `/save-config` writes the model's file (`/save-config global` the chat's), `/del-config` deletes it, and the catalog itself is never written. A model of the catalog has two profiles: `quality`, the default, where the answers are the ones the file gives; and `fast` (`--profile fast`), which adds the levers measured to make that model faster at a small, measured cost to its answers (see below). A model whose catalog entry names a draft gets it by itself: Qwen3-4B guesses with Qwen3-0.6B.
+
+**The fast profiles, as measured.** Every lever that trades a little accuracy for speed — `--head 4`, `--attention fast`, `--bits 4` where the experts are in planes — was tried on every model of the catalog, alone and in every combination, on 8 October 2026 on the development laptop; a lever is in a model's profile when it adds 2% or more. Speed: 128 tokens after a prompt of 1,900 (`tests/bench_long`, two runs each); for the three models larger than their 16 GiB cache, a fixed text read token by token instead (`tests/llm_eval`), because each lever changes the text a greedy reply takes and with it the experts read from disk. Agreement: the most likely token against llama.cpp, Italian prose / C source, as in the file → with the profile.
+
+| Model | Fast profile | Faster by | Agreement |
+|---|---|---|---|
+| Qwen3-0.6B | `--head 4 --attention fast` | 14.3% | 345 → 331 / 377 → 368 of 400 |
+| Qwen3-4B | `--head 4 --attention fast` | 6.8% | 379 → 369 / 397 → 388 |
+| Qwen3.5-0.8B | `--attention fast` | 2.0% | 387 → 386 / 386 → 387 |
+| Qwen3.5-2B | `--head 4` | 10.2% | 376 → 352 / 388 → 375 |
+| Qwen3.5-9B | `--head 4` | 5.1% | 383 → 372 / 393 → 391 |
+| Qwen3-30B-A3B | `--head 4 --attention fast --bits 4` | 10.0% | 57 → 55 of 64 / 392 → 385 |
+| Qwen3.6-35B-A3B | `--head 4 --bits 4` | 6.5% | 60 → 55 of 64 / 196 → 194 of 200 |
+| Qwen3-Next-80B-A3B | `--head 4 --bits 4` | 8.6% | 386 → 372 / 397 → 392 |
+| Qwen3-Coder-Next | `--head 4 --bits 4` | 10.5% | — / 193 → 196 of 200 |
+
+Qwen3.5-0.8B does not take `--head 4`: with it, it answered "3" to "2+3". Gemma 4 has no fast profile: its keys are sixteen-bit, where `--attention fast` has nothing to do, its heads are not six-bit and its experts are not in planes. `--attention fast` pays where attention is a larger share of a token at 1,900 positions (Qwen3-0.6B +7.5%, Qwen3-30B-A3B +4.0%); on the hybrid Qwen3.5, Qwen3.6 and Qwen3-Next it adds 2% or less.
+
+**The measure on this machine.** What makes a model fastest depends on the machine too, so the first time a model starts in a terminal the chat offers to measure it: the model opened each way that can differ — drafts from its prediction file or draft model, from the conversation, or none; in the `fast` profile also the output head as in the file — one reply to warm it and the same reply measured at temperature 0, so every way writes the same text. A way other than the one the model starts with has to be at least 3% faster to be kept (one reply is measured, and a couple of per cent is its noise). The result goes to `~/.cache/janas/tune-<name>-<profile>.conf`, with the speeds as a comment, and is used for the levers you did not set yourself; a "no" is kept too, so the question comes once. `--tune` measures again, `--no-tune` neither asks nor uses it. On the development laptop: Qwen3-4B 33.1 tokens/s with Qwen3-0.6B's drafts, 29.2 without drafts, 29.5 with drafts from the conversation; Qwen3.5-2B 77.4 with its MTP block, 41.9 without drafts, 60.6 from the conversation, and with the head at four bits 77.4 against 75.6 at six; Qwen3-0.6B within 1% either way, so it starts as it would have.
 
 | Option | What it does |
 |---|---|
+| `--profile <quality\|fast>` | the catalog's profile for the model (default `quality`) |
+| `--models <dir>` | where the models are (default: `JANAS_MODELS`, or `~/.local/share/janas/models`) |
+| `--tune`, `--no-tune` | measure again how the model runs fastest on this machine; or neither ask nor use that measure |
 | `--mtp <file>` | the model's multi-token prediction file (an MTP block, or Gemma 4's assistant): faster replies, same text; without it, the one beside the model that fits it |
 | `--no-mtp` | no prediction file, not even one found beside the model |
 | `--draft <file>` | a small model of the same family to guess the next tokens: faster replies, same text (see below) |
@@ -241,6 +266,7 @@ janas-chat <model.jns> [options]
 | `--reserve <GiB>` | when the cache is automatic, the memory left to other programs (default: a fifth of the machine's); more keeps a busy desktop out of swap, at the price of a smaller cache |
 | `--bits <2\|4\|6>` | bits per weight of the experts' down matrix (default: the memory decides) |
 | `--attention <exact\|fast>` | how the attention scores are computed (default: fast above 16384 tokens of context) |
+| `--head <4\|6>` | bits per weight of the output head: `4` requantizes a six-bit head at start, a few per cent faster and a little less exact (default: `6`, as in the file; see below) |
 | `--no-preload` | do not fill the expert cache at start from this machine's profile |
 | `--no-recap` | when the context fills, drop the oldest turns without summing them up |
 | `--system <text>` | the system message (`""` for none; the default gives the assistant its name, Janas, names the model it thinks with, and says who wrote the engine) |
@@ -260,7 +286,9 @@ Where a model has no prediction block the guesses are copied from the conversati
 
 **On sampling.** The defaults are the ones Qwen recommends for its own models: temperature 0.7, top-k 20, top-p 0.8. They are narrower than they look. With top-p 0.8, on Qwen3-4B, **196 of 256 tokens had a single candidate left after the cut** - nothing to draw, so the reply is the one the model would have given greedily, and two questions that mean the same thing get the same words. Starting with `--top-p 0.95` brings that to 142 of 256. It is not a fault and not a setting this project chose: it is what those numbers do to a model that is sure of itself.
 
-**On `--attention`.** At a long context most of a token goes into attention, and most of that into the scores: one dot product per position, per head. The `fast` way reads the query as sixteen-bit integers with a scale of its own, so the dot product becomes an exact integer sum — the machine does sixteen of those products at a time instead of eight, and the scores come out a fifth to a quarter quicker. What it costs is the query's quantization, a relative 3e-5, sixty times less than the eight-bit keys and values already carry; on four hundred tokens against llama.cpp the most likely token agreed 394 times out of 400 on C source against 393 the exact way, and 377 against 382 on Italian prose. The engine asks for it by itself only when you asked for more than 16384 tokens of context, where the gain is real and the conversation will get there; `--attention exact` and `--attention fast` settle it either way, and so does `JANAS_ATTN=float|int16`.
+**On `--attention`.** At a long context most of a token goes into attention, and most of that into the scores: one dot product per position, per head. The `fast` way reads the query as sixteen-bit integers with a scale of its own, so the dot product becomes an exact integer sum — the machine does sixteen of those products at a time instead of eight, and the scores come out a fifth to a quarter quicker. What it costs is the query's quantization, a relative 3e-5, sixty times less than the eight-bit keys and values already carry; on four hundred tokens against llama.cpp the most likely token agreed 394 times out of 400 on C source against 393 the exact way, and 377 against 382 on Italian prose. Since 7 October 2026 the `fast` way also weighs the values with sixteen-bit integers, a further 6-11% off a layer's attention (`tests/bench_attn`, Qwen3-30B-A3B's geometry, 2,048 to 32,000 positions); on Qwen3-30B-A3B, 400 tokens of C against llama.cpp, the most likely token agreed 390 times out of 400 against 388 with the scores alone and 392 the exact way, with the same mean logit difference (0.2865, 0.2893, 0.2871); the figures before this sentence are for the scores alone. The engine asks for it by itself only when you asked for more than 16384 tokens of context, where the gain is real and the conversation will get there; `--attention exact` and `--attention fast` settle it either way, and so does `JANAS_ATTN=float|int16`.
+
+**On `--head`.** The output head - the matrix that turns the model's state into a score for every word of the vocabulary - is the largest one read whole for every token: on Qwen3.5-9B a seventh of a token's time. Most files keep it at six bits per weight (Q6_K); `--head 4` requantizes it to four (Q4_K) when the model opens, a second or two, and leaves everything else as it is. Measured on 7 October 2026, 128 tokens after a prompt of 1,900: Qwen3.5-9B writes 13.35-13.36 tokens/s where 12.76-12.77 (+4.6%, the head 7.8 ms a token where 11.0), Qwen3-Next-80B-A3B with a 16 GiB cache 25.0-25.3 where 24.4-24.5 (+2.8%); prompts are read at the same speed. The price is in the answers: against llama.cpp on 400 tokens, the most likely token agreed 372 times where 383 on Qwen3.5-9B (Italian prose) and 391 where 393 (C source), 372 where 382 and 392 where 393 on Qwen3-Next-80B-A3B, 387 where 392 on Qwen3-30B-A3B (C source), and the mean difference of the scores grows by a quarter to two thirds. Requantizing the other six-bit matrices as well (attention, the shared experts) cost more agreement for next to no speed, so the option stops at the head. The files of Qwen3.5-9B, Qwen3.8-27B, Qwen3-30B-A3B, Qwen3-Coder-30B-A3B, Qwen3.6-35B-A3B and Qwen3-Next-80B-A3B have a six-bit head of their own; those of Qwen3-0.6B, Qwen3-4B, Qwen3.5-0.8B and Qwen3.5-2B use their six-bit token embeddings as the head, and there the table is requantized for both uses (the input embeddings then read at four bits, as the larger models' files already keep them): three runs each with nothing else running, Qwen3-0.6B 107.0-107.7 tokens/s where 100.6-101.9 (+6%), Qwen3.5-0.8B 113.5-114.7 where 104.2-105.8 (+9%), Qwen3.5-2B 54.4-54.9 where 50.0-50.4 (+9%), Qwen3-4B 24.0-24.1 where 23.2-23.3 (+3.4%). Here the answers move more: 352 where 376 on Qwen3.5-2B (prose), 363 where 387 on Qwen3.5-0.8B, 366 where 379 on Qwen3-4B, 327 where 345 on Qwen3-0.6B. Gemma 4's embeddings are not six-bit and are left alone. `JANAS_HEAD_BITS=4` does the same from the environment.
 
 In the chat, a line starting with `/` is a command, and it turns grey-blue as soon as it names one the chat really has:
 

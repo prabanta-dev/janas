@@ -17,6 +17,7 @@ const char *const JANAS_ENV_NAMES[] = {"JANAS_ALPHAVANTAGE_KEY",
                                        "JANAS_API_KEY",
                                        "JANAS_ARENA_HUGE",
                                        "JANAS_ATTN",
+                                       "JANAS_ATTN_FUSE",
                                        "JANAS_ATTN_SKIPSTAT",
                                        "JANAS_AVIATIONSTACK_KEY",
                                        "JANAS_BLOCK_THREADS",
@@ -46,11 +47,13 @@ const char *const JANAS_ENV_NAMES[] = {"JANAS_ALPHAVANTAGE_KEY",
                                        "JANAS_GPU_TOKEN_PROFILE",
                                        "JANAS_GPU_VERBOSE",
                                        "JANAS_GPU_XCOH",
+                                       "JANAS_HEAD_BITS",
                                        "JANAS_KERNELS",
                                        "JANAS_KV",
                                        "JANAS_LOCATION",
                                        "JANAS_METRICS",
                                        "JANAS_METRICS_EVERY",
+                                       "JANAS_MODELS",
                                        "JANAS_NOMINATIM_URL",
                                        "JANAS_OSRM_URL",
                                        "JANAS_OVERPASS_URL",
@@ -76,9 +79,6 @@ const char *const JANAS_ENV_NAMES[] = {"JANAS_ALPHAVANTAGE_KEY",
 const size_t JANAS_N_ENV_NAMES =
     sizeof JANAS_ENV_NAMES / sizeof *JANAS_ENV_NAMES;
 
-/* read by Janas's own scripts, not by its programs */
-static const char *const SCRIPTS[] = {"JANAS_MODELS"};
-
 int janas_env_check(const char *prog)
 {
     int n = 0;
@@ -94,8 +94,6 @@ int janas_env_check(const char *prog)
         int known = 0;
         for (size_t i = 0; i < JANAS_N_ENV_NAMES && !known; i++)
             known = strcmp(name, JANAS_ENV_NAMES[i]) == 0;
-        for (size_t i = 0; i < sizeof SCRIPTS / sizeof *SCRIPTS && !known; i++)
-            known = strcmp(name, SCRIPTS[i]) == 0;
         if (known)
             continue;
         char why[240];
