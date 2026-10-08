@@ -16,6 +16,10 @@
 
 /* The user's language ("it"; "en" or NULL: English, no translation). */
 void layout_set_lang(const char *lang);
+/* The model the layouts are translated by: each model keeps its own, and
+   its failures, so that a small model's poor translation is never shown
+   with another model's answers and a failed one is not asked for again. */
+void layout_set_model(const char *key);
 const char *layout_lang(void);
 
 /* How a layout is translated: system and user messages to the model, its

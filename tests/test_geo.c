@@ -87,6 +87,45 @@ int main(void)
     const struct geo_city *c = geo_city_find("Turin");
     CHECK(c && strcmp(geo_country_name(c->country), "Italy") == 0,
           "Turin is not in Italy");
+    /* a region by its name, as its largest city: Liguria was a peak in
+       Antarctica to the weather service's geocoding (8 Oct 2026) */
+    static const char *const reg[][2] = {
+        {"Liguria", "Genoa"},       {"Sicilia", "Palermo"},
+        {"Sicily", "Palermo"},      {"lombardia", "Milan"},
+        {"Valle d'Aosta", "Aosta"}, {"Marche", "Ancona"},
+        {"Puglia", "Bari"},         {"Bavaria", "Munich"}};
+    for (size_t i = 0; i < sizeof reg / sizeof *reg; i++) {
+        c = geo_region_city(reg[i][0]);
+        CHECK(c && strcmp(c->ascii, reg[i][1]) == 0, "region %s: %s", reg[i][0],
+              c ? c->ascii : "none");
+    }
+    /* the largest city, not the seat: Basilicata's is Matera */
+    c = geo_region_city("Basilicata");
+    CHECK(c && strcmp(geo_region_name(c->region), "Basilicate") == 0,
+          "Basilicata: %s", c ? geo_region_name(c->region) : "none");
+    CHECK(!geo_region_city("Nowhereland"), "Nowhereland is a region");
+    /* cities by their Italian names: "Roma" was Roma in Queensland's
+       airport, Torino nothing (8 Oct 2026) */
+    static const char *const cit[][3] = {{"Roma", "Rome", "IT"},
+                                         {"Torino", "Turin", "IT"},
+                                         {"Siracusa", "Siracusa", "IT"},
+                                         {"Londra", "London", "GB"},
+                                         {"Parigi", "Paris", "FR"}};
+    for (size_t i = 0; i < sizeof cit / sizeof *cit; i++) {
+        c = geo_city_find(cit[i][0]);
+        CHECK(c && strcmp(c->ascii, cit[i][1]) == 0 &&
+                  strcmp(geo_country_iso2(c->country), cit[i][2]) == 0,
+              "city %s: %s", cit[i][0], c ? c->ascii : "none");
+    }
+    a = geo_airport_find("Roma");
+    CHECK(a && strcmp(geo_country_iso2(a->country), "IT") == 0,
+          "Roma's airport: %s", a ? a->iata : "none");
+    a = geo_airport_find("Firenze");
+    CHECK(a && strcmp(a->iata, "FLR") == 0, "Firenze's airport: %s",
+          a ? a->iata : "none");
+    a = geo_airport_find("Florence");
+    CHECK(a && strcmp(a->iata, "FLR") == 0, "Florence's airport: %s",
+          a ? a->iata : "none");
     c = geo_city_find("livorno");
     CHECK(c && strcmp(geo_region_name(c->region), "Tuscany") == 0,
           "Livorno is not in Tuscany");

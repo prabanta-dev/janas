@@ -1702,8 +1702,8 @@ int main(int argc, char **argv)
             struct janas_llm_params probe = mp;
             static char probe_mtp[4096], probe_draft[4096];
             if (!probe.mtp_path && !probe.draft_path && !no_mtp &&
-                !(probe.draft_path = chat_model_draft(&cm, probe_draft,
-                                                      sizeof(probe_draft))))
+                !(probe.draft_path =
+                      chat_model_draft(&cm, probe_draft, sizeof(probe_draft))))
                 probe.mtp_path =
                     chat_model_mtp(&cm, probe_mtp, sizeof(probe_mtp));
             chat_tune_run(cm.path, &probe, &cp, gpu, dims, tpath);
@@ -1777,6 +1777,7 @@ int main(int argc, char **argv)
     aside_chat = c;
     user_lang();
     layout_set_translator(translate);
+    layout_set_model(cm.key);
     if (mcp) {
         mcpc_defer(!all_tools);
         mcpc_start(mcp_config);

@@ -799,7 +799,7 @@ static int flights_between(const struct janas_json *args, struct janas_buf *b)
         char m[300];
         snprintf(m, sizeof m,
                  "Airport not known: %.100s. Give an IATA or ICAO code (TRN, "
-                 "LICT) or a city's name in English.",
+                 "LICT) or a city's name in Italian or English.",
                  !f ? (from ? from : "(none)") : to);
         janas_mcps_text_result(b, m, strlen(m), 1);
         return 0;
@@ -1166,11 +1166,12 @@ static int flights_nearby(const struct janas_json *args, struct janas_buf *b)
                      geo_country_name(c->country));
         } else {
             char m[300];
-            snprintf(m, sizeof m,
-                     "Place not known: %.100s. Give an airport code (TRN, "
-                     "LIMF), a city's name in English, or a latitude and "
-                     "longitude.",
-                     place);
+            snprintf(
+                m, sizeof m,
+                "Place not known: %.100s. Give an airport code (TRN, "
+                "LIMF), a city's name in Italian or English, or a latitude and "
+                "longitude.",
+                place);
             janas_mcps_text_result(b, m, strlen(m), 1);
             return 0;
         }

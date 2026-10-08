@@ -2,6 +2,15 @@
 
 > Curated, user-facing summary of completed work, newest first.
 
+## [2026-10-08] - Cities by their Italian names; each model's own layouts
+
+- **Roma, Torino, Londra, Parigi are cities to the flights and weather services.** The tables name cities in English, and an Italian name went astray: "Roma" was the airport of Roma in Queensland (0 aircraft within 50 km of it, for a question about Rome), Torino, Londra and Parigi nothing at all. The Italian names of the cities most asked for, Italy's and abroad, now lead to theirs, each in its country (Siracusa stays in Sicily); an airport found by a city's name has to be within 100 km of the largest city so called ("Florence" is Peretola, not Florence Regional in South Carolina). Asked again: Roma, 17 aircraft within 50 km of Ciampino. `test_geo` checks them.
+- **Each model translates the services' layouts for itself, and is not asked again after it failed.** A layout (the text a service's answer is shown in) was translated once and kept for every model, so Qwen3.5-0.8B's poor translation ("misurato dal punto") came with every other model's answers once it had written it first; and a translation that failed was asked for again at the next question, two or three minutes a reply for Qwen3-4B. Now the file carries the model's name, and a failure is kept beside it: Qwen3-4B 291 s for its first weather question, 42 s for the next. Layouts translated before are translated again, once, by each model.
+
+## [2026-10-08] - The weather of a region
+
+- **A region is a place the weather service knows.** Asked for "Liguria", the geocoding it uses has no such place, only a peak of that name in Antarctica, and that is what it took: -26 °C in Liguria, found by Qwen3-0.6B asking for Liguria's warnings. A region is now taken as its largest city with the region kept for the warnings (Liguria: Genova, and MeteoAlarm's warnings for Liguria): an Italian one by its Italian or English name before the geocoding (so "Molise" is Campobasso, not the hamlet of 150 people called so), any other only where the geocoding knows no town of that name ("Washington" stays the capital). Of the geocoding's answers, a place people live in now always comes before a peak, a range or a lake, and anything in Antarctica after everything else. `test_geo` checks the regions.
+
 ## [2026-10-08] - Every model's fast profile, measured
 
 - **Every lever that trades a little accuracy for speed was tried on every model of the catalog, alone and in every combination**: `--head 4`, `--attention fast`, and `--bits 4` where the experts are in planes. A lever is in a model's `fast` profile when it adds 2% or more: Qwen3-0.6B `--head 4 --attention fast` (+14.3%), Qwen3-4B the same (+6.8%), Qwen3.5-0.8B `--attention fast` (+2.0%), Qwen3.5-2B and 9B `--head 4` (+10.2%, +5.1%), Qwen3-30B-A3B all three (+10.0%), Qwen3.6-35B-A3B, Qwen3-Next-80B-A3B and Qwen3-Coder-Next `--head 4 --bits 4` (+6.5%, +8.6%, +10.5%). The agreement with llama.cpp of each is in the README. Gemma 4 has none: sixteen-bit keys, heads not six-bit, experts not in planes. Oracles of llama.cpp for the four Gemma 4 models were made for it (micro-batches of 8).

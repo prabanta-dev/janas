@@ -47,14 +47,15 @@ static void url_put(struct janas_buf *b, const char *s, size_t n)
  * region and province, and with rename its name too.
  */
 static int find_named(const char *query, double near_lat, double near_lon,
-                      struct wx_place *p, char *err, size_t err_len);
+                      struct wx_place *p, int *inhabited, char *err,
+                      size_t err_len);
 
 static void localize(struct wx_place *p, const char *city, int rename)
 {
     struct wx_place q;
     char err[256];
     if (!city || !*city ||
-        find_named(city, p->lat, p->lon, &q, err, sizeof err) != 0 ||
+        find_named(city, p->lat, p->lon, &q, NULL, err, sizeof err) != 0 ||
         geo_km(p->lat, p->lon, q.lat, q.lon) > 30 ||
         (p->cc[0] && strcasecmp(p->cc, q.cc) != 0))
         return;
@@ -102,6 +103,8 @@ void wx_place_at(double lat, double lon, struct wx_place *p)
     localize(p, c->name, km < 3);
 }
 
+static void from_city(const struct geo_city *c, struct wx_place *p);
+
 static int from_tables(const char *q, struct wx_place *p)
 {
     size_t n = strlen(q);
@@ -131,6 +134,25 @@ static int from_tables(const char *q, struct wx_place *p)
     const struct geo_city *c = geo_city_find(q);
     if (!c)
         return 0;
+    from_city(c, p);
+    return 1;
+}
+
+/* A region, as its most populous city, the region kept for the warnings:
+   "Liguria" is no place the geocoding knows - it gave a peak of that name
+   in Antarctica, -26 degrees in Liguria (8 Oct 2026). */
+static int from_region(const char *q, struct wx_place *p)
+{
+    const struct geo_city *c = geo_region_city(q);
+    if (!c)
+        return 0;
+    from_city(c, p);
+    localize(p, c->name, 1);
+    return 1;
+}
+
+static void from_city(const struct geo_city *c, struct wx_place *p)
+{
     memset(p, 0, sizeof *p);
     copy(p->name, sizeof p->name, c->name);
     p->lat = DEG(c->lat);
@@ -141,7 +163,6 @@ static int from_tables(const char *q, struct wx_place *p)
     copy(p->cc, sizeof p->cc, geo_country_iso2(c->country));
     if (c->region != 0xFFFF)
         copy(p->region, sizeof p->region, geo_region_name(c->region));
-    return 1;
 }
 
 /* "38.02, 12.51" */
@@ -173,9 +194,13 @@ static int contains(const char *hay, const char *needle)
 }
 
 /* GeoNames' feature code as a weight: a capital, a region's, a
-   province's or county's, a municipality's seat, a place. */
+   province's or county's, a municipality's seat, a place; anything that
+   is not a place people live in (a peak, a range, a lake) after every
+   place, so that no peak stands for a town. */
 static double rank_weight(const char *code)
 {
+    if (code && strncmp(code, "PPL", 3) != 0)
+        return 1e-3;
     static const struct {
         const char *code;
         double w;
@@ -193,7 +218,8 @@ static double rank_weight(const char *code)
    "Venice" Venezia (51,000 people in its old town, a regional capital),
    not Dayton in Ohio, which the geocoding gives first. */
 static int find_named(const char *query, double near_lat, double near_lon,
-                      struct wx_place *p, char *err, size_t err_len)
+                      struct wx_place *p, int *inhabited, char *err,
+                      size_t err_len)
 {
     /* "Trapani, Sicilia": the name, and what its region or country must
        hold */
@@ -252,10 +278,12 @@ static int find_named(const char *query, double near_lat, double near_lon,
             continue;
         }
         double pop = janas_json_num(janas_json_get(r, "population"), 0);
-        /* + 1: places of no known population still count */
+        /* + 1: places of no known population still count; Antarctica's
+           after every other */
         double score =
             (pop + 1) *
-            rank_weight(janas_json_str(janas_json_get(r, "feature_code")));
+            rank_weight(janas_json_str(janas_json_get(r, "feature_code"))) *
+            (same_name(cc, "AQ") ? 1e-6 : 1);
         if (!best || score > best_score) {
             best = r;
             best_score = score;
@@ -279,6 +307,11 @@ static int find_named(const char *query, double near_lat, double near_lon,
         p->lat = janas_json_num(janas_json_get(best, "latitude"), 0);
         p->lon = janas_json_num(janas_json_get(best, "longitude"), 0);
         p->elevation = janas_json_num(janas_json_get(best, "elevation"), NAN);
+        if (inhabited) {
+            const char *fc =
+                janas_json_str(janas_json_get(best, "feature_code"));
+            *inhabited = !fc || strncmp(fc, "PPL", 3) == 0;
+        }
         ok = 1;
     }
     janas_json_free(d);
@@ -286,8 +319,11 @@ static int find_named(const char *query, double near_lat, double near_lon,
     if (ok)
         return 0;
     /* the geocoding did not answer, or knew nothing: the tables */
-    if (from_tables(name, p))
+    if (from_tables(name, p)) {
+        if (inhabited)
+            *inhabited = 1;
         return 0;
+    }
     if (why[0])
         snprintf(err, err_len, "no place called \"%s\" found (%s)", query, why);
     else
@@ -314,5 +350,16 @@ int wx_place_find(const char *query, struct wx_place *p, char *err,
     if (a && (strcmp(a->iata, query) == 0 || strcmp(a->icao, query) == 0) &&
         from_tables(query, p))
         return 0;
-    return find_named(query, NAN, NAN, p, err, err_len);
+    /* an Italian region before the geocoding, any other only where the
+       geocoding knows no place people live in by that name: "Washington"
+       is the capital, not the state's largest city */
+    const struct geo_city *rc = geo_region_city(query);
+    if (rc && strcmp(geo_country_iso2(rc->country), "IT") == 0 &&
+        from_region(query, p))
+        return 0;
+    int inhabited = 0;
+    int r = find_named(query, NAN, NAN, p, &inhabited, err, err_len);
+    if ((r != 0 || !inhabited) && rc && from_region(query, p))
+        return 0;
+    return r;
 }

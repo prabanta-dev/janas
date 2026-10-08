@@ -66,6 +66,10 @@ const struct geo_airport *geo_airport_find(const char *what);
 /* A city by name (its ASCII name, case ignored; the most populous of those
    of that name); NULL when none. */
 const struct geo_city *geo_city_find(const char *name);
+/* A first-level region by its English name or, for Italy's, its Italian
+   one ("Liguria", "Sicilia", "Lombardy"): its most populous city of the
+   tables, or NULL. Of two regions so called, the one of the larger city. */
+const struct geo_city *geo_region_city(const char *name);
 /* The nearest city (within 5 degrees of latitude; one under 10,000
    people only within 3 km), and its distance; NULL when none. */
 const struct geo_city *geo_city_near(double lat, double lon, double *km);

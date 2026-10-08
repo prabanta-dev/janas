@@ -20,11 +20,17 @@
 #define META "dev.prabanta.janas/layout"
 
 static char lang[16] = "en";
+static char model[128] = "";
 static int (*translator)(const char *, const char *, const char *, char **);
 
 void layout_set_lang(const char *l)
 {
     snprintf(lang, sizeof lang, "%s", l && *l ? l : "en");
+}
+
+void layout_set_model(const char *key)
+{
+    snprintf(model, sizeof model, "%s", key ? key : "");
 }
 
 const char *layout_lang(void)
@@ -406,14 +412,27 @@ static char *translated(const char *name, const char *en)
     char dir[1024], path[1200];
     if (dir_of(dir, sizeof dir) != 0)
         return NULL;
-    snprintf(path, sizeof path, "%s/%s.%s.%016llx.txt", dir, name, lang,
-             (unsigned long long)glossary_mark(lang, name, mark(en)));
+    /* the model's own: Qwen3.5-0.8B's "misurato dal punto" was shown with
+       every model's answers once it had written it first (8 Oct 2026) */
+    unsigned long long mk = glossary_mark(lang, name, mark(en));
+    char failed[1200];
+    snprintf(path, sizeof path, "%s/%s.%s.%s%s%016llx.txt", dir, name, lang,
+             model, model[0] ? "." : "", mk);
+    snprintf(failed, sizeof failed, "%s/%s.%s.%s%s%016llx.fail", dir, name,
+             lang, model, model[0] ? "." : "", mk);
     char *have = read_file(path);
     char why[200];
     if (have && janas_tpl_same_shape(en, strlen(en), have, strlen(have), why,
                                      sizeof why))
         return have;
     free(have);
+    /* failed before with this model and this layout: English, at once -
+       asking again cost Qwen3-4B two or three minutes a reply */
+    FILE *ff = fopen(failed, "rb");
+    if (ff) {
+        fclose(ff);
+        return NULL;
+    }
     struct coded c;
     if (!translator || encode(en, &c) != 0)
         return NULL;
@@ -467,8 +486,13 @@ static char *translated(const char *name, const char *en)
     if (!out) {
         fprintf(stderr,
                 "janas-chat: the layout %s in %s is not usable (%s): "
-                "English is used\n",
+                "English is used, and this model is not asked again\n",
                 name, lang, why);
+        FILE *f = fopen(failed, "wb");
+        if (f) {
+            fprintf(f, "%s\n", why);
+            fclose(f);
+        }
         return NULL;
     }
     FILE *f = fopen(path, "wb");

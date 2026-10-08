@@ -98,6 +98,90 @@ static void norm(const char *s, char *out, size_t cap)
     out[n] = 0;
 }
 
+/*
+ * The tables name cities in English; people here name them in Italian.
+ * Without this "Roma" was the airport of Roma in Queensland (its city's
+ * name in the tables), and Torino, Londra or Parigi nothing at all (8 Oct
+ * 2026): the Italian names of the cities most asked for, Italy's and
+ * abroad, and those of the tables' that differ.
+ */
+static const struct {
+    const char *it, *en, *cc;
+} CITY_IT[] = {
+    {"roma", "Rome", "IT"},
+    {"milano", "Milan", "IT"},
+    {"napoli", "Naples", "IT"},
+    {"torino", "Turin", "IT"},
+    {"firenze", "Florence", "IT"},
+    {"venezia", "Venice", "IT"},
+    {"genova", "Genoa", "IT"},
+    {"padova", "Padua", "IT"},
+    {"mantova", "Mantua", "IT"},
+    {"londra", "London", "GB"},
+    {"parigi", "Paris", "FR"},
+    {"berlino", "Berlin", "DE"},
+    {"monaco di baviera", "Munich", "DE"},
+    {"lisbona", "Lisbon", "PT"},
+    {"atene", "Athens", "GR"},
+    {"bruxelles", "Brussels", "BE"},
+    {"ginevra", "Geneva", "CH"},
+    {"zurigo", "Zürich", "CH"},
+    {"barcellona", "Barcelona", "ES"},
+    {"siviglia", "Sevilla", "ES"},
+    {"varsavia", "Warsaw", "PL"},
+    {"praga", "Prague", "CZ"},
+    {"copenaghen", "Copenhagen", "DK"},
+    {"stoccolma", "Stockholm", "SE"},
+    {"edimburgo", "Edinburgh", "GB"},
+    {"il cairo", "Cairo", "EG"},
+    {"algeri", "Algiers", "DZ"},
+    {"tunisi", "Tunis", "TN"},
+    {"belgrado", "Belgrade", "RS"},
+    {"lubiana", "Ljubljana", "SI"},
+    {"zagabria", "Zagreb", "HR"},
+    {"marsiglia", "Marseille", "FR"},
+    {"nizza", "Nice", "FR"},
+    {"lione", "Lyon", "FR"},
+    {"tolosa", "Toulouse", "FR"},
+    {"francoforte", "Frankfurt am Main", "DE"},
+    {"colonia", "Köln", "DE"},
+    {"amburgo", "Hamburg", "DE"},
+    {"dublino", "Dublin", "IE"},
+    {"bucarest", "Bucharest", "RO"},
+    {"cracovia", "Krakow", "PL"},
+    {"anversa", "Antwerp", "BE"},
+    {"l'aia", "The Hague", "NL"},
+    {"salisburgo", "Salzburg", "AT"},
+    {"lussemburgo", "Luxembourg", "LU"},
+};
+
+/* The CITY_IT entry of an Italian name, or -1. */
+static int city_it(const char *name)
+{
+    char w[128];
+    norm(name, w, sizeof w);
+    for (size_t i = 0; i < N_OF(CITY_IT); i++)
+        if (strcmp(w, CITY_IT[i].it) == 0)
+            return (int)i;
+    return -1;
+}
+
+/* The most populous city called name (English or as the tables write
+   it), in the country cc when given. */
+static const struct geo_city *city_named(const char *name, const char *cc)
+{
+    const struct geo_city *best = NULL;
+    for (size_t i = 0; i < N_OF(geo_cities); i++) {
+        const struct geo_city *c = &geo_cities[i];
+        if ((strcasecmp(c->ascii, name) == 0 ||
+             strcasecmp(c->name, name) == 0) &&
+            (!cc || strcmp(geo_country_iso2(c->country), cc) == 0) &&
+            (!best || c->pop > best->pop))
+            best = c;
+    }
+    return best;
+}
+
 const struct geo_airport *geo_airport_find(const char *what)
 {
     size_t n = strlen(what);
@@ -107,17 +191,33 @@ const struct geo_airport *geo_airport_find(const char *what)
             (n == 4 && a->icao[0] && strcasecmp(a->icao, what) == 0))
             return a;
     }
+    /* an Italian name of a city: the airport nearest to it, in its country
+       ("Firenze" is Peretola's, not Florence's in Alabama) */
+    int it = city_it(what);
+    if (it >= 0) {
+        const struct geo_city *c = city_named(CITY_IT[it].en, CITY_IT[it].cc);
+        double km;
+        const struct geo_airport *a =
+            c ? geo_airport_near(DEG(c->lat), DEG(c->lon), &km) : NULL;
+        return a && km < 50 ? a : NULL;
+    }
     char w[128], t[256];
     norm(what, w, sizeof w);
     if (!w[0])
         return NULL;
+    /* the largest city of that name, if any: an airport found by its city
+       or name has to be within 100 km of it ("Florence" is Peretola's, not
+       Florence Regional's in South Carolina, which the name matches) */
+    const struct geo_city *c = city_named(what, NULL);
+#define NEAR_C(a)                                                              \
+    (!c || geo_km(DEG(c->lat), DEG(c->lon), DEG((a)->lat), DEG((a)->lon)) < 100)
     /* by city, then by name: of the airports of a city, the one whose name
        starts with the city's wins */
     const struct geo_airport *by_city = NULL;
     for (size_t i = 0; i < N_OF(geo_airports); i++) {
         const struct geo_airport *a = &geo_airports[i];
         norm(a->city, t, sizeof t);
-        if (strcmp(t, w) == 0) {
+        if (strcmp(t, w) == 0 && NEAR_C(a)) {
             norm(a->name, t, sizeof t);
             if (!by_city || strncmp(t, w, strlen(w)) == 0)
                 by_city = a;
@@ -129,12 +229,12 @@ const struct geo_airport *geo_airport_find(const char *what)
     if (strlen(w) >= 4)
         for (size_t i = 0; i < N_OF(geo_airports); i++) {
             norm(geo_airports[i].name, t, sizeof t);
-            if (strstr(t, w))
+            if (strstr(t, w) && NEAR_C(&geo_airports[i]))
                 return &geo_airports[i];
         }
+#undef NEAR_C
     /* a city's name: its nearest airport, within 50 km ("Turin" is Caselle
        Torinese's airport for OurAirports) */
-    const struct geo_city *c = geo_city_find(what);
     if (c) {
         double km;
         const struct geo_airport *a =
@@ -147,13 +247,46 @@ const struct geo_airport *geo_airport_find(const char *what)
 
 const struct geo_city *geo_city_find(const char *name)
 {
+    int it = city_it(name);
+    return it >= 0 ? city_named(CITY_IT[it].en, CITY_IT[it].cc)
+                   : city_named(name, NULL);
+}
+
+/* Italy's regions whose English name is not the Italian one */
+static const struct {
+    const char *it, *en;
+} REGION_IT[] = {
+    {"sicilia", "sicily"},
+    {"sardegna", "sardinia"},
+    {"toscana", "tuscany"},
+    {"lombardia", "lombardy"},
+    {"piemonte", "piedmont"},
+    {"puglia", "apulia"},
+    {"marche", "the marches"},
+    {"basilicata", "basilicate"},
+    {"valle d'aosta", "aosta valley"},
+    {"val d'aosta", "aosta valley"},
+    {"friuli", "friuli venezia giulia"},
+};
+
+const struct geo_city *geo_region_city(const char *name)
+{
+    char w[128], t[128];
+    norm(name, w, sizeof w);
+    const char *q = w;
+    for (size_t i = 0; i < N_OF(REGION_IT); i++)
+        if (strcmp(q, REGION_IT[i].it) == 0)
+            q = REGION_IT[i].en;
     const struct geo_city *best = NULL;
-    for (size_t i = 0; i < N_OF(geo_cities); i++) {
-        const struct geo_city *c = &geo_cities[i];
-        if ((strcasecmp(c->ascii, name) == 0 ||
-             strcasecmp(c->name, name) == 0) &&
-            (!best || c->pop > best->pop))
-            best = c;
+    for (size_t r = 0; r < N_OF(geo_regions); r++) {
+        norm(geo_regions[r].name, t, sizeof t);
+        if (strcmp(t, q) != 0)
+            continue;
+        for (size_t i = 0; i < N_OF(geo_cities); i++) {
+            const struct geo_city *c = &geo_cities[i];
+            if (c->region == r && (!best || c->pop > best->pop))
+                best = c;
+        }
     }
     return best;
 }
