@@ -134,10 +134,12 @@ Janas reads its own format, `.jns`, converted from a **Q4_K_M** GGUF (Q3_K, IQ3_
 | **Qwen3-Coder-Next** | [Qwen](https://huggingface.co/Qwen/Qwen3-Coder-Next-GGUF) | 48.4 GB | 48.4 GB | 32 GB |
 | **Qwen3-Coder-30B-A3B-Instruct** — for code completion in the editor ([docs/code-completion.md](docs/code-completion.md)) | [unsloth](https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF) | 18.6 GB | 18.6 GB | 32 GB, to keep it whole in memory |
 | **Qwen3-30B-A3B** | [Qwen](https://huggingface.co/Qwen/Qwen3-30B-A3B-GGUF) | 18.6 GB | 18.6 GB | 16 GB |
+| **Qwen3-30B-A3B with an importance matrix** (`qwen3-30b-a3b-imatrix`) — bartowski's Q4_K_M: the nearest to Qwen's own Q8_0 of the three here (400 tokens: code 388, Italian 367, against 376 and 335 for the Q4_K_M above), 8-10% slower held in memory: it keeps more matrices in Q6_K | [bartowski](https://huggingface.co/bartowski/Qwen_Qwen3-30B-A3B-GGUF) | 18.6 GB | 18.6 GB | 16 GB |
 | **Qwen3-30B-A3B in three bits** (`qwen3-30b-a3b-q3`) — unsloth's dynamic UD-Q3_K_XL: against Qwen's own Q8_0 it agrees more often than the Q4_K_M above (400 tokens: code 386 against 376, Italian 360 against 335), with 27% fewer bytes of experts; with the expert cache held at 2 GiB on this 32 GB machine, 19.8 tokens/s against 13.6; held whole in memory, as fast (32.0-32.2 tokens/s against 32.1-32.2) | [unsloth](https://huggingface.co/unsloth/Qwen3-30B-A3B-GGUF) | 13.8 GB | 13.8 GB | 8-16 GB |
 | **Qwen3.5-9B** — dense; its prediction block from the checkpoint ([MODELS.md](MODELS.md#the-fingerprints)) | [unsloth](https://huggingface.co/unsloth/Qwen3.5-9B-GGUF) | 5.7 GB | 5.7 GB | 16 GB |
 | **Qwen3.5-2B** — dense, small and quick; a prediction block too | [unsloth](https://huggingface.co/unsloth/Qwen3.5-2B-GGUF) | 1.3 GB | 1.3 GB | 8 GB |
 | **Qwen3-4B** — dense, and the smallest here that answers well | [Qwen](https://huggingface.co/Qwen/Qwen3-4B-GGUF) | 2.5 GB | 2.5 GB | 8 GB |
+| **Qwen3-4B with an importance matrix** (`qwen3-4b-imatrix`) — bartowski's Q4_K_M, the same weight types and size as Qwen's: against Qwen's own Q8_0 (400 tokens) code 381 against 364, Italian 351 against 329, at the same speed | [bartowski](https://huggingface.co/bartowski/Qwen_Qwen3-4B-GGUF) | 2.5 GB | 2.5 GB | 8 GB |
 | **Qwen3-0.6B** — not to talk to: to draft for a dense one (`--draft`) | [unsloth](https://huggingface.co/unsloth/Qwen3-0.6B-GGUF) | 0.40 GB | 0.40 GB | with the model above |
 | **Qwen3-Embedding-0.6B** — not to talk to: for embeddings (`janas-server --embedding-model`); published in Q8_0 and converted as it is | [Qwen](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF) | 0.64 GB | 0.64 GB | beside the chat model |
 
@@ -247,6 +249,9 @@ The settings come in layers, each over the one before: the model's profile in th
 | Qwen3.5-2B | `--head 4` | 10.2% | 376 → 352 / 388 → 375 |
 | Qwen3.5-9B | `--head 4` | 5.1% | 383 → 372 / 393 → 391 |
 | Qwen3-30B-A3B | `--head 4 --attention fast --bits 4` | 10.0% | 57 → 55 of 64 / 392 → 385 |
+| Qwen3-4B with an importance matrix | `--head 4 --attention fast` (9 October) | 5.7% | 351 → 350 / 381 → 376, against Qwen's Q8_0 |
+| Qwen3-30B-A3B with an importance matrix | `--head 4` (9 October; `--bits 4` added 1.6%, `--attention fast` 0.6%) | 3.2% | 367 → 354 / 388 → 387, against Qwen's Q8_0 |
+| Qwen3-30B-A3B in three bits | `--head 4` (measured on 9 October; `--attention fast` added 1.3%) | 3.8% | 360 → 348 / 386 → 382, against Qwen's Q8_0 |
 | Qwen3.6-35B-A3B | `--head 4 --bits 4` | 6.5% | 60 → 55 of 64 / 196 → 194 of 200 |
 | Qwen3-Next-80B-A3B | `--head 4 --bits 4` | 8.6% | 386 → 372 / 397 → 392 |
 | Qwen3-Coder-Next | `--head 4 --bits 4` | 10.5% | — / 193 → 196 of 200 |

@@ -2,6 +2,10 @@
 
 > Curated, user-facing summary of completed work, newest first.
 
+## [2026-10-09] - Qwen3-4B and Qwen3-30B-A3B also with an importance matrix
+
+- **`qwen3-4b-imatrix` and `qwen3-30b-a3b-imatrix`: bartowski's Q4_K_M beside Qwen's own, which stay the default.** Qwen's Q4_K_M files are quantized without an importance matrix, bartowski's with one. Against Qwen's own Q8_0 (400 tokens of llama.cpp's logits, most likely token agreeing): Qwen3-4B 381 against 364 on code and 351 against 329 on Italian, at the same size and speed; Qwen3-30B-A3B 388 against 376 and 367 against 335, the nearest of the three versions now in the catalog, 8-10% slower held in memory since it keeps more matrices in Q6_K. Each has its fast profile measured: `--head 4 --attention fast` (+5.7%) and `--head 4` (+3.2%). The three-bit Qwen3-30B-A3B also has one now: `--head 4` (+3.8%).
+
 ## [2026-10-09] - Qwen3-30B-A3B in three bits
 
 - **`qwen3-30b-a3b-q3`: the same model in unsloth's dynamic three-bit mix, smaller and closer to the original.** Measured against Qwen's own Q8_0 (400 tokens of llama.cpp's logits), unsloth's UD-Q3_K_XL agrees on the most likely token more often than Qwen's Q4_K_M that the catalog already had: 386 against 376 on code, 360 against 335 on Italian prose, with 27% fewer bytes of experts (12.8 GB against 17.6). With little memory it is also faster: with the expert cache held at 2 GiB, 19.8 tokens/s against 13.6. Held whole in memory it is as fast: 32.0-32.2 tokens/s against 32.1-32.2, once the Q3_K product was made faster (below). `qwen3-30b-a3b` is unchanged.

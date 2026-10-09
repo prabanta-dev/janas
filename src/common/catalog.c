@@ -51,6 +51,25 @@ const struct janas_model_entry janas_catalog[] = {
      .ram_gb = 8,
      .draft = "qwen3-0.6b",
      .fast = "--head 4 --attention fast"},
+    /* the same weights types and size from bartowski, quantized with an
+       importance matrix: against Qwen's own Q8_0 (400 tokens, most likely
+       token agreeing) code 381 against 364, Italian 351 against 329, at the
+       same speed (28.1 tokens/s against 27.6, 9 Oct 2026) */
+    {.name = "qwen3-4b-imatrix",
+     .what = "Qwen3-4B, bartowski's Q4_K_M: same size, nearer the original",
+     .repo = "bartowski/Qwen_Qwen3-4B-GGUF",
+     .parts = {"Qwen_Qwen3-4B-Q4_K_M.gguf"},
+     .part_sha =
+         {"fbe1d5edd4ce802ae3ae7c7e4ab7d09789d697fdac1fc7929f8df4ca3c41bae3"},
+     .gguf_gb = 2.5,
+     .out = "qwen3-4b-bq4km.jns",
+     .flat_sha =
+         "aa4f0bc6033a206ba5ac51dcdd799299d369019d5614dc08a6baa0bda6123098",
+     .jns_sha =
+         "134ae0afbbd3e45b3cdbfd36fd205fb98c91df62a129541048e29370a42b835e",
+     .ram_gb = 8,
+     .draft = "qwen3-0.6b",
+     .fast = "--head 4 --attention fast"},
     {.name = "qwen3.5-0.8b",
      .what = "Qwen3.5-0.8B, dense - a test model of the Qwen3.5 architecture, "
              "not for chatting",
@@ -119,7 +138,8 @@ const struct janas_model_entry janas_catalog[] = {
        tokens, most likely token agreeing: code 386 against 376, Italian
        360 against 335) with 27% fewer bytes of experts; with a cache of
        2 GiB 19.8 tokens/s against 13.6, held whole in memory as fast
-       (32.1, 9 Oct 2026). No fast profile measured yet. */
+       (32.1, 9 Oct 2026). Fast profile: --head 4, 3.8% (bench_long
+       1900 + 128); --attention fast added 1.3%, under the 2% a lever needs. */
     {.name = "qwen3-30b-a3b-q3",
      .what = "Qwen3-30B-A3B, unsloth's 3-bit mix: smaller, as good",
      .repo = "unsloth/Qwen3-30B-A3B-GGUF",
@@ -130,7 +150,27 @@ const struct janas_model_entry janas_catalog[] = {
      .out = "qwen3-30b-a3b-udq3kxl.jns",
      .flat_sha =
          "7a77e62a3d6b1df321f455472e0b970a09eb3534ec76982a6e169087d4897656",
-     .ram_gb = 8},
+     .ram_gb = 8,
+     .fast = "--head 4"},
+    /* bartowski's Q4_K_M, quantized with an importance matrix: the nearest
+       to Qwen's own Q8_0 of the three (400 tokens: code 388, Italian 367,
+       against 376 and 335 for Qwen's Q4_K_M and 386 and 360 for the
+       three-bit mix), 8-10% slower than Qwen's held in memory, since it
+       keeps more matrices in Q6_K (9 Oct 2026) */
+    {.name = "qwen3-30b-a3b-imatrix",
+     .what = "Qwen3-30B-A3B, bartowski's Q4_K_M, nearest to the Q8_0",
+     .repo = "bartowski/Qwen_Qwen3-30B-A3B-GGUF",
+     .parts = {"Qwen_Qwen3-30B-A3B-Q4_K_M.gguf"},
+     .part_sha =
+         {"a015794bfb1d69cb03dbb86b185fb2b9b339f757df5f8f9dd9ebdab8f6ed5d32"},
+     .gguf_gb = 18.6,
+     .out = "qwen3-30b-a3b-bq4km.jns",
+     .flat_sha =
+         "c2089d293f10d2e0fdabbb7ea6f17d6834f3027480de987fb6dd718e301eaa04",
+     .jns_sha =
+         "bee2aa5a9b5a33f19d9c153d2a0a7e8ac493a670b2d0084c195ce977cf3c83ea",
+     .ram_gb = 16,
+     .fast = "--head 4"},
     {.name = "qwen3.6-35b-a3b",
      .what = "Qwen3.6-35B-A3B, mixture of experts, MTP inside",
      .repo = "bartowski/Qwen_Qwen3.6-35B-A3B-GGUF",

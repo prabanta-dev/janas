@@ -94,6 +94,14 @@ e8ed44bdd3c612ce3ec1204a4b9db671115efab4a2ada384c70cf6492d430291  qwen3-4b-q4km-
 1cbd8ebfdf14aee05777f5278e655382f040cdedc21d282e93806fc8cf279fc5  qwen3-4b-q4km.jns   (jns_planes)
 ```
 
+**Qwen3-4B with an importance matrix** (`qwen3-4b-imatrix`), from [`bartowski/Qwen_Qwen3-4B-GGUF`](https://huggingface.co/bartowski/Qwen_Qwen3-4B-GGUF): the same weight types as Qwen's Q4_K_M, quantized with an importance matrix.
+
+```
+fbe1d5edd4ce802ae3ae7c7e4ab7d09789d697fdac1fc7929f8df4ca3c41bae3  Qwen_Qwen3-4B-Q4_K_M.gguf
+aa4f0bc6033a206ba5ac51dcdd799299d369019d5614dc08a6baa0bda6123098  qwen3-4b-bq4km-flat.jns   (gguf2jns)
+134ae0afbbd3e45b3cdbfd36fd205fb98c91df62a129541048e29370a42b835e  qwen3-4b-bq4km.jns   (jns_planes)
+```
+
 **Qwen3.5-0.8B, Qwen3.5-2B and Qwen3.5-9B**, dense, from [`unsloth/Qwen3.5-0.8B-GGUF`](https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF), [`unsloth/Qwen3.5-2B-GGUF`](https://huggingface.co/unsloth/Qwen3.5-2B-GGUF) and [`unsloth/Qwen3.5-9B-GGUF`](https://huggingface.co/unsloth/Qwen3.5-9B-GGUF), GGUF conversions of the Qwen team's checkpoints. Converted in one step, as they are kept here: `jns_planes` could cut planes from their Q6_K `down` matrices, but a model this size has no need to read fewer bits.
 
 ```
@@ -111,6 +119,14 @@ e40ec6c58ef2390c7a4ce8c9b7b6b384ed4e55c9980f646d1c98e83e2c018115  qwen3.5-9b-q4k
 0d003f6662faee786ed5da3e31b29c978de5ae5d275c8794c606a7f3c01aa8f5  Qwen3-30B-A3B-Q4_K_M.gguf
 6906de51f2923b3be3a83eb040eaaeb090cba3389e9217648abe08bd678376e9  qwen3-30b-a3b-q4km-flat.jns   (gguf2jns)
 3fa0185b7eecd43e222d420f68aae28a86b3b90392fd7e4052b5cd337318e895  qwen3-30b-a3b-q4km.jns   (jns_planes)
+```
+
+**Qwen3-30B-A3B with an importance matrix** (`qwen3-30b-a3b-imatrix`), from [`bartowski/Qwen_Qwen3-30B-A3B-GGUF`](https://huggingface.co/bartowski/Qwen_Qwen3-30B-A3B-GGUF), bartowski's Q4_K_M.
+
+```
+a015794bfb1d69cb03dbb86b185fb2b9b339f757df5f8f9dd9ebdab8f6ed5d32  Qwen_Qwen3-30B-A3B-Q4_K_M.gguf
+c2089d293f10d2e0fdabbb7ea6f17d6834f3027480de987fb6dd718e301eaa04  qwen3-30b-a3b-bq4km-flat.jns   (gguf2jns)
+bee2aa5a9b5a33f19d9c153d2a0a7e8ac493a670b2d0084c195ce977cf3c83ea  qwen3-30b-a3b-bq4km.jns   (jns_planes)
 ```
 
 **Qwen3-30B-A3B in three bits** (`qwen3-30b-a3b-q3`), from [`unsloth/Qwen3-30B-A3B-GGUF`](https://huggingface.co/unsloth/Qwen3-30B-A3B-GGUF), unsloth's dynamic UD-Q3_K_XL. Converted in one step: its down matrices are Q3_K and Q4_K, so there are no planes to cut.
