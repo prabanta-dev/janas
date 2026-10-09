@@ -118,8 +118,8 @@ const struct janas_model_entry janas_catalog[] = {
        importance matrix: nearer Qwen's own Q8_0 than Qwen's Q4_K_M (400
        tokens, most likely token agreeing: code 386 against 376, Italian
        360 against 335) with 27% fewer bytes of experts; with a cache of
-       2 GiB 19.8 tokens/s against 13.6, held whole in memory 5% slower
-       (9 Oct 2026). No fast profile measured yet. */
+       2 GiB 19.8 tokens/s against 13.6, held whole in memory as fast
+       (32.1, 9 Oct 2026). No fast profile measured yet. */
     {.name = "qwen3-30b-a3b-q3",
      .what = "Qwen3-30B-A3B, unsloth's 3-bit mix: smaller, as good",
      .repo = "unsloth/Qwen3-30B-A3B-GGUF",

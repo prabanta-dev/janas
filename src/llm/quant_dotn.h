@@ -1361,24 +1361,6 @@ DOTN(q3k_dotn_body)(const struct janas_block_q3k *w,
     for (size_t b = 0; b < nb; b++) {
         if (nv <= 2)
             DOTN(prefetch_ahead)(&w[b], sizeof(w[b]));
-        __m256i u[8], sc16[8];
-        __m256i hm = _mm256_loadu_si256((const __m256i *)w[b].hmask);
-        _Pragma("GCC unroll 2") for (int n = 0; n < 2; n++)
-        {
-            __m256i qs =
-                _mm256_loadu_si256((const __m256i *)(w[b].qs + 32 * n));
-            _Pragma("GCC unroll 4") for (int j = 0; j < 4; j++)
-            {
-                __m256i lo =
-                    _mm256_and_si256(_mm256_srli_epi16(qs, 2 * j), three);
-                /* bit j + 4n of hmask moved to bit 2, within its byte */
-                const int sh = j + 4 * n - 2;
-                __m256i hs = sh > 0   ? _mm256_srli_epi16(hm, sh)
-                             : sh < 0 ? _mm256_slli_epi16(hm, -sh)
-                                      : hm;
-                u[4 * n + j] = _mm256_or_si256(lo, _mm256_and_si256(hs, four));
-            }
-        }
         /* register k holds groups 2k (low lane) and 2k + 1 (high): the
            scales as int16, the even ones in the low lane and the odd ones in
            the high, then word k of each lane spread over it */
@@ -1386,25 +1368,45 @@ DOTN(q3k_dotn_body)(const struct janas_block_q3k *w,
         __m256i eo = _mm256_cvtepi8_epi16(
             _mm_shuffle_epi8(s8, _mm_setr_epi8(0, 2, 4, 6, 8, 10, 12, 14, 1, 3,
                                                5, 7, 9, 11, 13, 15)));
-        _Pragma("GCC unroll 8") for (int k = 0; k < 8; k++) sc16[k] =
-            _mm256_shuffle_epi8(
-                eo, _mm256_set1_epi16((short)((2 * k + 1) << 8 | 2 * k)));
         __m256i scall = _mm256_cvtepi8_epi16(s8);
         float d = _cvtsh_ss(w[b].d);
+        __m256i hm = _mm256_loadu_si256((const __m256i *)w[b].hmask);
+        __m256i qs[2] = {_mm256_loadu_si256((const __m256i *)w[b].qs),
+                         _mm256_loadu_si256((const __m256i *)(w[b].qs + 32))};
+        /* each register of weights and its scales made where it is used,
+           for every vector at once: made all first, eight of each, they
+           took all sixteen registers and went through the stack (more
+           loads than Q4_K for half the bytes, 9 Oct 2026) */
+        __m256i sum[8];
+        _Pragma("GCC unroll 8") for (int v = 0; v < nv; v++) sum[v] =
+            _mm256_setzero_si256();
+        _Pragma("GCC unroll 8") for (int k = 0; k < 8; k++)
+        {
+            const int n = k / 4, j = k % 4;
+            __m256i lo =
+                _mm256_and_si256(_mm256_srli_epi16(qs[n], 2 * j), three);
+            /* bit j + 4n of hmask moved to bit 2, within its byte */
+            const int sh = j + 4 * n - 2;
+            __m256i hs = sh > 0   ? _mm256_srli_epi16(hm, sh)
+                         : sh < 0 ? _mm256_slli_epi16(hm, -sh)
+                                  : hm;
+            __m256i u = _mm256_or_si256(lo, _mm256_and_si256(hs, four));
+            __m256i sc = _mm256_shuffle_epi8(
+                eo, _mm256_set1_epi16((short)((2 * k + 1) << 8 | 2 * k)));
+            _Pragma("GCC unroll 8") for (int v = 0; v < nv; v++)
+            {
+                __m256i a = _mm256_loadu_si256(
+                    (const __m256i *)(x[(size_t)v * xs + b].qs + 32 * k));
+                sum[v] = DOTN_ACC(sum[v], _mm256_maddubs_epi16(u, a), sc);
+            }
+        }
         _Pragma("GCC unroll 8") for (int v = 0; v < nv; v++)
         {
             const struct janas_block_q8k *xb = x + (size_t)v * xs + b;
-            __m256i sum = _mm256_setzero_si256();
-            _Pragma("GCC unroll 8") for (int k = 0; k < 8; k++)
-            {
-                __m256i a =
-                    _mm256_loadu_si256((const __m256i *)(xb->qs + 32 * k));
-                sum = DOTN_ACC(sum, _mm256_maddubs_epi16(u[k], a), sc16[k]);
-            }
             __m256i corr = _mm256_madd_epi16(
                 _mm256_loadu_si256((const __m256i *)xb->bsums), scall);
             int32_t sumi = DOTN(hsum_epi32)(
-                _mm256_sub_epi32(sum, _mm256_slli_epi32(corr, 2)));
+                _mm256_sub_epi32(sum[v], _mm256_slli_epi32(corr, 2)));
             acc[v] = fmaf(d * xb->d, (float)sumi, acc[v]);
         }
     }
