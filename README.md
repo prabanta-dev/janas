@@ -134,6 +134,7 @@ Janas reads its own format, `.jns`, converted from a **Q4_K_M** GGUF (Q3_K, IQ3_
 | **Qwen3-Coder-Next** | [Qwen](https://huggingface.co/Qwen/Qwen3-Coder-Next-GGUF) | 48.4 GB | 48.4 GB | 32 GB |
 | **Qwen3-Coder-30B-A3B-Instruct** — for code completion in the editor ([docs/code-completion.md](docs/code-completion.md)) | [unsloth](https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF) | 18.6 GB | 18.6 GB | 32 GB, to keep it whole in memory |
 | **Qwen3-30B-A3B** | [Qwen](https://huggingface.co/Qwen/Qwen3-30B-A3B-GGUF) | 18.6 GB | 18.6 GB | 16 GB |
+| **Qwen3-30B-A3B in three bits** (`qwen3-30b-a3b-q3`) — unsloth's dynamic UD-Q3_K_XL: against Qwen's own Q8_0 it agrees more often than the Q4_K_M above (400 tokens: code 386 against 376, Italian 360 against 335), with 27% fewer bytes of experts; with the expert cache held at 2 GiB on this 32 GB machine, 19.8 tokens/s against 13.6; held whole in memory, 5% slower (its Q3_K product is slower than Q4_K's) | [unsloth](https://huggingface.co/unsloth/Qwen3-30B-A3B-GGUF) | 13.8 GB | 13.8 GB | 8-16 GB |
 | **Qwen3.5-9B** — dense; its prediction block from the checkpoint ([MODELS.md](MODELS.md#the-fingerprints)) | [unsloth](https://huggingface.co/unsloth/Qwen3.5-9B-GGUF) | 5.7 GB | 5.7 GB | 16 GB |
 | **Qwen3.5-2B** — dense, small and quick; a prediction block too | [unsloth](https://huggingface.co/unsloth/Qwen3.5-2B-GGUF) | 1.3 GB | 1.3 GB | 8 GB |
 | **Qwen3-4B** — dense, and the smallest here that answers well | [Qwen](https://huggingface.co/Qwen/Qwen3-4B-GGUF) | 2.5 GB | 2.5 GB | 8 GB |

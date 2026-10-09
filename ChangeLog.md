@@ -2,6 +2,10 @@
 
 > Curated, user-facing summary of completed work, newest first.
 
+## [2026-10-09] - Qwen3-30B-A3B in three bits
+
+- **`qwen3-30b-a3b-q3`: the same model in unsloth's dynamic three-bit mix, smaller and closer to the original.** Measured against Qwen's own Q8_0 (400 tokens of llama.cpp's logits), unsloth's UD-Q3_K_XL agrees on the most likely token more often than Qwen's Q4_K_M that the catalog already had: 386 against 376 on code, 360 against 335 on Italian prose, with 27% fewer bytes of experts (12.8 GB against 17.6). With little memory it is also faster: with the expert cache held at 2 GiB, 19.8 tokens/s against 13.6. Held whole in memory it is 5% slower, since its Q3_K product is slower than Q4_K's. `qwen3-30b-a3b` is unchanged. The same trade does not pay on Qwen3.6-35B-A3B, whose Q4_K_M is already made with an importance matrix: bartowski's Q3_K_M lost 26 positions of 400 on Italian for 2-12% more speed, so it is not in the catalog.
+
 ## [2026-10-08] - Light experts not in memory left out, not the lightest of all
 
 - **With a small expert cache, only what would cost a read is given up.** When the cache holds less than a fifth of a model's experts, the engine used to drop the lightest experts of every token, six of ten or eight, whether they were in memory or not. Now it keeps every expert in memory and leaves out only the light ones it would have to read from disk (below 0.8/k of a token's weight, 0.95/k under a tenth), the other experts taking their share. Qwen3-Next-80B against llama.cpp, 400 tokens: with a 2 GiB cache 26.4 tokens/s instead of 20.9 at about the same agreement (380 against 383 most likely tokens); with 4 GiB the same speed (27.7) with a mean logit difference of 0.36 instead of 0.53; on Italian prose with 8 GiB 372 tokens agreeing instead of 361, and faster (23.7 against 21.4 tokens/s). On Qwen3-30B-A3B and Qwen3.6-35B-A3B with 1.5-3.5 GiB of cache it was 9-37% faster than the old way on code and on Italian prose, as close to llama.cpp or closer in most cases. `/experts n` asks for an exact number again and turns it off; `JANAS_MISS_SKIP` sets the weight for measures.

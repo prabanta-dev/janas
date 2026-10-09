@@ -114,6 +114,23 @@ const struct janas_model_entry janas_catalog[] = {
          "3fa0185b7eecd43e222d420f68aae28a86b3b90392fd7e4052b5cd337318e895",
      .ram_gb = 16,
      .fast = "--head 4 --attention fast --bits 4"},
+    /* the same model in unsloth's dynamic three-bit mix, quantized with an
+       importance matrix: nearer Qwen's own Q8_0 than Qwen's Q4_K_M (400
+       tokens, most likely token agreeing: code 386 against 376, Italian
+       360 against 335) with 27% fewer bytes of experts; with a cache of
+       2 GiB 19.8 tokens/s against 13.6, held whole in memory 5% slower
+       (9 Oct 2026). No fast profile measured yet. */
+    {.name = "qwen3-30b-a3b-q3",
+     .what = "Qwen3-30B-A3B, unsloth's 3-bit mix: smaller, as good",
+     .repo = "unsloth/Qwen3-30B-A3B-GGUF",
+     .parts = {"Qwen3-30B-A3B-UD-Q3_K_XL.gguf"},
+     .part_sha =
+         {"f1b8111d3e49a0238fcaa77ec9ee24eb9805266b5e85bf8e54c12dedb02cf4ff"},
+     .gguf_gb = 13.8,
+     .out = "qwen3-30b-a3b-udq3kxl.jns",
+     .flat_sha =
+         "7a77e62a3d6b1df321f455472e0b970a09eb3534ec76982a6e169087d4897656",
+     .ram_gb = 8},
     {.name = "qwen3.6-35b-a3b",
      .what = "Qwen3.6-35B-A3B, mixture of experts, MTP inside",
      .repo = "bartowski/Qwen_Qwen3.6-35B-A3B-GGUF",

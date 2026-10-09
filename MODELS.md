@@ -113,6 +113,13 @@ e40ec6c58ef2390c7a4ce8c9b7b6b384ed4e55c9980f646d1c98e83e2c018115  qwen3.5-9b-q4k
 3fa0185b7eecd43e222d420f68aae28a86b3b90392fd7e4052b5cd337318e895  qwen3-30b-a3b-q4km.jns   (jns_planes)
 ```
 
+**Qwen3-30B-A3B in three bits** (`qwen3-30b-a3b-q3`), from [`unsloth/Qwen3-30B-A3B-GGUF`](https://huggingface.co/unsloth/Qwen3-30B-A3B-GGUF), unsloth's dynamic UD-Q3_K_XL. Converted in one step: its down matrices are Q3_K and Q4_K, so there are no planes to cut.
+
+```
+f1b8111d3e49a0238fcaa77ec9ee24eb9805266b5e85bf8e54c12dedb02cf4ff  Qwen3-30B-A3B-UD-Q3_K_XL.gguf
+7a77e62a3d6b1df321f455472e0b970a09eb3534ec76982a6e169087d4897656  qwen3-30b-a3b-udq3kxl.jns   (gguf2jns)
+```
+
 **Qwen3-Embedding-0.6B**, from [`Qwen/Qwen3-Embedding-0.6B-GGUF`](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF), for `janas-server --embedding-model`. It is published in Q8_0 and converted as it is, in one step: its matrices are not Q6_K, so there are no planes to cut. Two conversions give the same bytes.
 
 ```
