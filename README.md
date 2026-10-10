@@ -92,7 +92,7 @@ The last column is a draft guessing the next tokens and the model checking them,
 
 **This column was wrong until 26 September 2026**, and higher: it measured the block continuing a paragraph that repeated itself, which a model copies and the block guesses almost every time - 107 tok/s for Qwen3.5-2B, 26 for Qwen3.5-9B. The MoE figures of the time (29 and 30) happened to be lower than today's; the ChangeLog has the details.
 
-For a point of reference, llama.cpp (build `2b18470` of 18 September 2026) with its Vulkan backend on the same integrated GPU, everything on it (`llama-bench -p 1024 -n 16 -ngl 99 -t 12`), against `janas-bench --prompt 1024 --gen 16` on the same files the same days (9 and 10 October 2026; llama.cpp's best configuration, Janas's own choice):
+For a point of reference, llama.cpp (build `2b18470` of 18 September 2026) with its Vulkan backend on the same integrated GPU, everything on it (`llama-bench -p 1024 -n 16 -ngl 99 -t 12`; the largest model otherwise, below), against `janas-bench --prompt 1024 --gen 16` on the same files the same days (9 and 10 October 2026; llama.cpp's best configuration, Janas's own choice):
 
 | Model | reading 1,024 tokens: Janas | llama.cpp | writing: Janas | llama.cpp |
 |---|---:|---:|---:|---:|
@@ -104,8 +104,10 @@ For a point of reference, llama.cpp (build `2b18470` of 18 September 2026) with 
 | Gemma-4-E4B-it | 122 tok/s | 109 tok/s | 20 tok/s | 15 tok/s |
 | Gemma-4-12B-it | 65 tok/s | 46 tok/s | 9.9 tok/s | 7.1 tok/s |
 | Gemma-4-26B-A4B-it | 84 tok/s | 76 tok/s | 18 tok/s | 12 tok/s |
+| Qwen3.6-35B-A3B | 88 tok/s | 78 tok/s | 20 tok/s | 11 tok/s |
+| Qwen3-Next-80B-A3B (48.4 GB, more than the memory) | 62 tok/s | 16 tok/s | 24 tok/s | 2.8 tok/s |
 
-Janas's figures are one round each; the writing column is without drafts on both sides. The two tools do not measure in exactly the same way (`llama-bench` writes without a prompt before it; `janas-bench` after the 1,024 tokens), and it is one machine. llama.cpp's own CPU backend did worse on this laptop than its Vulkan one at reading (Qwen3-4B 70 tok/s on 20 threads) and as well at writing.
+On Qwen3-Next-80B-A3B, whose file is larger than this laptop's 30 GB, llama.cpp with its usual build ran out of memory as soon as the GPU took part, even with the experts left on the CPU (`-ngl 99 -ncmoe 48`): its CPU backend copies the weights into memory of its own to repack them, and the Vulkan backend copies those it leaves to the CPU into buffers the system cannot reclaim. It ran with a build without repacking (`GGML_CPU_REPACK=OFF`) and two options more, `--no-host 1 -lm mmap`, which leave the experts in the file, read through the page cache: 16 tok/s reading with the GPU, and 2.8 writing on the CPU alone (with the GPU, 2.0); these are its two figures in the table. Janas ran the same model with no option of its own, the experts it uses most in a cache of about 19 GB and the rest read from the disk. Janas's figures are one round each; the writing column is without drafts on both sides. The two tools do not measure in exactly the same way (`llama-bench` writes without a prompt before it; `janas-bench` after the 1,024 tokens), and it is one machine. llama.cpp's own CPU backend did worse on this laptop than its Vulkan one at reading (Qwen3-4B 70 tok/s on 20 threads) and as well at writing.
 
 **Try it on an idle machine first.** The expert cache takes the memory that is free when the model is opened, and what is left of the model is read from disk while it answers, so everything else running takes its share. It degrades gently rather than breaking: measured with a browser and an editor open, the same model kept about three quarters of its speed and waited five times longer on the disk. But the first thing you see should be the machine's real speed, and any measurement you mean to send to others has to be taken with the machine to itself.
 
