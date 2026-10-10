@@ -177,10 +177,11 @@ JANAS_LLM_API int32_t janas_llm_default_system(const janas_llm *llm, char *buf,
 
 /*
  * The engine tunes itself while it runs: for each kind of pass (one token,
- * a few, a block) it tries the configurations the machine offers (thread
- * counts, the GPU) and keeps the fastest, remembering its choices per
- * machine and model in ~/.cache/janas/. janas_llm_set_mode changes the
- * power mode; janas_llm_tuning describes the current choices.
+ * a few, a short block, a prompt's long blocks) it tries the configurations
+ * the machine offers (thread counts, the GPU) and keeps the fastest,
+ * remembering its choices per machine and model in ~/.cache/janas/.
+ * janas_llm_set_mode changes the power mode; janas_llm_tuning describes the
+ * current choices.
  */
 JANAS_LLM_API int32_t janas_llm_set_mode(janas_llm *llm, int32_t mode);
 JANAS_LLM_API int32_t janas_llm_tuning(const janas_llm *llm, char *buf,
@@ -362,11 +363,12 @@ JANAS_LLM_API int32_t janas_llm_chat_send_results(janas_llm_chat *c, int32_t n,
  *
  * The prompt is read here, not when it is sent or loaded: those only build
  * it and return at once. A long prompt is read a block of tokens at a time
- * (256), and every block returns an empty piece, so the caller has control
- * between them - to say how far the reading has gone (janas_llm_chat_stats:
- * stage, input_done of input_tokens), or to stop. On a slow machine a
- * prompt of 260,000 tokens takes hours, and this is how a program shows it
- * is working and not stuck.
+ * (256; 512 on the models whose feed-forwards the GPU takes whole with the
+ * fast prompt), and every block returns an empty piece, so the caller has
+ * control between them - to say how far the reading has gone
+ * (janas_llm_chat_stats: stage, input_done of input_tokens), or to stop. On a
+ * slow machine a prompt of 260,000 tokens takes hours, and this is how a
+ * program shows it is working and not stuck.
  */
 JANAS_LLM_API int32_t janas_llm_chat_next(janas_llm_chat *c, char *buf,
                                           int32_t cap, int32_t *len);

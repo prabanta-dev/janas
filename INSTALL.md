@@ -67,7 +67,7 @@ bin/x86_64-linux/janas-chat qwen3-next.jns --mtp qwen3-next-mtp.jns
 
 Type a message and press Enter; a backslash and Enter add a line to it instead of sending it, and the backslash is not part of what the model reads. Commands start with `/`: `/help` lists them, `/stats` shows the speed of every reply, `/mode` the power mode (`auto`, `eco`, `max`) and what the engine chose, `/think` turns reasoning on or off for models that reason (their reasoning is printed in grey), `/experts n` sets how many experts each token uses (fewer: faster replies, a little less accurate). Ctrl-C stops a reply, Ctrl-D quits. `janas-chat` with no arguments lists the options (context length, memory for the expert cache, sampling).
 
-The engine tunes itself while it runs: it tries the configurations your machine offers (how many threads, whether the GPU takes part) on real work and keeps the fastest. The first minutes of use are the learning phase; the choices are kept in `~/.cache/janas/`, per machine and model. Afterwards it still tries an alternative now and then, to follow the machine's state (heat, power source), and ever more rarely while the alternatives keep losing.
+The engine tunes itself while it runs: it tries the configurations your machine offers (how many threads, whether the GPU takes part) on real work and keeps the fastest. The first minutes of use are the learning phase; the choices are kept in `~/.cache/janas/`, per machine and model. Afterwards it still tries an alternative now and then, to follow the machine's state (heat, power source), and ever more rarely while the alternatives keep losing; the number of threads, settled by the first tries, moves when other threads win several tries in a row.
 
 ## Measuring your machine
 
@@ -80,9 +80,10 @@ It takes a few minutes: it measures prompt processing and generation speed for e
 ## Troubleshooting
 
 - `JANAS_GPU=0` turns the GPU off; `JANAS_GPU_DEVICE=integrated` or `discrete` picks one when there are both; `JANAS_GPU_FAST_PROMPT=0` reads prompts the exact way, bit for bit as the CPU (the fast prompt, on by default, rounds them group by group on the GPU).
+- `JANAS_GPU_BLOCK=0` keeps the dense models' prompts off the whole-block path (every layer of a block in one submission to the GPU) while leaving the fast prompt's products on; `JANAS_PREFILL_BLOCK=n` sets the tokens of a prompt's block (256 by default, 512 where the GPU takes the feed-forwards whole).
 - `JANAS_PREFETCH=0` never reads experts ahead (by default it turns itself on when the cache misses many experts a token).
 - `JANAS_ARENA_HUGE=1` asks the kernel for huge pages for the expert cache, as before 30 September 2026 (with transparent huge pages on `always` and their defrag on `madvise` it made the first writes to the cache slow).
 - `JANAS_KERNELS=avx2` uses the AVX2 kernels even where AVX-VNNI is available.
 - `JANAS_TUNE=0` turns self-tuning off (fixed defaults); delete `~/.cache/janas/tuning.txt` to start tuning from scratch.
-- `JANAS_TUNE_THREADS=0` keeps every usable thread instead of letting the first passes choose between every thread, one per performance core and the performance cores' threads; the choice, once made, is kept for that machine and model.
+- `JANAS_TUNE_THREADS=0` keeps every usable thread instead of letting the first passes choose between every thread, one per performance core and the performance cores' threads; the choice is kept for that machine and model, and moves only when other threads win several tries in a row.
 - The expert cache takes the free memory, leaving a fifth of the machine's memory to the rest of the system; `--cache <GiB>` in `janas-chat` sets it.
