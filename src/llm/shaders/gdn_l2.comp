@@ -1,0 +1,35 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+   Copyright (C) 2026 Maurizio Cammalleri */
+#version 450
+// After gdn_conv.comp: each q and k head (the first 2 n_kh of the
+// convolution's heads of ds = 128 channels) over its L2 norm, x / sqrt(sum
+// x^2 + eps), in place. A workgroup per head (x) and token (y), a channel a
+// thread.
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
+
+layout(local_size_x = 128) in;
+
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer F { float v[]; };
+
+layout(push_constant) uniform P { uvec2 x; uint cc; float eps; } p;
+
+shared float sg_part[64];
+
+void main()
+{
+    uint i = gl_LocalInvocationID.x, h = gl_WorkGroupID.x, t = gl_WorkGroupID.y;
+    F X = F(p.x);
+    uint o = t * p.cc + h * 128u + i;
+    float v = X.v[o];
+    float r = subgroupAdd(v * v);
+    if (subgroupElect())
+        sg_part[gl_SubgroupID] = r;
+    barrier();
+    float ss = sg_part[0];
+    for (uint k = 1u; k < gl_NumSubgroups; k++)
+        ss += sg_part[k];
+    X.v[o] = v * (1.0 / sqrt(ss + p.eps));
+}

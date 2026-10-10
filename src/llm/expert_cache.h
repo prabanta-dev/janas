@@ -66,13 +66,21 @@ size_t janas_expert_cache_slots(const struct janas_expert_cache *c);
  */
 const uint8_t *janas_expert_cache_resident(struct janas_expert_cache *c,
                                            uint64_t *bytes, uint64_t *loads);
+/* The arena and its bytes, whatever it holds: for a GPU that reads the
+   host's memory where it is, which sees each slot as it is loaded. The
+   bytes given here and by _resident count a guard page past the last
+   slot (JANAS_ARENA_GUARD): the GPU's shaders read a few bytes beyond a
+   matrix (Q6_K: 4), and the last slot's had nowhere to go. */
+#define JANAS_ARENA_GUARD 4096
+const uint8_t *janas_expert_cache_arena(const struct janas_expert_cache *c,
+                                        uint64_t *bytes);
 uint64_t janas_expert_cache_loads(const struct janas_expert_cache *c);
 /*
- * The arena moved to arena (n_slots x slot bytes, owned by the caller, not
- * freed here), its contents copied, the file read without O_DIRECT from
- * then on: for memory a GPU's driver allocated, which it reads faster
- * than imported pages. Only when nothing is being read (as _resident); 0,
- * or -1 with nothing changed.
+ * The arena moved to arena (n_slots x slot bytes and the guard, owned by the
+ * caller, not freed here), its contents copied, the file read without O_DIRECT
+ * from then on: for memory a GPU's driver allocated, which it reads faster than
+ * imported pages. Only when nothing is being read (as _resident); 0, or -1 with
+ * nothing changed.
  */
 int janas_expert_cache_rebase(struct janas_expert_cache *c, uint8_t *arena);
 

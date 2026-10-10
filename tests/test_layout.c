@@ -8,6 +8,8 @@
  * model) and the file kept, in a directory of its own under ~/tmp.
  * The sources belong to the program, so they are compiled in here.
  */
+#define _GNU_SOURCE /* nftw */
+#include <ftw.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,6 +17,15 @@
 
 #include "chat/glossary.c"
 #include "chat/layout.c"
+
+static int rm_one(const char *path, const struct stat *st, int flag,
+                  struct FTW *ftw)
+{
+    (void)st;
+    (void)flag;
+    (void)ftw;
+    return remove(path);
+}
 
 static int failures;
 
@@ -159,16 +170,15 @@ int main(void)
         coded_free(&c);
     }
 
-    /* tidy up: the one file and the two directories made here */
+    /* tidy up: the layout the test kept is there, then the whole
+       directory goes (the failed translation's mark too: left behind, it
+       kept one directory per run in ~/tmp) */
     char path[1200];
     snprintf(path, sizeof path, "%s/janas/layouts/test.it.%016llx.txt", dir,
              (unsigned long long)glossary_mark("it", "test", mark(EN)));
-    CHECK(unlink(path) == 0, "no file at %s", path);
-    snprintf(path, sizeof path, "%s/janas/layouts", dir);
-    rmdir(path);
-    snprintf(path, sizeof path, "%s/janas", dir);
-    rmdir(path);
-    rmdir(dir);
+    CHECK(access(path, F_OK) == 0, "no file at %s", path);
+    nftw(dir, rm_one, 16, FTW_DEPTH | FTW_PHYS);
+    CHECK(access(dir, F_OK) != 0, "%s left behind", dir);
 
     if (failures) {
         printf("test_layout: %d failures\n", failures);

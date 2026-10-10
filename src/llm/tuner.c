@@ -17,10 +17,14 @@
 #define TRIES 3         /* measurements of each candidate before choosing */
 #define RETRY_EVERY 128 /* passes between tries of an alternative, at first */
 #define RETRY_MAX 1024  /* at most, after tries that changed nothing */
+#define RESETTLE_WINS 3 /* tries in a row won by other threads: theirs */
 
 int janas_tune_class(uint32_t n_tokens)
 {
-    return n_tokens <= 1 ? 0 : (n_tokens <= 16 ? 1 : 2);
+    return n_tokens <= 1                  ? 0
+           : n_tokens <= 16               ? 1
+           : n_tokens >= JANAS_TUNE_BLOCK ? 2
+                                          : 3;
 }
 
 void janas_tuner_init(struct janas_tuner *t, const struct janas_tune_cand *c,
@@ -47,6 +51,15 @@ static int usable(const struct janas_tuner *t, int cls, int i)
 {
     return (!t->cand[i].gpu || (t->allow_gpu && (cls > 0 || t->gpu_one))) &&
            (!t->cls[cls].threads || t->cand[i].threads == t->cls[cls].threads);
+}
+
+/* A candidate a try may run: as usable, but any threads - once they are
+   settled, other threads are tried too, each try a fresh pass against the
+   choice's recent mean, so that a machine that changes (warm, throttled)
+   can move them */
+static int retryable(const struct janas_tuner *t, int cls, int i)
+{
+    return !t->cand[i].gpu || (t->allow_gpu && (cls > 0 || t->gpu_one));
 }
 
 /* The default of a class: its own, or once the threads are settled the
@@ -91,10 +104,14 @@ void janas_tuner_allow_gpu_one(struct janas_tuner *t, int allow)
 int janas_tuner_best(const struct janas_tuner *t, int cls)
 {
     /* the default unless an alternative is clearly faster: measurements
-       are noisy, a near tie is not worth a change */
+       are noisy, a near tie is not worth a change. The default's mean
+       counts from its first measurement: waiting for all its tries let any
+       alternative tried three times win, even a slower one - Qwen3.5-2B's
+       blocks went to 20 threads (3.68 ms a token) over the default's 12
+       (3.22, measured twice) (10 Oct 2026) */
     int def = class_def(t, cls), best = def;
     double bar =
-        t->cls[cls].tried[def] >= TRIES ? t->cls[cls].cost[def] * MARGIN : 1e30;
+        t->cls[cls].tried[def] > 0 ? t->cls[cls].cost[def] * MARGIN : 1e30;
     for (int i = 0; i < t->n_cand; i++)
         if (i != def && usable(t, cls, i) && t->cls[cls].tried[i] >= TRIES &&
             t->cls[cls].cost[i] < bar) {
@@ -143,7 +160,7 @@ int janas_tuner_pick(struct janas_tuner *t, int cls)
     if (p >= t->cls[cls].retry_at) {
         int old = -1;
         for (int i = 0; i < t->n_cand; i++)
-            if (i != best && usable(t, cls, i) &&
+            if (i != best && retryable(t, cls, i) &&
                 (old < 0 || t->cls[cls].last[i] < t->cls[cls].last[old]))
                 old = i;
         t->cls[cls].retry_at = p + t->cls[cls].retry_gap;
@@ -164,11 +181,33 @@ void janas_tuner_record(struct janas_tuner *t, int cls, int cand,
     /* a try that beats the choice clearly: tries often again, until the
        averages settle which is better (one pass alone may be luck) */
     int rb = t->cls[cls].retry_best;
-    if (rb >= 0 && cand == t->cls[cls].retry_cand &&
-        sec_per_token < t->cls[cls].cost[rb] * MARGIN) {
-        t->cls[cls].retry_gap = RETRY_EVERY;
-        t->cls[cls].retry_at = t->cls[cls].passes + RETRY_EVERY;
-        t->cls[cls].retry_best = -1;
+    if (rb >= 0 && cand == t->cls[cls].retry_cand) {
+        if (sec_per_token < t->cls[cls].cost[rb] * MARGIN) {
+            t->cls[cls].retry_gap = RETRY_EVERY;
+            t->cls[cls].retry_at = t->cls[cls].passes + RETRY_EVERY;
+            t->cls[cls].retry_best = -1;
+            t->cls[cls].wins[cand]++;
+        } else {
+            t->cls[cls].wins[cand] = 0;
+        }
+        /*
+         * Other threads, faster in try after try: theirs from now on. The
+         * threads are settled by the first tries, and a laptop that warms
+         * up turns the comparison round - Qwen3.5-2B settled on 20 threads
+         * for its tokens, which then took 28.1 ms against 18.9 on 12 (10
+         * Oct 2026). Their mean starts again from this pass: the old one
+         * was made at another time.
+         */
+        int th = t->cls[cls].threads;
+        if (th && t->cand[cand].threads != th &&
+            t->cls[cls].wins[cand] >= RESETTLE_WINS) {
+            t->cls[cls].threads = t->cand[cand].threads;
+            t->cls[cls].wins[cand] = 0;
+            t->cls[cls].cost[cand] = sec_per_token;
+            t->cls[cls].tried[cand] = TRIES;
+            t->cls[cls].last[cand] = t->cls[cls].passes;
+            return;
+        }
     }
     double *c = &t->cls[cls].cost[cand];
     uint32_t n = t->cls[cls].tried[cand];
@@ -288,13 +327,16 @@ void janas_tuner_save(const struct janas_tuner *t, const char *key)
 
 void janas_tuner_report(const struct janas_tuner *t, char *buf, size_t len)
 {
-    static const char *name[] = {"one token", "2-16 tokens", "blocks"};
+    static const char *name[] = {"one token", "2-16 tokens", "blocks",
+                                 "17-63 tokens"};
+    static const int order[JANAS_TUNE_CLASSES] = {0, 1, 3, 2}; /* by size */
     size_t w = 0;
     buf[0] = 0;
-    for (int k = 0; k < JANAS_TUNE_CLASSES && w < len; k++) {
+    for (int o = 0; o < JANAS_TUNE_CLASSES && w < len; o++) {
+        int k = order[o];
         int b = janas_tuner_best(t, k);
         w += (size_t)snprintf(buf + w, len - w, "%s%s: %d threads%s",
-                              k ? "; " : "", name[k], t->cand[b].threads,
+                              o ? "; " : "", name[k], t->cand[b].threads,
                               t->cand[b].gpu ? " + GPU" : "");
         if (t->cls[k].tried[b] >= TRIES && w < len)
             w += (size_t)snprintf(buf + w, len - w, " (%.1f ms/token)",

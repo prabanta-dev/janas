@@ -64,23 +64,34 @@ void janas_m_init_tuner(struct janas_llm_model *m)
                 c[n++] =
                     (struct janas_tune_cand){.threads = opts[i], .gpu = gpu};
         }
-    int def[JANAS_TUNE_CLASSES] = {0, 0, 0};
+    int def[JANAS_TUNE_CLASSES] = {0, 0, 0, 0};
     for (int k = 0; k < n; k++) {
         if (!c[k].gpu && c[k].threads == m->all_threads)
             def[0] = k;
         if (!c[k].gpu && c[k].threads == block)
-            def[1] = def[2] = k;
+            def[1] = def[2] = def[3] = k;
     }
     /* JANAS_GPU_ALWAYS=1: the GPU variant as the default for passes over
        several tokens (tests, and with JANAS_TUNE=0 a fixed GPU setup) */
+    /* with the fast prompt the GPU computes nearly all of a block, and the
+       CPU's threads mostly draw the power it would use (the laptop's PL4):
+       blocks start on the performance cores' threads, not on all of them -
+       of 12 models the fastest blocks were on 6 or 12 threads 11 times,
+       Qwen3.5-2B 318 tokens/s on 6 and 309 on 12 against 272 on 20 (10 Oct
+       2026) */
+    int fast = m->gpu && !m->gpu_off && janas_gpu_fast_prompt() && !bt;
+    if (fast)
+        for (int k = 0; k < n; k++)
+            if (!c[k].gpu && c[k].threads == m->p_threads)
+                def[2] = k;
     const char *ga = getenv("JANAS_GPU_ALWAYS");
     if (ga && atoi(ga) > 0)
         for (int k = 0; k < n; k++)
             if (c[k].gpu && c[k].threads == block)
-                def[1] = def[2] = k;
+                def[1] = def[2] = def[3] = k;
     if (bt && block != c[def[1]].threads && n < JANAS_TUNE_MAX_CANDS) {
         c[n] = (struct janas_tune_cand){.threads = block, .gpu = 0};
-        def[1] = def[2] = n++;
+        def[1] = def[2] = def[3] = n++;
     }
     janas_tuner_init(&m->tuner, c, n, def, (tn && atoi(tn) == 0) || bt);
     janas_tuner_allow_gpu(&m->tuner, 1);
@@ -95,10 +106,10 @@ void janas_m_init_tuner(struct janas_llm_model *m)
     janas_cpu_name(cpu, sizeof(cpu));
     janas_jns_meta_str(&m->j, "general.name", name, sizeof(name));
     int w =
-        snprintf(m->tune_key, sizeof(m->tune_key), "v2|%s|%d/%d/%d|%s%s|%s|",
+        snprintf(m->tune_key, sizeof(m->tune_key), "v2|%s|%d/%d/%d|%s%s%s|%s|",
                  cpu, m->p_cores, m->p_threads, m->all_threads,
                  m->gpu && !m->gpu_off ? janas_gpu_name(m->gpu) : "no GPU",
-                 one ? " 1g" : "", name);
+                 one ? " 1g" : "", fast ? " f" : "", name);
     for (int k = 0; k < n && w > 0 && (size_t)w < sizeof(m->tune_key); k++)
         w += snprintf(m->tune_key + w, sizeof(m->tune_key) - (size_t)w, "%d%s,",
                       c[k].threads, c[k].gpu ? "g" : "");
@@ -113,8 +124,10 @@ void janas_m_apply_candidate(struct janas_llm_model *m, int cand)
     if (m->own_compute)
         janas_pool_set_active(m->compute, m->tuner.cand[cand].threads);
     m->gpu_use = m->tuner.cand[cand].gpu;
-    if (m->gpu)
+    if (m->gpu) {
         janas_gpu_keep_awake(m->gpu, m->gpu_use);
+        janas_gpu_set_only_fast(m->gpu, !m->gpu_use);
+    }
 }
 
 void janas_llm_model_set_eco(struct janas_llm_model *m, int eco)
@@ -133,6 +146,12 @@ int janas_llm_model_threads(const struct janas_llm_model *m, int cls)
     if (cls < 0 || cls >= JANAS_TUNE_CLASSES || m->tuner.n_cand <= 0)
         return 0;
     return m->tuner.cand[janas_tuner_best(&m->tuner, cls)].threads;
+}
+
+int janas_llm_model_gpu_prompts(const struct janas_llm_model *m)
+{
+    return m->gpu && !m->gpu_off && m->tuner.allow_gpu &&
+           janas_gpu_fast_prompt();
 }
 
 int janas_llm_model_gpu_used(const struct janas_llm_model *m)

@@ -461,6 +461,11 @@ static int forward(struct janas_llm_model *m, const int32_t *tokens, uint32_t n,
        where it can (model_gpu.c) */
     if (logits && janas_m_gpu_token(m, pos0, n, all_logits, logits) == 0) {
         m->ring_hi = pos0 + n;
+        if (m->a->rec) { /* a long block (model_gpu.c): as at the end */
+            m->base = 1 - m->src;
+            m->base_pos = pos0 + n;
+            m->log_n = 0;
+        }
         return 0;
     }
     for (uint32_t l = 0; l < m->n_layer; l++) {
@@ -549,8 +554,7 @@ static int forward(struct janas_llm_model *m, const int32_t *tokens, uint32_t n,
                                    .cols = dm,
                                    .n_vec = n - first};
     if (logits) /* without: the hidden states alone, an embedding */
-        janas_gpu_matvec_group(m->gpu_off || !m->gpu_use ? NULL : m->gpu,
-                               m->compute, &to, 1);
+        janas_gpu_matvec_group(janas_m_gpu(m, 0), m->compute, &to, 1);
     if (logits && m->softcap > 0.0f) {
         struct tok_job sc = {.m = m, .n = n - first, .out = logits};
         janas_pool_run(m->compute, softcap_worker, &sc);
@@ -674,8 +678,7 @@ int janas_llm_mtp_draft(struct janas_llm_model *m, const int32_t *tokens,
                                   .y = m->dh_logits,
                                   .rows = m->dh_n,
                                   .cols = m->d_model};
-    janas_gpu_matvec_group(m->gpu_off || !m->gpu_use ? NULL : m->gpu,
-                           m->compute, &t, 1);
+    janas_gpu_matvec_group(janas_m_gpu(m, 0), m->compute, &t, 1);
     /* the best row and its softmax probability within the head */
     float *l = m->dh_logits, mx = l[0];
     uint32_t best = 0;
@@ -736,8 +739,7 @@ int janas_llm_mtp_forward(struct janas_llm_model *m, const int32_t *tokens,
                                    .rows = dm,
                                    .cols = 2 * dm,
                                    .n_vec = n};
-    janas_gpu_matvec_group(m->gpu_off || !m->gpu_use ? NULL : m->gpu,
-                           m->compute, &tp, 1);
+    janas_gpu_matvec_group(janas_m_gpu(m, 0), m->compute, &tp, 1);
     m->phase[JANAS_PH_QKV] += now() - ta;
     set_rope(m, n, pos0);
     for (uint32_t j = 0; j < n; j++) {
@@ -773,8 +775,7 @@ int janas_llm_mtp_forward(struct janas_llm_model *m, const int32_t *tokens,
                                    .rows = m->n_vocab,
                                    .cols = dm,
                                    .n_vec = n - first};
-    janas_gpu_matvec_group(m->gpu_off || !m->gpu_use ? NULL : m->gpu,
-                           m->compute, &to, 1);
+    janas_gpu_matvec_group(janas_m_gpu(m, 0), m->compute, &to, 1);
     m->phase[JANAS_PH_OUTPUT] += now() - td;
     return 0;
 }

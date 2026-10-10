@@ -117,9 +117,19 @@ int janas_llm_model_settling(const struct janas_llm_model *m);
 #define JANAS_LLM_MAX_BLOCK 64
 
 /*
+ * The prefill block of the model in j: JANAS_PREFILL_BLOCK, else 512 for a
+ * model whose feed-forwards (its experts, or the one of a dense model in
+ * the expert cache) the GPU's fast prompt takes whole (gate and up Q4_K,
+ * down Q4_K or Q6_K, plain or in planes; janas_gpu_fast_prompt on), else
+ * 256;
+ * 64 .. 4096.
+ */
+uint32_t janas_llm_prefill_block(const struct janas_jns *j);
+
+/*
  * Largest block of tokens one forward call accepts: larger than
  * JANAS_LLM_MAX_BLOCK, so that a prefill reads each expert once for many
- * tokens (256 unless JANAS_PREFILL_BLOCK says otherwise, 64 .. 4096). A call
+ * tokens (janas_llm_prefill_block). A call
  * longer than JANAS_LLM_MAX_BLOCK cannot be taken back on a model with a
  * recurrent state: the next call starts where it ended.
  */
@@ -262,8 +272,12 @@ void janas_llm_model_tuning(const struct janas_llm_model *m, char *buf,
  * part worth telling anybody.
  */
 int janas_llm_model_gpu_used(const struct janas_llm_model *m);
+/* Whether the GPU reads the prompts' blocks whatever the tuner chooses
+   (the fast prompt, outside eco mode). */
+int janas_llm_model_gpu_prompts(const struct janas_llm_model *m);
 /* The compute threads of the configuration the tuner holds best for a
-   kind of pass (janas_tune_class: 0 one token, 2 a block); 0 unknown. */
+   kind of pass (janas_tune_class: 0 one token, 1 a few, 2 a block, 3 a
+   short one); 0 unknown. */
 int janas_llm_model_threads(const struct janas_llm_model *m, int cls);
 
 int janas_llm_model_candidates(const struct janas_llm_model *m, int *threads,

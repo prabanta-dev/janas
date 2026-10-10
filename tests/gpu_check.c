@@ -31,6 +31,8 @@ static uint32_t rnd(void)
 
 int main(void)
 {
+    /* the exact path: the fast prompt (on by default) rounds otherwise */
+    setenv("JANAS_GPU_FAST_PROMPT", "0", 1);
     /* GPU_CHECK_BIG_GB=n: n GiB of touched memory, like the engine's
        expert cache */
     const char *bg = getenv("GPU_CHECK_BIG_GB");
@@ -46,7 +48,7 @@ int main(void)
         printf("gpu_check: no GPU (%s), skipped\n", err);
         return 0;
     }
-    enum { MAXR = 4096, MAXC = 4096, MAXV = 17 };
+    enum { MAXR = 4096, MAXC = 4096, MAXV = 64 };
     size_t wbytes = (size_t)MAXR * (MAXC / JANAS_QK) * 144;
     wbytes = (wbytes + 4095) / 4096 * 4096;
     uint8_t *w = aligned_alloc(4096, wbytes);
@@ -196,7 +198,7 @@ int main(void)
     const size_t shapes[][2] = {{4096, 2048}, {1000, 256},  {128, 4096},
                                 {2048, 512},  {4096, 4096}, {777, 1024},
                                 {1500, 768}}; /* odd blocks per row */
-    const size_t nvs[] = {1, 2, 3, 5, 8, 9, 16, 17};
+    const size_t nvs[] = {1, 2, 3, 5, 8, 9, 16, 17, 33, 64};
     int bad = 0, runs = 0;
     /* 0 Q4_K, 1 Q6_K, 2-4 Q6_K_P with three, two and one planes, 5 Q5_K,
        6 Q8_0, 7-10 Q4_0, IQ4_NL, Q4_1, Q5_1, 11 IQ4_XS,

@@ -10,8 +10,9 @@
 // sum as sumi * 2^shk - c * off, the same integers and float operations as
 // the CPU: the results agree bit for bit. Activations shared across the
 // subgroup as in q4k_matvec.comp. The blocks are 82 bytes, so every other
-// one starts 2 bytes off a 4-byte boundary: words are read from the
-// boundary below and realigned, as in q6k_matvec.comp.
+// one starts 2 bytes off a 4-byte boundary: a block is read as the 6
+// aligned uvec4 that cover it and realigned, as in q6k_matvec.comp, and the
+// bare planes (64 bytes a block, from a 4096-byte boundary) as 4 uvec4 each.
 #extension GL_EXT_integer_dot_product : require
 #extension GL_KHR_shader_subgroup_basic : require
 #extension GL_KHR_shader_subgroup_ballot : require
@@ -36,7 +37,7 @@ uvec4 bc(uvec4 xr[NX], uint k) { return subgroupBroadcast(xr[k / SG], k % SG); }
 
 void main()
 {
-    U1 W = U1(p.w), P1 = U1(p.p1), P0 = U1(p.p0);
+    U4 P1 = U4(p.p1), P0 = U4(p.p0);
     U4 X = U4(p.x);
     F Y = F(p.y);
     uint lane = gl_SubgroupInvocationID;
@@ -51,25 +52,39 @@ void main()
     uint shk = p.level == 3u ? 1u : p.level == 2u ? 3u : 5u;
     int c = p.level == 3u ? 64 : p.level == 2u ? 61 : 49;
     uint off = row * p.nb * 82u;  /* bytes */
-    uint pw = row * p.nb * 16u;   /* words of the bare planes */
-    for (uint b = 0; b < p.nb; b++, off += 82u, pw += 16u) {
-        /* the block's 20 words (80 bytes) and d, realigned */
-        uint base = off >> 2, sh = (off & 3u) * 8u;
+    uint pw = row * p.nb * 4u;    /* uvec4 of the bare planes */
+    for (uint b = 0; b < p.nb; b++, off += 82u, pw += 4u) {
+        /* the block's 20 words (80 bytes) and d, realigned from the 16-byte
+           boundary s bytes below it (s even) */
+        uint lo = p.w.x + off;
+        U4 B = U4(uvec2(lo & ~15u, p.w.y + (lo < p.w.x ? 1u : 0u)));
+        uint s = lo & 15u;
+        uint rw[25];
+        for (uint k = 0; k < 6u; k++) {
+            uvec4 q = B.v[k];
+            rw[4u * k] = q.x;
+            rw[4u * k + 1u] = q.y;
+            rw[4u * k + 2u] = q.z;
+            rw[4u * k + 3u] = q.w;
+        }
+        rw[24] = 0u;
+        uint w0s = s >> 2;
         uint wd[21];
         for (uint k = 0; k < 21u; k++)
-            wd[k] = W.v[base + k];
-        if (sh != 0u)
-            for (uint k = 0; k < 20u; k++)
-                wd[k] = (wd[k] >> 16) | (wd[k + 1u] << 16);
-        float d = unpackHalf2x16(sh != 0u ? wd[20] >> 16 : wd[20] & 0xffffu).x;
+            wd[k] = (s & 2u) != 0u
+                        ? (rw[w0s + k] >> 16) | (rw[w0s + k + 1u] << 16)
+                        : rw[w0s + k];
+        float d = unpackHalf2x16(wd[20] & 0xffffu).x;
         int sc[16];
         for (uint k = 0; k < 4u; k++)
             for (uint j = 0; j < 4u; j++)
                 sc[4u * k + j] = bitfieldExtract(int(wd[16u + k]), int(8u * j), 8);
         uint w1[16], w0[16];
-        for (uint k = 0; k < 16u; k++) {
-            w1[k] = p.level >= 2u ? P1.v[pw + k] : 0u;
-            w0[k] = p.level >= 3u ? P0.v[pw + k] : 0u;
+        for (uint k = 0; k < 4u; k++) {
+            uvec4 a1 = p.level >= 2u ? P1.v[pw + k] : uvec4(0u);
+            uvec4 a0 = p.level >= 3u ? P0.v[pw + k] : uvec4(0u);
+            w1[4u * k] = a1.x; w1[4u * k + 1u] = a1.y; w1[4u * k + 2u] = a1.z; w1[4u * k + 3u] = a1.w;
+            w0[4u * k] = a0.x; w0[4u * k + 1u] = a0.y; w0[4u * k + 2u] = a0.z; w0[4u * k + 3u] = a0.w;
         }
         for (uint v = 0; v < NV; v++) {
             uvec4 xr[NX];

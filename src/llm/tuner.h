@@ -8,12 +8,13 @@
  * runs anyway: for each kind of pass (one token, a few, a block) it tries
  * each candidate a few times, keeps the fastest, and now and then tries the
  * others again to follow the machine's state (heat, power source). The
- * number of threads is settled once, by the first tries, and then kept:
- * a pass costs more as the context grows, so a candidate tried again at
- * long context against costs measured at short context loses unfairly -
- * which moved chats onto fewer cores than they could use. Only whether the
- * GPU takes part keeps being tried. The choices are saved per machine and
- * model, so the next start begins from them.
+ * number of threads is settled by the first tries, and moves only when
+ * other threads win several tries in a row, each a fresh pass against the
+ * choice's recent mean: a pass costs more as the context grows, so a
+ * candidate's old mean, made at short context, must not decide - which
+ * moved chats onto fewer cores than they could use - but a laptop that
+ * warms up can turn the first tries' verdict round. The choices are saved
+ * per machine and model, so the next start begins from them.
  */
 #ifndef JANAS_LLM_TUNER_H
 #define JANAS_LLM_TUNER_H
@@ -21,7 +22,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define JANAS_TUNE_CLASSES 3 /* one token; 2-16 (verification); more */
+/* one token; 2-16 (verification); blocks of JANAS_TUNE_BLOCK and more;
+   17 to JANAS_TUNE_BLOCK - 1 (a chat's short turns). The short blocks
+   apart since the fast prompt (from JANAS_GPU_FAST_N = 64 tokens) puts
+   the long ones nearly all on the GPU: together, their mean chose 20
+   threads for Qwen3.5-2B's prompts, which ran faster on 12 (10 Oct 2026) */
+#define JANAS_TUNE_CLASSES 4
+#define JANAS_TUNE_BLOCK 64
 #define JANAS_TUNE_MAX_CANDS 8
 
 struct janas_tune_cand {
@@ -40,6 +47,9 @@ struct janas_tuner {
         double cost[JANAS_TUNE_MAX_CANDS]; /* seconds per token, averaged */
         uint32_t tried[JANAS_TUNE_MAX_CANDS];
         uint32_t last[JANAS_TUNE_MAX_CANDS]; /* pass of the last try */
+        /* tries in a row each candidate won against the choice (one with
+           other threads takes the threads over at RESETTLE_WINS) */
+        uint8_t wins[JANAS_TUNE_MAX_CANDS];
         uint32_t passes;
         int def; /* the default candidate */
         /* the next try of an alternative, the passes until the one after,

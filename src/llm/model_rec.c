@@ -269,8 +269,7 @@ void janas_m_rec_layer(struct janas_llm_model *m, const struct layer *ly,
                                           .cols = dm,
                                           .n_vec = n,
                                           .y_stride = m->qkvz_dim}};
-        janas_gpu_matvec_group(m->gpu_off || !m->gpu_use ? NULL : m->gpu,
-                               m->compute, t, 2);
+        janas_gpu_matvec_group(janas_m_gpu(m, 0), m->compute, t, 2);
         /* beta then alpha per head, as in the grouped layout's order */
         const float *wb = ly->ssm_beta, *wa = ly->ssm_alpha;
         for (uint32_t j = 0; j < n; j++)
@@ -296,8 +295,7 @@ void janas_m_rec_layer(struct janas_llm_model *m, const struct layer *ly,
                                           .rows = 2 * nv,
                                           .cols = dm,
                                           .n_vec = n}};
-        janas_gpu_matvec_group(m->gpu_off || !m->gpu_use ? NULL : m->gpu,
-                               m->compute, t, 2);
+        janas_gpu_matvec_group(janas_m_gpu(m, 0), m->compute, t, 2);
     }
     /* per key head g the projection holds q, k, the values and the z gates
        of its rf value heads, then per g: rf betas and rf alphas */
@@ -402,8 +400,7 @@ void janas_m_rec_layer(struct janas_llm_model *m, const struct layer *ly,
                                    .rows = dm,
                                    .cols = m->d_inner,
                                    .n_vec = n};
-    janas_gpu_matvec_group(m->gpu_off || !m->gpu_use ? NULL : m->gpu,
-                           m->compute, &to, 1);
+    janas_gpu_matvec_group(janas_m_gpu(m, 0), m->compute, &to, 1);
     trace_row(m, "ssm_out", m->xn + (size_t)(n - 1) * dm, dm);
     for (uint32_t i = 0; i < n * dm; i++)
         m->x[i] += m->xn[i];

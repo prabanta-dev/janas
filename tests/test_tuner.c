@@ -165,20 +165,35 @@ int main(void)
     /* the threads are settled by the first tries and kept: a pass costing
        more as the context grows must not hand the choice to a candidate
        whose cost was measured at short context (a chat drifting onto
-       fewer cores). 20 threads win the first tries; then every pass of
-       theirs costs more, the others are never measured again */
+       fewer cores). 20 threads win the first tries; then every pass, of
+       any candidate, costs more: the other threads, tried now and then
+       with fresh passes, never win */
     janas_tuner_init(&t, cand, 4, def, 0);
     janas_tuner_allow_gpu(&t, 0);
     run(&t, (const double[]){1.0, 1.2, 0.8, 0.9}, 40);
     CHECK(janas_tuner_best(&t, 2) == 2, "settled best %d, want 2",
           janas_tuner_best(&t, 2));
+    int others = 0;
     for (int i = 0; i < 5000; i++) {
         int c = janas_tuner_pick(&t, 2);
-        CHECK(t.cand[c].threads == 20, "pass on %d threads after settling",
-              t.cand[c].threads);
+        others += t.cand[c].threads != 20;
         janas_tuner_record(&t, 2, c, 0.8 + i * 0.001);
     }
     CHECK(janas_tuner_best(&t, 2) == 2, "drifted: best %d, want 2",
+          janas_tuner_best(&t, 2));
+    CHECK(others > 0 && others < 50, "%d passes on other threads in 5000",
+          others);
+
+    /* the machine changes after the threads are settled (a laptop that
+       warms up): 12 threads become clearly faster than the 20 chosen, and
+       tries won in a row hand the threads over */
+    janas_tuner_init(&t, cand, 4, def, 0);
+    janas_tuner_allow_gpu(&t, 0);
+    run(&t, (const double[]){1.0, 1.2, 0.8, 0.9}, 40);
+    CHECK(janas_tuner_best(&t, 2) == 2, "settled best %d, want 2",
+          janas_tuner_best(&t, 2));
+    run(&t, (const double[]){1.0, 0.6, 0.9, 0.9}, 5000);
+    CHECK(janas_tuner_best(&t, 2) == 1, "warmed up: best %d, want 1",
           janas_tuner_best(&t, 2));
     /* forced: always that candidate */
     janas_tuner_force(&v, 1);

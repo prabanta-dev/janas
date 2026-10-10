@@ -1,0 +1,38 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+   Copyright (C) 2026 Maurizio Cammalleri */
+#version 450
+// A Gated DeltaNet layer of the whole block on the GPU (gpu_token.c), its
+// first step: the causal convolution of the q|k|v channels, then SiLU, as
+// model_rec.c's conv_head does - out[t][c] = SiLU(sum over i < d of
+// w[i][c] x in(t - d + 1 + i, c)), in(s) the block's row s (mixed) or, for
+// s < 0, row d - 1 + s of the layer's convolution state (the half the
+// position buffer names: its word 1). A thread a channel, a workgroup row
+// of 256 channels per token.
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+
+layout(local_size_x = 256) in;
+
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer R { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer W { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer RP { uint v[]; };
+
+// mixed: n rows of cc; out: likewise; w: d rows of cc; state: two halves of
+// hs floats, this layer's (d - 1) rows of cc at so in each
+layout(push_constant) uniform P { uvec2 mixed, out_, w, state, pos; uint cc, d, hs, so; } p;
+
+void main()
+{
+    uint c = gl_WorkGroupID.x * 256u + gl_LocalInvocationID.x, t = gl_WorkGroupID.y;
+    if (c >= p.cc)
+        return;
+    R M = R(p.mixed), Wt = R(p.w), S = R(p.state);
+    uint base = RP(p.pos).v[1] * p.hs + p.so;
+    float s = 0.0;
+    for (uint i = 0; i < p.d; i++) {
+        int r = int(t) - int(p.d) + 1 + int(i);
+        float x = r >= 0 ? M.v[uint(r) * p.cc + c] : S.v[base + uint(int(p.d) - 1 + r) * p.cc + c];
+        s = i == 0u ? x * Wt.v[c] : fma(x, Wt.v[i * p.cc + c], s);
+    }
+    W(p.out_).v[t * p.cc + c] = s / (1.0 + exp(-s));
+}

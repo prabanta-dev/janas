@@ -249,8 +249,7 @@ void janas_m_attn_layer(struct janas_llm_model *m, const struct layer *ly,
                                       .rows = kvd,
                                       .cols = dm,
                                       .n_vec = n}};
-    janas_gpu_matvec_group(m->gpu_off || !m->gpu_use ? NULL : m->gpu,
-                           m->compute, t, (size_t)nt);
+    janas_gpu_matvec_group(janas_m_gpu(m, 0), m->compute, t, (size_t)nt);
     if (nt == 2) /* Gemma 4's full layers: V is K, before K's norm */
         memcpy(m->vv, m->kk, (size_t)n * kvd * sizeof(float));
     int8_t *kc = m->kcache + m->kv_off[ly->slot];
@@ -303,8 +302,7 @@ void janas_m_attn_layer(struct janas_llm_model *m, const struct layer *ly,
                                    .rows = dm,
                                    .cols = qd,
                                    .n_vec = n};
-    janas_gpu_matvec_group(m->gpu_off || !m->gpu_use ? NULL : m->gpu,
-                           m->compute, &to, 1);
+    janas_gpu_matvec_group(janas_m_gpu(m, 0), m->compute, &to, 1);
     if (ly->post_attn)
         janas_m_post_norm(m, f32(m, ly->post_attn), n);
     janas_m_residual(m, n);

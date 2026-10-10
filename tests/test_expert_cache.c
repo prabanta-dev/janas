@@ -262,8 +262,8 @@ static void check_resident(struct janas_jns *j, struct janas_pool *io)
         CHECK(janas_expert_cache_finish(c) == 0, "finish failed");
         const uint8_t *a = janas_expert_cache_resident(c, &bytes, &loads);
         CHECK(a != NULL, "not resident with every expert loaded");
-        CHECK(bytes == (uint64_t)ALL * SLOT, "resident bytes %llu",
-              (unsigned long long)bytes);
+        CHECK(bytes == (uint64_t)ALL * SLOT + JANAS_ARENA_GUARD,
+              "resident bytes %llu", (unsigned long long)bytes);
         CHECK(loads == ALL && janas_expert_cache_loads(c) == ALL,
               "loads %llu, expected %d", (unsigned long long)loads, ALL);
         /* every expert is in the arena, where fetch says it is */

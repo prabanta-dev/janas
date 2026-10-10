@@ -1,0 +1,82 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+   Copyright (C) 2026 Maurizio Cammalleri */
+#version 450
+// The Gated DeltaNet recurrence of a block, as deltanet.c's gdn_step_h does
+// it token after token: per value head h and row r of its state M (ds = 128
+// numbers, kept at sixteen bits between tokens), with the token's q and k
+// (key head g), v and the head's beta and decay -
+//   x = M[r] decay, sk = x . k, d = (v[r] - sk) beta, y = x + d k,
+//   out[r] = (y . q) scale, M[r] = y at sixteen bits.
+// beta = sigmoid(b), decay = exp(softplus(a + dt[h]) A[h]) from the raw b
+// and a (ba: per token, the nv b then the nv a). The row stays in registers
+// for the whole block: eight threads a row, sixteen numbers each, sixteen
+// rows a workgroup. The state is read from the half the position buffer's
+// word 1 names and written to the one its word 2 does.
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_clustered : require
+
+layout(local_size_x = 128) in;
+
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer R { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer W { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer U { uint v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer RP { uint v[]; };
+
+// co: n rows of cc (q heads, k heads at kd, v at 2 kd); ba: n rows of 2 nv;
+// att: n rows of nv ds; state: two halves of hs sixteen-bit numbers, this
+// layer's nv ds ds at so; dt, A: nv floats
+layout(push_constant) uniform P {
+    uvec2 co, ba, att, state, pos, dt, a;
+    uint cc, nv, nkh, n, hs, so, vmap_mod;
+    float scale;
+} p;
+
+void main()
+{
+    uint t = gl_LocalInvocationID.x, lane = t % 8u, rl = t / 8u;
+    uint h = gl_WorkGroupID.x / 8u, r = (gl_WorkGroupID.x % 8u) * 16u + rl;
+    uint kd = p.nkh * 128u, g = p.vmap_mod != 0u ? h % p.nkh : h / (p.nv / p.nkh);
+    R CO = R(p.co), BA = R(p.ba);
+    W O = W(p.att);
+    U S = U(p.state);
+    RP PS = RP(p.pos);
+    /* this thread's sixteen numbers of the row: e0 .. e0 + 15 */
+    uint e0 = lane * 16u;
+    uint row = p.so + (h * 128u + r) * 128u + e0; /* sixteen-bit numbers */
+    uint src = (PS.v[1] * p.hs + row) / 2u, dst = (PS.v[2] * p.hs + row) / 2u;
+    float x[16];
+    [[unroll]] for (uint i = 0; i < 8u; i++) {
+        vec2 f = unpackHalf2x16(S.v[src + i]);
+        x[2u * i] = f.x;
+        x[2u * i + 1u] = f.y;
+    }
+    float dtv = R(p.dt).v[h], av = R(p.a).v[h];
+    for (uint j = 0; j < p.n; j++) {
+        float b = BA.v[j * 2u * p.nv + h], al = BA.v[j * 2u * p.nv + p.nv + h] + dtv;
+        float beta = 1.0 / (1.0 + exp(-b));
+        float sp = al > 20.0 ? al : log(1.0 + exp(al));
+        float dec = exp(sp * av);
+        uint qo = j * p.cc + g * 128u + e0, ko = qo + kd;
+        float sk = 0.0;
+        [[unroll]] for (uint i = 0; i < 16u; i++) {
+            x[i] *= dec;
+            sk = fma(x[i], CO.v[ko + i], sk);
+        }
+        sk = subgroupClusteredAdd(sk, 8u);
+        float d = (CO.v[j * p.cc + 2u * kd + h * 128u + r] - sk) * beta;
+        float sq = 0.0;
+        [[unroll]] for (uint i = 0; i < 16u; i++) {
+            float y = fma(d, CO.v[ko + i], x[i]);
+            sq = fma(y, CO.v[qo + i], sq);
+            x[i] = unpackHalf2x16(packHalf2x16(vec2(y, 0.0))).x;
+        }
+        sq = subgroupClusteredAdd(sq, 8u);
+        if (lane == 0u)
+            O.v[j * p.nv * 128u + h * 128u + r] = sq * p.scale;
+    }
+    [[unroll]] for (uint i = 0; i < 8u; i++)
+        S.v[dst + i] = packHalf2x16(vec2(x[2u * i], x[2u * i + 1u]));
+}

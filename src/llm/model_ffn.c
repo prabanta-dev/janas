@@ -195,7 +195,12 @@ struct expert_run {
     uint32_t a, b;
 };
 
-#define MAX_RUNS 65 /* a chunk of 64 routed experts and the shared one */
+/* Experts are asked of the cache and computed a chunk at a time: 128, a
+   layer of Qwen3-30B-A3B at once - in chunks of 64 the GPU got half a
+   layer's experts per launch, and ran them at 340 GMAC/s instead of 420
+   (9 Oct 2026). */
+#define EXPERT_CHUNK 128
+#define MAX_RUNS (EXPERT_CHUNK + 1) /* a chunk and the shared expert */
 
 #define EX_T(v, code)                                                          \
     do {                                                                       \
@@ -253,14 +258,12 @@ static void run_experts(struct janas_llm_model *m,
     }
     if (janas_m_exp_tracing())
         ex_setup += now() - t_enter;
-    EX_T(ex_t1, janas_gpu_matvec_group(
-                    m->gpu_off || !m->gpu_use || m->arena_stale ? NULL : m->gpu,
-                    m->compute, t1, 2 * (size_t)n_runs));
+    EX_T(ex_t1, janas_gpu_matvec_group(janas_m_gpu(m, 1), m->compute, t1,
+                                       2 * (size_t)n_runs));
     struct act_job aj = {m, ng};
     EX_T(ex_act, janas_pool_run(m->compute, act_worker, &aj));
-    EX_T(ex_t2, janas_gpu_matvec_group(
-                    m->gpu_off || !m->gpu_use || m->arena_stale ? NULL : m->gpu,
-                    m->compute, t2, n_runs));
+    EX_T(ex_t2,
+         janas_gpu_matvec_group(janas_m_gpu(m, 1), m->compute, t2, n_runs));
 }
 
 int janas_m_route_rank(struct janas_llm_model *m, uint32_t l, uint32_t n,
@@ -549,10 +552,10 @@ int janas_m_moe_block(struct janas_llm_model *m, const struct layer *ly,
 
     /* experts in chunks: compute those in RAM while the others load; the
        shared expert, resident, goes with the first of them */
-    for (uint32_t c0 = 0; c0 < nd || (c0 == 0 && nt > np); c0 += 64) {
-        uint32_t cn = nd - c0 < 64 ? nd - c0 : 64;
-        const uint8_t *slots[64];
-        uint8_t ready[64];
+    for (uint32_t c0 = 0; c0 < nd || (c0 == 0 && nt > np); c0 += EXPERT_CHUNK) {
+        uint32_t cn = nd - c0 < EXPERT_CHUNK ? nd - c0 : EXPERT_CHUNK;
+        const uint8_t *slots[EXPERT_CHUNK];
+        uint8_t ready[EXPERT_CHUNK];
         if (cn) {
             int rc_b;
             EX_T(ex_cache, rc_b = janas_expert_cache_begin(
@@ -596,7 +599,7 @@ int janas_m_moe_block(struct janas_llm_model *m, const struct layer *ly,
             if (nr)
                 run_experts(m, runs, nr);
         }
-        if (nd <= c0 + 64)
+        if (nd <= c0 + EXPERT_CHUNK)
             break;
     }
     if (n < 2) {

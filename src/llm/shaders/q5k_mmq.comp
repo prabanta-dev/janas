@@ -1,0 +1,135 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+   Copyright (C) 2026 Maurizio Cammalleri */
+#version 450
+// The fast prompt for Q5_K (Qwen3.5's recurrent layers' projections): as
+// q4k_mmq.comp, each weight's fifth bit (bit j of qh[l] for weight l of
+// group j) joined to its nibble, the group's 32 values staged as bytes. NOT
+// bit for bit with the CPU: rounded group by group.
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_EXT_integer_dot_product : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+
+layout(local_size_x = 128) in;
+layout(constant_id = 0) const uint NV = 8; // unused: the table's constants
+layout(constant_id = 1) const uint SG = 8;
+
+const uint BM = 64u, BN = 64u, BK = 32u, KS = 4u;
+const uint WM = 32u, WN = 32u, TM = 2u, TN = 2u, WARP = 32u;
+const uint WNITER = (WM * WN) / (WARP * TM * TN); // 8
+const uint WSUBN = WN / WNITER;                    // 4
+const uint WB = 11u, XB = 20u; // uvec4 a block: weights, activations
+
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer U4 { uvec4 v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer U1 { uint v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer F { float v[]; };
+
+// w: the first row; x: vector v, block b at uvec4 (v * xs + b) * 20;
+// y: row r of vector v at y[v * ys + r]
+layout(push_constant) uniform P { uvec2 w, x, y; uint rows, nb, nv, xs, ys; } p;
+
+struct ACache { uint qs[8]; vec2 dm; }; // a group: its 32 values, d*sc, dmin*m
+struct BCache { int qs[8]; vec2 ds; };  // a group: quants, d8, d8 * their sum
+shared ACache sa[BM * KS];
+shared BCache sb[BN * KS];
+
+void main()
+{
+    U4 W4 = U4(p.w), X = U4(p.x);
+    U1 W1 = U1(p.w);
+    F Y = F(p.y);
+    uint id = gl_LocalInvocationID.x;
+    uint r0 = gl_WorkGroupID.x * BM, v0 = gl_WorkGroupID.y * BN;
+    uint warp = id / WARP, tiw = id % WARP;
+    uint tiwr = tiw % (WM / TM), tiwc = tiw / (WM / TM);
+    uint warp_r = warp % (BM / WM), warp_c = warp / (BM / WM);
+    float sums[WNITER * TN * TM];
+    [[unroll]] for (uint i = 0; i < WNITER * TN * TM; i++) sums[i] = 0.0;
+    uint ngroups = p.nb * 8u;
+    for (uint g0 = 0; g0 < ngroups; g0 += KS) {
+        // weights: 4 invocations a row, each one word of the row's group
+        // (2 x 4 nibbles), for 2 rows and 4 groups
+        {
+            uint iqs = id % 4u, rl = id / 4u;
+            [[unroll]] for (uint l = 0; l < BM; l += 32u) {
+                uint r = min(r0 + rl + l, p.rows - 1u);
+                // groups k and k + 1 are the low and high nibbles of the same
+                // words: read once for both (they were read once each)
+                [[unroll]] for (uint k = 0; k < KS; k += 2u) {
+                    uint g = g0 + k, b = g / 8u, j = g % 8u;
+                    uint blk = (r * p.nb + b) * WB;
+                    uint wq = blk * 4u + 12u + (j / 2u) * 8u + 2u * iqs;
+                    uint wh = blk * 4u + 4u + 2u * iqs;
+                    [[unroll]] for (uint u = 0; u < 2u; u++) {
+                        uint w = W1.v[wq + u], h = W1.v[wh + u];
+                        sa[k * BM + rl + l].qs[2u * iqs + u] =
+                            (w & 0x0f0f0f0fu) | (((h >> j) & 0x01010101u) << 4);
+                        sa[(k + 1u) * BM + rl + l].qs[2u * iqs + u] =
+                            ((w >> 4) & 0x0f0f0f0fu) | (((h >> (j + 1u)) & 0x01010101u) << 4);
+                    }
+                    if (iqs == 0u) {
+                        uvec4 hd = W4.v[blk];
+                        vec2 dd = unpackHalf2x16(hd.x);
+                        [[unroll]] for (uint h = 0; h < 2u; h++) {
+                            uint jh = j + h, jj = jh % 4u;
+                            int sc = jh < 4u ? int(bitfieldExtract(hd.y, int(8u * jj), 6))
+                                             : int(bitfieldExtract(hd.w, int(8u * jj), 4) |
+                                                   (bitfieldExtract(hd.y, int(8u * jj + 6u), 2) << 4));
+                            int mn = jh < 4u ? int(bitfieldExtract(hd.z, int(8u * jj), 6))
+                                             : int(bitfieldExtract(hd.w, int(8u * jj + 4u), 4) |
+                                                   (bitfieldExtract(hd.z, int(8u * jj + 6u), 2) << 4));
+                            sa[(k + h) * BM + rl + l].dm = vec2(dd.x * float(sc), dd.y * float(mn));
+                        }
+                    }
+                }
+            }
+        }
+        // activations: 2 invocations a vector, each half a group's quants
+        {
+            uint iqs = id % 2u, c = id / 2u;
+            uint v = min(v0 + c, p.nv - 1u);
+            [[unroll]] for (uint k = 0; k < KS; k++) {
+                uint g = g0 + k, b = g / 8u, j = g % 8u;
+                uint xo = (v * p.xs + b) * XB;
+                uvec4 q = X.v[xo + 2u * j + iqs];
+                sb[k * BN + c].qs[4u * iqs] = int(q.x);
+                sb[k * BN + c].qs[4u * iqs + 1u] = int(q.y);
+                sb[k * BN + c].qs[4u * iqs + 2u] = int(q.z);
+                sb[k * BN + c].qs[4u * iqs + 3u] = int(q.w);
+                if (iqs == 0u) {
+                    float d8 = uintBitsToFloat(X.v[xo + 18u].x);
+                    uvec4 bs = X.v[xo + 16u + j / 4u];
+                    uint bw = j % 4u == 0u ? bs.x : j % 4u == 1u ? bs.y : j % 4u == 2u ? bs.z : bs.w;
+                    int s = bitfieldExtract(int(bw), 0, 16) + bitfieldExtract(int(bw), 16, 16);
+                    sb[k * BN + c].ds = vec2(d8, d8 * float(s));
+                }
+            }
+        }
+        barrier();
+        for (uint k = 0; k < KS; k++) {
+            ACache ca[TM];
+            [[unroll]] for (uint cr = 0; cr < TM; cr++)
+                ca[cr] = sa[k * BM + warp_r * WM + tiwr * TM + cr];
+            [[unroll]] for (uint wsic = 0; wsic < WNITER; wsic++)
+                [[unroll]] for (uint cc = 0; cc < TN; cc++) {
+                    BCache cb = sb[k * BN + warp_c * WN + wsic * WSUBN + tiwc * TN + cc];
+                    [[unroll]] for (uint cr = 0; cr < TM; cr++) {
+                        int q = 0;
+                        [[unroll]] for (uint i = 0; i < 8u; i++)
+                            q += dotPacked4x8EXT(int(ca[cr].qs[i]), cb.qs[i]);
+                        sums[(wsic * TN + cc) * TM + cr] +=
+                            cb.ds.x * ca[cr].dm.x * float(q) - ca[cr].dm.y * cb.ds.y;
+                    }
+                }
+        }
+        barrier();
+    }
+    [[unroll]] for (uint wsic = 0; wsic < WNITER; wsic++)
+        [[unroll]] for (uint cc = 0; cc < TN; cc++)
+            [[unroll]] for (uint cr = 0; cr < TM; cr++) {
+                uint row = r0 + warp_r * WM + tiwr * TM + cr;
+                uint v = v0 + warp_c * WN + wsic * WSUBN + tiwc * TN + cc;
+                if (row < p.rows && v < p.nv)
+                    Y.v[v * p.ys + row] = sums[(wsic * TN + cc) * TM + cr];
+            }
+}

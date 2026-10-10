@@ -79,7 +79,7 @@ It takes a few minutes: it measures prompt processing and generation speed for e
 
 ## Troubleshooting
 
-- `JANAS_GPU=0` turns the GPU off; `JANAS_GPU_DEVICE=integrated` or `discrete` picks one when there are both.
+- `JANAS_GPU=0` turns the GPU off; `JANAS_GPU_DEVICE=integrated` or `discrete` picks one when there are both; `JANAS_GPU_FAST_PROMPT=0` reads prompts the exact way, bit for bit as the CPU (the fast prompt, on by default, rounds them group by group on the GPU).
 - `JANAS_PREFETCH=0` never reads experts ahead (by default it turns itself on when the cache misses many experts a token).
 - `JANAS_ARENA_HUGE=1` asks the kernel for huge pages for the expert cache, as before 30 September 2026 (with transparent huge pages on `always` and their defrag on `madvise` it made the first writes to the cache slow).
 - `JANAS_KERNELS=avx2` uses the AVX2 kernels even where AVX-VNNI is available.

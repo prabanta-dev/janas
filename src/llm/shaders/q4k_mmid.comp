@@ -1,0 +1,125 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+   Copyright (C) 2026 Maurizio Cammalleri */
+#version 450
+// The fast prompt for a mixture's experts (gpu.c experts_id): every
+// expert of a group in one dispatch, as llama.cpp's mul_mat_id, the
+// workgroup's z the expert. Its weights, activations and outputs come from
+// a table (P.t); an expert gets some 16 of a block's tokens, so the tiles
+// are 64 rows by 16 vectors, each invocation 2 rows by 4. Otherwise as
+// q4k_mmq.comp: groups of 32 staged 4 at a time, scales applied in float,
+// NOT bit for bit with the CPU.
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_EXT_integer_dot_product : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+
+layout(local_size_x = 128) in;
+layout(constant_id = 0) const uint NV = 8; // unused: the table's constants
+layout(constant_id = 1) const uint SG = 8;
+
+const uint BM = 64u, BN = 16u, KS = 4u, WB = 9u, XB = 20u;
+
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer U4 { uvec4 v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer U1 { uint v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer F { float v[]; };
+
+// t: the table, 3 uvec4 an expert: (w, x), (y, nv, ys), (p1, p0); then
+// from uvec4 tiles on, one a workgroup's z: (expert, first vector)
+layout(push_constant) uniform P { uvec2 t; uint rows, nb, tiles; } p;
+
+struct ACache { uint qs[4]; vec2 dm; };
+struct BCache { int qs[8]; vec2 ds; };
+shared ACache sa[BM * KS];
+shared BCache sb[BN * KS];
+
+void main()
+{
+    U4 T = U4(p.t);
+    uvec4 tl = T.v[p.tiles + gl_WorkGroupID.z];
+    uint e = tl.x;
+    uvec4 t0 = T.v[3u * e], t1 = T.v[3u * e + 1u];
+    uint nv = t1.z, ys = t1.w;
+    uint r0 = gl_WorkGroupID.x * BM, v0 = tl.y;
+    U4 W4 = U4(t0.xy), X = U4(t0.zw);
+    U1 W1 = U1(t0.xy);
+    F Y = F(t1.xy);
+    uint id = gl_LocalInvocationID.x;
+    uint rq = (id % 32u) * 2u, vq = (id / 32u) * 4u;
+    float sums[8];
+    [[unroll]] for (uint i = 0; i < 8u; i++) sums[i] = 0.0;
+    uint ngroups = p.nb * 8u;
+    for (uint g0 = 0; g0 < ngroups; g0 += KS) {
+        {
+            uint iqs = id % 4u, rl = id / 4u;
+            [[unroll]] for (uint l = 0; l < BM; l += 32u) {
+                uint r = min(r0 + rl + l, p.rows - 1u);
+                // groups k and k + 1 are the low and high nibbles of the same
+                // words: read once for both (they were read once each)
+                [[unroll]] for (uint k = 0; k < KS; k += 2u) {
+                    uint g = g0 + k, b = g / 8u, j = g % 8u;
+                    uint blk = (r * p.nb + b) * WB;
+                    uint wq = blk * 4u + 4u + (j / 2u) * 8u + 2u * iqs;
+                    uint w0 = W1.v[wq], w1 = W1.v[wq + 1u];
+                    sa[k * BM + rl + l].qs[iqs] = (w0 & 0x0f0f0f0fu) | ((w1 & 0x0f0f0f0fu) << 4);
+                    sa[(k + 1u) * BM + rl + l].qs[iqs] =
+                        ((w0 >> 4) & 0x0f0f0f0fu) | (((w1 >> 4) & 0x0f0f0f0fu) << 4);
+                    if (iqs == 0u) {
+                        uvec4 hd = W4.v[blk];
+                        vec2 dd = unpackHalf2x16(hd.x);
+                        [[unroll]] for (uint h = 0; h < 2u; h++) {
+                            uint jh = j + h, jj = jh % 4u;
+                            int sc = jh < 4u ? int(bitfieldExtract(hd.y, int(8u * jj), 6))
+                                             : int(bitfieldExtract(hd.w, int(8u * jj), 4) |
+                                                   (bitfieldExtract(hd.y, int(8u * jj + 6u), 2) << 4));
+                            int mn = jh < 4u ? int(bitfieldExtract(hd.z, int(8u * jj), 6))
+                                             : int(bitfieldExtract(hd.w, int(8u * jj + 4u), 4) |
+                                                   (bitfieldExtract(hd.z, int(8u * jj + 6u), 2) << 4));
+                            sa[(k + h) * BM + rl + l].dm = vec2(dd.x * float(sc), dd.y * float(mn));
+                        }
+                    }
+                }
+            }
+        }
+        {
+            uint k = id / 32u, c = (id % 32u) / 2u, iqs = id % 2u;
+            uint v = min(v0 + c, nv - 1u);
+            uint g = g0 + k, b = g / 8u, j = g % 8u;
+            uint xo = (v * p.nb + b) * XB;
+            uvec4 q = X.v[xo + 2u * j + iqs];
+            sb[k * BN + c].qs[4u * iqs] = int(q.x);
+            sb[k * BN + c].qs[4u * iqs + 1u] = int(q.y);
+            sb[k * BN + c].qs[4u * iqs + 2u] = int(q.z);
+            sb[k * BN + c].qs[4u * iqs + 3u] = int(q.w);
+            if (iqs == 0u) {
+                float d8 = uintBitsToFloat(X.v[xo + 18u].x);
+                uvec4 bs = X.v[xo + 16u + j / 4u];
+                uint bw = j % 4u == 0u ? bs.x : j % 4u == 1u ? bs.y : j % 4u == 2u ? bs.z : bs.w;
+                int s = bitfieldExtract(int(bw), 0, 16) + bitfieldExtract(int(bw), 16, 16);
+                sb[k * BN + c].ds = vec2(d8, d8 * float(s));
+            }
+        }
+        barrier();
+        for (uint k = 0; k < KS; k++) {
+            ACache ca[2];
+            [[unroll]] for (uint r = 0; r < 2u; r++)
+                ca[r] = sa[k * BM + rq + r];
+            [[unroll]] for (uint c = 0; c < 4u; c++) {
+                BCache cb = sb[k * BN + vq + c];
+                [[unroll]] for (uint r = 0; r < 2u; r++) {
+                    int q = 0;
+                    [[unroll]] for (uint i = 0; i < 8u; i++)
+                        q += dotPacked4x8EXT(int((ca[r].qs[i / 2u] >> ((i % 2u) * 4u)) & 0x0f0f0f0fu),
+                                             cb.qs[i]);
+                    sums[c * 2u + r] += cb.ds.x * ca[r].dm.x * float(q) - ca[r].dm.y * cb.ds.y;
+                }
+            }
+        }
+        barrier();
+    }
+    [[unroll]] for (uint c = 0; c < 4u; c++)
+        [[unroll]] for (uint r = 0; r < 2u; r++) {
+            uint row = r0 + rq + r, v = v0 + vq + c;
+            if (row < p.rows && v < nv)
+                Y.v[v * ys + row] = sums[c * 2u + r];
+        }
+}

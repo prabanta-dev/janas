@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -570,6 +571,17 @@ int janas_m_init_draft_head(struct janas_llm_model *m, const uint8_t *src,
     return 0;
 }
 
+/* A buffer a product writes: whole pages, so that the GPU can be given it
+   (janas_gpu_import), listed for that. */
+static float *out_alloc(struct janas_llm_model *m, size_t bytes)
+{
+    bytes = (bytes + 4095) & ~(size_t)4095;
+    float *p = aligned_alloc(4096, bytes ? bytes : 4096);
+    if (p && m->n_out < (int)(sizeof(m->out) / sizeof(*m->out)))
+        m->out[m->n_out++] = (struct janas_out_buf){p, bytes};
+    return p;
+}
+
 struct janas_llm_model *janas_llm_model_load(const char *path,
                                              const struct janas_llm_options *o,
                                              char *err, size_t err_len)
@@ -805,13 +817,7 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
         const char *kv = getenv("JANAS_KV");
         m->kv16 = kv ? atoi(kv) == 16 : m->a->kv16;
     }
-    {
-        const char *pb = getenv("JANAS_PREFILL_BLOCK");
-        long v = pb ? atol(pb) : 256;
-        m->blk = v < JANAS_LLM_MAX_BLOCK ? JANAS_LLM_MAX_BLOCK
-                 : v > 4096              ? 4096
-                                         : (uint32_t)v;
-    }
+    m->blk = janas_llm_prefill_block(&m->j);
     /* the sliding-window layers keep a ring of positions, not the whole
        context: the window and a prefill block (JANAS_SWA_RING=0 keeps
        every position, as the full layers do) */
@@ -874,11 +880,11 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
     size_t B = m->blk, P = B * (m->k + 1);
     size_t inner = m->d_inner > qd ? m->d_inner : qd;
     size_t bigw = m->qkvz_dim > 2 * qd ? m->qkvz_dim : 2 * qd;
-    m->x = malloc(B * dm * sizeof(float));
-    m->xn = malloc(B * dm * sizeof(float));
-    m->q = malloc(B * qd * sizeof(float));
-    m->kk = malloc(B * kvd * sizeof(float));
-    m->vv = malloc(B * kvd * sizeof(float));
+    m->x = out_alloc(m, B * dm * sizeof(float)); /* the GPU reads it */
+    m->xn = out_alloc(m, B * dm * sizeof(float));
+    m->q = out_alloc(m, B * qd * sizeof(float));
+    m->kk = out_alloc(m, B * kvd * sizeof(float));
+    m->vv = out_alloc(m, B * kvd * sizeof(float));
     m->att = malloc(B * inner * sizeof(float));
     m->router = malloc(B * m->n_expert * sizeof(float));
     m->rope_cos = malloc(B * m->n_rot / 2 * sizeof(float));
@@ -895,8 +901,9 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
     }
     if (m->ple_dim) {
         size_t W = (size_t)m->n_layer * m->ple_dim;
-        m->ple = malloc(B * W * sizeof(float));
-        m->ple_g = malloc(B * m->ple_dim * sizeof(float));
+        /* where the GPU writes the branches' products (janas_gpu_dense_mm) */
+        m->ple = out_alloc(m, B * W * sizeof(float));
+        m->ple_g = out_alloc(m, B * m->ple_dim * sizeof(float));
         m->ple_row = malloc(2 * W * sizeof(float));
         m->ple_q = malloc(B * m->ple_dim / JANAS_QK * sizeof(*m->ple_q));
         if (!m->ple || !m->ple_g || !m->ple_row || !m->ple_q) {
@@ -912,10 +919,10 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
     m->glist = malloc(P * sizeof(uint32_t));
     m->count = malloc((m->n_expert + 1) * sizeof(uint32_t));
     m->pair_w = malloc(P * sizeof(float));
-    m->gate = malloc(P * ff * sizeof(float));
-    m->up = malloc(P * ff * sizeof(float));
+    m->gate = out_alloc(m, P * ff * sizeof(float));
+    m->up = out_alloc(m, P * ff * sizeof(float));
     m->h = malloc(P * ff * sizeof(float));
-    m->dout = malloc(P * dm * sizeof(float));
+    m->dout = out_alloc(m, P * dm * sizeof(float));
     m->xg = malloc(P * dm / JANAS_QK * sizeof(*m->xg));
     m->hq = malloc(P * ff / JANAS_QK * sizeof(*m->hq));
     m->hlen = malloc(P * sizeof(uint32_t));
@@ -1003,7 +1010,7 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
 #endif
     if (m->a->attn_gate || m->a->rec) {
         /* the gated queries, and the DeltaNet's fused projections */
-        m->big = malloc(B * bigw * sizeof(float));
+        m->big = out_alloc(m, B * bigw * sizeof(float));
         m->qgate = malloc(B * qd * sizeof(float));
         if (!m->big || !m->qgate) {
             snprintf(err, err_len, "out of memory");
@@ -1011,10 +1018,17 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
         }
     }
     if (m->a->rec) {
-        m->ssm_buf = calloc(2 * (size_t)m->n_rec * m->n_vh * m->ds * m->ds,
-                            sizeof(uint16_t));
-        m->conv_buf = calloc(
-            2 * (size_t)m->n_rec * m->conv_ch * (m->d_conv - 1), sizeof(float));
+        /* the GPU reads and writes them too (gpu_token.c): imported */
+        size_t sb = 2 * (size_t)m->n_rec * m->n_vh * m->ds * m->ds *
+                    sizeof(uint16_t),
+               cb = 2 * (size_t)m->n_rec * m->conv_ch * (m->d_conv - 1) *
+                    sizeof(float);
+        m->ssm_buf = (uint16_t *)out_alloc(m, sb);
+        m->conv_buf = out_alloc(m, cb);
+        if (m->ssm_buf)
+            memset(m->ssm_buf, 0, sb);
+        if (m->conv_buf)
+            memset(m->conv_buf, 0, cb);
         m->ba = malloc(B * 2 * m->n_vh * sizeof(float));
         /* the rows of the replayed tokens (a logged call, at most
            JANAS_LLM_MAX_BLOCK), then the block */
@@ -1181,6 +1195,12 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
         if (m->mtp_res && janas_gpu_import(m->gpu, m->mtp_res,
                                            m->mtp_j.h.resident_bytes) != 0)
             m->gpu_off = 1;
+        /* the products' outputs too, so that the GPU writes them where the
+           engine reads them: through a staging buffer they cost a copy on
+           one thread, 0.4-2.8 ms a block of a layer on Qwen3-4B (9 Oct
+           2026). One that cannot be shared keeps the copy. */
+        for (int i = 0; i < m->n_out; i++)
+            janas_gpu_import(m->gpu, m->out[i].p, m->out[i].bytes);
     }
     janas_m_init_tuner(m);
     return m;
@@ -1461,18 +1481,74 @@ int janas_m_gpu_import(struct janas_llm_model *m, const uint8_t *p,
  * others. Checked after each pass until then; one change of a slot later
  * (a new level of bits) and the GPU's copy is no longer used.
  */
+uint32_t janas_llm_prefill_block(const struct janas_jns *j)
+{
+    /* 512 where the GPU takes the feed-forwards whole: a mixture's experts
+       (gpu.c experts_id) get some 32 tokens each, not 16, and fill its
+       tiles better - Qwen3-30B-A3B read a prompt of 1024 tokens at 122.7
+       tokens/s instead of 108.5 (GPU share of the experts' tokens 0.5;
+       0.4: 112.7, 0.6: 119.2; blocks of 1024: 101); a dense model's one
+       "expert" too, Qwen3-4B 134.6 instead of 127.0. Not for the others,
+       whose products the CPU shares: Gemma 4 26B-A4B (experts' down Q5_1,
+       the rest Q8_0) 63 instead of 68 (9 Oct 2026). Qwen3.5 (qwen35, its
+       recurrent layers' projections Q5_K): 2B 278.9 -> 318.6, 9B 80.3 ->
+       86.0, 0.8B 489.0 -> 493.5 (10 Oct 2026). */
+    /* measured on these architectures only: Qwen3-Next's recurrent layers
+       and the others keep the block they had */
+    char arch[32] = "";
+    janas_jns_meta_str(j, "general.architecture", arch, sizeof(arch));
+    int fast = janas_gpu_fast_prompt() && j->h.n_expert >= 1 && j->layers &&
+               (!strcmp(arch, "qwen3") || !strcmp(arch, "qwen3moe") ||
+                !strcmp(arch, "qwen35"));
+    for (uint32_t l = 0; fast && l < j->h.n_layer; l++) {
+        const struct janas_jns_matrix *x = j->layers[l].m;
+        fast = x[0].type == JANAS_Q4_K && x[1].type == JANAS_Q4_K &&
+               (x[2].type == JANAS_Q4_K || x[2].type == JANAS_Q6_K ||
+                x[2].type == JANAS_Q6_K_P);
+    }
+    const char *pb = getenv("JANAS_PREFILL_BLOCK");
+    long v = pb ? atol(pb) : fast ? 512 : 256;
+    return v < JANAS_LLM_MAX_BLOCK ? JANAS_LLM_MAX_BLOCK
+           : v > 4096              ? 4096
+                                   : (uint32_t)v;
+}
+
 void janas_m_arena_to_gpu(struct janas_llm_model *m)
 {
     if (!m->gpu || m->gpu_off || !m->cache || m->arena_gpu < 0)
         return;
     if (m->arena_gpu == 1) {
-        if (!m->arena_stale &&
+        if (!m->arena_stale && !m->arena_in_place &&
             janas_expert_cache_loads(m->cache) != m->arena_loads)
             m->arena_stale = 1;
         return;
     }
-    uint64_t bytes, loads;
+    uint64_t bytes, loads = 0;
     const uint8_t *a = janas_expert_cache_resident(m->cache, &bytes, &loads);
+    /*
+     * A GPU that reads the host's memory in place (an integrated one) needs
+     * no complete cache: it reads each slot where the CPU does, as loaded,
+     * and never holds a stale copy. Waiting for every expert of every layer
+     * keeps a mixture's experts off it for good - Qwen3-30B-A3B's warm-up
+     * loads the 5,620 of its 6,144 its prompts use, and the rest never come
+     * (9 Oct 2026). Only the fast prompt gives the GPU experts (gpu.c
+     * experts_id), so only with it, or with JANAS_GPU_ARENA_INPLACE=1.
+     */
+    int in_place =
+        !a && (janas_gpu_fast_prompt() || getenv("JANAS_GPU_ARENA_INPLACE")) &&
+        janas_gpu_shares_host(m->gpu) && !getenv("JANAS_GPU_ALLOC") &&
+        !getenv("JANAS_GPU_TOKEN");
+    if (in_place) {
+        a = janas_expert_cache_arena(m->cache, &bytes);
+#ifdef MADV_POPULATE_WRITE
+        /* every page the arena's own first: a slot never loaded is the
+           kernel's shared zero page, and each load that replaces one
+           invalidates the import, pinned again whole (4 GB) at the next
+           submission - 1.6 s of submissions on a block of 256 tokens of
+           Qwen3-30B-A3B instead of 0.1 (9 Oct 2026) */
+        madvise((void *)a, bytes, MADV_POPULATE_WRITE);
+#endif
+    }
     if (!a)
         return;
     uint64_t slot = janas_expert_cache_slot_bytes(m->cache);
@@ -1488,9 +1564,17 @@ void janas_m_arena_to_gpu(struct janas_llm_model *m)
         janas_gpu_flush(m->gpu, own, bytes);
         m->arena_gpu = 1;
         m->arena_loads = loads;
+        m->arena_in_place = in_place;
+        if (getenv("JANAS_GPU_VERBOSE"))
+            fprintf(stderr, "arena: %.1f GB in the GPU driver's memory%s\n",
+                    bytes / 1e9, in_place ? " (in place)" : "");
     } else if (janas_m_gpu_import(m, a, bytes, slot) == 0) {
         m->arena_gpu = 1;
         m->arena_loads = loads;
+        m->arena_in_place = in_place;
+        if (getenv("JANAS_GPU_VERBOSE"))
+            fprintf(stderr, "arena: %.1f GB imported%s\n", bytes / 1e9,
+                    in_place ? " (in place)" : "");
     } else {
         m->arena_gpu = -1; /* no room for it: the CPU goes on alone */
     }

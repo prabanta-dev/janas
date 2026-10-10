@@ -5,9 +5,10 @@
  * (gpu_token.h): which models it takes, their layers described for it, the
  * KV cache shared with it, and the call from the forward pass.
  *
- * For now opt-in (JANAS_GPU_TOKEN=1) and for the dense attention models of
- * qwen3's shape on a GPU that reads the host's memory in place, with the
- * feed-forward weights (the experts' arena) on it already.
+ * For the dense attention models of qwen3's shape, and qwen3.5's (Gated
+ * DeltaNet layers between them) for a prompt's blocks only, on a GPU that
+ * reads the host's memory in place, with the feed-forward weights (the
+ * experts' arena) on it already.
  */
 #include "model.h"
 
@@ -28,9 +29,12 @@ static const char *not_for_gpu(const struct janas_llm_model *m)
 {
     if (!m->gpu || m->gpu_off || !janas_gpu_shares_host(m->gpu))
         return "no GPU reading the host's memory";
-    if (m->a->rec || m->a->swa || m->a->attn_gate || m->a->sandwich ||
-        m->a->gelu || m->kv16 || m->softcap > 0.0f || m->ple_dim || m->mtp ||
-        m->asst)
+    /* qwen3.5: its recurrent layers and gated queries; an MTP block or a
+       drafting model gets the final hidden states */
+    int q35 = m->a->rec == JANAS_REC_Q35 && m->a->attn_gate;
+    if ((m->a->rec && !q35) || (m->a->attn_gate && !q35) || m->a->swa ||
+        m->a->sandwich || m->a->gelu || m->kv16 || m->softcap > 0.0f ||
+        m->ple_dim)
         return "an architecture the token's shaders do not take yet";
     if (m->n_expert != 1 || !m->cache)
         return "not a dense model";
@@ -38,8 +42,14 @@ static const char *not_for_gpu(const struct janas_llm_model *m)
         return "the feed-forward weights are not on the GPU";
     for (uint32_t l = 0; l < m->n_layer; l++) {
         const struct layer *ly = &m->layers[l];
-        if (ly->rec || ly->swa || !ly->wk || !ly->wv || !ly->q_norm ||
-            !ly->k_norm || ly->post_attn || ly->post_ffn || ly->pre_norm2 ||
+        if (ly->rec) {
+            if (!ly->ssm_qkv || !ly->ssm_z || !ly->ssm_out || !ly->ssm_beta ||
+                !ly->ssm_alpha || !ly->conv_t || !ly->ssm_norm)
+                return "a layer the token's shaders do not take yet";
+            continue;
+        }
+        if (ly->swa || !ly->wk || !ly->wv || !ly->q_norm || !ly->k_norm ||
+            ly->post_attn || ly->post_ffn || ly->pre_norm2 ||
             m->kv_ring[ly->slot] || ly->hd != m->head_dim ||
             ly->n_kv != m->n_head_kv || ly->n_rot != m->n_rot)
             return "a layer the token's shaders do not take yet";
@@ -223,13 +233,27 @@ static int build(struct janas_llm_model *m, char *err, size_t len)
             return -1;
         }
         g->attn_norm = f32(m, ly->attn_norm);
-        g->q_norm = f32(m, ly->q_norm);
-        g->k_norm = f32(m, ly->k_norm);
         g->ffn_norm = f32(m, ly->ffn_norm);
-        g->wq = task_of(m, ly->wq, qd, dm);
-        g->wk = task_of(m, ly->wk, kvd, dm);
-        g->wv = task_of(m, ly->wv, kvd, dm);
-        g->wo = task_of(m, ly->wo, dm, qd);
+        if (ly->rec) {
+            g->rec = 1;
+            g->slot = ly->slot;
+            g->ssm_qkv = task_of(m, ly->ssm_qkv, m->conv_ch, dm);
+            g->ssm_z = task_of(m, ly->ssm_z, m->d_inner, dm);
+            g->ssm_out = task_of(m, ly->ssm_out, dm, m->d_inner);
+            g->ssm_beta = ly->ssm_beta;
+            g->ssm_alpha = ly->ssm_alpha;
+            g->conv_w = ly->conv_t;
+            g->dt = f32(m, ly->dt_bias);
+            g->ssm_a = f32(m, ly->ssm_a);
+            g->ssm_norm = f32(m, ly->ssm_norm);
+        } else {
+            g->q_norm = f32(m, ly->q_norm);
+            g->k_norm = f32(m, ly->k_norm);
+            g->wq = task_of(m, ly->wq, m->a->attn_gate ? 2 * qd : qd, dm);
+            g->wk = task_of(m, ly->wk, kvd, dm);
+            g->wv = task_of(m, ly->wv, kvd, dm);
+            g->wo = task_of(m, ly->wo, dm, qd);
+        }
         for (int p = 0; p < 3; p++) {
             const struct janas_jns_matrix *mx = &jl->m[p];
             struct janas_matvec_task t = {.type = (int)mx->type,
@@ -248,10 +272,19 @@ static int build(struct janas_llm_model *m, char *err, size_t len)
             snprintf(err, len, "feed-forwards of different widths");
             return -1;
         }
-        g->kc = m->kcache + m->kv_off[ly->slot];
-        g->vc = m->vcache + m->kv_off[ly->slot];
-        g->ks = m->kscale + m->ks_off[ly->slot];
-        g->vs = m->vscale + m->ks_off[ly->slot];
+        if (!ly->rec) {
+            g->kc = m->kcache + m->kv_off[ly->slot];
+            g->vc = m->vcache + m->kv_off[ly->slot];
+            g->ks = m->kscale + m->ks_off[ly->slot];
+            g->vs = m->vscale + m->ks_off[ly->slot];
+        }
+    }
+    uint32_t a0 = 0; /* the first attention layer: the cache's capacity */
+    while (a0 < m->n_layer && m->layers[a0].rec)
+        a0++;
+    if (a0 == m->n_layer) {
+        snprintf(err, len, "no attention layer");
+        return -1;
     }
     m->gtok_md = (struct janas_gpu_tok_model){
         .n_layer = m->n_layer,
@@ -262,12 +295,23 @@ static int build(struct janas_llm_model *m, char *err, size_t len)
         .n_rot = m->n_rot,
         .ff = ff,
         .n_vocab = m->n_vocab,
-        .cap = m->kv_cap[m->layers[0].slot],
+        .cap = m->kv_cap[m->layers[a0].slot],
         .eps = m->eps,
         .attn_scale = 1.0f / sqrtf((float)hd),
         .layers = m->gtok_layers,
         .out_norm = f32(m, m->out_norm),
-        .output = task_of(m, m->output, m->n_vocab, dm)};
+        .output = task_of(m, m->output, m->n_vocab, dm),
+        .gated_q = m->a->attn_gate,
+        .n_rec = m->a->rec ? m->n_rec : 0,
+        .ds = m->ds,
+        .nv = m->n_vh,
+        .nkh = m->n_kh,
+        .d_conv = m->d_conv,
+        .conv_ch = m->conv_ch,
+        .d_inner = m->d_inner,
+        .vmap_mod = m->vmap_mod,
+        .ssm_state = m->ssm_buf,
+        .conv_state = m->conv_buf};
     free(m->gblk_layers);
     m->gblk_layers = NULL;
     if (getenv("JANAS_GPU_REPACK") && atoi(getenv("JANAS_GPU_REPACK")) > 0) {
@@ -297,26 +341,36 @@ int janas_m_gpu_token(struct janas_llm_model *m, uint32_t pos, uint32_t n,
 {
     if (m->gtok_state < 0)
         return -1;
-    /* blocks of more than one token: opt-in for now (JANAS_GPU_BLOCK=1) */
-    static int blocks = -1;
-    if (blocks < 0)
-        blocks =
-            getenv("JANAS_GPU_BLOCK") && atoi(getenv("JANAS_GPU_BLOCK")) > 0;
-    if (n > 1 && !blocks)
-        return -1;
-    if (m->gtok_state == 0) {
-        const char *e = getenv("JANAS_GPU_TOKEN");
-        if (!e || atoi(e) <= 0) {
-            m->gtok_state = -1;
-            return -1;
-        }
+    /* JANAS_GPU_TOKEN=1: tokens, and blocks with JANAS_GPU_BLOCK=1. With the
+       fast prompt a prompt's blocks (from JANAS_GPU_FAST_N tokens) come
+       here by themselves, JANAS_GPU_BLOCK=0 aside: the whole block in one
+       submission, the CPU idle - Qwen3-4B read a prompt of 1024 tokens at
+       163 tokens/s instead of 148 (llama.cpp on the same GPU: 164), top-1
+       against the Q8_0 reference 235/256 as on the CPU's path (9 Oct 2026).
+       Not the tokens of a reply: one at a time the GPU is slower (20
+       tokens/s against 27.6). */
+    static int tok = -1, blocks = -1;
+    if (tok < 0) {
+        const char *e = getenv("JANAS_GPU_TOKEN"),
+                   *b = getenv("JANAS_GPU_BLOCK");
+        tok = e && atoi(e) > 0;
+        blocks = b ? atoi(b) > 0 : -1; /* -1: not said */
     }
+    int prompt =
+        janas_gpu_fast_prompt() && n >= JANAS_GPU_FAST_N && blocks != 0;
+    if (!prompt && !(tok && (n == 1 || blocks > 0)))
+        return -1;
+    /* a recurrent model: blocks that need no log (longer than a draft's)
+       and replay nothing - the state read whole from one half, written to
+       the other, as forward() expects of such a block */
+    if (m->a->rec && (n <= JANAS_LLM_MAX_BLOCK || m->replay))
+        return -1;
     const char *why = not_for_gpu(m);
     if (why) {
         /* the arena may reach the GPU later: wait for it, say nothing */
         if (m->gtok_state == 0 && m->arena_gpu == 0 && m->gpu && !m->gpu_off)
             return -1;
-        if (m->gtok_state == 0)
+        if (m->gtok_state == 0 && tok) /* asked for, not by itself */
             fprintf(stderr, "janas: no whole token on the GPU: %s\n", why);
         m->gtok_state = -1;
         return -1;
@@ -325,7 +379,8 @@ int janas_m_gpu_token(struct janas_llm_model *m, uint32_t pos, uint32_t n,
         janas_expert_cache_loads(m->cache) != m->gtok_loads) {
         char err[160];
         if (build(m, err, sizeof(err)) != 0) {
-            fprintf(stderr, "janas: no whole token on the GPU: %s\n", err);
+            if (tok)
+                fprintf(stderr, "janas: no whole token on the GPU: %s\n", err);
             m->gtok_state = -1;
             return -1;
         }
@@ -333,11 +388,20 @@ int janas_m_gpu_token(struct janas_llm_model *m, uint32_t pos, uint32_t n,
     }
     /* a longer block (a prompt, only its last logits wanted) in pieces:
        each piece's keys and values in the cache before the next */
-    uint32_t nb = janas_gpu_tok_max_block(m->gtok), half = m->n_rot / 2;
-    if (n > nb && all)
+    uint32_t half = m->n_rot / 2;
+    if (all && n > janas_gpu_tok_block_at(m->gtok, &m->gtok_md, pos))
         return -1;
-    for (uint32_t j = 0; j < n; j += nb) {
-        uint32_t k = n - j < nb ? n - j : nb;
+    /* the recurrent state: the first piece from half src to the other,
+       the later ones on that one in place; each piece at least the
+       convolution's rows of state long. With an MTP block or a drafting
+       model, every token's final hidden state */
+    uint32_t src = m->src, dst = 1 - m->src, rows = m->a->rec ? m->d_conv : 1;
+    float *hid = m->mtp || m->asst ? m->hid : NULL;
+    for (uint32_t j = 0, k; j < n; j += k) {
+        uint32_t nb = janas_gpu_tok_block_at(m->gtok, &m->gtok_md, pos + j);
+        k = n - j < nb ? n - j : nb;
+        if (n - j - k > 0 && n - j - k + 1 < rows)
+            k -= rows; /* the last piece long enough */
         if (janas_gpu_tok_run(m->gpu, m->gtok, &m->gtok_md,
                               m->x + (size_t)j * m->d_model,
                               m->rope_cos + (size_t)j * half,
@@ -345,7 +409,8 @@ int janas_m_gpu_token(struct janas_llm_model *m, uint32_t pos, uint32_t n,
                               j + k < n ? 2
                               : all     ? 1
                                         : 0,
-                              logits) != 0)
+                              logits, hid ? hid + (size_t)j * m->d_model : NULL,
+                              j ? dst : src, dst) != 0)
             return -1;
     }
     return 0;

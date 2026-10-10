@@ -156,8 +156,8 @@ int main(int argc, char **argv)
             janas_llm_model_decode(m, tokens[p], (uint32_t)p, seq + p * nv);
         double pb0[JANAS_PH_COUNT], pb1[JANAS_PH_COUNT];
         janas_llm_model_phases(m, pb0);
-        double tb = now(), maxd = 0, sumd = 0;
-        size_t same = 0, top = 0;
+        double tb = now(), maxd = 0, sumd = 0, rsum = 0;
+        size_t same = 0, top = 0, rtop = 0;
         for (size_t p0 = 0; p0 < nn; p0 += (size_t)block) {
             uint32_t b =
                 (uint32_t)(nn - p0 < (size_t)block ? nn - p0 : (size_t)block);
@@ -178,6 +178,15 @@ int main(int argc, char **argv)
                 }
                 same += eq;
                 top += argmax(a, nv) == argmax(c, nv);
+                /* and against the reference, as the main loop compares */
+                if (ref &&
+                    fseek(ref, (long)((p0 + j) * nv * sizeof(float)),
+                          SEEK_SET) == 0 &&
+                    fread(want, sizeof(float), nv, ref) == nv) {
+                    for (uint32_t i = 0; i < nv; i++)
+                        rsum += fabs((double)c[i] - want[i]);
+                    rtop += argmax(c, nv) == argmax(want, nv);
+                }
             }
         }
         double tbs = now() - tb;
@@ -190,6 +199,10 @@ int main(int argc, char **argv)
         printf("blocks of %d: most likely token as token by token at %zu/%zu, "
                "mean |diff| %.4f\n",
                block, top, nn, sumd / ((double)nn * nv));
+        if (ref)
+            printf("blocks of %d against the reference: top-1 %zu/%zu, mean "
+                   "|diff| %.4f\n",
+                   block, rtop, nn, rsum / ((double)nn * nv));
         free(seq);
         free(blk);
     }

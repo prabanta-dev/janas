@@ -91,7 +91,8 @@ struct janas_llm_model {
        true, the experts' products stay on the CPU */
     int arena_gpu, arena_stale;
     uint64_t arena_loads;
-    char gpu_why[160]; /* no GPU: why (janas_llm_model_gpu_why) */
+    int arena_in_place; /* read by the GPU where it is: never stale */
+    char gpu_why[160];  /* no GPU: why (janas_llm_model_gpu_why) */
     struct janas_expert_cache *cache;
 
     const struct janas_arch *a; /* what this architecture has (arch.h) */
@@ -268,6 +269,12 @@ struct janas_llm_model {
        is left out, not read (see skip_misses); 0: never. And how many were */
     float miss_skip;
     uint64_t skip_asked, skip_left;
+    /* the products' output buffers, whole pages, shared with the GPU */
+    struct janas_out_buf {
+        float *p;
+        size_t bytes;
+    } out[16];
+    int n_out;
     int warm_use;        /* preload the most used experts, and count them */
     uint32_t *use_count; /* experts used this session, n_layer * n_expert */
     uint64_t head_before, head_after; /* output head requantized (head_bits) */
@@ -428,5 +435,22 @@ int janas_m_moe_block(struct janas_llm_model *m, const struct layer *ly,
                       struct janas_expert_cache *cache,
                       const struct janas_jns_layer *jl, uint32_t l, uint32_t n,
                       int part);
+
+/*
+ * The GPU a product may use, or NULL: the tuner's choice for this pass
+ * (gpu_use); with the fast prompt the GPU too where the tuner chose the
+ * CPU alone, for the fast prompt's products only (janas_gpu_set_only_fast),
+ * which must always run there to give the same results. arena: a product
+ * of the experts' arena, kept off the GPU while its copy there is stale.
+ */
+static inline struct janas_gpu *janas_m_gpu(const struct janas_llm_model *m,
+                                            int arena)
+{
+    if (!m->gpu || m->gpu_off || (arena && m->arena_stale))
+        return NULL;
+    if (m->gpu_use || (m->tuner.allow_gpu && janas_gpu_fast_prompt()))
+        return m->gpu;
+    return NULL;
+}
 
 #endif

@@ -26,10 +26,11 @@
 #include <unistd.h>
 #include <vulkan/vulkan.h>
 
-#define MAX_REGIONS 32
+#define MAX_REGIONS 48
 #define MAX_PENDING 64
 #define MAX_XCACHE 8
-#define X_STAGE_BYTES ((size_t)8 << 20)
+#define X_STAGE_BYTES                                                          \
+    ((size_t)16 << 20) /* a 512-token block's experts: 10.5 MB */
 #define Y_STAGE_BYTES ((size_t)32 << 20)
 #define ROWS_PER_GROUP 64 /* local_size_x of the shader */
 #define NV_PER_GROUP 8    /* its NV */
@@ -146,6 +147,14 @@ struct janas_gpu {
     /* blocks of 32: Q4_0, IQ4_NL, Q4_1, Q5_1 (b32_matvec's KIND) */
     VkPipeline pipe32[4];
     VkPipeline pipex4, pipe3, pipei3; /* IQ4_XS, Q3_K, IQ3_S */
+    /* Q4_K on many vectors in tiles (q4k_mm.comp), MM_ROWS x MM_VECS */
+    VkShaderModule sm_mm, sm_mm6, sm_mm6s, sm_mm80, sm_mm5, sm_dm[2];
+    VkPipeline pipe_mm, pipe_mm6, pipe_mm6s, pipe_mm80, pipe_mm5, pipe_dm[2];
+    int only_fast; /* janas_gpu_set_only_fast */
+    /* a mixture's experts in one dispatch (experts_id): Q4_K, Q6_K_P */
+    VkShaderModule sm_id4, sm_id6, sm_id6s;
+    VkPipeline pipe_id4, pipe_id6, pipe_id6s;
+    struct stage ts; /* their table, 3 uvec4 an expert */
     /* the product shaders made for a single vector (prod_index) */
     VkShaderModule pm1[N_PROD];
     VkPipeline pp1[N_PROD];

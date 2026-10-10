@@ -261,6 +261,9 @@ static void product(struct janas_llm_model *m, const struct janas_jns_tensor *t,
 {
     uint32_t cols = (uint32_t)t->dims[0], rows = (uint32_t)t->dims[1];
     if (t->type == 0) {
+        if (janas_gpu_dense_mm(janas_m_gpu(m, 0), 0, f32(m, t), x, y, rows,
+                               cols, n, 1.0f) == 0)
+            return;
         struct f32_job b = {
             .w = f32(m, t), .x = x, .y = y, .rows = rows, .cols = cols, .n = n};
         atomic_init(&b.next, 0);
@@ -277,8 +280,7 @@ static void product(struct janas_llm_model *m, const struct janas_jns_tensor *t,
                                    .rows = rows,
                                    .cols = cols,
                                    .n_vec = n};
-    janas_gpu_matvec_group(m->gpu_off || !m->gpu_use ? NULL : m->gpu,
-                           m->compute, &tk, 1);
+    janas_gpu_matvec_group(janas_m_gpu(m, 0), m->compute, &tk, 1);
 }
 
 /*
@@ -303,7 +305,8 @@ int janas_m_ple_inputs(struct janas_llm_model *m, const int32_t *tokens,
     atomic_init(&b.next, 0);
     if (n < 2)
         bf16_worker(&b, 0, 1);
-    else
+    else if (janas_gpu_dense_mm(janas_m_gpu(m, 0), 1, b.w, b.x, b.y, b.rows,
+                                b.cols, n, b.scale) != 0)
         janas_pool_run(m->compute, bf16_worker, &b);
     const float *nw = f32(m, m->ple_norm);
     size_t row_bytes =

@@ -5,7 +5,8 @@
 // residual, if add is set) stored at xo (if set), then v = rms_norm(x) * w
 // (if w is set; else v = x), quantized to Q8_K in the product shaders'
 // layouts - q256 (qs, bsums, d: janas_q8k_quantize_det) and q32 (the eight
-// blocks of 32 with a scale each, if q32 is set). One workgroup per block
+// blocks of 32 with a scale each, if q32 is set), and v itself at xn (if
+// set: a recurrent layer's f32 products, an MTP block's hidden states). One workgroup per block
 // of 256 values: each one makes the whole vector's sum of squares, the
 // same operations in the same order, so the same bits, then normalizes and
 // quantizes its own block, a value a thread. x is only read: the residual
@@ -25,7 +26,7 @@ layout(local_size_x = 256) in;
 layout(buffer_reference, std430, buffer_reference_align = 4) buffer F { float v[]; };
 layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer U { uint v[]; };
 
-layout(push_constant) uniform P { uvec2 x, add, w, xo, q256, q32; uint d; float eps; } p;
+layout(push_constant) uniform P { uvec2 x, add, w, xo, q256, q32, xn; uint d; float eps; } p;
 
 /* The workgroup's sum: each subgroup's in one operation, then the
    subgroups' in a fixed order. */
@@ -96,6 +97,8 @@ void main()
         precise float vs = xv * scale;
         v = vs * Wt.v[e];
     }
+    if (set(p.xn))
+        F(p.xn).v[xo0 + e] = v;
     /* the maxima of the groups of 32 and of the block */
     float mc = subgroupClusteredMax(abs(v), 8u);
     if (t % 8u == 0u)

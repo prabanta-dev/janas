@@ -1,0 +1,75 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+   Copyright (C) 2026 Maurizio Cammalleri */
+#version 450
+// The fast prompt for weights left as they are, f32 (KIND 0) or bf16 (1):
+// the per-layer branches of Gemma 4's E2B and E4B (gpu.c
+// janas_gpu_dense_mm). Tiles of 64 rows by 64 vectors, 16 columns staged
+// per barrier, each invocation 4 rows by 4 vectors. y[v * ys + r] = scale x
+// the dot product of row r with vector v (vectors cols floats apart). NOT
+// bit for bit with the CPU: summed in another order.
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+
+layout(local_size_x = 256) in;
+layout(constant_id = 0) const uint NV = 8; // unused
+layout(constant_id = 1) const uint SG = 8; // unused
+layout(constant_id = 2) const uint KIND = 0;
+
+const uint BM = 64u, BN = 64u, BK = 16u;
+
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer F1 { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer U1 { uint v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer FO { float v[]; };
+
+layout(push_constant) uniform P { uvec2 w, x, y; uint rows, cols, nv, ys; float scale; } p;
+
+shared float sa[BK * BM];
+shared float sb[BK * BN];
+
+// weight k of row r
+float wt(uint r, uint k)
+{
+    uint i = r * p.cols + k;
+    if (KIND == 0u)
+        return F1(p.w).v[i];
+    uint u = U1(p.w).v[i >> 1];
+    return uintBitsToFloat((i & 1u) != 0u ? u & 0xffff0000u : u << 16);
+}
+
+void main()
+{
+    F1 X = F1(p.x);
+    FO Y = FO(p.y);
+    uint id = gl_LocalInvocationID.x;
+    uint r0 = gl_WorkGroupID.x * BM, v0 = gl_WorkGroupID.y * BN;
+    uint tr = id % 16u, tc = id / 16u;
+    uint ld = id / 4u, kq = (id % 4u) * 4u; // staging: a row (vector), 4 columns
+    uint rl = min(r0 + ld, p.rows - 1u), vl = min(v0 + ld, p.nv - 1u);
+    float acc[16];
+    [[unroll]] for (uint i = 0; i < 16u; i++) acc[i] = 0.0;
+    for (uint k0 = 0; k0 < p.cols; k0 += BK) {
+        [[unroll]] for (uint i = 0; i < 4u; i++) {
+            sa[(kq + i) * BM + ld] = wt(rl, k0 + kq + i);
+            sb[(kq + i) * BN + ld] = X.v[vl * p.cols + k0 + kq + i];
+        }
+        barrier();
+        [[unroll]] for (uint kk = 0; kk < BK; kk++) {
+            float a[4], b[4];
+            [[unroll]] for (uint i = 0; i < 4u; i++) {
+                a[i] = sa[kk * BM + tr * 4u + i];
+                b[i] = sb[kk * BN + tc * 4u + i];
+            }
+            [[unroll]] for (uint i = 0; i < 4u; i++)
+                [[unroll]] for (uint j = 0; j < 4u; j++)
+                    acc[i * 4u + j] += a[i] * b[j];
+        }
+        barrier();
+    }
+    [[unroll]] for (uint i = 0; i < 4u; i++)
+        [[unroll]] for (uint j = 0; j < 4u; j++) {
+            uint row = r0 + tr * 4u + i, v = v0 + tc * 4u + j;
+            if (row < p.rows && v < p.nv)
+                Y.v[v * p.ys + row] = acc[i * 4u + j] * p.scale;
+        }
+}

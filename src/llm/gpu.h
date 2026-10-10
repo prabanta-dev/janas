@@ -103,6 +103,33 @@ int janas_gpu_finish(struct janas_gpu *g, int *waited);
 void janas_gpu_matvec_group(struct janas_gpu *g, struct janas_pool *pool,
                             const struct janas_matvec_task *tasks, size_t n);
 
+/*
+ * The fast prompt's product of weights left as they are, f32 (bf16 0) or
+ * bf16 (1), rows x cols, with n vectors of cols floats in x: y[v * rows + r]
+ * = scale x row r . vector v, on the GPU alone, waited for. Only for n of
+ * JANAS_GPU_FAST_N and more, cols a multiple of 16, and w, x and y in memory
+ * the GPU holds; 0, or -1 with nothing written (the caller computes it).
+ */
+int janas_gpu_dense_mm(struct janas_gpu *g, int bf16, const void *w,
+                       const float *x, float *y, size_t rows, size_t cols,
+                       size_t n, float scale);
+
+/*
+ * Whether the fast prompt is on (unless JANAS_GPU_FAST_PROMPT=0): blocks of
+ * JANAS_GPU_FAST_N vectors and more of the types it has shaders for go to
+ * the GPU whole, rounded group by group - close to the CPU's results, not
+ * bit for bit - and, so that a prompt always gives the same results, every
+ * such block goes to the GPU, whatever the tuner would choose.
+ */
+/* 64: a mixture's experts get some 16 tokens each of a block of 256, too
+   few to fill a tile of 64 - forced whole onto the GPU, Qwen3-30B-A3B read
+   a prompt at 84 tokens/s instead of 97 (9 Oct 2026) */
+#define JANAS_GPU_FAST_N 64
+int janas_gpu_fast_prompt(void);
+/* For the passes that follow: only the fast prompt's products on the GPU,
+   the rest on the CPU (a pass the tuner gave the CPU alone). */
+void janas_gpu_set_only_fast(struct janas_gpu *g, int on);
+
 /* Keeps the GPU out of its sleep states (an empty dispatch every 0.5 ms,
    JANAS_GPU_KEEPALIVE_US) while on: for the passes that use it. */
 void janas_gpu_keep_awake(struct janas_gpu *g, int on);

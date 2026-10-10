@@ -306,12 +306,8 @@ int32_t janas_llm_open(const char *path, const struct janas_llm_params *pp,
     uint32_t ring = 0;
     snprintf(key, sizeof(key), "%.32s.attention.sliding_window", arch);
     if (janas_jns_meta_u32(&j, key, &window) == 0 && window) {
-        const char *pb = getenv("JANAS_PREFILL_BLOCK"),
-                   *rg = getenv("JANAS_SWA_RING");
-        long blk = pb ? atol(pb) : 256;
-        ring = janas_attn_ring_positions(window, blk < 64     ? 64
-                                                 : blk > 4096 ? 4096
-                                                              : (uint32_t)blk);
+        const char *rg = getenv("JANAS_SWA_RING");
+        ring = janas_attn_ring_positions(window, janas_llm_prefill_block(&j));
         if (ring >= p.n_ctx || (rg && atoi(rg) == 0))
             ring = 0;
     }
@@ -388,8 +384,9 @@ int32_t janas_llm_open(const char *path, const struct janas_llm_params *pp,
     }
     snprintf(key, sizeof(key), "%.32s.expert_used_count", arch);
     janas_jns_meta_u32(&j, key, &k_used);
-    const char *pb = getenv("JANAS_PREFILL_BLOCK");
-    uint64_t blk = pb && atol(pb) > 256 ? (uint64_t)atol(pb) : 256;
+    uint64_t blk = janas_llm_prefill_block(&j);
+    if (blk < 256)
+        blk = 256;
     uint64_t scratch =
         blk * (((uint64_t)k_used + 1) * (3ull * ff + embd) + 32ull * embd) *
         sizeof(float);
@@ -688,12 +685,15 @@ int32_t janas_llm_describe(const janas_llm *llm, char *buf, int32_t cap,
     if (janas_llm_model_gpu(llm->m)) {
         /* which passes it is given, in the words /mode uses for them */
         int use = janas_llm_model_gpu_used(llm->m);
+        if (janas_llm_model_gpu_prompts(llm->m))
+            use |= 1 << 2; /* the fast prompt: every block */
         if (!use)
             gpu = ", GPU present (not used)";
         else {
-            const char *where[3] = {"single tokens", "draft checks", "blocks"};
-            char list[64] = "";
-            for (int k = 0; k < 3; k++)
+            const char *where[4] = {"single tokens", "draft checks", "blocks",
+                                    "short blocks"};
+            char list[96] = "";
+            for (int k = 0; k < 4; k++)
                 if (use & (1 << k))
                     snprintf(list + strlen(list), sizeof(list) - strlen(list),
                              "%s%s", list[0] ? " and " : "", where[k]);

@@ -1,0 +1,29 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+   Copyright (C) 2026 Maurizio Cammalleri */
+#version 450
+// After gdn_conv.comp: the layer's convolution state for the next call,
+// the block's last d - 1 rows of mixed (n >= d - 1), into the half the
+// position buffer's word 2 names. Apart from gdn_conv.comp, which may still
+// read the state when the two halves are one (a later piece of a block).
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+
+layout(local_size_x = 256) in;
+
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer R { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer S { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer RP { uint v[]; };
+
+layout(push_constant) uniform P { uvec2 mixed, state, pos; uint cc, d, hs, so, n; } p;
+
+void main()
+{
+    uint c = gl_WorkGroupID.x * 256u + gl_LocalInvocationID.x;
+    if (c >= p.cc)
+        return;
+    R M = R(p.mixed);
+    S St = S(p.state);
+    uint base = RP(p.pos).v[2] * p.hs + p.so;
+    for (uint k = 0; k + 1u < p.d; k++)
+        St.v[base + k * p.cc + c] = M.v[(p.n - p.d + 1u + k) * p.cc + c];
+}

@@ -1,35 +1,27 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
    Copyright (C) 2026 Maurizio Cammalleri */
 #version 450
-// Attention of one token, second step, with the quantization of its output
-// for the products that follow: one workgroup per block of 256 of the
-// n_head x hd outputs, a value a thread (element e: head e / hd, dimension
-// e % hd). The runs of attn_decode.comp joined in their order - the
-// largest maximum M, each run's sums and l scaled by e^(m - M), the sums
-// divided by the total - then quantized to Q8_K as norm_quant.comp does
-// (q256, and q32 if set): no dispatch of its own between the two. With
-// gate set (qwen3.5's attention), each output times sigmoid of its gate
-// (gs floats a token) before.
+// A Gated DeltaNet layer's last step before its output product, as
+// model_rec.c's gate_worker does: each head's raw output (ds = 128 numbers)
+// normalized by its RMS and the weights w (ds), times SiLU(z), then
+// quantized to Q8_K as norm_quant.comp does (q256, and q32 if set). A
+// workgroup per block of 256 (two heads) and token (y), a number a thread.
 #extension GL_EXT_buffer_reference : require
+#extension GL_KHR_shader_subgroup_arithmetic : require
 #extension GL_KHR_shader_subgroup_basic : require
 #extension GL_KHR_shader_subgroup_clustered : require
 #extension GL_EXT_buffer_reference_uvec2 : require
 
 layout(local_size_x = 256) in;
 
-const uint C = 128u; /* positions a run, as attn_decode.comp */
-
-layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer R { float v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer F { float v[]; };
 layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer U { uint v[]; };
-layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer RP { uint v[]; };
 
-layout(push_constant) uniform P {
-    uvec2 part, q256, q32;
-    uint hd, nch, ps; /* ps: floats from a token's runs to the next's */
-    uint gs;  /* the gate's floats a token */
-    uvec2 pos;
-    uvec2 gate;
-} p;
+// att, z: n rows of d floats; w: ds floats
+layout(push_constant) uniform P { uvec2 att, z, w, q256, q32; uint d; float eps; } p;
+
+shared float sq_[256];
+shared float hs_[2];
 
 shared float m8[32];        /* the block's maxima, eight values each */
 shared int s8a[32], s8b[32]; /* and its quants' sums, eight each */
@@ -52,29 +44,23 @@ int q8(float v, float id)
 
 void main()
 {
-    uint t = gl_LocalInvocationID.x, b = gl_WorkGroupID.x, hd = p.hd;
+    uint t = gl_LocalInvocationID.x, b = gl_WorkGroupID.x, j = gl_WorkGroupID.y;
+    uint e = 256u * b + t, o = j * p.d + e;
     U Q = U(p.q256), Q32 = U(p.q32);
-    /* token j of a block (workgroup y): positions 0 .. pos + j */
-    uint j0 = gl_WorkGroupID.y;
-    uint runs = (RP(p.pos).v[0] + j0 + C) / C; /* npos / C, rounded up */
-    R PR = R(p.part);
-    uint e = 256u * b + t, h = e / hd, i = e % hd;
-    uint at = j0 * p.ps + h * p.nch * (hd + 2u);
-    float M = PR.v[at + hd];
-    for (uint c = 1u; c < runs; c++)
-        M = max(M, PR.v[at + c * (hd + 2u) + hd]);
-    float L = 0.0, a = 0.0;
-    for (uint c = 0; c < runs; c++) {
-        uint o = at + c * (hd + 2u);
-        float f = exp(PR.v[o + hd] - M);
-        L += PR.v[o + hd + 1u] * f;
-        a += PR.v[o + i] * f;
+    float a = F(p.att).v[o];
+    sq_[t] = a * a;
+    barrier();
+    if (t < 2u) { /* each head's sum of squares, in order */
+        float s = 0.0;
+        for (uint i = 0; i < 128u; i++)
+            s += sq_[128u * t + i];
+        hs_[t] = s;
     }
-    float v = a / L;
-    if (set(p.gate)) {
-        float gv = R(p.gate).v[j0 * p.gs + e];
-        v *= 1.0 / (1.0 + exp(-gv));
-    }
+    barrier();
+    precise float sc = 1.0 / sqrt(hs_[t / 128u] / 128.0 + p.eps);
+    precise float vs = a * sc;
+    float z = F(p.z).v[o];
+    float v = vs * F(p.w).v[e % 128u] * (z / (1.0 + exp(-z)));
     /* the maxima of the groups of 32 and of the block */
     float mc = subgroupClusteredMax(abs(v), 8u);
     if (t % 8u == 0u)
@@ -93,7 +79,7 @@ void main()
     /* four quants a word, from four neighbouring threads */
     uint wa = subgroupClusteredOr((uint(qa) & 0xffu) << (8u * (t % 4u)), 4u);
     uint wb = subgroupClusteredOr((uint(qb) & 0xffu) << (8u * (t % 4u)), 4u);
-    uint base = (j0 * gl_NumWorkGroups.x + b) * 80u; /* 320 bytes a block */
+    uint base = (j * gl_NumWorkGroups.x + b) * 80u; /* 320 bytes a block */
     if (t % 4u == 0u) {
         Q.v[base + t / 4u] = wa;
         if (set(p.q32))

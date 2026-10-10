@@ -478,7 +478,7 @@ struct janas_expert_cache *janas_expert_cache_create(const struct janas_jns *j,
     char path[64];
     snprintf(path, sizeof(path), "/proc/self/fd/%d", j->fd);
     c->fd = open(path, O_RDONLY | O_DIRECT | O_CLOEXEC);
-    size_t arena_bytes = n_slots * slot_bytes;
+    size_t arena_bytes = n_slots * slot_bytes + JANAS_ARENA_GUARD;
     c->arena = aligned_alloc(JANAS_JNS_ALIGN, arena_bytes);
     c->where = malloc(n_keys * sizeof(int32_t));
     c->key = malloc(n_slots * sizeof(int64_t));
@@ -758,7 +758,14 @@ const uint8_t *janas_expert_cache_resident(struct janas_expert_cache *c,
     pthread_mutex_unlock(&c->api_lock);
     if (busy || !full)
         return NULL;
-    *bytes = (uint64_t)c->n_slots * c->slot_bytes;
+    *bytes = (uint64_t)c->n_slots * c->slot_bytes + JANAS_ARENA_GUARD;
+    return c->arena;
+}
+
+const uint8_t *janas_expert_cache_arena(const struct janas_expert_cache *c,
+                                        uint64_t *bytes)
+{
+    *bytes = (uint64_t)c->n_slots * c->slot_bytes + JANAS_ARENA_GUARD;
     return c->arena;
 }
 

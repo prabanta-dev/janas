@@ -6,6 +6,7 @@
  */
 #include "gpu_token.h"
 
+#include <math.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,10 +22,15 @@
 #include "qk_rope.h"     /* janas_spv_qk_rope */
 #include "attn_decode.h" /* janas_spv_attn_decode */
 #include "attn_merge.h"  /* janas_spv_attn_merge */
+#include "gdn_conv.h"    /* janas_spv_gdn_conv */
+#include "gdn_cstate.h"  /* janas_spv_gdn_cstate */
+#include "gdn_l2.h"      /* janas_spv_gdn_l2 */
+#include "gdn_rec.h"     /* janas_spv_gdn_rec */
+#include "gdn_gate.h"    /* janas_spv_gdn_gate */
 
 /* The push constants of each shader, laid out as its GLSL block. */
 struct push_nq {
-    uint32_t x[2], add[2], w[2], xo[2], q256[2], q32[2];
+    uint32_t x[2], add[2], w[2], xo[2], q256[2], q32[2], xn[2];
     uint32_t d;
     float eps;
 };
@@ -43,8 +49,38 @@ struct push_at {
 };
 struct push_am {
     uint32_t part[2], q256[2], q32[2];
-    uint32_t hd, nch, ps, pad;
+    uint32_t hd, nch, ps, gs;
     uint32_t pos[2]; /* 8-byte aligned, as the GLSL block puts it */
+    uint32_t gate[2];
+};
+/* the Gated DeltaNet shaders (gdn_*.comp) */
+struct push_gconv {
+    uint32_t mixed[2], out[2], w[2], state[2], pos[2];
+    uint32_t cc, d, hs, so;
+};
+struct push_gcst {
+    uint32_t mixed[2], state[2], pos[2];
+    uint32_t cc, d, hs, so, n;
+};
+struct push_gl2 {
+    uint32_t x[2];
+    uint32_t cc;
+    float eps;
+};
+struct push_grec {
+    uint32_t co[2], ba[2], att[2], state[2], pos[2], dt[2], a[2];
+    uint32_t cc, nv, nkh, n, hs, so, vmap_mod;
+    float scale;
+};
+struct push_ggate {
+    uint32_t att[2], z[2], w[2], q256[2], q32[2];
+    uint32_t d;
+    float eps;
+};
+struct push_dm { /* gpu.c's dense_mm.comp */
+    uint32_t w[2], x[2], y[2];
+    uint32_t rows, cols, nv, ys;
+    float scale;
 };
 /* The attention's positions a run (attn_decode.comp C), and the shapes its
    shared memory takes: the query heads of a KV head times hd, and times a
@@ -72,10 +108,11 @@ _Static_assert(sizeof(struct push_at) <= JANAS_G_PUSH_BYTES, "push size");
 _Static_assert(offsetof(struct push_qk, pos) % 8 == 0, "push layout");
 _Static_assert(offsetof(struct push_at, pos) % 8 == 0, "push layout");
 _Static_assert(offsetof(struct push_am, pos) % 8 == 0, "push layout");
+_Static_assert(sizeof(struct push_grec) <= JANAS_G_PUSH_BYTES, "push size");
 /* The most tokens a block takes (the model's own blocks: model.h
    JANAS_LLM_MAX_BLOCK), and the memory the attention's runs may take for
    them. */
-#define TOK_MAX_BLOCK 64
+#define TOK_MAX_BLOCK 256
 #define TOK_PART_BUDGET ((size_t)64 << 20)
 
 /* JANAS_GPU_TOKEN_PROFILE=1: the GPU's own timestamps after each phase of
@@ -105,10 +142,13 @@ struct janas_gpu_tok {
        the position is read from the buffer at o_pos, so every block of n
        tokens submits the same commands */
     uint32_t nb;
-    VkCommandBuffer cb[TOK_MAX_BLOCK + 1][3];
-    int prof;       /* timestamps in the commands being recorded (n = 1) */
-    VkQueryPool qp; /* timestamps, if profiling */
-    uint32_t n_ts;  /* written this token */
+    /* [n][all][hidden wanted] */
+    VkCommandBuffer cb[TOK_MAX_BLOCK + 1][3][2];
+    uint32_t cb_nch[TOK_MAX_BLOCK + 1][3]
+                   [2]; /* the runs each was recorded for */
+    int prof;           /* timestamps in the commands being recorded (n = 1) */
+    VkQueryPool qp;     /* timestamps, if profiling */
+    uint32_t n_ts;      /* written this token */
     uint8_t ph_of[MAX_TS]; /* the phase each timestamp closes */
     double ph_ns[PH_N];
     double wall_ns; /* submission to the fence, as the CPU sees it */
@@ -116,14 +156,30 @@ struct janas_gpu_tok {
     uint64_t tokens;
     VkShaderModule sm_nq, sm_qk, sm_at, sm_am;
     VkPipeline p_nq, p_qk, p_at, p_am;
+    /* qwen3.5's recurrent layers */
+    VkShaderModule sm_gc, sm_gs, sm_gl, sm_gr, sm_gg;
+    VkPipeline p_gc, p_gs, p_gl, p_gr, p_gg;
+    size_t *par;      /* per layer: its parameters' offsets in buf (PAR_*) */
     struct stage buf; /* every intermediate, one allocation */
     /* offsets into buf, each nb tokens' worth */
-    uint32_t nch;    /* the attention's runs of positions, for the cache */
-    size_t part_tok; /* a token's runs, floats */
+    uint32_t nch;       /* the attention's runs of positions, for the cache */
+    size_t part_floats; /* room for the runs of a block, floats */
+    uint32_t rec_nch;   /* the runs a token of the block being recorded has */
     size_t o_part;
     size_t o_x, o_x1, o_q256, o_q32, o_qkv, o_ywo, o_gu, o_h, o_yd, o_rope,
         o_logits, o_pos;
+    /* qwen3.5: the normalized input (f32), q|k|v and z of the recurrent
+       layers, their convolution's output, beta and alpha, their raw
+       output, the query's gates, the final hidden states */
+    size_t o_xnf, o_mix, o_z, o_conv, o_ba, o_att, o_gate, o_hid;
 };
+
+/* A recurrent layer's parameters copied into buf: beta then alpha (2 nv x
+   dm), the convolution (d_conv x conv_ch), dt, A (nv), the norm (ds) */
+enum { PAR_BA, PAR_CONV, PAR_DT, PAR_A, PAR_NORM, PAR_N };
+
+static void sync_range(struct janas_gpu *g, struct janas_gpu_tok *t, size_t off,
+                       size_t bytes, int flush);
 
 int janas_gpu_shares_host(const struct janas_gpu *g)
 {
@@ -164,13 +220,51 @@ static int check_model(const struct janas_gpu *g,
         md->n_head / md->n_kv * md->hd > ATT_MAXQ ||
         md->n_head / md->n_kv * ATT_RUN > ATT_MAXS)
         return fail(err, len, "a shape the token's shaders do not take");
+    if (md->n_rec &&
+        (md->ds != 128 || md->conv_ch % 256 || md->d_inner % 256 ||
+         md->d_inner != md->nv * md->ds || md->nv > 64 || !md->nkh ||
+         md->nv % md->nkh || md->d_conv < 2 || md->d_conv > 8 ||
+         md->d_inner > md->dm * 4 ||
+         md->conv_ch != 2 * md->nkh * md->ds + md->d_inner ||
+         !addr_of(g, md->ssm_state,
+                  2 * (size_t)md->n_rec * md->nv * md->ds * md->ds * 2) ||
+         !addr_of(g, md->conv_state,
+                  2 * (size_t)md->n_rec * (md->d_conv - 1) * md->conv_ch * 4)))
+        return fail(err, len,
+                    "recurrent layers the token's shaders do not take");
     for (uint32_t l = 0; l < md->n_layer; l++) {
         const struct janas_gpu_tok_layer *ly = &md->layers[l];
+        if (ly->rec) {
+            const struct janas_matvec_task *r[6] = {&ly->ssm_qkv, &ly->ssm_z,
+                                                    &ly->ssm_out, &ly->gate,
+                                                    &ly->up,      &ly->down};
+            for (int i = 0; i < 6; i++)
+                if (!janas_gpu_can(g, r[i])) {
+                    snprintf(err, len,
+                             "layer %u: a weight the GPU cannot compute "
+                             "(product %d, type %d)",
+                             l, i, r[i]->type);
+                    return -1;
+                }
+            if (janas_g_x_in_32(ly->down.type))
+                return fail(err, len, "a down matrix in blocks of 32");
+            if (!addr_of(g, ly->attn_norm, md->dm * 4) ||
+                !addr_of(g, ly->ffn_norm, md->dm * 4))
+                return fail(err, len, "a norm out of the GPU's reach");
+            continue;
+        }
         const struct janas_matvec_task *t[7] = {
             &ly->wq, &ly->wk, &ly->wv, &ly->wo, &ly->gate, &ly->up, &ly->down};
         for (int i = 0; i < 7; i++)
-            if (!janas_gpu_can(g, t[i]))
-                return fail(err, len, "a weight the GPU cannot compute");
+            if (!janas_gpu_can(g, t[i])) {
+                snprintf(err, len,
+                         "layer %u: a weight the GPU cannot compute (product "
+                         "%d, type %d)",
+                         l, i, t[i]->type);
+                return -1;
+            }
+        if (md->gated_q && (ly->wq.type == JANAS_Q6_K_P || ly->wq.plane[0]))
+            return fail(err, len, "a gated query in planes");
         if (janas_g_x_in_32(ly->down.type))
             return fail(err, len, "a down matrix in blocks of 32");
         size_t cache = (size_t)md->n_kv * md->cap * md->hd;
@@ -211,11 +305,15 @@ struct janas_gpu_tok *janas_gpu_tok_create(struct janas_gpu *g,
     size_t at = 0;
     /* the attention's runs: per token, query head and run, hd sums, m and
        l; as many tokens a block as they leave room for */
+    /* laid out for the runs the positions reached so far have, not for
+       the whole cache's (janas_gpu_tok_block_at): a prompt's blocks stay
+       long at any context - sized for the cache, 16384 positions left
+       Qwen3-4B 30 tokens a block, too few for the fast prompt's tiles */
     t->nch = (md->cap + ATT_RUN - 1) / ATT_RUN;
-    t->part_tok = (size_t)md->n_head * t->nch * (md->hd + 2);
-    size_t nb = TOK_PART_BUDGET / (t->part_tok * 4);
-    t->nb = nb < 1 ? 1 : nb > TOK_MAX_BLOCK ? TOK_MAX_BLOCK : (uint32_t)nb;
-    nb = t->nb;
+    size_t full = (size_t)md->n_head * t->nch * (md->hd + 2);
+    t->part_floats = TOK_PART_BUDGET / 4 > full ? TOK_PART_BUDGET / 4 : full;
+    t->nb = TOK_MAX_BLOCK;
+    size_t nb = t->nb;
     t->o_x = take(&at, nb * md->dm * 4);
     t->o_x1 = take(&at, nb * md->dm * 4); /* the residual's other buffer */
     t->o_q256 = take(&at, nb * big / JANAS_QK * 320);
@@ -228,7 +326,34 @@ struct janas_gpu_tok *janas_gpu_tok_create(struct janas_gpu *g,
     t->o_rope = take(&at, nb * md->n_rot * 4);
     t->o_logits = take(&at, nb * md->n_vocab * 4);
     t->o_pos = take(&at, 16);
-    t->o_part = take(&at, nb * t->part_tok * 4);
+    t->o_part = take(&at, t->part_floats * 4);
+    t->o_xnf = take(&at, nb * md->dm * 4);
+    t->o_hid = take(&at, nb * md->dm * 4);
+    if (md->gated_q)
+        t->o_gate = take(&at, nb * qd * 4);
+    if (md->n_rec) {
+        t->o_mix = take(&at, nb * md->conv_ch * 4);
+        t->o_z = take(&at, nb * md->d_inner * 4);
+        t->o_conv = take(&at, nb * md->conv_ch * 4);
+        t->o_ba = take(&at, nb * 2 * md->nv * 4);
+        t->o_att = take(&at, nb * md->d_inner * 4);
+        t->par = calloc((size_t)md->n_layer * PAR_N, sizeof(size_t));
+        if (!t->par) {
+            fail(err, err_len, "out of memory");
+            janas_gpu_tok_destroy(g, t);
+            return NULL;
+        }
+        for (uint32_t l = 0; l < md->n_layer; l++) {
+            if (!md->layers[l].rec)
+                continue;
+            size_t *pr = t->par + (size_t)l * PAR_N;
+            pr[PAR_BA] = take(&at, 2 * (size_t)md->nv * md->dm * 4);
+            pr[PAR_CONV] = take(&at, (size_t)md->d_conv * md->conv_ch * 4);
+            pr[PAR_DT] = take(&at, md->nv * 4);
+            pr[PAR_A] = take(&at, md->nv * 4);
+            pr[PAR_NORM] = take(&at, md->ds * 4);
+        }
+    }
     /* cached for the host (the logits are read on the CPU: 2.5 ms a token
        from uncached memory on the development laptop), flushed and
        invalidated by hand where it is not coherent */
@@ -243,10 +368,41 @@ struct janas_gpu_tok *janas_gpu_tok_create(struct janas_gpu *g,
             &t->p_at, md->n_head / md->n_kv, att_sg()) == 0 ||
         janas_g_make_pipeline(g, janas_spv_attn_merge,
                               sizeof(janas_spv_attn_merge), &t->sm_am, &t->p_am,
-                              0) != VK_SUCCESS) {
+                              0) != VK_SUCCESS ||
+        (md->n_rec &&
+         (janas_g_make_pipeline(g, janas_spv_gdn_conv,
+                                sizeof(janas_spv_gdn_conv), &t->sm_gc, &t->p_gc,
+                                0) != VK_SUCCESS ||
+          janas_g_make_pipeline(g, janas_spv_gdn_cstate,
+                                sizeof(janas_spv_gdn_cstate), &t->sm_gs,
+                                &t->p_gs, 0) != VK_SUCCESS ||
+          janas_g_make_pipeline(g, janas_spv_gdn_l2, sizeof(janas_spv_gdn_l2),
+                                &t->sm_gl, &t->p_gl, 0) != VK_SUCCESS ||
+          janas_g_make_pipeline(g, janas_spv_gdn_rec, sizeof(janas_spv_gdn_rec),
+                                &t->sm_gr, &t->p_gr, 0) != VK_SUCCESS ||
+          janas_g_make_pipeline(g, janas_spv_gdn_gate,
+                                sizeof(janas_spv_gdn_gate), &t->sm_gg, &t->p_gg,
+                                0) != VK_SUCCESS ||
+          !g->pipe_dm[0]))) {
         fail(err, err_len, "cannot create the token's buffers or shaders");
         janas_gpu_tok_destroy(g, t);
         return NULL;
+    }
+    /* the recurrent layers' parameters, copied once */
+    for (uint32_t l = 0; md->n_rec && l < md->n_layer; l++) {
+        const struct janas_gpu_tok_layer *ly = &md->layers[l];
+        if (!ly->rec)
+            continue;
+        const size_t *pr = t->par + (size_t)l * PAR_N;
+        size_t nvd = (size_t)md->nv * md->dm * 4;
+        memcpy(t->buf.map + pr[PAR_BA], ly->ssm_beta, nvd);
+        memcpy(t->buf.map + pr[PAR_BA] + nvd, ly->ssm_alpha, nvd);
+        memcpy(t->buf.map + pr[PAR_CONV], ly->conv_w,
+               (size_t)md->d_conv * md->conv_ch * 4);
+        memcpy(t->buf.map + pr[PAR_DT], ly->dt, md->nv * 4);
+        memcpy(t->buf.map + pr[PAR_A], ly->ssm_a, md->nv * 4);
+        memcpy(t->buf.map + pr[PAR_NORM], ly->ssm_norm, md->ds * 4);
+        sync_range(g, t, pr[PAR_BA], pr[PAR_NORM] + md->ds * 4 - pr[PAR_BA], 1);
     }
     const char *pe = getenv("JANAS_GPU_TOKEN_PROFILE");
     if (pe && atoi(pe) > 0 && g->ts_period > 0) {
@@ -285,11 +441,15 @@ void janas_gpu_tok_destroy(struct janas_gpu *g, struct janas_gpu_tok *t)
     }
     for (uint32_t n = 0; n <= TOK_MAX_BLOCK; n++)
         for (int a = 0; a < 3; a++)
-            if (t->cb[n][a])
-                g->vkFreeCommandBuffers(g->dev, g->cp, 1, &t->cb[n][a]);
-    VkPipeline p[4] = {t->p_nq, t->p_qk, t->p_at, t->p_am};
-    VkShaderModule s[4] = {t->sm_nq, t->sm_qk, t->sm_at, t->sm_am};
-    for (int i = 0; i < 4; i++) {
+            for (int h = 0; h < 2; h++)
+                if (t->cb[n][a][h])
+                    g->vkFreeCommandBuffers(g->dev, g->cp, 1, &t->cb[n][a][h]);
+    VkPipeline p[9] = {t->p_nq, t->p_qk, t->p_at, t->p_am, t->p_gc,
+                       t->p_gs, t->p_gl, t->p_gr, t->p_gg};
+    VkShaderModule s[9] = {t->sm_nq, t->sm_qk, t->sm_at, t->sm_am, t->sm_gc,
+                           t->sm_gs, t->sm_gl, t->sm_gr, t->sm_gg};
+    free(t->par);
+    for (int i = 0; i < 9; i++) {
         if (p[i])
             g->vkDestroyPipeline(g->dev, p[i], NULL);
         if (s[i])
@@ -351,10 +511,11 @@ static void push(struct janas_gpu *g, const void *pc, size_t bytes)
 static void rec_norm_quant(struct janas_gpu *g, struct janas_gpu_tok *t,
                            VkPipeline *bound, VkDeviceAddress x,
                            VkDeviceAddress add, VkDeviceAddress w,
-                           VkDeviceAddress xo, uint32_t d, float eps,
-                           uint32_t n)
+                           VkDeviceAddress xo, VkDeviceAddress xn, uint32_t d,
+                           float eps, uint32_t n)
 {
     struct push_nq pc = {.d = d, .eps = eps};
+    janas_g_push_addr(pc.xn, xn);
     janas_g_push_addr(pc.x, x);
     janas_g_push_addr(pc.add, add);
     janas_g_push_addr(pc.w, w);
@@ -389,9 +550,123 @@ static int rec_product(struct janas_gpu *g, struct janas_gpu_tok *t,
    comes from the buffer.
    A single token takes the layers' GPU copies (JANAS_GPU_REPACK), a block
    the weights as they are (the copies' shaders take one vector). */
+/* The runs of ATT_RUN positions npos positions take, rounded up to a power
+   of two (so that a prompt's blocks record their commands again only a few
+   times), at most the cache's. */
+static uint32_t runs_for(const struct janas_gpu_tok *t, uint32_t npos)
+{
+    uint32_t c = (npos + ATT_RUN - 1) / ATT_RUN, r = 1;
+    while (r < c)
+        r *= 2;
+    return r < t->nch ? r : t->nch;
+}
+
+/* A token's runs, floats, at nch runs a head. */
+static size_t part_tok(const struct janas_gpu_tok *t,
+                       const struct janas_gpu_tok_model *md, uint32_t nch)
+{
+    (void)t;
+    return (size_t)md->n_head * nch * (md->hd + 2);
+}
+
+/* A Gated DeltaNet layer (qwen3.5) on the block normalized in q256 / q32
+   and XNF: its output into YWO, as model_rec.c's janas_m_rec_layer. */
+static int rec_gdn(struct janas_gpu *g, struct janas_gpu_tok *t,
+                   const struct janas_gpu_tok_model *md,
+                   const struct janas_gpu_tok_layer *ly, uint32_t l,
+                   VkPipeline *bound, VkDeviceAddress YWO, uint32_t n)
+{
+    VkDeviceAddress B = t->buf.addr, MIX = B + t->o_mix, Z = B + t->o_z,
+                    CONV = B + t->o_conv, BA = B + t->o_ba, ATT = B + t->o_att,
+                    POS = B + t->o_pos;
+    const size_t *pr = t->par + (size_t)l * PAR_N;
+    uint32_t cc = md->conv_ch;
+    /* q|k|v (the convolution's channels) and z */
+    if (rec_product(g, t, bound, &ly->ssm_qkv, 0, MIX, n, cc) != 0 ||
+        rec_product(g, t, bound, &ly->ssm_z, 0, Z, n, md->d_inner) != 0)
+        return -1;
+    /* beta then alpha, per token, from the normalized input at f32 */
+    struct push_dm pd = {.rows = 2 * md->nv,
+                         .cols = md->dm,
+                         .nv = n,
+                         .ys = 2 * md->nv,
+                         .scale = 1.0f};
+    janas_g_push_addr(pd.w, B + pr[PAR_BA]);
+    janas_g_push_addr(pd.x, B + t->o_xnf);
+    janas_g_push_addr(pd.y, BA);
+    bind(g, bound, g->pipe_dm[0]);
+    push(g, &pd, sizeof(pd));
+    g->vkCmdDispatch(g->cb, (2 * md->nv + 63) / 64, (n + 63) / 64, 1);
+    janas_g_compute_barrier(g);
+    /* the convolution, then the state it leaves, the q and k heads' norms */
+    uint32_t hs_c = md->n_rec * (md->d_conv - 1) * cc,
+             so_c = ly->slot * (md->d_conv - 1) * cc;
+    VkDeviceAddress CS = addr_of(g, md->conv_state, (size_t)hs_c * 8);
+    struct push_gconv pc = {.cc = cc, .d = md->d_conv, .hs = hs_c, .so = so_c};
+    janas_g_push_addr(pc.mixed, MIX);
+    janas_g_push_addr(pc.out, CONV);
+    janas_g_push_addr(pc.w, B + pr[PAR_CONV]);
+    janas_g_push_addr(pc.state, CS);
+    janas_g_push_addr(pc.pos, POS);
+    bind(g, bound, t->p_gc);
+    push(g, &pc, sizeof(pc));
+    g->vkCmdDispatch(g->cb, cc / 256, n, 1);
+    janas_g_compute_barrier(g);
+    struct push_gcst ps = {
+        .cc = cc, .d = md->d_conv, .hs = hs_c, .so = so_c, .n = n};
+    janas_g_push_addr(ps.mixed, MIX);
+    janas_g_push_addr(ps.state, CS);
+    janas_g_push_addr(ps.pos, POS);
+    bind(g, bound, t->p_gs);
+    push(g, &ps, sizeof(ps));
+    g->vkCmdDispatch(g->cb, cc / 256, 1, 1);
+    struct push_gl2 pl = {.cc = cc, .eps = md->eps};
+    janas_g_push_addr(pl.x, CONV);
+    bind(g, bound, t->p_gl);
+    push(g, &pl, sizeof(pl));
+    g->vkCmdDispatch(g->cb, 2 * md->nkh, n, 1);
+    janas_g_compute_barrier(g);
+    /* the recurrence, then each head's norm, gate and quantization */
+    uint32_t hs_s = md->n_rec * md->nv * md->ds * md->ds,
+             so_s = ly->slot * md->nv * md->ds * md->ds;
+    struct push_grec pg = {.cc = cc,
+                           .nv = md->nv,
+                           .nkh = md->nkh,
+                           .n = n,
+                           .hs = hs_s,
+                           .so = so_s,
+                           .vmap_mod = (uint32_t)md->vmap_mod,
+                           .scale = 1.0f / sqrtf((float)md->ds)};
+    janas_g_push_addr(pg.co, CONV);
+    janas_g_push_addr(pg.ba, BA);
+    janas_g_push_addr(pg.att, ATT);
+    janas_g_push_addr(pg.state, addr_of(g, md->ssm_state, (size_t)hs_s * 4));
+    janas_g_push_addr(pg.pos, POS);
+    janas_g_push_addr(pg.dt, B + pr[PAR_DT]);
+    janas_g_push_addr(pg.a, B + pr[PAR_A]);
+    bind(g, bound, t->p_gr);
+    push(g, &pg, sizeof(pg));
+    g->vkCmdDispatch(g->cb, md->nv * (md->ds / 16), 1, 1);
+    janas_g_compute_barrier(g);
+    struct push_ggate pq = {.d = md->d_inner, .eps = md->eps};
+    janas_g_push_addr(pq.att, ATT);
+    janas_g_push_addr(pq.z, Z);
+    janas_g_push_addr(pq.w, B + pr[PAR_NORM]);
+    janas_g_push_addr(pq.q256, B + t->o_q256);
+    janas_g_push_addr(pq.q32, B + t->o_q32);
+    bind(g, bound, t->p_gg);
+    push(g, &pq, sizeof(pq));
+    g->vkCmdDispatch(g->cb, md->d_inner / JANAS_QK, n, 1);
+    janas_g_compute_barrier(g);
+    if (rec_product(g, t, bound, &ly->ssm_out, 0, YWO, n, 0) != 0)
+        return -1;
+    janas_g_compute_barrier(g);
+    return 0;
+}
+
 static int record(struct janas_gpu *g, struct janas_gpu_tok *t,
                   const struct janas_gpu_tok_model *md, uint32_t n,
-                  uint32_t first)
+                  uint32_t first, int hid)
 {
     uint32_t qd = md->n_head * md->hd, kvd = md->n_kv * md->hd;
     size_t qs = qd + 2 * kvd;
@@ -424,13 +699,35 @@ static int record(struct janas_gpu *g, struct janas_gpu_tok *t,
         /* the previous layer's feed-forward added, then this one's norm */
         rec_norm_quant(g, t, &bound, X, l ? YD : 0,
                        addr_of(g, ly->attn_norm, md->dm * 4), l ? XN : 0,
-                       md->dm, md->eps, n);
+                       ly->rec ? B + t->o_xnf : 0, md->dm, md->eps, n);
         if (l)
             SW = X, X = XN, XN = SW;
         stamp(g, t, PH_NORM);
-        /* q, k and v of each token side by side, qs floats a token */
-        if (rec_product(g, t, &bound, &ly->wq, 0, QKV, n, qs) != 0 ||
-            rec_product(g, t, &bound, &ly->wk, 0, QKV + (size_t)qd * 4, n,
+        if (ly->rec) {
+            if (rec_gdn(g, t, md, ly, l, &bound, YWO, n) != 0)
+                return -1;
+            goto ffn;
+        }
+        /* q, k and v of each token side by side, qs floats a token; a
+           gated query (qwen3.5) head by head, its gates apart */
+        if (md->gated_q) {
+            size_t rb = (size_t)(md->dm / JANAS_QK) *
+                        janas_qtype_block_size(ly->wq.type);
+            for (uint32_t h = 0; h < md->n_head; h++) {
+                struct janas_matvec_task q = ly->wq, gt = ly->wq;
+                q.rows = gt.rows = md->hd;
+                q.w = (const uint8_t *)ly->wq.w + (size_t)2 * h * md->hd * rb;
+                gt.w = (const uint8_t *)q.w + (size_t)md->hd * rb;
+                if (rec_product(g, t, &bound, &q, 0,
+                                QKV + (size_t)h * md->hd * 4, n, qs) != 0 ||
+                    rec_product(g, t, &bound, &gt, 0,
+                                B + t->o_gate + (size_t)h * md->hd * 4, n,
+                                qd) != 0)
+                    return -1;
+            }
+        } else if (rec_product(g, t, &bound, &ly->wq, 0, QKV, n, qs) != 0)
+            return -1;
+        if (rec_product(g, t, &bound, &ly->wk, 0, QKV + (size_t)qd * 4, n,
                         qs) != 0 ||
             rec_product(g, t, &bound, &ly->wv, 0, QKV + (size_t)(qd + kvd) * 4,
                         n, qs) != 0)
@@ -465,10 +762,10 @@ static int record(struct janas_gpu *g, struct janas_gpu_tok *t,
                              .n_kv = md->n_kv,
                              .hd = md->hd,
                              .cap = md->cap,
-                             .nch = t->nch,
+                             .nch = t->rec_nch,
                              .scale = md->attn_scale,
                              .qs = (uint32_t)qs,
-                             .ps = (uint32_t)t->part_tok};
+                             .ps = (uint32_t)part_tok(t, md, t->rec_nch)};
         janas_g_push_addr(pa.pos, POS);
         janas_g_push_addr(pa.q, QKV);
         janas_g_push_addr(pa.kc, addr_of(g, ly->kc, cache));
@@ -478,13 +775,16 @@ static int record(struct janas_gpu *g, struct janas_gpu_tok *t,
         janas_g_push_addr(pa.part, B + t->o_part);
         bind(g, &bound, t->p_at);
         push(g, &pa, sizeof(pa));
-        g->vkCmdDispatch(g->cb, md->n_kv * t->nch, n, 1);
+        g->vkCmdDispatch(g->cb, md->n_kv * t->rec_nch, n, 1);
         janas_g_compute_barrier(g);
         stamp(g, t, PH_ATTN);
         /* the runs joined and the output quantized for wo, a workgroup a
            block of 256 */
-        struct push_am pm = {
-            .hd = md->hd, .nch = t->nch, .ps = (uint32_t)t->part_tok};
+        struct push_am pm = {.hd = md->hd,
+                             .nch = t->rec_nch,
+                             .ps = (uint32_t)part_tok(t, md, t->rec_nch),
+                             .gs = qd};
+        janas_g_push_addr(pm.gate, md->gated_q ? B + t->o_gate : 0);
         janas_g_push_addr(pm.part, B + t->o_part);
         janas_g_push_addr(pm.q256, B + t->o_q256);
         janas_g_push_addr(pm.q32, B + t->o_q32);
@@ -499,8 +799,9 @@ static int record(struct janas_gpu *g, struct janas_gpu_tok *t,
             return -1;
         janas_g_compute_barrier(g);
         stamp(g, t, PH_WO);
+    ffn:
         rec_norm_quant(g, t, &bound, X, YWO,
-                       addr_of(g, ly->ffn_norm, md->dm * 4), XN, md->dm,
+                       addr_of(g, ly->ffn_norm, md->dm * 4), XN, 0, md->dm,
                        md->eps, n);
         SW = X, X = XN, XN = SW;
         stamp(g, t, PH_NORM);
@@ -538,10 +839,12 @@ static int record(struct janas_gpu *g, struct janas_gpu_tok *t,
     /* the last feed-forward added, the final norm, the output head for
        tokens first .. n - 1 (none: the residual left in X, the next block's
        keys and values already in the cache) */
-    if (first < n) {
+    if (first < n || hid) {
         rec_norm_quant(g, t, &bound, X, YD,
-                       addr_of(g, md->out_norm, md->dm * 4), 0, md->dm, md->eps,
-                       n);
+                       addr_of(g, md->out_norm, md->dm * 4), 0,
+                       hid ? B + t->o_hid : 0, md->dm, md->eps, n);
+    }
+    if (first < n) {
         if (rec_product(g, t, &bound, output,
                         (size_t)first * (md->dm / JANAS_QK) * 320,
                         B + t->o_logits, n - first, 0) != 0)
@@ -564,12 +867,27 @@ uint32_t janas_gpu_tok_max_block(const struct janas_gpu_tok *t)
     return t ? t->nb : 0;
 }
 
+uint32_t janas_gpu_tok_block_at(const struct janas_gpu_tok *t,
+                                const struct janas_gpu_tok_model *md,
+                                uint32_t pos)
+{
+    if (!t)
+        return 0;
+    size_t n = t->part_floats / part_tok(t, md, runs_for(t, pos + t->nb));
+    return n < 1 ? 1 : n > t->nb ? t->nb : (uint32_t)n;
+}
+
 int janas_gpu_tok_run(struct janas_gpu *g, struct janas_gpu_tok *t,
                       const struct janas_gpu_tok_model *md, const float *x,
                       const float *cs, const float *sn, uint32_t pos,
-                      uint32_t n, int all, float *logits)
+                      uint32_t n, int all, float *logits, float *hidden,
+                      uint32_t src, uint32_t dst)
 {
-    if (!t || g->busy || g->broken || n < 1 || n > t->nb || pos + n > md->cap)
+    if (!t || g->busy || g->broken || n < 1 || n > t->nb || pos + n > md->cap ||
+        (md->n_rec && n + 1 < md->d_conv))
+        return -1;
+    uint32_t nch = runs_for(t, pos + n);
+    if ((size_t)n * part_tok(t, md, nch) > t->part_floats)
         return -1;
     uint32_t half = md->n_rot / 2, first = all == 1 ? 0 : all == 2 ? n : n - 1;
     memcpy(t->buf.map + t->o_x, x, (size_t)n * md->dm * sizeof(float));
@@ -579,11 +897,20 @@ int janas_gpu_tok_run(struct janas_gpu *g, struct janas_gpu_tok *t,
         memcpy(r + half * sizeof(float), sn + (size_t)j * half,
                half * sizeof(float));
     }
-    memcpy(t->buf.map + t->o_pos, &pos, sizeof(pos));
+    /* the position, then the halves of the recurrent state to read and to
+       write, read by the shaders at run time */
+    uint32_t pw[3] = {pos, src, dst};
+    memcpy(t->buf.map + t->o_pos, pw, sizeof(pw));
     sync_range(g, t, t->o_x, (size_t)n * md->dm * sizeof(float), 1);
     sync_range(g, t, t->o_rope, (size_t)n * md->n_rot * sizeof(float), 1);
-    sync_range(g, t, t->o_pos, sizeof(pos), 1);
-    VkCommandBuffer *cb = &t->cb[n][all == 1 && n == 1 ? 0 : all];
+    sync_range(g, t, t->o_pos, sizeof(pw), 1);
+    int ai = all == 1 && n == 1 ? 0 : all, hi = hidden != NULL;
+    VkCommandBuffer *cb = &t->cb[n][ai][hi];
+    if (*cb && t->cb_nch[n][ai][hi] != nch) {
+        /* recorded for other runs: again (a few times in a context) */
+        g->vkFreeCommandBuffers(g->dev, g->cp, 1, cb);
+        *cb = VK_NULL_HANDLE;
+    }
     if (!*cb) {
         VkCommandBufferAllocateInfo ca = {
             .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
@@ -596,7 +923,9 @@ int janas_gpu_tok_run(struct janas_gpu *g, struct janas_gpu_tok *t,
         }
         VkCommandBuffer keep = g->cb;
         g->cb = *cb; /* the helpers record into g->cb */
-        int rc = record(g, t, md, n, first);
+        t->rec_nch = nch;
+        t->cb_nch[n][ai][hi] = nch;
+        int rc = record(g, t, md, n, first, hi);
         g->cb = keep;
         if (rc != 0) {
             g->vkFreeCommandBuffers(g->dev, g->cp, 1, cb);
@@ -624,6 +953,11 @@ int janas_gpu_tok_run(struct janas_gpu *g, struct janas_gpu_tok *t,
     if (lb) {
         sync_range(g, t, t->o_logits, lb, 0);
         memcpy(logits, t->buf.map + t->o_logits, lb);
+    }
+    if (hidden) {
+        size_t hb = (size_t)n * md->dm * 4;
+        sync_range(g, t, t->o_hid, hb, 0);
+        memcpy(hidden, t->buf.map + t->o_hid, hb);
     }
     struct timespec w2;
     clock_gettime(CLOCK_MONOTONIC, &w2);
@@ -669,10 +1003,21 @@ uint32_t janas_gpu_tok_max_block(const struct janas_gpu_tok *t)
     return 0;
 }
 
+uint32_t janas_gpu_tok_block_at(const struct janas_gpu_tok *t,
+                                const struct janas_gpu_tok_model *md,
+                                uint32_t pos)
+{
+    (void)t;
+    (void)md;
+    (void)pos;
+    return 0;
+}
+
 int janas_gpu_tok_run(struct janas_gpu *g, struct janas_gpu_tok *t,
                       const struct janas_gpu_tok_model *md, const float *x,
                       const float *cs, const float *sn, uint32_t pos,
-                      uint32_t n, int all, float *logits)
+                      uint32_t n, int all, float *logits, float *hidden,
+                      uint32_t src, uint32_t dst)
 {
     (void)n;
     (void)all;
@@ -684,6 +1029,9 @@ int janas_gpu_tok_run(struct janas_gpu *g, struct janas_gpu_tok *t,
     (void)sn;
     (void)pos;
     (void)logits;
+    (void)hidden;
+    (void)src;
+    (void)dst;
     return -1;
 }
 

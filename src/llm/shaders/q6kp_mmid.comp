@@ -1,0 +1,133 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+   Copyright (C) 2026 Maurizio Cammalleri */
+#version 450
+// The fast prompt for a mixture's experts whose down matrices are Q6_K in
+// planes at level 3: as q4k_mmid.comp, the weights staged as q6kp_mmq.comp
+// does (the table's third uvec4 the two bare planes). NOT bit for bit with
+// the CPU.
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_EXT_integer_dot_product : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+
+layout(local_size_x = 128) in;
+layout(constant_id = 0) const uint NV = 8; // unused: the table's constants
+layout(constant_id = 1) const uint SG = 8;
+
+const uint BM = 64u, BN = 16u, KS = 4u, XB = 20u;
+
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer U4 { uvec4 v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer U1 { uint v[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer F { float v[]; };
+
+// t: the table, 3 uvec4 an expert: (w, x), (y, nv, ys), (p1, p0); then
+// from uvec4 tiles on, one a workgroup's z: (expert, first vector)
+layout(push_constant) uniform P { uvec2 t; uint rows, nb, tiles; } p;
+
+struct ACache { uint qs[8]; vec2 dsc; };
+struct BCache { int qs[8]; vec2 d8s; float d8; };
+shared ACache sa[BM * KS];
+shared BCache sb[BN * KS];
+
+// word i (0-20) of the high plane block at byte off from w, realigned
+uint hword(U1 W, uint off, uint i)
+{
+    uint a = (off >> 2) + i;
+    return (off & 2u) != 0u ? (W.v[a] >> 16) | (W.v[a + 1u] << 16) : W.v[a];
+}
+
+void main()
+{
+    U4 T = U4(p.t);
+    uvec4 tl = T.v[p.tiles + gl_WorkGroupID.z];
+    uint e = tl.x;
+    uvec4 t0 = T.v[3u * e], t1 = T.v[3u * e + 1u];
+    uint nv = t1.z, ys = t1.w;
+    uint r0 = gl_WorkGroupID.x * BM, v0 = tl.y;
+    uvec4 t2 = T.v[3u * e + 2u];
+    U4 X = U4(t0.zw);
+    U1 W = U1(t0.xy), P1 = U1(t2.xy), P0 = U1(t2.zw);
+    F Y = F(t1.xy);
+    uint id = gl_LocalInvocationID.x;
+    uint rq = (id % 32u) * 2u, vq = (id / 32u) * 4u;
+    float sums[8];
+    [[unroll]] for (uint i = 0; i < 8u; i++) sums[i] = 0.0;
+    uint ngroups = p.nb * 8u;
+    for (uint g0 = 0; g0 < ngroups; g0 += KS) {
+        {
+            uint iqs = id % 4u, rl = id / 4u;
+            [[unroll]] for (uint l = 0; l < BM; l += 32u) {
+                uint r = min(r0 + rl + l, p.rows - 1u);
+                // the 4 groups staged are those of one byte's 4 pairs of
+                // bits: each word read once for all of them (it was read
+                // once per group, the high plane's twice: realigned)
+                uint b = g0 / 8u, n = (g0 % 8u) / 4u;
+                uint off = (r * p.nb + b) * 82u;
+                uint pw = (r * p.nb + b) * 16u;
+                [[unroll]] for (uint u = 0; u < 2u; u++) {
+                    uint i = 8u * n + 2u * iqs + u;
+                    uint h = hword(W, off, i), a1 = P1.v[pw + i], a0 = P0.v[pw + i];
+                    [[unroll]] for (uint k = 0; k < KS; k++) {
+                        uint hsh = 2u * k;
+                        sa[k * BM + rl + l].qs[2u * iqs + u] =
+                            ((h >> hsh) & 0x03030303u) << 4 | ((a1 >> hsh) & 0x03030303u) << 2 |
+                            ((a0 >> hsh) & 0x03030303u);
+                    }
+                }
+                if (iqs == 0u) {
+                    float d = unpackHalf2x16(hword(W, off, 20u) & 0xffffu).x;
+                    uint sw0 = hword(W, off, 16u + 2u * n), sw1 = hword(W, off, 17u + 2u * n);
+                    [[unroll]] for (uint k = 0; k < KS; k++) {
+                        uint sw = k < 2u ? sw0 : sw1, sb0 = (2u * k) % 4u;
+                        int s0 = bitfieldExtract(int(sw), int(8u * sb0), 8);
+                        int s1 = bitfieldExtract(int(sw), int(8u * sb0 + 8u), 8);
+                        sa[k * BM + rl + l].dsc = vec2(d * float(s0), d * float(s1));
+                    }
+                }
+            }
+        }
+        {
+            uint k = id / 32u, c = (id % 32u) / 2u, iqs = id % 2u;
+            uint v = min(v0 + c, nv - 1u);
+            uint g = g0 + k, b = g / 8u, j = g % 8u;
+            uint xo = (v * p.nb + b) * XB;
+            uvec4 q = X.v[xo + 2u * j + iqs];
+            sb[k * BN + c].qs[4u * iqs] = int(q.x);
+            sb[k * BN + c].qs[4u * iqs + 1u] = int(q.y);
+            sb[k * BN + c].qs[4u * iqs + 2u] = int(q.z);
+            sb[k * BN + c].qs[4u * iqs + 3u] = int(q.w);
+            if (iqs == 0u) {
+                uvec4 bs = X.v[xo + 16u + j / 4u];
+                uint bw = j % 4u == 0u ? bs.x : j % 4u == 1u ? bs.y : j % 4u == 2u ? bs.z : bs.w;
+                sb[k * BN + c].d8s = vec2(32.0 * float(bitfieldExtract(int(bw), 0, 16)),
+                                          32.0 * float(bitfieldExtract(int(bw), 16, 16)));
+                sb[k * BN + c].d8 = uintBitsToFloat(X.v[xo + 18u].x);
+            }
+        }
+        barrier();
+        for (uint k = 0; k < KS; k++) {
+            ACache ca[2];
+            [[unroll]] for (uint r = 0; r < 2u; r++)
+                ca[r] = sa[k * BM + rq + r];
+            [[unroll]] for (uint c = 0; c < 4u; c++) {
+                BCache cb = sb[k * BN + vq + c];
+                [[unroll]] for (uint r = 0; r < 2u; r++) {
+                    int q0 = 0, q1 = 0;
+                    [[unroll]] for (uint i = 0; i < 4u; i++) {
+                        q0 += dotPacked4x8EXT(int(ca[r].qs[i]), cb.qs[i]);
+                        q1 += dotPacked4x8EXT(int(ca[r].qs[i + 4u]), cb.qs[i + 4u]);
+                    }
+                    sums[c * 2u + r] += cb.d8 * (ca[r].dsc.x * (float(q0) - cb.d8s.x) +
+                                                 ca[r].dsc.y * (float(q1) - cb.d8s.y));
+                }
+            }
+        }
+        barrier();
+    }
+    [[unroll]] for (uint c = 0; c < 4u; c++)
+        [[unroll]] for (uint r = 0; r < 2u; r++) {
+            uint row = r0 + rq + r, v = v0 + vq + c;
+            if (row < p.rows && v < nv)
+                Y.v[v * ys + row] = sums[c * 2u + r];
+        }
+}

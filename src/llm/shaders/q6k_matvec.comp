@@ -7,7 +7,9 @@
 // as the CPU kernels. Activations shared across the subgroup as in
 // q4k_matvec.comp. A Q6_K block is 210 bytes (ql 128, qh 64, scales 16,
 // d 2), so blocks start 2 bytes off a 4-byte boundary every other time:
-// 32-bit words are read from the boundary below and realigned.
+// a block is read as the 14 aligned uvec4 that cover it and realigned in
+// registers. Read a 32-bit word at a time, it took 53 loads a block and
+// ran at a quarter of Q4_K's speed (9 Oct 2026).
 #extension GL_EXT_integer_dot_product : require
 #extension GL_KHR_shader_subgroup_basic : require
 #extension GL_KHR_shader_subgroup_ballot : require
@@ -30,7 +32,6 @@ uvec4 bc(uvec4 xr[NX], uint k) { return subgroupBroadcast(xr[k / SG], k % SG); }
 
 void main()
 {
-    U1 W = U1(p.w);
     U4 X = U4(p.x);
     F Y = F(p.y);
     uint lane = gl_SubgroupInvocationID;
@@ -44,15 +45,29 @@ void main()
         acc[v] = 0.0;
     uint off = row * p.nb * 210u; /* bytes */
     for (uint b = 0; b < p.nb; b++, off += 210u) {
-        /* the block's 52 words (208 bytes) and d, realigned */
-        uint base = off >> 2, sh = (off & 3u) * 8u;
+        /* the block's 52 words (208 bytes) and d, realigned: the 16-byte
+           boundary below it, s bytes before (even: 210 and the rows' start
+           are), and 14 uvec4 from there */
+        uint lo = p.w.x + off;
+        uvec2 at = uvec2(lo & ~15u, p.w.y + (lo < p.w.x ? 1u : 0u));
+        uint s = lo & 15u;
+        U4 B = U4(at);
+        uint rw[57];
+        for (uint k = 0; k < 14u; k++) {
+            uvec4 q = B.v[k];
+            rw[4u * k] = q.x;
+            rw[4u * k + 1u] = q.y;
+            rw[4u * k + 2u] = q.z;
+            rw[4u * k + 3u] = q.w;
+        }
+        rw[56] = 0u;
+        uint w0 = s >> 2;
         uint wd[53];
         for (uint k = 0; k < 53u; k++)
-            wd[k] = W.v[base + k];
-        if (sh != 0u)
-            for (uint k = 0; k < 52u; k++)
-                wd[k] = (wd[k] >> 16) | (wd[k + 1u] << 16);
-        float d = unpackHalf2x16(sh != 0u ? wd[52] >> 16 : wd[52] & 0xffffu).x;
+            wd[k] = (s & 2u) != 0u
+                        ? (rw[w0 + k] >> 16) | (rw[w0 + k + 1u] << 16)
+                        : rw[w0 + k];
+        float d = unpackHalf2x16(wd[52] & 0xffffu).x;
         int sc[16];
         for (uint k = 0; k < 4u; k++)
             for (uint j = 0; j < 4u; j++)
