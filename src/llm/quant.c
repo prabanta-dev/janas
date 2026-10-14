@@ -110,7 +110,9 @@ int janas_mxfp4_to_q8_0(const uint8_t *in, struct janas_block_q8_0 *out,
     return 0;
 }
 
+#if defined(__x86_64__)
 static int use_avx2_fma; /* set by float_helpers_init, further down */
+#endif
 
 /* The eight blocks of 32 (d32, qs32, bsums32) of one block, as the 256
    are made: det, the division-free scale of the _det variant */
@@ -1190,9 +1192,9 @@ static int use_vnni;
 /* Resolved before main: the kernels are first called from pool threads. */
 __attribute__((constructor)) static void dot_kernels_init(void)
 {
+#if defined(__x86_64__)
     for (int e = 0; e < 256; e++)
         e8m0_tab[e] = janas_e8m0_half((uint8_t)e);
-#if defined(__x86_64__)
     __builtin_cpu_init();
     if (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma") &&
         __builtin_cpu_supports("f16c")) {

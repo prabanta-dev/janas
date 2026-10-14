@@ -170,7 +170,10 @@ gdn_step_h_avx2(uint16_t *M, const float *q, const float *k, const float *v,
 }
 #endif
 
-static int use_avx2, use_f16c;
+static int use_avx2; /* read by janas_gdn_kernel_name on every architecture */
+#if defined(__x86_64__)
+static int use_f16c;
+#endif
 
 __attribute__((constructor)) static void gdn_init(void)
 {

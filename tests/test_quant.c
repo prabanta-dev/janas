@@ -478,7 +478,8 @@ det8(const float *g, const float *u, float *h, int n)
    step of the plain one. */
 static void test_det(void)
 {
-    float g[1024], u[1024], a[1024], b[1024];
+#if defined(__x86_64__)
+    float g[1024], u[1024];
     int bad = 0;
     for (int round = 0; round < 1000; round++) {
         for (int i = 0; i < 1024; i++) {
@@ -488,17 +489,17 @@ static void test_det(void)
         }
         g[0] = -30.0f, g[1] = -30.5f, g[2] = 88.0f, g[3] = -88.0f;
         g[4] = 0.0f, g[5] = -0.0f, g[6] = 1e-30f, g[7] = 100.0f;
+        float a[1024], b[1024];
         for (int i = 0; i < 1024; i++)
             a[i] = janas_silu_mul_det(g[i], u[i]);
-#if defined(__x86_64__)
         if (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma")) {
             det8(g, u, b, 1024);
             for (int i = 0; i < 1024; i++)
                 bad += memcmp(&a[i], &b[i], 4) != 0;
         }
-#endif
     }
     CHECK(bad == 0, "silu_mul_det: %d scalar/AVX2 differences", bad);
+#endif
     double worst = 0;
     for (int i = 0; i < 100000; i++) {
         float d = ldexpf(rndf(1.0f, 2.0f), (int)(rnd() % 200) - 100);
