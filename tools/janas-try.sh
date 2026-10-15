@@ -287,7 +287,8 @@ level()
     local keep=()
     [ "$KEEP" = 1 ] && keep=(--keep)
     note "janas-get $getname: the GGUF goes once converted${keep:+ (kept: --keep)}"
-    "$BIN/janas-get" "$getname" --dir "$MODELS" "${keep[@]}" 2>&1 | tee "$WORK/get-$lv.txt"
+    "$BIN/janas-get" "$getname" --dir "$MODELS" ${keep[@]+"${keep[@]}"} 2>&1 |
+        tee "$WORK/get-$lv.txt"
     local rc=${PIPESTATUS[0]} got=$WORK/get-$lv.txt
     local t
     for t in "gguf2jns" "jns_planes" "gguf2jns (assistant)" "hf2jns_mtp"; do
@@ -328,7 +329,7 @@ level()
     rm -rf "$x" && mkdir -p "$x/config" "$x/cache" "$x/data"
     text=$(printf '/experts 0\n%s\n' "$FP_PROMPT" |
         XDG_CONFIG_HOME="$x/config" XDG_CACHE_HOME="$x/cache" \
-            XDG_DATA_HOME="$x/data" "$BIN/janas-chat" "$jns" "${mtp[@]}" \
+            XDG_DATA_HOME="$x/data" "$BIN/janas-chat" "$jns" ${mtp[@]+"${mtp[@]}"} \
             --bits 6 --attention exact --temp 0 --max 64 --system "" \
             --no-preload --ctx 4096 --no-mcp --no-tune 2>>"$LOG")
     rm -rf "$x"
@@ -349,7 +350,7 @@ level()
         echo "$lv speed not measured (the machine was busy)" >> "$WORK/results"
     elif [ "$BENCH" = 1 ]; then
         note "measuring the speed (janas-bench, 3 rounds): minutes on quick, longer on the others"
-        (cd "$WORK" && "$BIN/janas-bench" "$jns" "${mtp[@]}" --rounds 3 \
+        (cd "$WORK" && "$BIN/janas-bench" "$jns" ${mtp[@]+"${mtp[@]}"} --rounds 3 \
             >>"$LOG" 2>&1)
         local busy="idle"
         [ "$BENCH_IDLE_BEFORE" -lt 85 ] && busy="BUSY: the speeds are lower than this machine can do"
@@ -542,12 +543,17 @@ publish()
 cleanup()
 { # only what this script put there: the directory may hold other models
     [ "$KEEP" = 1 ] && return 0
-    local f size=0 files=()
+    local f size=0 files=() listed
+    # a process substitution would hide a failed sort: the models would be kept with no message
+    if ! listed=$(sort -u "$WORK/created"); then
+        fail "cannot list $WORK/created: the models are kept"
+        return 1
+    fi
     while read -r f; do
         [ -f "$f" ] || continue
         files+=("$f")
         size=$((size + $(stat -c %s "$f")))
-    done < <(sort -u "$WORK/created")
+    done <<<"$listed"
     [ "${#files[@]}" -gt 0 ] || return 0
     ask "Delete the models this script downloaded and converted ($(gib "$size") GiB)? Keep them to run again or to use Janas" || return 0
     for f in "${files[@]}"; do
