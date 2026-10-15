@@ -16,6 +16,8 @@
 
 #include <stddef.h>
 
+#include "common/printf_like.h"
+
 enum janas_json_type {
     JANAS_JSON_NULL,
     JANAS_JSON_FALSE,
@@ -65,7 +67,7 @@ struct janas_buf {
 void janas_buf_put(struct janas_buf *b, const char *s, size_t n);
 void janas_buf_puts(struct janas_buf *b, const char *s);
 void janas_buf_printf(struct janas_buf *b, const char *fmt, ...)
-    __attribute__((format(gnu_printf, 2, 3)));
+    JANAS_PRINTF_LIKE(2, 3);
 void janas_buf_free(struct janas_buf *b);
 
 /* v as JSON text, the way the chat templates' tojson writes it. */

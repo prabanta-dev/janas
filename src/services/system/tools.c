@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include "common/mcp_server.h"
+#include "common/printf_like.h"
 #include "services/common/template.h"
 #include "system.h"
 
@@ -66,7 +67,7 @@ static const char *arg_str(const struct janas_json *args, const char *name)
 }
 
 static int fail(struct janas_buf *b, const char *fmt, ...)
-    __attribute__((format(gnu_printf, 2, 3)));
+    JANAS_PRINTF_LIKE(2, 3);
 
 static int fail(struct janas_buf *b, const char *fmt, ...)
 {

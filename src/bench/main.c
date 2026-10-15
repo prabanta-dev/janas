@@ -46,6 +46,7 @@
 
 #include "common/env_names.h"
 #include "common/model_pick.h"
+#include "common/printf_like.h"
 #include "common/sysinfo.h"
 #include "common/words.h"
 #include "janas/llm.h"
@@ -100,7 +101,7 @@ static double now(void)
 static FILE *report;
 
 /* Printed to the terminal and to the report file. */
-static void out(const char *fmt, ...) __attribute__((format(gnu_printf, 1, 2)));
+static void out(const char *fmt, ...) JANAS_PRINTF_LIKE(1, 2);
 static void out(const char *fmt, ...)
 {
     va_list ap;

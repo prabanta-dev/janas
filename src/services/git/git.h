@@ -16,6 +16,7 @@
 #include <stddef.h>
 #include <time.h>
 
+#include "common/printf_like.h"
 #include "llm/json.h"
 
 /* ---- run.c ---- */
@@ -141,8 +142,7 @@ int gt_tools_call(void *ctx, const struct janas_json *params,
 const char *gt_arg_str(const struct janas_json *args, const char *name);
 int gt_arg_bool(const struct janas_json *args, const char *name);
 /* The text as the tool's result, an error when is_error */
-int gt_fail(struct janas_buf *b, const char *fmt, ...)
-    __attribute__((format(gnu_printf, 2, 3)));
+int gt_fail(struct janas_buf *b, const char *fmt, ...) JANAS_PRINTF_LIKE(2, 3);
 int gt_answer(struct janas_buf *b, const char *name, struct janas_buf *d,
               const char *layout, const char *brief);
 /* A text git takes as an argument and never as an option: not empty, not

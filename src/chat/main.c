@@ -15,6 +15,9 @@
  * part of what is sent. Ctrl-C stops a reply, Ctrl-D quits.
  */
 #define _XOPEN_SOURCE 700 /* wcwidth, for the width of what is printed */
+#if defined(__APPLE__)
+#define _DARWIN_C_SOURCE /* _XOPEN_SOURCE alone hides SIGWINCH and _SC_* */
+#endif
 #include <errno.h>
 #include <locale.h>
 #include <pthread.h>
@@ -31,6 +34,7 @@
 
 #include "common/env_names.h"
 #include "common/model_pick.h"
+#include "common/printf_like.h"
 #include "common/sysinfo.h"
 #include "common/words.h"
 #include "edit.h"
@@ -581,7 +585,7 @@ static int32_t set_system(janas_llm_chat *c, const char *system)
 /* What the reading ahead says, where the user sees it: in the
    conversation, or on stderr when the output is a pipe. */
 static void prep_say(const char *colour, const char *fmt, ...)
-    __attribute__((format(gnu_printf, 2, 3)));
+    JANAS_PRINTF_LIKE(2, 3);
 static void prep_say(const char *colour, const char *fmt, ...)
 {
     char text[512];

@@ -9,12 +9,13 @@
 
 #include <yyjson.h>
 
+#include "common/printf_like.h"
 #include "server.h"
 
 /* The error of a request that cannot be served, for the 400 answer: always
    returns 0, so that BAD() can sit inside an expression. */
 int srv_perr(struct srv_perr *e, const char *code, const char *fmt, ...)
-    __attribute__((format(gnu_printf, 3, 4)));
+    JANAS_PRINTF_LIKE(3, 4);
 #define BAD(...) srv_perr(e, __VA_ARGS__)
 
 /* Marks the request failed; returns -1. */

@@ -11,6 +11,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "common/printf_like.h"
 #include "janas/llm.h"
 #include "llm/expert_cache.h"
 #include "llm/constrain.h"
@@ -218,7 +219,7 @@ struct janas_llm_chat {
 
 /* The last error, on this thread; returns code. */
 int32_t janas_api_fail(int32_t code, const char *fmt, ...)
-    __attribute__((format(gnu_printf, 2, 3)));
+    JANAS_PRINTF_LIKE(2, 3);
 double janas_api_now(void);
 /* The power mode in effect: auto follows the power source. */
 void janas_api_apply_mode(janas_llm *llm);
