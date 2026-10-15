@@ -32,6 +32,15 @@ wrote on 11 October 2026 for `--host=x86_64-w64-mingw32` (MinGW-w64, GCC
 14), with the same options but `--with-threads`, which it chose itself:
 Windows's own threads. It compiles the same 14 sources.
 
+`darwin/MHD_config.h`, for macOS builds, is the one the same `configure`
+wrote on 14 October 2026, natively on macOS 27.0.1 arm64 under Apple clang
+21.0.0 (`/usr/bin/cc`), with the same options as the Linux run. It compiles
+the same 14 sources. It carries the macOS answers: no `EPOLL_SUPPORT`, no
+`HAVE_EPOLL_CREATE1`, no `HAVE_LINUX_SENDFILE`, `HAVE_ACCEPT4` or
+`HAVE_SOCK_NONBLOCK`; `HAVE_DARWIN_SENDFILE` and
+`HAVE_PTHREAD_SETNAME_NP_DARWIN` instead of the GNU spellings; and
+`_MHD_ITC_PIPE` instead of the eventfd transport.
+
 `build.sh` compiles the sources with `-D_GNU_SOURCE -DHAVE_CONFIG_H` and
 without Janas's warning flags: warnings in code that is not Janas's are not
 Janas's to fix here.
