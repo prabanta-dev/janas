@@ -322,6 +322,8 @@ const char *janas_q4k_kernel_name(void);
    JANAS_KERNELS does not ask for plain AVX2. Attention asks the same
    question, and both answers give the same numbers. */
 int janas_use_vnni(void);
+/* 1 when JANAS_KERNELS=ref asks for the scalar references everywhere. */
+int janas_kernels_ref(void);
 
 /* The same three entry points for Q6_K. */
 void janas_q6k_dequantize(const struct janas_block_q6k *x, float *y, size_t n);

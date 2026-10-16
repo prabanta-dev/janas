@@ -58,4 +58,9 @@ uint64_t janas_mem_available(void);
 /* Installed memory, in bytes (0 if unknown). */
 uint64_t janas_mem_total(void);
 
+/* ARM64: whether the CPU has the dot-product instructions (SDOT, Armv8.2)
+   and the 8-bit integer matrix ones (SMMLA, I8MM). 0 elsewhere. */
+int janas_cpu_arm_dotprod(void);
+int janas_cpu_arm_i8mm(void);
+
 #endif
