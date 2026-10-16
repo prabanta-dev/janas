@@ -233,6 +233,7 @@ struct janas_llm_model {
     struct janas_expert_cache *mtp_cache;
     int mtp;           /* an MTP block: its own file, or in the main one */
     int mtp_own_cache; /* mtp_cache belongs to the MTP file */
+    int mtp_split;     /* the MTP block in the file, in a cache of its own */
     const struct janas_jns_layer *mtp_jl; /* its experts: layer table entry */
     uint32_t mtp_cl;                      /* and layer index in mtp_cache */
     const struct janas_jns_tensor *eh_proj, *enorm, *hnorm, *mtp_norm;

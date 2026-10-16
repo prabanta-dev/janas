@@ -51,6 +51,12 @@ struct janas_expert_cache *janas_expert_cache_create(const struct janas_jns *j,
                                                      struct janas_pool *io,
                                                      char *err, size_t err_len);
 
+/* The same, for the layers l0 to l1 - 1 only: the slots as big as the
+   largest of those, and the experts of other layers never held. */
+struct janas_expert_cache *janas_expert_cache_create_range(
+    const struct janas_jns *j, uint64_t budget_bytes, int level,
+    struct janas_pool *io, uint32_t l0, uint32_t l1, char *err, size_t err_len);
+
 /* The bytes of an expert slot this cache holds, at the level it was made. */
 uint64_t janas_expert_cache_slot_bytes(const struct janas_expert_cache *c);
 void janas_expert_cache_destroy(struct janas_expert_cache *c);
