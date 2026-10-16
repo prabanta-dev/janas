@@ -5,7 +5,7 @@ Janas-LLM runs large mixture-of-experts language models on ordinary computers: t
 ## Requirements
 
 - **Linux on x86-64**, or **Windows 10 (1903 or later) and 11 on x86-64**: the binary package of each release, or a build made on Linux with MinGW-w64 (below).
-- **CPU:** any x86-64 runs it; AVX2 with FMA and F16C (Intel since 2013, AMD since 2015) is needed for good speed, and AVX-VNNI is used when present.
+- **CPU:** any x86-64 runs it; AVX2 with FMA and F16C (Intel since 2013, AMD since 2015) is needed for good speed, AVX-VNNI is used when present, and AVX-512 (F, BW, VL and VNNI: Zen 4 and later, Ice Lake and later) takes the Q4_K, Q5_K, Q6_K and Q8_0 products to 512-bit registers, 15-50% more on a prompt's multi-vector products.
 - **Memory:** at least 16 GB; 32 GB or more for large models (Qwen3-Next-80B-A3B: about 2 GB of resident weights, plus as much expert cache as the memory allows).
 - **Disk:** the model on an **NVMe SSD** (the experts are read directly from it while generating).
 - **GPU (optional):** an integrated or discrete GPU with a **Vulkan 1.3** driver. The engine works fully without one; it measures whether the GPU helps on your machine and uses it only then.
@@ -97,7 +97,7 @@ The model is a name of the catalog, downloaded after asking if it is not there y
 - `JANAS_GPU_BLOCK=0` keeps the dense models' prompts off the whole-block path (every layer of a block in one submission to the GPU) while leaving the fast prompt's products on; `JANAS_PREFILL_BLOCK=n` sets the tokens of a prompt's block (256 by default, 512 where the GPU takes the feed-forwards whole).
 - `JANAS_PREFETCH=0` never reads experts ahead (by default it turns itself on when the cache misses many experts a token).
 - `JANAS_ARENA_HUGE=1` asks the kernel for huge pages for the expert cache, as before 30 September 2026 (with transparent huge pages on `always` and their defrag on `madvise` it made the first writes to the cache slow).
-- `JANAS_KERNELS=avx2` uses the AVX2 kernels even where AVX-VNNI is available.
+- `JANAS_KERNELS=avx2` uses the AVX2 kernels even where AVX-VNNI is available; `JANAS_KERNELS=avx-vnni` keeps the 256-bit AVX-VNNI kernels where AVX-512 is available (the kernel in use is in `janas-bench`'s report and `test_quant`'s last line).
 - `JANAS_TUNE=0` turns self-tuning off (fixed defaults); delete `~/.cache/janas/tuning.txt` to start tuning from scratch.
 - `JANAS_TUNE_THREADS=0` keeps every usable thread instead of letting the first passes choose between every thread, one per performance core and the performance cores' threads; the choice is kept for that machine and model, and moves only when other threads win several tries in a row.
 - The expert cache takes the free memory, leaving a fifth of the machine's memory to the rest of the system; `--cache <GiB>` in `janas-chat` sets it.

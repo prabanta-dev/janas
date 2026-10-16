@@ -1141,6 +1141,9 @@ static float e8m0_tab[256];
 #undef DOTN
 #undef DOTN_TARGET
 #undef DOTN_ACC
+
+/* And the 512-bit ones, on the types that have them. */
+#include "quant_dot512.h"
 #endif
 
 typedef float (*dot_fn)(const struct janas_block_q4k *,
@@ -1186,6 +1189,7 @@ typedef void (*dotn6p_fn)(const struct janas_block_q6kp *, const uint8_t *,
 static dotn6p_fn dot6p_impl; /* NULL: the scalar reference */
 static const char *dot_name = "ref";
 static int use_vnni;
+static int use_avx512; /* F/BW/VL/VNNI: the 512-bit kernels */
 
 /* Resolved before main: the kernels are first called from pool threads. */
 __attribute__((constructor)) static void dot_kernels_init(void)
@@ -1227,6 +1231,19 @@ __attribute__((constructor)) static void dot_kernels_init(void)
             dotis_impl = iq3s_dot_vnni;
             dot6p_impl = q6kp_dotn_vnni;
             dot_name = "avx-vnni";
+            /* avx-vnni: no 512-bit kernels */
+            if (__builtin_cpu_supports("avx512f") &&
+                __builtin_cpu_supports("avx512bw") &&
+                __builtin_cpu_supports("avx512vl") &&
+                __builtin_cpu_supports("avx512vnni") &&
+                !(k && !strcmp(k, "avx-vnni"))) {
+                use_avx512 = 1;
+                dot_impl = q4k_dot_avx512;
+                dot5_impl = q5k_dot_avx512;
+                dot6_impl = q6k_dot_avx512;
+                dot80_impl = q8_0_dot_avx512;
+                dot_name = "avx512-vnni";
+            }
         }
     }
 #endif
@@ -1558,16 +1575,24 @@ void janas_dot_rows(int type, const void *w, size_t row_bytes,
         rows_fn f = NULL;
         switch (type) {
         case JANAS_Q4_K:
-            f = use_vnni ? q4k_rows_vnni : q4k_rows_avx2;
+            f = use_avx512 ? q4k_rows_avx512
+                : use_vnni ? q4k_rows_vnni
+                           : q4k_rows_avx2;
             break;
         case JANAS_Q6_K:
-            f = use_vnni ? q6k_rows_vnni : q6k_rows_avx2;
+            f = use_avx512 ? q6k_rows_avx512
+                : use_vnni ? q6k_rows_vnni
+                           : q6k_rows_avx2;
             break;
         case JANAS_Q5_K:
-            f = use_vnni ? q5k_rows_vnni : q5k_rows_avx2;
+            f = use_avx512 ? q5k_rows_avx512
+                : use_vnni ? q5k_rows_vnni
+                           : q5k_rows_avx2;
             break;
         case JANAS_Q8_0:
-            f = use_vnni ? q8_0_rows_vnni : q8_0_rows_avx2;
+            f = use_avx512 ? q8_0_rows_avx512
+                : use_vnni ? q8_0_rows_vnni
+                           : q8_0_rows_avx2;
             break;
         case JANAS_IQ4_NL:
             f = use_vnni ? iq4nl_rows_vnni : iq4nl_rows_avx2;
@@ -1623,16 +1648,19 @@ void janas_dot_multi(int type, const void *w, const struct janas_block_q8k *x,
             const struct janas_block_q8k *xv = x + v * x_stride;
             switch (type) {
             case JANAS_Q4_K:
-                (use_vnni ? q4k_dotn_vnni : q4k_dotn_avx2)(w, xv, x_stride, g,
-                                                           nb, r);
+                (use_avx512 ? q4k_dotn_avx512
+                 : use_vnni ? q4k_dotn_vnni
+                            : q4k_dotn_avx2)(w, xv, x_stride, g, nb, r);
                 break;
             case JANAS_Q6_K:
-                (use_vnni ? q6k_dotn_vnni : q6k_dotn_avx2)(w, xv, x_stride, g,
-                                                           nb, r);
+                (use_avx512 ? q6k_dotn_avx512
+                 : use_vnni ? q6k_dotn_vnni
+                            : q6k_dotn_avx2)(w, xv, x_stride, g, nb, r);
                 break;
             case JANAS_Q5_K:
-                (use_vnni ? q5k_dotn_vnni : q5k_dotn_avx2)(w, xv, x_stride, g,
-                                                           nb, r);
+                (use_avx512 ? q5k_dotn_avx512
+                 : use_vnni ? q5k_dotn_vnni
+                            : q5k_dotn_avx2)(w, xv, x_stride, g, nb, r);
                 break;
             case JANAS_IQ4_NL:
                 (use_vnni ? iq4nl_dotn_vnni : iq4nl_dotn_avx2)(w, xv, x_stride,
@@ -1667,8 +1695,9 @@ void janas_dot_multi(int type, const void *w, const struct janas_block_q8k *x,
                                                              nb, r);
                 break;
             default:
-                (use_vnni ? q8_0_dotn_vnni : q8_0_dotn_avx2)(w, xv, x_stride, g,
-                                                             nb, r);
+                (use_avx512 ? q8_0_dotn_avx512
+                 : use_vnni ? q8_0_dotn_vnni
+                            : q8_0_dotn_avx2)(w, xv, x_stride, g, nb, r);
             }
             for (int i = 0; i < g; i++)
                 out[(v + (size_t)i) * out_stride] = r[i];
