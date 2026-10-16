@@ -18,6 +18,9 @@
 #if defined(__x86_64__)
 #include <immintrin.h>
 #define cpu_relax() _mm_pause()
+#elif defined(__aarch64__)
+/* yield: the ARM64 spin-wait hint */
+#define cpu_relax() __asm__ __volatile__("yield" ::: "memory")
 #else
 #define cpu_relax() ((void)0)
 #endif

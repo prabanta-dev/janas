@@ -114,7 +114,10 @@ elif [ -n "$JANAS_OS" ]; then
 fi
 CC="${CC:-gcc}"
 
-CPU="$(uname -m)"
+# the CPU the compiler builds for (aarch64-w64-windows-gnu: aarch64), not
+# the shell's: an x86-64 Git Bash on an ARM64 machine says x86_64
+CPU="$("$CC" -dumpmachine 2>/dev/null | cut -d- -f1 || true)"
+[ -n "$CPU" ] || CPU="$(uname -m)"
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 [ "$JANAS_OS" = windows ] && OS=windows
 OBJ="lib/$CPU-$OS-$VARIANT"
@@ -126,6 +129,11 @@ SUFFIX=""
 # the C library of Ubuntu 22.04 (the binary package's) declares memmem,
 # strcasestr and the like only with it, where a newer one does by default
 CFLAGS=(-std=gnu11 -D_GNU_SOURCE= -Wall -Wextra -Werror -pthread -Isrc -Iinclude)
+# on ARM64 a multiply and an add may be fused (one rounding, not two) unless
+# told otherwise: the scalar references would round as they do nowhere else
+if [ "$CPU" = aarch64 ]; then
+    CFLAGS+=(-ffp-contract=off)
+fi
 if [ "$OS" = windows ]; then
     # Windows 10 and later; printf with the C99 formats (%zu, %lld); what
     # MinGW's C library lacks, in one header every file starts with

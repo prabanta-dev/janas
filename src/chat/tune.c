@@ -28,8 +28,8 @@
    between two runs (Gemma 4 E2B with its assistant: 38.6, then 46.9) */
 static const char *const PROMPTS[] = {
     "Explain in about one hundred words how a bicycle stays upright.",
-    "Write a C function that reverses a singly linked list, with a short "
-    "comment.",
+    ("Write a C function that reverses a singly linked list, with a short "
+     "comment."),
     "List ten Italian cities with one line about each."};
 #define N_PROMPTS (sizeof PROMPTS / sizeof *PROMPTS)
 

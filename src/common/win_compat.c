@@ -489,6 +489,7 @@ int janas_fclose(FILE *f)
  * and must agree with them to the bit. Defined under the C library's own
  * name, it is the one every file links.
  */
+#if defined(__x86_64__) || defined(__i386__)
 __attribute__((target("fma"))) static float fmaf_fma(float x, float y, float z)
 {
     return __builtin_fmaf(x, y, z); /* one vfmadd */
@@ -531,6 +532,13 @@ float fmaf(float x, float y, float z)
     }
     return has_fma ? fmaf_fma(x, y, z) : fmaf_soft(x, y, z);
 }
+#else
+/* ARM64 always has a fused multiply-add: one fmadd, rounded once */
+float fmaf(float x, float y, float z)
+{
+    return __builtin_fmaf(x, y, z);
+}
+#endif
 
 static VOID CALLBACK alarm_fired(PVOID arg, BOOLEAN timer)
 {

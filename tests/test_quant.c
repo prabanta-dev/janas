@@ -368,6 +368,128 @@ static void test_matvec_multi(void)
     free(x);
 }
 
+/* The formats in blocks of 32 through the group product, more vectors and
+   rows than one call takes at once and odd counts of both, rows of 1 to 33
+   blocks of 256: every result must match the single-vector kernel bit for
+   bit. */
+static void test_matvec_multi_b32_cols(size_t cols)
+{
+    enum { ROWS = 301, NV = 19 };
+    const size_t nb = cols / JANAS_QK;
+    static const int types[] = {JANAS_Q4_0, JANAS_IQ4_NL, JANAS_Q8_0};
+    struct janas_block_q8k *x = malloc((size_t)NV * nb * sizeof(*x));
+    float *xf = malloc(cols * sizeof(float));
+    float *y = malloc((size_t)NV * ROWS * sizeof(float));
+    for (int v = 0; v < NV; v++) {
+        for (size_t i = 0; i < cols; i++)
+            xf[i] = rndf(-1.0f, 1.0f);
+        janas_q8k_quantize(xf, x + (size_t)v * nb, cols);
+    }
+    struct janas_pool *pool = janas_pool_create(3, NULL);
+    for (unsigned k = 0; k < sizeof(types) / sizeof(*types); k++) {
+        int type = types[k];
+        size_t bs = janas_qtype_block_size(type), rb = nb * bs;
+        unsigned char *w = malloc(ROWS * rb);
+        for (size_t i = 0; i < ROWS * rb; i++)
+            w[i] = (unsigned char)rnd();
+        /* every block of 32 begins with its fp16 scale: a finite one */
+        for (size_t b = 0; b < ROWS * rb / (bs / 8); b++) {
+            uint16_t d = janas_fp32_to_fp16(rndf(0.001f, 0.1f));
+            memcpy(w + b * (bs / 8), &d, 2);
+        }
+        for (int nv = 1; nv <= NV; nv++) {
+            struct janas_matvec_task t = {.type = type,
+                                          .w = w,
+                                          .x = x,
+                                          .y = y,
+                                          .rows = ROWS,
+                                          .cols = cols,
+                                          .n_vec = (size_t)nv};
+            janas_matvec_q4k_group(pool, &t, 1);
+            for (int v = 0; v < nv; v++)
+                for (int r = 0; r < ROWS; r++) {
+                    float ref = janas_dot(type, w + (size_t)r * rb,
+                                          x + (size_t)v * nb, nb);
+                    CHECK(y[v * ROWS + r] == ref,
+                          "type %d cols %zu nv %d v %d row %d: %g vs %g", type,
+                          cols, nv, v, r, y[v * ROWS + r], ref);
+                }
+        }
+        free(w);
+    }
+    janas_pool_destroy(pool);
+    free(x);
+    free(xf);
+    free(y);
+}
+
+static void test_matvec_multi_b32(void)
+{
+    static const size_t cols[] = {256, 768, 2048, 8192, 8448};
+    for (unsigned c = 0; c < sizeof(cols) / sizeof(*cols); c++)
+        test_matvec_multi_b32_cols(cols[c]);
+}
+
+#if defined(__aarch64__)
+/* dot_f32_avx2's arithmetic written out lane by lane: two 8-lane fused
+   accumulators over 16 floats at a time, then one over 8, the two added lane
+   for lane, janas_hsum8's pairing, and the tail fused. */
+static float dot_f32_avx2_order(const float *a, const float *b, size_t n)
+{
+    float s0[8] = {0}, s1[8] = {0}, t[8], q[4];
+    size_t i = 0;
+    for (; i + 16 <= n; i += 16)
+        for (int l = 0; l < 8; l++) {
+            s0[l] = fmaf(a[i + l], b[i + l], s0[l]);
+            s1[l] = fmaf(a[i + 8 + l], b[i + 8 + l], s1[l]);
+        }
+    for (; i + 8 <= n; i += 8)
+        for (int l = 0; l < 8; l++)
+            s0[l] = fmaf(a[i + l], b[i + l], s0[l]);
+    for (int l = 0; l < 8; l++)
+        t[l] = s0[l] + s1[l];
+    for (int l = 0; l < 4; l++)
+        q[l] = t[l] + t[l + 4];
+    float r = (q[0] + q[2]) + (q[1] + q[3]);
+    for (; i < n; i++)
+        r = fmaf(a[i], b[i], r);
+    return r;
+}
+
+/* The ARM64 float helpers against the AVX2 path's order, to the bit, for
+   every length up to 100 and some long ones (each tail and loop mix). */
+static void test_f32_helpers_order(void)
+{
+    if (janas_kernels_ref())
+        return;
+    enum { N = 4103 };
+    float *a = malloc(N * sizeof(float)), *b = malloc(N * sizeof(float));
+    float *y = malloc(N * sizeof(float)), *z = malloc(N * sizeof(float));
+    static const size_t big[] = {256, 1000, 2048, 4103};
+    for (int round = 0; round < 104; round++) {
+        size_t n = round < 100 ? (size_t)round + 1 : big[round - 100];
+        for (size_t i = 0; i < n; i++) {
+            a[i] = rndf(-2.0f, 2.0f);
+            b[i] = rndf(-2.0f, 2.0f);
+            y[i] = z[i] = rndf(-2.0f, 2.0f);
+        }
+        float got = janas_dot_f32(a, b, n), want = dot_f32_avx2_order(a, b, n);
+        CHECK(memcmp(&got, &want, 4) == 0, "dot_f32 n %zu: %.9g vs %.9g", n,
+              got, want);
+        float k = rndf(-1.0f, 1.0f);
+        janas_axpy_f32(y, k, a, n);
+        for (size_t i = 0; i < n; i++)
+            z[i] = fmaf(k, a[i], z[i]);
+        CHECK(memcmp(y, z, n * sizeof(float)) == 0, "axpy_f32 n %zu differs",
+              n);
+    }
+    free(a);
+    free(b);
+    free(y);
+    free(z);
+}
+#endif
+
 /*
  * Q4_K quantization: round trip on Gaussian-like and heavy-tailed weights.
  * The error relative to the weights' spread must stay near what 4 bits with
@@ -478,7 +600,8 @@ det8(const float *g, const float *u, float *h, int n)
    step of the plain one. */
 static void test_det(void)
 {
-    float g[1024], u[1024], a[1024], b[1024];
+#if defined(__x86_64__)
+    float g[1024], u[1024];
     int bad = 0;
     for (int round = 0; round < 1000; round++) {
         for (int i = 0; i < 1024; i++) {
@@ -488,17 +611,17 @@ static void test_det(void)
         }
         g[0] = -30.0f, g[1] = -30.5f, g[2] = 88.0f, g[3] = -88.0f;
         g[4] = 0.0f, g[5] = -0.0f, g[6] = 1e-30f, g[7] = 100.0f;
+        float a[1024], b[1024];
         for (int i = 0; i < 1024; i++)
             a[i] = janas_silu_mul_det(g[i], u[i]);
-#if defined(__x86_64__)
         if (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma")) {
             det8(g, u, b, 1024);
             for (int i = 0; i < 1024; i++)
                 bad += memcmp(&a[i], &b[i], 4) != 0;
         }
-#endif
     }
     CHECK(bad == 0, "silu_mul_det: %d scalar/AVX2 differences", bad);
+#endif
     double worst = 0;
     for (int i = 0; i < 100000; i++) {
         float d = ldexpf(rndf(1.0f, 2.0f), (int)(rnd() % 200) - 100);
@@ -1192,6 +1315,10 @@ int main(void)
     test_matvec();
     test_matvec_group();
     test_matvec_multi();
+    test_matvec_multi_b32();
+#if defined(__aarch64__)
+    test_f32_helpers_order();
+#endif
     test_dot_multi();
     test_det();
     test_dot_q5k_q8_0();

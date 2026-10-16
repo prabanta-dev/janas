@@ -288,4 +288,31 @@ uint64_t janas_mem_total(void)
     return meminfo("MemTotal");
 }
 
+#if defined(__aarch64__) && defined(__linux__)
+#include <asm/hwcap.h>
+#include <sys/auxv.h>
+int janas_cpu_arm_dotprod(void)
+{
+    return (getauxval(AT_HWCAP) & HWCAP_ASIMDDP) != 0;
+}
+
+int janas_cpu_arm_i8mm(void)
+{
+#ifdef HWCAP2_I8MM
+    return (getauxval(AT_HWCAP2) & HWCAP2_I8MM) != 0;
+#else
+    return 0;
+#endif
+}
+#else
+int janas_cpu_arm_dotprod(void)
+{
+    return 0;
+}
+
+int janas_cpu_arm_i8mm(void)
+{
+    return 0;
+}
+#endif
 #endif /* !_WIN32 */
