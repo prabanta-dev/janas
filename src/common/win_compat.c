@@ -329,6 +329,18 @@ void janas_free(void *p)
     if (!p)
         return;
     struct align_tag *t = (struct align_tag *)p - 1;
+    /* A large malloc block can start a fresh page with nothing mapped before
+       it (seen on ARM64 Windows: a 4 MiB-aligned block straight from the
+       heap's VirtualAlloc). Then the tag would sit on another page: look at
+       that page before reading it. */
+    if (((uintptr_t)p & 4095) == 0) {
+        MEMORY_BASIC_INFORMATION mbi;
+        if (!VirtualQuery(t, &mbi, sizeof mbi) || mbi.State != MEM_COMMIT ||
+            (mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD))) {
+            free(p);
+            return;
+        }
+    }
     if (((uintptr_t)p & 15) == 0 &&
         t->check == (ALIGN_TAG ^ (uint64_t)(uintptr_t)p)) {
         void *base = t->base;
