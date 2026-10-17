@@ -308,14 +308,28 @@ for html in src/*/*.html; do
 done
 CFLAGS+=(-I"$GEN")
 
-# one object, rebuilt when its source or any header is newer
-headers_newest=$(find src include "$SPV" "$GEN" -name '*.h' -printf '%T@\n' | sort -n | tail -1)
+# one object, rebuilt when its source or any header is newer. The newest
+# header is chosen in the shell, not by a pipeline: a reader that stops
+# early (head, grep -q) would trip pipefail on the writer's SIGPIPE
+newest_h=
+while IFS= read -r -d '' h; do
+    if [ -z "$newest_h" ] || [ "$h" -nt "$newest_h" ]; then
+        newest_h=$h
+    fi
+done < <(find src include "$SPV" "$GEN" -name '*.h' -print0)
+headers_newest=0
+if [ -n "$newest_h" ]; then
+    # GNU stat spells the mtime in seconds -c %Y, BSD -f %m. The GNU
+    # spelling goes first: a failing BSD stat prints nothing, where a
+    # failing GNU stat in -f mode still prints the file system info
+    headers_newest=$(stat -c %Y "$newest_h" 2>/dev/null || stat -f %m "$newest_h")
+fi
 compile()
 { # source, object, then the flags
     local src="$1" obj="$2"
     shift 2
     if [ ! -f "$obj" ] || [ "$src" -nt "$obj" ] ||
-        [ "$(stat -c %Y "$obj")" -lt "${headers_newest%.*}" ]; then
+        [ "$(stat -c %Y "$obj" 2>/dev/null || stat -f %m "$obj")" -lt "$headers_newest" ]; then
         echo "CC  $src"
         "$CC" "$@" -c "$src" -o "$obj"
     fi
@@ -342,9 +356,10 @@ tp_flags()
     local d="src/third_party/$1"
     case "$1" in
     libmicrohttpd)
-        # Windows has a configuration of its own (see its origin.md)
+        # Windows and darwin have configurations of their own (see its origin.md)
         [ "$OS" = windows ] && echo "-I$d/w32"
-        echo "-D_GNU_SOURCE -DHAVE_CONFIG_H -I$d -I$d/src/include" \
+        [ "$OS" = darwin ] && echo "-I$d/darwin"
+        echo "-DHAVE_CONFIG_H -I$d -I$d/src/include" \
             "-I$d/src/microhttpd" ;;
     mbedtls)
         local c="$d/tf-psa-crypto" v="$d/tf-psa-crypto/drivers"
