@@ -1206,8 +1206,14 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
         m->caller_pinned = janas_cpus_save(m->caller_cpus) == 0;
         janas_pin_current_thread(pin);
     }
-    m->cache = janas_expert_cache_create(&m->j, o->cache_bytes, m->exp_level,
-                                         m->io, err, err_len);
+    /* the MTP block in the file (qwen35moe) gets a cache of its own: its
+       experts in Q8_0 are near twice the others', and slots as big as
+       theirs halved what the budget held (qwen3.6-35b-a3b-q4_0: 5782 of
+       10496 experts in 18 GiB) */
+    m->mtp_split = m->n_layer < m->j.h.n_layer;
+    m->cache =
+        janas_expert_cache_create_range(&m->j, o->cache_bytes, m->exp_level,
+                                        m->io, 0, m->n_layer, err, err_len);
     if (!m->cache)
         goto fail;
     /* reads ahead (model_ffn.c janas_m_prefetch): where they pay, of the
@@ -1276,6 +1282,15 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
                       &m->mtp_j,
                       o->mtp_cache_bytes ? o->mtp_cache_bytes : 256ull << 20,
                       m->exp_level, m->io, err, err_len)
+            : m->mtp_split
+                ? janas_expert_cache_create_range(
+                      &m->j,
+                      /* the whole layer: a block asks for up to 128 experts
+                         of it at a time (model_ffn.c EXPERT_CHUNK) */
+                      (uint64_t)m->n_expert *
+                          m->j.layers[m->n_layer].level_bytes[m->exp_level - 1],
+                      m->exp_level, m->io, m->n_layer, m->j.h.n_layer, err,
+                      err_len)
                 : m->cache;
         if (!m->hid || !m->mtp_hid || !m->cat || !m->catq || !m->mtp_cache ||
             init_draft_head(m, dvocab) != 0)
@@ -1345,7 +1360,7 @@ void janas_llm_model_free(struct janas_llm_model *m)
     janas_gpu_destroy(m->gpu); /* before the memory it imported; frees
                                   the resident region it allocated */
     janas_expert_cache_destroy(m->cache);
-    if (m->mtp_own_cache)
+    if (m->mtp_own_cache || (m->mtp_split && m->mtp_cache != m->cache))
         janas_expert_cache_destroy(m->mtp_cache);
     janas_attn_destroy(m->attn);
     janas_attn_destroy(m->attn_swa);
