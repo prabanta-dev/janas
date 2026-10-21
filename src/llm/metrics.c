@@ -16,6 +16,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "common/printf_like.h"
 #include "llm/chat.h"
 #include "llm/json.h"
 #include "llm/model.h"
@@ -53,7 +54,7 @@ static int on(void)
 /* One JSON line: the event, its time, and the members (text without the
    braces), written in one piece so lines from several threads never mix. */
 static void emit(const char *event, const char *fmt, ...)
-    __attribute__((format(gnu_printf, 2, 3)));
+    JANAS_PRINTF_LIKE(2, 3);
 static void emit(const char *event, const char *fmt, ...)
 {
     if (json_fd < 0)
@@ -85,8 +86,7 @@ static void emit(const char *event, const char *fmt, ...)
     janas_buf_free(&b);
 }
 
-static void human(const char *fmt, ...)
-    __attribute__((format(gnu_printf, 1, 2)));
+static void human(const char *fmt, ...) JANAS_PRINTF_LIKE(1, 2);
 static void human(const char *fmt, ...)
 {
     if (human_every <= 0)

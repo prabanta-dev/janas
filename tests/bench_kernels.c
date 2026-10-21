@@ -121,7 +121,7 @@ int main(int argc, char **argv)
     float *v = malloc(8 * cols * sizeof(float));
     srand(1);
     for (size_t i = 0; i < 8 * cols; i++)
-        v[i] = (float)rand() / RAND_MAX - 0.5f;
+        v[i] = (float)rand() / (float)RAND_MAX - 0.5f;
     for (int k = 0; k < 8; k++)
         janas_q8k_quantize(v + k * cols, x + k * nb, cols);
     printf("GB/s of weights, %zu MiB a type, 2048 columns; 1 core (CPU %d) "

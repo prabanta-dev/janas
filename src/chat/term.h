@@ -24,6 +24,7 @@
 #include <wchar.h>
 #include <unistd.h>
 
+#include "common/printf_like.h"
 #include "tty.h"
 
 struct janas_term {
@@ -250,8 +251,8 @@ static void term_puts(struct janas_term *t, const char *s)
     term_write(t, s, strlen(s));
 }
 
-__attribute__((format(gnu_printf, 2, 3))) static void
-term_printf(struct janas_term *t, const char *fmt, ...)
+JANAS_PRINTF_LIKE(2, 3)
+static void term_printf(struct janas_term *t, const char *fmt, ...)
 {
     char small[1024], *buf = small;
     va_list ap;
