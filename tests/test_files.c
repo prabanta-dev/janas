@@ -124,11 +124,11 @@ static void make_home(void)
     put_file(P("%s/secret.txt", out), "outside\n", 0);
     char target[PATH_MAX + 64];
     snprintf(target, sizeof target, "%s/secret.txt", out);
-    symlink(target, P("%s/proj/link_out", home));
+    CHECK(symlink(target, P("%s/proj/link_out", home)) == 0, "link_out");
     snprintf(target, sizeof target, "%s/.ssh", home);
-    symlink(target, P("%s/proj/link_ssh", home));
+    CHECK(symlink(target, P("%s/proj/link_ssh", home)) == 0, "link_ssh");
     snprintf(target, sizeof target, "%s/new.txt", out);
-    symlink(target, P("%s/proj/dangle", home));
+    CHECK(symlink(target, P("%s/proj/dangle", home)) == 0, "dangle");
 }
 
 static void reads(void)
