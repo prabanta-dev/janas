@@ -57,6 +57,7 @@
 #include "common/env_names.h"
 #include "common/model_pick.h"
 #include "common/sysinfo.h"
+#include "llm/quant.h"
 #include "common/words.h"
 #include "janas/llm.h"
 #include "llm/api_internal.h"
@@ -342,6 +343,11 @@ int main(int argc, char **argv)
     if (janas_cpu_layout(NULL, 0, &lay) == 0)
         out(" (%d performance cores, %d threads on them, %d usable in all)",
             lay.n_p_cores, lay.n_p_threads, lay.n);
+    char feat[512];
+    janas_cpu_features(feat, sizeof(feat));
+    out("\nCPU has: %s", feat[0] ? feat : "(not known)");
+    out("\nkernels: %s%s", janas_q4k_kernel_name(),
+        getenv("JANAS_KERNELS") ? " (JANAS_KERNELS set)" : "");
     int mains = janas_on_mains();
     out("\nmemory:  %.1f GiB, %.1f GiB available; power: %s\n",
         (double)janas_mem_total() / (1 << 30),

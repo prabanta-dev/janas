@@ -41,6 +41,7 @@
 #include <time.h>
 
 #include "common/aligned.h"
+#include "common/sysinfo.h"
 #include "llm/bf16.h"
 #include "llm/gpu.h"
 #include "llm/matvec.h"
@@ -667,6 +668,13 @@ int main(void)
             memset(b, 1, big);
     }
     printf("gpu_check %s\n", JANAS_VERSION);
+    {
+        char cpu[128], feat[512];
+        janas_cpu_name(cpu, sizeof cpu);
+        janas_cpu_features(feat, sizeof feat);
+        printf("CPU: %s\nCPU has: %s\nkernels: %s\n", cpu[0] ? cpu : "unknown",
+               feat[0] ? feat : "(not known)", janas_q4k_kernel_name());
+    }
     const char *off = getenv("JANAS_GPU");
     if (off && strcmp(off, "0") == 0)
         printf("(JANAS_GPU=0 turns the GPU off for the engine; gpu_check "

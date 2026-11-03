@@ -611,6 +611,10 @@ static void about(const janas_llm *llm)
              : mains   ? ", on mains"
                        : ", on battery");
     term_field(&term, "machine", machine);
+    char feat[512];
+    janas_cpu_features(feat, sizeof(feat));
+    if (feat[0])
+        term_field(&term, "instructions", feat);
     term_field(&term, "engine",
                "Janas-LLM " JANAS_VERSION ", C11, no dependency beyond the C "
                "library; the experts stream from the disk, so a model larger "

@@ -27,7 +27,7 @@ It builds Janas and runs its tests, downloads a model from Hugging Face (checkin
 bin/x86_64-linux/janas-bench <model>
 ```
 
-`<model>` is a name from the list `janas-bench` shows when given none (`qwen3-4b`), or a `.jns` file. The report already carries the CPU's name, the core layout, the GPU if there is one, and the speed of every configuration tried. Add:
+`<model>` is a name from the list `janas-bench` shows when given none (`qwen3-4b`), or a `.jns` file. The report already carries the CPU's name, the instructions it has that matter to a model (`CPU has:`: AVX2, AVX-VNNI, the AVX-512 kinds, AVX10, AMX; dotprod, i8mm, SVE, SME on ARM) and the kernels Janas chose among them (`kernels:`), the core layout, the GPU if there is one, and the speed of every configuration tried. Add:
 
 - the **distribution** and kernel (`uname -a`), and the **RAM** (`free -g`);
 - the **disk** the model sits on (NVMe? SATA? over USB?);

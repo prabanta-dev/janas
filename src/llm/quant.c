@@ -1801,6 +1801,10 @@ __attribute__((constructor)) static void dot_kernels_init(void)
             dotis_impl = iq3s_dot_evnni;
             dot6p_impl = q6kp_dotn_evnni;
             dot_name = "avx512-vnni";
+        } else if (plain && (__builtin_cpu_supports("avxvnni") ||
+                             (__builtin_cpu_supports("avx512vnni") &&
+                              __builtin_cpu_supports("avx512vl")))) {
+            dot_name = "avx2 (VNNI left out: JANAS_KERNELS=avx2)";
         }
     }
 #endif

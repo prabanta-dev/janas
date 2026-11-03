@@ -251,6 +251,8 @@ jobs:
           for s in src/services/*/; do
             s=$(basename "$s")
             [ "$s" = common ] && continue
+            # a service not built for Windows yet (janas-files) stays out
+            [ -f "$B/janas-$s.exe" ] || continue
             install -m 755 "$B/janas-$s.exe" "$P/services/"
             install -m 644 "src/services/$s/README.md" "$P/services/janas-$s.md"
           done

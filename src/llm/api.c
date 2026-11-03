@@ -1037,9 +1037,10 @@ int32_t janas_llm_describe(const janas_llm *llm, char *buf, int32_t cap,
                                                           : "");
     snprintf(w->desc, sizeof(w->desc),
              "%s (%s), context %u tokens, expert cache %.1f GiB, up to %d "
-             "compute threads%s, drafts %s%s%s%s",
+             "compute threads, %s kernels%s, drafts %s%s%s%s",
              llm->name[0] ? llm->name : "model", llm->arch, llm->n_ctx,
-             (double)llm->cache_bytes / (1 << 30), llm->n_compute, gpu,
+             (double)llm->cache_bytes / (1 << 30), llm->n_compute,
+             janas_q4k_kernel_name(), gpu,
              llm->draft     ? "from a second model"
              : llm->has_mtp ? "from the MTP block"
                             : "from the conversation",

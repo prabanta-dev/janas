@@ -47,6 +47,11 @@ void janas_cpus_restore(const unsigned char save[JANAS_CPU_SAVE_BYTES]);
 int janas_exe_path(char *buf, size_t len);
 /* The processor's name ("Intel(R) Core(TM) Ultra 9 185H"), or "". */
 void janas_cpu_name(char *buf, size_t len);
+/* The processor's instructions that matter to a model's products, those
+   used and those not yet ("avx2 avx-vnni avx512vnni amx-int8..."), each
+   counted where the system enables it (cpu_features.c); empty when none
+   is known. */
+void janas_cpu_features(char *buf, size_t len);
 
 /* Whether the machine runs on mains power: 1 yes, 0 on battery, -1 unknown
    (no power supply information: a desktop, most likely). */

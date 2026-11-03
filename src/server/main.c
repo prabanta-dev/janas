@@ -16,6 +16,7 @@
 #include "common/env_names.h"
 #include "common/sock.h"
 #include "common/stop.h"
+#include "common/sysinfo.h"
 #include "common/words.h"
 
 #include <netdb.h>
@@ -587,6 +588,11 @@ int main(int argc, char **argv)
         return 1;
     }
     freeaddrinfo(ai);
+    char cpu[128], feat[512];
+    janas_cpu_name(cpu, sizeof cpu);
+    janas_cpu_features(feat, sizeof feat);
+    fprintf(stderr, "janas-server: CPU %s; instructions: %s\n",
+            cpu[0] ? cpu : "unknown", feat[0] ? feat : "not known");
     fprintf(stderr,
             "janas-server: %s\n"
             "janas-server: model '%s' on http%s://%s%s%s:%u/v1%s; Ctrl+C "
