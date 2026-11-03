@@ -116,6 +116,20 @@ typedef struct {
     uint64_t lower;
     uint64_t upper;
 } napi_type_tag;
+
+typedef enum {
+    napi_int8_array,
+    napi_uint8_array,
+    napi_uint8_clamped_array,
+    napi_int16_array,
+    napi_uint16_array,
+    napi_int32_array,
+    napi_uint32_array,
+    napi_float32_array,
+    napi_float64_array,
+    napi_bigint64_array,
+    napi_biguint64_array
+} napi_typedarray_type;
 #endif
 
 /* js_native_api.h */
@@ -150,6 +164,18 @@ napi_status napi_get_named_property(napi_env env, napi_value object,
 napi_status napi_get_element(napi_env env, napi_value object, uint32_t index,
                              napi_value *result);
 napi_status napi_is_array(napi_env env, napi_value value, bool *result);
+napi_status napi_create_array_with_length(napi_env env, size_t length,
+                                          napi_value *result);
+napi_status napi_set_element(napi_env env, napi_value object, uint32_t index,
+                             napi_value value);
+napi_status napi_is_typedarray(napi_env env, napi_value value, bool *result);
+napi_status napi_get_typedarray_info(napi_env env, napi_value typedarray,
+                                     napi_typedarray_type *type, size_t *length,
+                                     void **data, napi_value *arraybuffer,
+                                     size_t *byte_offset);
+napi_status napi_is_arraybuffer(napi_env env, napi_value value, bool *result);
+napi_status napi_get_arraybuffer_info(napi_env env, napi_value arraybuffer,
+                                      void **data, size_t *byte_length);
 napi_status napi_get_array_length(napi_env env, napi_value value,
                                   uint32_t *result);
 napi_status napi_call_function(napi_env env, napi_value recv, napi_value func,

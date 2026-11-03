@@ -208,6 +208,48 @@ long janas_vad_probs(struct janas_vad *v, const float *pcm, size_t n,
     return (long)nw;
 }
 
+long janas_vad_probs_read(struct janas_vad *v, size_t n, float gain,
+                          const float *(*get)(void *user, size_t from,
+                                              size_t count, char *err,
+                                              size_t err_len),
+                          void *user, float **probs, char *err,
+                          size_t err_len)
+{
+    enum { PIECE = 256 * WIN };
+    size_t nw = (n + WIN - 1) / WIN;
+    float *p = malloc(sizeof(float) * (nw ? nw : 1));
+    float *g = malloc(sizeof(float) * PIECE);
+    if (!p || !g) {
+        free(p);
+        free(g);
+        snprintf(err, err_len, "out of memory");
+        return -1;
+    }
+    float x[CTX + WIN], h[HID] = {0}, c[HID] = {0};
+    memset(x, 0, sizeof(float) * CTX);
+    for (size_t at0 = 0, w = 0; at0 < n; at0 += PIECE) {
+        size_t len = n - at0 < PIECE ? n - at0 : PIECE;
+        const float *src = get(user, at0, len, err, err_len);
+        if (!src) {
+            free(p);
+            free(g);
+            return -1;
+        }
+        for (size_t i = 0; i < len; i++)
+            g[i] = src[i] * gain; /* as the whole sound normalized is */
+        for (size_t at = 0; at < len; at += WIN, w++) {
+            size_t k = len - at < WIN ? len - at : WIN;
+            memcpy(x + CTX, g + at, sizeof(float) * k);
+            memset(x + CTX + k, 0, sizeof(float) * (WIN - k));
+            p[w] = step(v, x, h, c);
+            memmove(x, x + WIN, sizeof(float) * CTX);
+        }
+    }
+    free(g);
+    *probs = p;
+    return (long)nw;
+}
+
 long janas_vad_segments(const struct janas_vad *v, const float *probs,
                         long n_probs, size_t n,
                         const struct janas_vad_params *p, size_t **seg)

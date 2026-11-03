@@ -800,7 +800,7 @@ static void vorbis_free(struct vorbis *v)
 
 /* ---- the stream ---- */
 
-int janas_vorbis_stream(const struct ogg_packets *o, struct janas_audio *a,
+int janas_vorbis_stream(const struct ogg_packets *o, struct audio_out *ao,
                         char *why, size_t wn)
 {
     struct vorbis v = {0};
@@ -853,7 +853,11 @@ int janas_vorbis_stream(const struct ogg_packets *o, struct janas_audio *a,
             !(vec[c] = malloc(sizeof(float) * (size_t)half)) ||
             !(pcm[c] = malloc(sizeof(float) * (size_t)maxn)))
             goto oom;
-    size_t got = 0, cap = 0;
+    /* a block gives at most half the larger size */
+    if (!(out = malloc(sizeof(float) * (size_t)maxn)))
+        goto oom;
+    size_t got = 0;
+    ao->rate = v.rate;
     int pn = 0; /* the previous block's size, 0 before the first */
     int64_t first_granule = -1;
     size_t first_page_end = 0; /* samples out when its page ended */
@@ -936,28 +940,16 @@ int janas_vorbis_stream(const struct ogg_packets *o, struct janas_audio *a,
         /* from the previous block's centre to this one's */
         if (pn) {
             int len = pn / 4 + n / 4;
-            if (got + (size_t)len > JANAS_AUDIO_MAX_SAMPLES) {
-                snprintf(why, wn, "a Vorbis stream longer than this reads");
-                goto end;
-            }
-            if (got + (size_t)len > cap) {
-                size_t c2 = cap ? cap * 2 : 1 << 18;
-                while (c2 < got + (size_t)len)
-                    c2 *= 2;
-                float *q = realloc(out, sizeof(float) * c2);
-                if (!q)
-                    goto oom;
-                out = q;
-                cap = c2;
-            }
             for (int k = 0; k < len; k++) {
                 double s = 0;
                 int pi = pn / 2 + k, ci = n / 4 - pn / 4 + k;
                 for (int c = 0; c < v.ch; c++)
                     s += (pi < pn ? prev[c][pi] : 0) +
                          (ci >= 0 && ci < n ? pcm[c][ci] : 0);
-                out[got + (size_t)k] = (float)(s / v.ch);
+                out[k] = (float)(s / v.ch);
             }
+            if (audio_put(ao, out, (size_t)len, why, wn) != 0)
+                goto end;
             got += (size_t)len;
         }
         for (int c = 0; c < v.ch; c++)
@@ -995,11 +987,8 @@ int janas_vorbis_stream(const struct ogg_packets *o, struct janas_audio *a,
         snprintf(why, wn, "a Vorbis stream without sound");
         goto end;
     }
-    memmove(out, out + skip, sizeof(float) * (total - skip));
-    a->pcm = out;
-    a->n = total - skip;
-    a->rate = v.rate;
-    out = NULL;
+    ao->skip = skip;
+    ao->total = total;
     rc = 0;
     goto end;
 oom:

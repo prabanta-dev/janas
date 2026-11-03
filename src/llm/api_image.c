@@ -73,6 +73,18 @@ uint32_t janas_api_picture_block(const char *path)
     return both && most && most <= 4096 ? (most + 63) / 64 * 64 : 0;
 }
 
+int32_t janas_llm_sees(const janas_llm *llm)
+{
+    if (!llm || !llm->path ||
+        (llm->format != FORMAT_CHATML && llm->format != FORMAT_GEMMA))
+        return 0;
+    if (llm->vis)
+        return 1;
+    char best[8448];
+    vision_path(llm->path, best, sizeof best);
+    return best[0] != 0;
+}
+
 /* The encoder beside the model: 0, or -1 with the reason in the library's
    error. */
 static int vision_of(janas_llm *llm)

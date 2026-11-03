@@ -199,7 +199,7 @@ int ogg_read(const uint8_t *d, size_t n, struct ogg_packets *o, char *why,
 
 /* Ogg FLAC: 0x7F "FLAC", the mapping's version and header count, then
    "fLaC" and STREAMINFO; the other packets metadata blocks then frames */
-static int ogg_flac(const struct ogg_packets *o, struct janas_audio *a,
+static int ogg_flac(const struct ogg_packets *o, struct audio_out *ao,
                     char *why, size_t wn)
 {
     size_t total = 0;
@@ -225,12 +225,12 @@ static int ogg_flac(const struct ogg_packets *o, struct janas_audio *a,
     }
     /* the metadata blocks keep their own last-block flags; the first is
        marked last when no other follows it in the header packets */
-    int rc = janas_audio_flac(s, n, a, why, wn);
+    int rc = janas_audio_flac(s, n, ao, why, wn);
     free(s);
     return rc;
 }
 
-int janas_audio_ogg(const uint8_t *d, size_t n, struct janas_audio *a,
+int janas_audio_ogg(const uint8_t *d, size_t n, struct audio_out *ao,
                     char *why, size_t wn)
 {
     if (n < 4 || memcmp(d, "OggS", 4))
@@ -238,9 +238,9 @@ int janas_audio_ogg(const uint8_t *d, size_t n, struct janas_audio *a,
     struct ogg_packets o;
     if (ogg_read(d, n, &o, why, wn))
         return -1;
-    int rc = o.codec == 1   ? janas_vorbis_stream(&o, a, why, wn)
-             : o.codec == 2 ? janas_opus_stream(&o, a, why, wn)
-                            : ogg_flac(&o, a, why, wn);
+    int rc = o.codec == 1   ? janas_vorbis_stream(&o, ao, why, wn)
+             : o.codec == 2 ? janas_opus_stream(&o, ao, why, wn)
+                            : ogg_flac(&o, ao, why, wn);
     ogg_packets_free(&o);
     return rc;
 }

@@ -479,7 +479,7 @@ JANAS_LLM_API int32_t janas_llm_chat_load(janas_llm_chat *c, int32_t n,
 /*
  * The same, message by message, with what janas_llm_chat_load cannot say:
  * the tool calls of an assistant's message. janas_llm_chat_begin starts an
- * empty conversation; janas_llm_chat_add appends a message;
+ * empty conversation, leaving a reply still being read where it is; janas_llm_chat_add appends a message;
  * janas_llm_chat_add_call appends a call to the last message, which must be
  * the assistant's (name, and the arguments as a JSON object); and
  * janas_llm_chat_run loads it all as janas_llm_chat_load does, the reply
@@ -673,7 +673,10 @@ JANAS_LLM_API int32_t janas_llm_chat_token_top(const janas_llm_chat *c,
                                                int32_t *n);
 
 /* Raw text to continue, with no chat format around it; the continuation
-   follows through janas_llm_chat_next. Shared text is reused as above. */
+   follows through janas_llm_chat_next. Shared text is reused as above. The
+   model's special tokens written in the text (<|im_start|>, <|fim_prefix|>,
+   <|endoftext|>...) are those tokens, so that a prompt made in the model's
+   own format reads as the model was trained on it. */
 JANAS_LLM_API int32_t janas_llm_chat_prompt(janas_llm_chat *c, const char *text,
                                             int32_t len);
 
@@ -696,6 +699,13 @@ JANAS_LLM_API int32_t janas_llm_chat_thinking(const janas_llm_chat *c);
    chat template carries the switch and its vocabulary both markers. Where
    this is 0, janas_llm_chat_params.thinking changes nothing. */
 JANAS_LLM_API int32_t janas_llm_reasons(const janas_llm *llm);
+
+/* 1 where the model's chat template takes tools (janas_llm_chat_tools). */
+JANAS_LLM_API int32_t janas_llm_uses_tools(const janas_llm *llm);
+
+/* 1 where the model reads pictures (janas_llm_chat_image): a chat format
+   that places them and a vision encoder beside the model's file. */
+JANAS_LLM_API int32_t janas_llm_sees(const janas_llm *llm);
 
 /* Forgets the conversation (the system message too). */
 JANAS_LLM_API int32_t janas_llm_chat_reset(janas_llm_chat *c);
@@ -857,7 +867,8 @@ struct janas_llm_transcribe_params {
        (default); 1 auto (loudness normalized, then voice activity
        detection with the defaults below); 2 voice activity detection with
        vad_threshold, vad_prefix_ms and vad_silence_ms. Only the speech is
-       read, its windows within each stretch of it. */
+       read: stretches of it close together in one window of thirty seconds
+       at most, the pauses between them included. */
     int32_t chunking;
     float vad_threshold;    /* 0.5 */
     int32_t vad_prefix_ms;  /* 300: kept before speech */
@@ -873,8 +884,9 @@ struct janas_llm_transcribe_params {
 };
 JANAS_LLM_API void
 janas_llm_transcribe_params_default(struct janas_llm_transcribe_params *p);
-/* The n bytes of a sound file (WAV, FLAC, MP3, Ogg, M4A, WebM; any rate and
-   channels; up to four hours at 48 kHz) transcribed; p may be NULL.
+/* The n bytes of a sound file (WAV, FLAC, MP3, Ogg, M4A, WebM; any rate,
+   channels and length: a sound too long for the memory free is decoded
+   again a window at a time, the same result) transcribed; p may be NULL.
    JANAS_LLM_EINVAL when the bytes are not a sound this reads, or the
    language is unknown. */
 JANAS_LLM_API int32_t

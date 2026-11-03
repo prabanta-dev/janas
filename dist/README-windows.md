@@ -71,7 +71,7 @@ The first says which models it knows, their size and the memory they want; the s
 | `hf2jns_mtp` | makes a model's multi-token prediction block from its original checkpoint |
 | `jns_check` | what a `.jns` file says about itself: architecture, sizes, types, licence |
 | `vkcheck` | whether this computer's GPU can run Janas's GPU backend, and why not: what the backend needs with the driver's answer, then three short tests on the GPU |
-| `services/` | Janas's services, which bring data of the world to a model: flights, weather, maps, prices, earthquakes, Wikipedia, GitHub, git, this computer. `janas-chat` starts them by itself; any other MCP client can use them. See `services/README.md` |
+| `services/` | Janas's services, which bring data of the world to a model: your files, flights, weather, maps, prices, earthquakes, Wikipedia, GitHub, git, this computer. `janas-chat` starts them by itself; any other MCP client can use them. See `services/README.md` |
 | `lib/`, `include/` | `libjanas_llm.dll` and `libjanas_mcp.dll`, their import libraries for MinGW (`.dll.a`), their C headers and FreeBASIC bindings, for programs of your own; the programs above do not need them |
 
 ## Needs

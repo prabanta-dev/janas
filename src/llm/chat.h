@@ -136,6 +136,7 @@ struct janas_llm_chat {
     size_t n_idpics;
     char *text;
     size_t n_text, cap_text;
+    int text_special; /* the model's special tokens in it are tokens */
     /* counters */
     struct janas_gen_stats st0;
     struct janas_expert_cache_stats cs0;

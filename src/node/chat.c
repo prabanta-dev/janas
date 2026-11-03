@@ -2,8 +2,8 @@
    Copyright (C) 2026 Maurizio Cammalleri */
 /*
  * chat.c - the Chat class: a model's conversation (one at a time per model,
- * as the library has it), its parameters, its system message, a reset, and
- * the replies it asks for (reply.c).
+ * as the library has it), its parameters, its system message, a reset, the
+ * pictures that go with a message, and the replies it asks for (reply.c).
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -356,6 +356,72 @@ static napi_value chat_reset(napi_env env, napi_callback_info info)
     return p;
 }
 
+struct image_job {
+    void *data;
+    size_t n;
+};
+
+static void image_drop(void *data)
+{
+    struct image_job *ij = data;
+    if (ij)
+        free(ij->data);
+    free(ij);
+}
+
+static void image_run(struct janas_node_job *j)
+{
+    struct image_job *ij = j->data;
+    janas_llm_chat *c = j->m->chat;
+    if (!c) {
+        j->rc = JANAS_NODE_ECLOSED;
+        snprintf(j->error, sizeof(j->error), "janas: the chat is closed");
+        return;
+    }
+    j->rc = janas_llm_chat_image(c, ij->data, (int64_t)ij->n);
+    if (j->rc != JANAS_LLM_OK)
+        failed(j);
+}
+
+/* a picture for the next message: the bytes copied now, read by the
+   engine in order with the messages */
+static napi_value chat_image(napi_env env, napi_callback_info info)
+{
+    size_t argc = 1;
+    napi_value argv[1] = {NULL};
+    struct janas_node_chat *c = janas_node_self(env, info, &janas_node_chat_tag,
+                                                &argc, argv, "Chat.image");
+    if (!c)
+        return NULL;
+    if (c->closed || c->m->closing)
+        return closed(env, 1, "chat.image");
+    struct image_job *ij = calloc(1, sizeof(*ij));
+    if (!ij)
+        return janas_node_throw(env, JANAS_LLM_ENOMEM, "janas: out of memory");
+    ij->data = argc ? janas_node_bytes(env, argv[0], &ij->n) : NULL;
+    if (!ij->data) {
+        int oom = ij->n == SIZE_MAX;
+        image_drop(ij);
+        return oom ? janas_node_throw(env, JANAS_LLM_ENOMEM,
+                                      "janas: out of memory")
+                   : janas_node_type_error(
+                         env, "janas: chat.image(data): the bytes of a PNG or "
+                              "a JPEG, as a Buffer, a Uint8Array or an "
+                              "ArrayBuffer");
+    }
+    struct janas_node_job *j = janas_node_job(c->m, image_run);
+    napi_value p = j ? janas_node_promise(env, &j->deferred) : NULL;
+    if (!p) {
+        image_drop(ij);
+        free(j);
+        return janas_node_throw(env, JANAS_LLM_ENOMEM, "janas: out of memory");
+    }
+    j->data = ij;
+    j->drop = image_drop;
+    janas_node_post(env, j);
+    return p;
+}
+
 static napi_value chat_close(napi_env env, napi_callback_info info)
 {
     struct janas_node_chat *c = janas_node_self(env, info, &janas_node_chat_tag,
@@ -403,6 +469,7 @@ napi_value janas_node_chat_class(napi_env env)
     napi_property_descriptor d[] = {
         {.utf8name = "send", .method = chat_send, .attributes = method},
         {.utf8name = "load", .method = chat_load, .attributes = method},
+        {.utf8name = "image", .method = chat_image, .attributes = method},
         {.utf8name = "set", .method = chat_set, .attributes = method},
         {.utf8name = "reset", .method = chat_reset, .attributes = method},
         {.utf8name = "close", .method = chat_close, .attributes = method},

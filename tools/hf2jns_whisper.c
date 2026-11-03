@@ -16,7 +16,8 @@
  * transposed - a row per input, its outputs contiguous - as the engine's
  * tiled products read them, the token embeddings too; the norms, biases
  * and positions in float. The metadata holds the sizes, the
- * spectrogram's mel filters (as the processor has them), the special
+ * spectrogram's mel filters (as the processor has them, or as librosa
+ * makes them where it no longer does: large-v3), the special
  * tokens, the languages, the tokens never to be sampled, and the
  * vocabulary with its merges for the engine's tokenizer.
  *
@@ -24,6 +25,7 @@
  */
 #define _GNU_SOURCE
 #include <dirent.h>
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -36,6 +38,52 @@
 
 #define GGML_F32 0
 #define GGML_F16 1
+
+static _Noreturn void die(const char *msg, const char *arg);
+
+/* Slaney's mel scale, librosa's (htk=False) */
+static double hz_to_mel(double f)
+{
+    const double sp = 200.0 / 3, min_log = 1000, logstep = log(6.4) / 27;
+    return f < min_log ? f / sp : min_log / sp + log(f / min_log) / logstep;
+}
+
+static double mel_to_hz(double m)
+{
+    const double sp = 200.0 / 3, min_log = 1000, logstep = log(6.4) / 27;
+    return m < min_log / sp ? m * sp
+                            : min_log * exp(logstep * (m - min_log / sp));
+}
+
+/* The filters OpenAI's mel_filters.npz holds, which the processors of the
+   first checkpoints carried: librosa.filters.mel(sr=rate, n_fft, n_mels,
+   norm="slaney") in float32 - triangles on the mel scale from 0 Hz to half
+   the rate, rounded to float, then scaled by 2 / their width in Hz and
+   rounded again, as librosa's float32 array does. */
+static void mel_filters(float *w, uint32_t mels, uint32_t n_fft, uint32_t rate)
+{
+    uint32_t bins = n_fft / 2 + 1;
+    double *mf = malloc(sizeof(double) * (mels + 2));
+    if (!mf)
+        die("out of memory", NULL);
+    /* numpy's linspace and rfftfreq, operation for operation */
+    double lo = hz_to_mel(0), hi = hz_to_mel(rate / 2.0),
+           step = (hi - lo) / (mels + 1), df = 1.0 / (n_fft * (1.0 / rate));
+    for (uint32_t i = 0; i < mels + 2; i++)
+        mf[i] = mel_to_hz(i == mels + 1 ? hi : i * step + lo);
+    for (uint32_t i = 0; i < mels; i++) {
+        double enorm = 2.0 / (mf[i + 2] - mf[i]);
+        for (uint32_t k = 0; k < bins; k++) {
+            double f = k * df;
+            double lower = -(mf[i] - f) / (mf[i + 1] - mf[i]),
+                   upper = (mf[i + 2] - f) / (mf[i + 2] - mf[i + 1]);
+            double v = lower < upper ? lower : upper;
+            float t = (float)(v > 0 ? v : 0);
+            w[i * bins + k] = (float)(t * enorm);
+        }
+    }
+    free(mf);
+}
 
 static _Noreturn void die(const char *msg, const char *arg)
 {
@@ -385,13 +433,16 @@ int main(int argc, char **argv)
     /* the mel filters, n_mels rows of n_fft / 2 + 1 */
     const struct janas_json *mf = janas_json_get(pre, "mel_filters");
     uint32_t bins = n_fft / 2 + 1;
-    if (!mf || mf->type != JANAS_JSON_ARRAY || mf->n != mels)
-        die("preprocessor_config.json lacks the mel filters", NULL);
+    if (mf && (mf->type != JANAS_JSON_ARRAY || mf->n != mels))
+        die("preprocessor_config.json has mel filters of another size", NULL);
     float *filt = malloc(sizeof(float) * mels * bins);
     if (!filt)
         die("out of memory", NULL);
+    if (!mf)
+        mel_filters(filt, mels, n_fft, rate);
     uint32_t m = 0;
-    for (const struct janas_json *r = mf->child; r; r = r->next, m++) {
+    for (const struct janas_json *r = mf ? mf->child : NULL; r;
+         r = r->next, m++) {
         if (r->type != JANAS_JSON_ARRAY || r->n != bins)
             die("a mel filter of another length", NULL);
         uint32_t k = 0;

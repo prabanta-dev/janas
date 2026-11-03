@@ -366,9 +366,10 @@ static AVX2 void att_scores_f32_avx2(const float *const *q, const int8_t *K,
     }
 }
 
-/* The scores over the sixteen-bit query, once for AVX2 and once for AVX-VNNI:
-   see attention_scores.h. Both sum the same integers, so both give the same
-   scores, and the same ones as att_scores_i16_ref. */
+/* The scores over the sixteen-bit query, once for AVX2, once for AVX-VNNI and
+   once for AVX-512 VNNI on 256 bits: see attention_scores.h. All sum the
+   same integers, so all give the same scores, and the same ones as
+   att_scores_i16_ref. */
 #define SCORES(name) name##_i16_avx2
 #define SCORES_TARGET AVX2
 #define SCORES_ACC(acc, a, b) _mm256_add_epi32(acc, _mm256_madd_epi16(a, b))
@@ -380,6 +381,15 @@ static AVX2 void att_scores_f32_avx2(const float *const *q, const int8_t *K,
 #define SCORES(name) name##_i16_vnni
 #define SCORES_TARGET __attribute__((target("avx2,fma,f16c,avxvnni")))
 #define SCORES_ACC(acc, a, b) _mm256_dpwssd_avx_epi32(acc, a, b)
+#include "attention_scores.h"
+#undef SCORES
+#undef SCORES_TARGET
+#undef SCORES_ACC
+
+#define SCORES(name) name##_i16_evnni
+#define SCORES_TARGET                                                          \
+    __attribute__((target("avx2,fma,f16c,avx512vnni,avx512vl")))
+#define SCORES_ACC(acc, a, b) _mm256_dpwssd_epi32(acc, a, b)
 #include "attention_scores.h"
 #undef SCORES
 #undef SCORES_TARGET
@@ -694,7 +704,10 @@ static void attn_item(struct attn_job *a, uint32_t it, float *sc, int avx,
                                      srow, (int)step);
         } else if (fast) {
 #if defined(__x86_64__)
-            if (vnni)
+            if (vnni == 2)
+                att_scores_i16_evnni(qi, K, ks, nt, hd, qsc, scale, srow, pf,
+                                     (int)step);
+            else if (vnni)
                 att_scores_i16_vnni(qi, K, ks, nt, hd, qsc, scale, srow, pf,
                                     (int)step);
             else if (avx)
@@ -770,7 +783,9 @@ static void attn_item(struct attn_job *a, uint32_t it, float *sc, int avx,
         }
         if (fastv) {
 #if defined(__x86_64__)
-            if (vnni)
+            if (vnni == 2)
+                att_values_i16_evnni(wp, wsc, V, nt, hd, out, (int)step);
+            else if (vnni)
                 att_values_i16_vnni(wp, wsc, V, nt, hd, out, (int)step);
             else if (avx)
                 att_values_i16_avx2(wp, wsc, V, nt, hd, out, (int)step);
@@ -915,7 +930,7 @@ static void attn_worker(void *arg, int tid, int n_threads)
 #if defined(__x86_64__)
     avx = __builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma") &&
           __builtin_cpu_supports("f16c");
-    vnni = avx && janas_use_vnni();
+    vnni = avx ? janas_use_vnni() : 0; /* 1 AVX-VNNI, 2 AVX-512 VNNI */
 #endif
     for (;;) {
         /* items claimed in order: a thread that finishes early takes more */

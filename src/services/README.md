@@ -4,6 +4,7 @@ A service of Janas is a program that brings data of the world - flights, the wea
 
 | Service | What it answers | Key |
 |---|---|---|
+| [`janas-files`](files/README.md) | your files: what a folder holds, what a file says, files found by name or by text; a file written or edited, a folder made, each asked of you; never the private ones (keys, passwords, the browsers' data), nothing deleted | none; nothing reaches the network |
 | [`janas-flights`](flights/README.md) | where a flight is and what it is doing, its times, the flights of a route, what flies over a sea or near a place | none for live data; a free one of your own for schedules |
 | [`janas-git`](git/README.md) | the git repositories of this computer: what has changed, the commits, the branches, a diff; a commit, pull, push or switch of branch, each asked of you first | none |
 | [`janas-github`](github/README.md) | a project's issues and pull requests (the new ones), its latest releases, its recent commits, what it is | none; the gh command's token when you have one |
@@ -16,7 +17,7 @@ A service of Janas is a program that brings data of the world - flights, the wea
 
 What every service does the same way:
 
-- **Reading by default.** Every tool only reads, but those of `janas-git` that commit, pull, push or switch branch; they say so, and nothing that throws work away is offered.
+- **Reading by default.** Every tool only reads, but those of `janas-git` that commit, pull, push or switch branch and those of `janas-files` that write, edit or make a folder; they say so, and nothing that throws work away is offered.
 - **Facts already worked out.** The answers are text for the model, with places, distances and times already computed and put into words, so that the model telling them has nothing to compute; what is not known is said to be not known.
 - **Open data first.** Questions about an area or a list are answered from open sources only; a source with a small quota (a key of yours) is kept for questions about one thing.
 - **It says when to use it.** A service tells the client's model when its tools apply: a question on the subject is enough, the tools need not be named, and the model is told not to name them in its answers.
@@ -28,7 +29,7 @@ What every service does the same way:
 
 ## In janas-chat
 
-`janas-chat` starts by itself the services it finds in `services/` beside it (the binary package) or beside it (in the same directory as the program, as the build leaves them) and runs without asking the calls of the tools that only read. A tool that changes something - `janas-git`'s commit, pull, push, switch - says so (MCP's `readOnlyHint` false), and its call is shown whole and asked of you every time, with `--mcp-auto` too; on a pipe it is not run. Their tools are not written into the system message: it holds a catalog, a line a service, and the model opens a service when a question needs it, getting its instructions and tools then (`--all-tools` writes them all at the start instead). A call shows as a dimmed line. Nothing to configure, nothing to name: ask your question.
+`janas-chat` starts by itself the services it finds in `services/` beside it (the binary package) or beside it (in the same directory as the program, as the build leaves them) and runs without asking the calls of the tools that only read. A tool that changes something - `janas-git`'s commit, pull, push, switch, `janas-files`'s write, edit, folder - says so (MCP's `readOnlyHint` false), and its call is shown whole and asked of you every time, with `--mcp-auto` too; on a pipe it is not run. Their tools are not written into the system message: it holds a catalog, a line a service, and the model opens a service when a question needs it, getting its instructions and tools then (`--all-tools` writes them all at the start instead). A call shows as a dimmed line. Nothing to configure, nothing to name: ask your question.
 
 - `/mcp` lists the servers running, the services marked as Janas's.
 - `--no-services` starts none of them; `--no-mcp` no server at all.

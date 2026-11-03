@@ -45,22 +45,22 @@ struct srv_config {
                              for the model's own default */
     int reasoning_budget; /* the longest reasoning when a request does not
                              say, in tokens: -1 no limit (default), 0 none */
-    const char *embed_path;  /* the embedding model, or NULL */
-    const char *embed_id;    /* its name for clients */
-    const char *speech_path; /* the speech-to-text model, or NULL */
-    const char *vad_path;    /* its voice activity detector, or NULL */
+    const char *embed_path;   /* the embedding model, or NULL */
+    const char *embed_id;     /* its name for clients */
+    const char *speech_path;  /* the speech-to-text model, or NULL */
+    const char *vad_path;     /* its voice activity detector, or NULL */
     const char *speaker_path; /* its speaker embeddings, or NULL */
-    const char *speech_id;   /* its name for clients */
-    const char *store_dir;   /* where stored documents outlive the server;
-                                NULL: memory only (--no-store) */
-    int keep;                /* conversations kept computed besides the
-                                current one (default 8) */
-    uint64_t keep_bytes;     /* memory for them; 0: automatic */
-    uint64_t keep_disk;      /* disk for them, below the memory; 0: none
-                                (default 8 GiB) */
-    int no_web;              /* refuse the web_search tool (Responses) */
-    int code_interpreter;    /* run code (code_interpreter, containers) */
-    const char *code_python; /* the python3 of the cage, NULL: the system's */
+    const char *speech_id;    /* its name for clients */
+    const char *store_dir;    /* where stored documents outlive the server;
+                                 NULL: memory only (--no-store) */
+    int keep;                 /* conversations kept computed besides the
+                                 current one (default 8) */
+    uint64_t keep_bytes;      /* memory for them; 0: automatic */
+    uint64_t keep_disk;       /* disk for them, below the memory; 0: none
+                                 (default 8 GiB) */
+    int no_web;               /* refuse the web_search tool (Responses) */
+    int code_interpreter;     /* run code (code_interpreter, containers) */
+    const char *code_python;  /* the python3 of the cage, NULL: the system's */
     const char *tls_cert, *tls_key; /* HTTPS (tls.c); NULL: HTTP */
     int no_mcp;                     /* refuse the tools of type mcp (Responses):
                                        no connection goes out on a request's word */
@@ -247,6 +247,14 @@ int32_t srv_engine_embed_dim(const struct srv_engine *e);
 /* The model's description (janas_llm_describe), for /v1/models. */
 const char *srv_engine_describe(const struct srv_engine *e);
 int64_t srv_engine_created(const struct srv_engine *e);
+/* What the model is and can do, as the engine found it at start. */
+struct srv_model_info {
+    char name[256]; /* the model's own name, empty when the file has none */
+    char arch[64];  /* its architecture ("qwen3moe") */
+    uint32_t n_ctx; /* the context, in tokens */
+    int tools, sees, reasons;
+};
+const struct srv_model_info *srv_engine_info(const struct srv_engine *e);
 /* The system message janas-chat gives the model (janas_llm_default_system),
    offered to the test page. */
 const char *srv_engine_system(const struct srv_engine *e);
@@ -343,6 +351,9 @@ int srv_reply_bytes(struct srv_req *r, unsigned status, char *body, size_t n,
 int srv_reply_fd(struct srv_req *r, int fd, uint64_t n, const char *type);
 int srv_reply_stream(struct srv_req *r, srv_stream_next next,
                      srv_stream_done done, void *ctx);
+/* The same with another Content-Type (Ollama's lines of JSON). */
+int srv_reply_stream_as(struct srv_req *r, srv_stream_next next,
+                        srv_stream_done done, void *ctx, const char *type);
 
 /* The handlers */
 int srv_models_list(struct srv_req *r);
@@ -358,6 +369,12 @@ int srv_moderations_create(struct srv_req *r);
 int srv_chat_create(struct srv_req *r);
 int srv_completion_create(struct srv_req *r);
 int srv_infill(struct srv_req *r); /* POST /infill, llama.cpp's */
+/* ollama.c: the handler of one of Ollama's routes (/api/...), or NULL */
+srv_handler srv_ollama_route(const char *method, const char *path);
+/* anthropic.c: Anthropic's Messages API, POST /v1/messages and
+   /v1/messages/count_tokens */
+int srv_anthropic_messages(struct srv_req *r);
+int srv_anthropic_count(struct srv_req *r);
 /* stored.c: the completions kept with store: true */
 int srv_stored_list(struct srv_req *r);
 int srv_stored_get(struct srv_req *r);

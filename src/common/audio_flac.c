@@ -219,9 +219,13 @@ static int subframe(struct br *b, int64_t *s, uint32_t n, int bps)
 
 struct stream {
     uint32_t rate, ch, bps;
-    float *out;
-    size_t n, cap;
+    size_t n;
     int64_t *s[8];
+    float *out; /* a block's mixed samples */
+    struct audio_out *o;
+    char *why;
+    size_t wn;
+    int stopped; /* the sink stopped it */
 };
 
 /* the frame at d[at]: its length, or 0 when it is not one */
@@ -283,35 +287,27 @@ static size_t frame(struct stream *st, const uint8_t *d, size_t n, size_t at)
             R[i] = (mid - R[i]) >> 1;
         }
     }
-    if (st->n + block > JANAS_AUDIO_MAX_SAMPLES)
-        return 0;
-    if (st->n + block > st->cap) {
-        size_t cap = st->cap ? st->cap * 2 : 1 << 16;
-        while (cap < st->n + block)
-            cap *= 2;
-        float *o = realloc(st->out, sizeof(float) * cap);
-        if (!o)
-            return 0;
-        st->out = o;
-        st->cap = cap;
-    }
     double scale = 1.0 / ((double)((uint64_t)1 << (bps - 1)) * ch);
     for (uint32_t i = 0; i < block; i++) {
         double v = 0;
         for (uint32_t c = 0; c < ch; c++)
             v += (double)st->s[c][i];
-        st->out[st->n + i] = (float)(v * scale);
+        st->out[i] = (float)(v * scale);
+    }
+    if (audio_put(st->o, st->out, block, st->why, st->wn) != 0) {
+        st->stopped = 1;
+        return 0;
     }
     st->n += block;
     return len + 2;
 }
 
-int janas_audio_flac(const uint8_t *d, size_t n, struct janas_audio *a,
+int janas_audio_flac(const uint8_t *d, size_t n, struct audio_out *o,
                      char *why, size_t wn)
 {
     if (n < 4 || memcmp(d, "fLaC", 4))
         return 1;
-    struct stream st = {0};
+    struct stream st = {.o = o, .why = why, .wn = wn};
     size_t at = 4;
     int last = 0, info = 0;
     while (!last) {
@@ -342,14 +338,17 @@ int janas_audio_flac(const uint8_t *d, size_t n, struct janas_audio *a,
         snprintf(why, wn, "a FLAC file without its stream's description");
         return -1;
     }
+    st.out = malloc(sizeof(float) * 65536);
     for (uint32_t c = 0; c < st.ch; c++)
-        if (!(st.s[c] = malloc(sizeof(int64_t) * 65536))) {
+        if (!st.out || !(st.s[c] = malloc(sizeof(int64_t) * 65536))) {
             for (uint32_t k = 0; k < c; k++)
                 free(st.s[k]);
+            free(st.out);
             snprintf(why, wn, "out of memory");
             return -1;
         }
-    while (at + 2 <= n) {
+    o->rate = st.rate;
+    while (at + 2 <= n && !st.stopped) {
         if (d[at] != 0xFF || (d[at + 1] & 0xFE) != 0xF8) {
             at++;
             continue;
@@ -359,13 +358,12 @@ int janas_audio_flac(const uint8_t *d, size_t n, struct janas_audio *a,
     }
     for (uint32_t c = 0; c < st.ch; c++)
         free(st.s[c]);
+    free(st.out);
+    if (st.stopped)
+        return -1;
     if (!st.n) {
-        free(st.out);
         snprintf(why, wn, "a FLAC file without a frame this reads");
         return -1;
     }
-    a->pcm = st.out;
-    a->n = st.n;
-    a->rate = st.rate;
     return 0;
 }

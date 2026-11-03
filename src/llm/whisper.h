@@ -85,6 +85,31 @@ void janas_whisper_lang(const struct janas_whisper *w, uint32_t i, char *buf,
 float *janas_whisper_mel(struct janas_whisper *w, const float *pcm, size_t n,
                          size_t pad, uint32_t *frames);
 
+/* A recording too long to hold: n samples (mono, at w->rate) read from a
+   source going forward - samples [from, from + count) within the n, valid
+   until the next call, which never asks for any before from; NULL with
+   err when they cannot be read - and read again from the start after
+   rewind. */
+struct janas_whisper_sound {
+    size_t n;
+    const float *(*get)(void *user, size_t from, size_t count, char *err,
+                        size_t err_len);
+    int (*rewind)(void *user, char *err, size_t err_len);
+    void *user;
+};
+/* the largest log10 of the whole spectrogram (the sound and pad zeros),
+   read in one pass: 0, or -1 with err */
+int janas_whisper_mel_max(struct janas_whisper *w,
+                          const struct janas_whisper_sound *snd, size_t pad,
+                          float *mx, char *err, size_t err_len);
+/* frames f0 .. f0 + count of the spectrogram, as janas_whisper_mel gives
+   them with mx its largest, into out (rows of stride): 0, or -1 with err */
+int janas_whisper_mel_window(struct janas_whisper *w,
+                             const struct janas_whisper_sound *snd,
+                             size_t pad, float mx, uint32_t f0, uint32_t count,
+                             float *out, uint32_t stride, char *err,
+                             size_t err_len);
+
 /* whisper_net.c: the encoder over a window of the spectrogram (rows of
    stride columns): 2 a_ctx columns from off, those from off + len on taken
    as zeros; it leaves the keys and values of every decoder block over it.
@@ -149,6 +174,14 @@ int janas_whisper_transcribe(struct janas_whisper *w, const float *pcm,
                              size_t n, const struct janas_whisper_opts *o,
                              struct janas_whisper_result *r, char *err,
                              size_t err_len);
+/* the same, read from a source: the spectrogram a window at a time, its
+   largest value from a pass before (the source rewound after it); the
+   same result */
+int janas_whisper_transcribe_sound(struct janas_whisper *w,
+                                   const struct janas_whisper_sound *snd,
+                                   const struct janas_whisper_opts *o,
+                                   struct janas_whisper_result *r, char *err,
+                                   size_t err_len);
 void janas_whisper_result_free(struct janas_whisper_result *r);
 
 /* whisper_align.c: the times of the words of segments segs[first..n) of

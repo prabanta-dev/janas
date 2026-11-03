@@ -755,7 +755,7 @@ static int vbr_frame(const uint8_t *f, const struct mpa_hdr *h, int *delay,
     return 1;
 }
 
-int janas_audio_mpeg(const uint8_t *d, size_t n, struct janas_audio *a,
+int janas_audio_mpeg(const uint8_t *d, size_t n, struct audio_out *o,
                      char *why, size_t wn)
 {
     struct mpa_hdr h;
@@ -777,9 +777,10 @@ int janas_audio_mpeg(const uint8_t *d, size_t n, struct janas_audio *a,
     int rate = h.rate, layer = h.layer, delay = -1, padding = 0;
     if (vbr_frame(d + at, &h, &delay, &padding))
         at += h.size;
-    float *out = NULL;
-    size_t got = 0, cap = 0;
+    float out[1152];
+    size_t got = 0;
     int rc = 0;
+    o->rate = (uint32_t)rate;
     while (at + 4 <= n) {
         if (frame_at(d, n, at, &h) || h.rate != rate || h.layer != layer) {
             at++; /* lost: the next sync */
@@ -792,25 +793,12 @@ int janas_audio_mpeg(const uint8_t *d, size_t n, struct janas_audio *a,
         at += len;
         if (k <= 0)
             continue;
-        if (got + (size_t)k > JANAS_AUDIO_MAX_SAMPLES) {
-            snprintf(why, wn, "an MPEG audio file longer than this reads");
+        for (int i = 0; i < k; i++)
+            out[i] = h.ch == 2 ? 0.5f * (pcm[0][i] + pcm[1][i]) : pcm[0][i];
+        if (audio_put(o, out, (size_t)k, why, wn) != 0) {
             rc = -1;
             break;
         }
-        if (got + (size_t)k > cap) {
-            size_t c = cap ? cap * 2 : 1 << 18;
-            float *o = realloc(out, sizeof(float) * c);
-            if (!o) {
-                snprintf(why, wn, "out of memory");
-                rc = -1;
-                break;
-            }
-            out = o;
-            cap = c;
-        }
-        for (int i = 0; i < k; i++)
-            out[got + (size_t)i] =
-                h.ch == 2 ? 0.5f * (pcm[0][i] + pcm[1][i]) : pcm[0][i];
         got += (size_t)k;
     }
     free(l3);
@@ -819,10 +807,8 @@ int janas_audio_mpeg(const uint8_t *d, size_t n, struct janas_audio *a,
         snprintf(why, wn, "an MPEG audio file without a frame this reads");
         rc = -1;
     }
-    if (rc) {
-        free(out);
+    if (rc)
         return -1;
-    }
     /* gapless: the encoder's delay and padding, and the decoder's 529 */
     size_t skip = delay >= 0 ? (size_t)delay + 529 : 0;
     size_t trim = padding > 529 ? (size_t)padding - 529 : 0;
@@ -830,9 +816,7 @@ int janas_audio_mpeg(const uint8_t *d, size_t n, struct janas_audio *a,
         skip = 0;
         trim = 0;
     }
-    memmove(out, out + skip, sizeof(float) * (got - skip - trim));
-    a->pcm = out;
-    a->n = got - skip - trim;
-    a->rate = (uint32_t)rate;
+    o->skip = skip;
+    o->total = got - trim;
     return 0;
 }

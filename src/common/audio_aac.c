@@ -9,19 +9,24 @@
  * long-term prediction, the inverse MDCT with sine and Kaiser-Bessel
  * windows, long and short. Fill elements carry the SBR data
  * (audio_aac_sbr.c) that doubles the rate of HE-AAC. Frames of 1024 and
- * of 960 samples. The rounding of AAC Main's predictor is libfaad's and
- * FFmpeg's, the noise's generator FFmpeg's, so the output can be compared
- * with theirs. The decoder of a stream (aac_stream) mixes the channels to
- * mono and trims the start and the end as the container says.
+ * of 960 samples. The error resilient syntax of ER AAC LC, AAC LD (frames
+ * of 512 and 480, its low-overlap window) and AAC ELD (its low-delay filter
+ * bank, audio_aac_eld.c), without the resilience tools, error protection
+ * and ELD's low-delay SBR, as FFmpeg. The rounding of AAC Main's predictor is
+ * libfaad's and FFmpeg's, the noise's generator FFmpeg's, so the output can be
+ * compared with theirs. The decoder of a stream (aac_stream) mixes the channels
+ * to mono and trims the start and the end as the container says.
  */
-#include "audio_aac.h"
+#include "audio_aac_core.h"
 
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "audio_aac_ld_tab.h"
 #include "audio_aac_tab.h"
+#include "audio_aac_usac_tab.h"
 #include "audio_fft.h"
 
 /* ---- Huffman codes ---- */
@@ -182,6 +187,53 @@ static int read_pce(struct abr *b)
 static const int CONFIG_CHANNELS[16] = {0, 1, 2, 3, 4, 5,  6, 8,
                                         0, 0, 0, 7, 8, 24, 8, 0};
 
+/* the elements of an error resilient frame, in order, for each channel
+   configuration: a single channel, a pair, an LFE */
+static const char *const ER_LAYOUT[16] = {
+    [1] = "S",    [2] = "C",     [3] = "SC",     [4] = "SCS",   [5] = "SCC",
+    [6] = "SCCL", [7] = "SCCCL", [11] = "SCCSL", [12] = "SCCCL"};
+
+static int is_er(int aot)
+{
+    return aot == AOT_ER_LC || aot == AOT_ER_LD || aot == AOT_ER_ELD;
+}
+
+/* the scalefactor bands of a low-delay frame: their count, 0 at the rates
+   it is not defined for */
+static int ld_bands(int frame, int index)
+{
+    return frame == 512 ? AAC_NUM_SWB_512[index] : AAC_NUM_SWB_480[index];
+}
+
+/* ELDSpecificConfig (4.4.1.1) after the channel configuration */
+static int eld_config(struct abr *b, struct aac_cfg *c, char *why, size_t wn)
+{
+    c->frame = abr_bit(b) ? 480 : 512;
+    if (abr_bits(b, 3)) {
+        snprintf(why, wn, "an AAC-ELD with error resilience tools (not read)");
+        return -1;
+    }
+    if (abr_bit(b)) {
+        snprintf(why, wn, "an AAC-ELD with low-delay SBR (not read)");
+        return -1;
+    }
+    while (abr_bits(b, 4) != 0) { /* eldExtType, until ELDEXT_TERM */
+        size_t len = abr_bits(b, 4);
+        if (len == 15)
+            len += abr_bits(b, 8);
+        if (len == 15 + 255)
+            len += abr_bits(b, 16);
+        b->pos += 8 * len;
+        if (abr_over(b))
+            break;
+    }
+    if (abr_bits(b, 2)) {
+        snprintf(why, wn, "an AAC with error protection (not read)");
+        return -1;
+    }
+    return 0;
+}
+
 int aac_config(const uint8_t *p, size_t n, struct aac_cfg *c, char *why,
                size_t wn)
 {
@@ -200,21 +252,21 @@ int aac_config(const uint8_t *p, size_t n, struct aac_cfg *c, char *why,
         if (aot == 22)
             abr_bits(&b, 4); /* extensionChannelConfiguration */
     }
-    if (aot != AOT_MAIN && aot != AOT_LC && aot != AOT_LTP) {
-        static const char *const NAMES[] = {[3] = "AAC SSR",
-                                            [6] = "AAC Scalable",
-                                            [8] = "CELP",
-                                            [9] = "HVXC",
-                                            [17] = "ER AAC LC",
-                                            [19] = "ER AAC LTP",
-                                            [20] = "ER AAC Scalable",
-                                            [22] = "ER BSAC",
-                                            [23] = "ER AAC LD",
-                                            [34] = "MPEG-1/2 Layer 1",
-                                            [35] = "MPEG-1/2 Layer 2",
-                                            [36] = "ALS",
-                                            [39] = "ER AAC ELD",
-                                            [42] = "USAC (xHE-AAC)"};
+    if (aot == AOT_USAC)
+        return usac_config(&b, c, why, wn);
+    if (aot != AOT_MAIN && aot != AOT_LC && aot != AOT_LTP && !is_er(aot)) {
+        static const char *const NAMES[] = {
+            [3] = "AAC SSR",
+            [6] = "AAC Scalable",
+            [8] = "CELP",
+            [9] = "HVXC",
+            [19] = "ER AAC LTP",
+            [20] = "ER AAC Scalable",
+            [22] = "ER BSAC",
+            [34] = "MPEG-1/2 Layer 1",
+            [35] = "MPEG-1/2 Layer 2",
+            [36] = "ALS",
+        };
         const char *name =
             aot >= 0 && aot < (int)(sizeof NAMES / sizeof *NAMES) && NAMES[aot]
                 ? NAMES[aot]
@@ -230,11 +282,40 @@ int aac_config(const uint8_t *p, size_t n, struct aac_cfg *c, char *why,
         snprintf(why, wn, "an AAC configuration without a rate");
         return -1;
     }
+    if (is_er(aot)) {
+        if (!ER_LAYOUT[c->chan_config]) {
+            snprintf(why, wn,
+                     "an error resilient AAC of channel configuration %d",
+                     c->chan_config);
+            return -1;
+        }
+        c->channels = CONFIG_CHANNELS[c->chan_config];
+        c->sbr = c->ps = 0;
+    }
+    if (aot == AOT_ER_ELD) {
+        if (eld_config(&b, c, why, wn) != 0)
+            return -1;
+        goto checked;
+    }
     /* GASpecificConfig */
-    c->frame = abr_bit(&b) ? 960 : 1024;
+    int fl = abr_bit(&b);
+    c->frame = aot == AOT_ER_LD ? (fl ? 480 : 512) : (fl ? 960 : 1024);
     if (abr_bit(&b))
         abr_bits(&b, 14); /* coreCoderDelay */
     int ext = abr_bit(&b);
+    if (is_er(aot)) {
+        if (ext && abr_bits(&b, 3)) {
+            snprintf(why, wn, "an AAC with error resilience tools (not read)");
+            return -1;
+        }
+        if (ext)
+            abr_bit(&b); /* extensionFlag3 */
+        if (abr_bits(&b, 2)) {
+            snprintf(why, wn, "an AAC with error protection (not read)");
+            return -1;
+        }
+        goto checked;
+    }
     if (c->chan_config == 0) {
         int ch = read_pce(&b);
         if (ch <= 0) {
@@ -264,6 +345,13 @@ int aac_config(const uint8_t *p, size_t n, struct aac_cfg *c, char *why,
     }
     if (c->sbr == 1 && !c->sbr_rate)
         c->sbr_rate = 2 * c->rate;
+checked:
+    if (c->frame <= 512 && !ld_bands(c->frame, c->rate_index)) {
+        snprintf(why, wn,
+                 "a low-delay AAC at %d Hz, a rate it has no bands for",
+                 c->rate);
+        return -1;
+    }
     if (abr_over(&b)) {
         snprintf(why, wn, "an AAC configuration cut short");
         return -1;
@@ -272,90 +360,6 @@ int aac_config(const uint8_t *p, size_t n, struct aac_cfg *c, char *why,
 }
 
 /* ---- the decoder ---- */
-
-enum { ONLY_LONG, LONG_START, EIGHT_SHORT, LONG_STOP };
-enum { ZERO_BT = 0, NOISE_BT = 13, INTENSITY_BT2 = 14, INTENSITY_BT = 15 };
-
-#define MAX_ELEMENTS 16
-#define MAX_CHANNELS 48
-#define MAX_PRED 672
-#define MAX_LTP_SFB 40
-
-struct pred {
-    float r0, r1, cor0, cor1, var0, var1;
-};
-
-struct ics {
-    int seq, shape, prev_shape, max_sfb;
-    int groups, group_len[8];
-    int num_swb, num_windows;
-    const uint16_t *swb; /* num_swb + 1 offsets */
-    int pred_present, pred_reset, pred_used[41];
-    int ltp_present, ltp_lag;
-    float ltp_coef;
-    int ltp_used[MAX_LTP_SFB];
-};
-
-struct tns {
-    int present;
-    int n_filt[8];
-    int length[8][4], order[8][4], dir[8][4];
-    float coef[8][4][20];
-};
-
-/* a channel's state */
-struct chan {
-    struct ics ics;
-    struct tns tns;
-    uint8_t cb[128];  /* the codebook of each window group x band */
-    int sf[128];      /* scalefactors, positions, noise energies */
-    float coef[1024]; /* the spectrum */
-    float overlap[1024];
-    float ltp_state[3072];
-    struct pred pred[MAX_PRED];
-    int pred_init;
-    float out[2048];
-};
-
-enum { BEFORE_TNS, BETWEEN_TNS_AND_IMDCT, AFTER_IMDCT = 3 };
-
-/* a coupling channel element's targets and gains (4.4.2.5, 4.6.8.3) */
-struct cce {
-    int point, num_coupled;
-    int type[8], id[8], ch_select[8];
-    float gain[16][128]; /* [list][band], [list][0] after the IMDCT */
-    float out[2048];     /* its samples, for coupling after the IMDCT */
-};
-
-struct element {
-    int type; /* 0 SCE, 1 CPE, 2 CCE, 3 LFE */
-    int tag;
-    int first; /* its first channel */
-    int ch;
-    struct sbr *sbr;
-    struct cce *cce;
-};
-
-struct aac_dec {
-    struct aac_cfg cfg;
-    struct vlc sf_vlc, spec_vlc[11];
-    struct aimdct *mdct_long, *mdct_short;
-    float sine_long[1024], sine_short[128];
-    float kbd_long[1024], kbd_short[128];
-    float pow43[8192];
-    float buf[2048];
-    float fwd[2048];
-    uint32_t noise_state;
-    int frame, short_len;
-    struct element el[MAX_ELEMENTS];
-    int n_el;
-    struct chan *ch[MAX_CHANNELS];
-    int n_ch;
-    int sbr_on;   /* -1 until the first frame says */
-    int sbr_down; /* the output at the core's rate */
-    float *outp[MAX_CHANNELS];
-    int out_ch;
-};
 
 static double bessel_i0(double x)
 {
@@ -406,8 +410,11 @@ void aac_free(struct aac_dec *d)
     for (int i = 0; i < d->n_el; i++) {
         sbr_free(d->el[i].sbr);
         free(d->el[i].cce);
+        free(d->el[i].us);
     }
     for (int i = 0; i < MAX_CHANNELS; i++) {
+        if (d->ch[i])
+            free(d->ch[i]->u);
         free(d->ch[i]);
         free(d->outp[i]);
     }
@@ -421,7 +428,9 @@ struct aac_dec *aac_new(const struct aac_cfg *c)
         return NULL;
     d->cfg = *c;
     d->frame = c->frame;
-    d->short_len = c->frame / 8;
+    /* low delay: no short windows, the low-overlap window's slopes a quarter
+       of the frame */
+    d->short_len = c->frame <= 512 ? c->frame / 4 : c->frame / 8;
     d->noise_state = 0x1f2e3d4c;
     d->sbr_on = c->sbr == 0 ? 0 : -1;
     d->sbr_down = c->sbr == 1 && c->sbr_rate && c->sbr_rate < 2 * c->rate;
@@ -472,7 +481,7 @@ int aac_out(const struct aac_dec *d, float ***pcm)
 
 /* ---- the syntax ---- */
 
-static const uint16_t *swb_table(int frame, int index, int *num)
+const uint16_t *aac_swb_table(int frame, int index, int *num)
 {
     const uint16_t *t;
     switch (frame) {
@@ -483,6 +492,22 @@ static const uint16_t *swb_table(int frame, int index, int *num)
     case 960:
         *num = AAC_NUM_SWB_960[index];
         t = AAC_SWB_960 + AAC_SWB_960_AT[index];
+        break;
+    case 512:
+        *num = AAC_NUM_SWB_512[index];
+        t = AAC_SWB_512 + AAC_SWB_512_AT[index];
+        break;
+    case 480:
+        *num = AAC_NUM_SWB_480[index];
+        t = AAC_SWB_480 + AAC_SWB_480_AT[index];
+        break;
+    case 768:
+        *num = AAC_NUM_SWB_768[index];
+        t = AAC_SWB_768 + AAC_SWB_768_AT[index];
+        break;
+    case 96:
+        *num = AAC_NUM_SWB_96[index];
+        t = AAC_SWB_96 + AAC_SWB_96_AT[index];
         break;
     case 128:
         *num = AAC_NUM_SWB_128[index];
@@ -509,11 +534,16 @@ static int read_ltp(struct abr *b, struct ics *ics)
 /* ics_info (4.4.2.1): 0, or -1 */
 static int read_ics_info(struct aac_dec *d, struct abr *b, struct ics *ics)
 {
-    if (abr_bit(b))
-        return -1; /* reserved */
+    int eld = d->cfg.aot == AOT_ER_ELD;
     ics->prev_shape = ics->shape;
-    ics->seq = (int)abr_bits(b, 2);
-    ics->shape = abr_bit(b);
+    if (!eld) { /* ELD's are long, of one shape */
+        if (abr_bit(b))
+            return -1; /* reserved */
+        ics->seq = (int)abr_bits(b, 2);
+        ics->shape = abr_bit(b);
+    }
+    if (d->frame <= 512 && ics->seq != ONLY_LONG)
+        return -1; /* low delay: long windows only */
     ics->pred_present = ics->ltp_present = 0;
     ics->pred_reset = 0;
     if (ics->seq == EIGHT_SHORT) {
@@ -528,14 +558,15 @@ static int read_ics_info(struct aac_dec *d, struct abr *b, struct ics *ics)
                 ics->group_len[ics->groups++] = 1;
         }
         ics->num_windows = 8;
-        ics->swb = swb_table(d->short_len, d->cfg.rate_index, &ics->num_swb);
+        ics->swb =
+            aac_swb_table(d->short_len, d->cfg.rate_index, &ics->num_swb);
     } else {
         ics->max_sfb = (int)abr_bits(b, 6);
         ics->groups = 1;
         ics->group_len[0] = 1;
         ics->num_windows = 1;
-        ics->swb = swb_table(d->frame, d->cfg.rate_index, &ics->num_swb);
-        if ((ics->pred_present = abr_bit(b))) {
+        ics->swb = aac_swb_table(d->frame, d->cfg.rate_index, &ics->num_swb);
+        if (!eld && (ics->pred_present = abr_bit(b))) {
             if (d->cfg.aot == AOT_MAIN) {
                 if (abr_bit(b)) {
                     ics->pred_reset = (int)abr_bits(b, 5);
@@ -550,7 +581,7 @@ static int read_ics_info(struct aac_dec *d, struct abr *b, struct ics *ics)
                 if ((ics->ltp_present = abr_bit(b)))
                     read_ltp(b, ics);
             } else {
-                return -1; /* prediction in AAC LC */
+                return -1; /* prediction in AAC LC, LTP in AAC LD */
             }
         }
     }
@@ -636,7 +667,8 @@ static int read_scalefactors(struct aac_dec *d, struct abr *b, struct ics *ics,
     return 0;
 }
 
-static int read_tns(struct abr *b, const struct ics *ics, struct tns *t)
+int aac_read_tns(struct aac_dec *d, struct abr *b, const struct ics *ics,
+                 struct tns *t)
 {
     int is8 = ics->seq == EIGHT_SHORT;
     for (int w = 0; w < ics->num_windows; w++) {
@@ -646,8 +678,10 @@ static int read_tns(struct abr *b, const struct ics *ics, struct tns *t)
         int res = abr_bit(b);
         for (int f = 0; f < t->n_filt[w]; f++) {
             t->length[w][f] = (int)abr_bits(b, 6 - 2 * is8);
-            int order = (int)abr_bits(b, 5 - 2 * is8);
-            if (order > (is8 ? 7 : 20))
+            /* USAC's orders take a bit less and have no limit of their own */
+            int usac = d->cfg.aot == AOT_USAC;
+            int order = (int)abr_bits(b, usac ? 4 - is8 : 5 - 2 * is8);
+            if (!usac && order > (is8 ? 7 : 20))
                 return -1;
             t->order[w][f] = order;
             if (!order)
@@ -807,8 +841,9 @@ static int read_ics(struct aac_dec *d, struct abr *b, struct chan *c,
         return -1;
     if (read_scalefactors(d, b, &c->ics, c->cb, c->sf, global_gain) != 0)
         return -1;
+    int er = is_er(d->cfg.aot), eld = d->cfg.aot == AOT_ER_ELD;
     int pulse[2 + 8], *pp = NULL;
-    if (abr_bit(b)) {
+    if (!eld && abr_bit(b)) {
         if (c->ics.seq == EIGHT_SHORT)
             return -1;
         pulse[0] = (int)abr_bits(b, 2) + 1;
@@ -821,11 +856,15 @@ static int read_ics(struct aac_dec *d, struct abr *b, struct chan *c,
         }
         pp = pulse;
     }
+    /* the error resilient syntax has TNS's data after the gain control's
+       flag */
     c->tns.present = abr_bit(b);
-    if (c->tns.present && read_tns(b, &c->ics, &c->tns) != 0)
+    if (c->tns.present && !er && aac_read_tns(d, b, &c->ics, &c->tns) != 0)
         return -1;
-    if (abr_bit(b))
+    if (!eld && abr_bit(b))
         return -1; /* gain control: AAC SSR only */
+    if (c->tns.present && er && aac_read_tns(d, b, &c->ics, &c->tns) != 0)
+        return -1;
     if (read_spectrum(d, b, c, pp) != 0)
         return -1;
     return abr_over(b) ? -1 : 0;
@@ -911,8 +950,8 @@ static void apply_prediction(struct aac_dec *d, struct chan *c)
 }
 
 /* mid/side (4.6.8.1), on the bands that are neither noise nor intensity */
-static void apply_ms(struct aac_dec *d, struct chan *l, struct chan *r,
-                     const uint8_t *ms)
+void aac_apply_ms(struct aac_dec *d, struct chan *l, struct chan *r,
+                  const uint8_t *ms)
 {
     const struct ics *ics = &l->ics;
     int stride = ics->seq == EIGHT_SHORT ? 16 : 0;
@@ -967,13 +1006,18 @@ static void apply_intensity(struct aac_dec *d, struct chan *l, struct chan *r,
 
 /* temporal noise shaping (4.6.9): the all-pole filter, or with inverse
    the all-zero one LTP's prediction takes */
-static void apply_tns(struct aac_dec *d, float *coef, const struct tns *t,
-                      const struct ics *ics, int inverse)
+void aac_apply_tns(struct aac_dec *d, float *coef, const struct tns *t,
+                   const struct ics *ics, int inverse)
 {
     int is8 = ics->seq == EIGHT_SHORT;
     int wlen = is8 ? d->short_len : d->frame;
-    int mmm = is8 ? AAC_TNS_MAX_BANDS_128[d->cfg.rate_index]
-                  : AAC_TNS_MAX_BANDS_1024[d->cfg.rate_index];
+    int usac = d->cfg.aot == AOT_USAC;
+    int mmm = usac && is8       ? USAC_TNS_MAX_BANDS_128[d->cfg.rate_index]
+              : usac            ? USAC_TNS_MAX_BANDS_1024[d->cfg.rate_index]
+              : is8             ? AAC_TNS_MAX_BANDS_128[d->cfg.rate_index]
+              : d->frame == 512 ? AAC_TNS_MAX_BANDS_512[d->cfg.rate_index]
+              : d->frame == 480 ? AAC_TNS_MAX_BANDS_480[d->cfg.rate_index]
+                                : AAC_TNS_MAX_BANDS_1024[d->cfg.rate_index];
     if (mmm > ics->max_sfb)
         mmm = ics->max_sfb;
     if (!mmm)
@@ -1031,20 +1075,25 @@ static void apply_tns(struct aac_dec *d, float *coef, const struct tns *t,
 static void long_window(struct aac_dec *d, const struct ics *ics, float *w)
 {
     int n = d->frame, s = d->short_len;
-    const float *lp = ics->prev_shape ? d->kbd_long : d->sine_long;
-    const float *lc = ics->shape ? d->kbd_long : d->sine_long;
-    const float *sp = ics->prev_shape ? d->kbd_short : d->sine_short;
-    const float *sc = ics->shape ? d->kbd_short : d->sine_short;
-    int flat = (n - s) / 2; /* 448 */
+    /* AAC LD's second shape is no Kaiser-Bessel window but the low-overlap
+       one: flat, its slopes a sine of a quarter of the frame */
+    int ld = d->cfg.aot == AOT_ER_LD;
+    int stop = ics->seq == LONG_STOP || (ld && ics->prev_shape);
+    int start = ics->seq == LONG_START || (ld && ics->shape);
+    const float *lp = ics->prev_shape && !ld ? d->kbd_long : d->sine_long;
+    const float *lc = ics->shape && !ld ? d->kbd_long : d->sine_long;
+    const float *sp = ics->prev_shape && !ld ? d->kbd_short : d->sine_short;
+    const float *sc = ics->shape && !ld ? d->kbd_short : d->sine_short;
+    int flat = (n - s) / 2; /* 448; LD 192 */
     for (int i = 0; i < n; i++) {
-        if (ics->seq == LONG_STOP)
+        if (stop)
             w[i] = i < flat ? 0 : i < flat + s ? sp[i - flat] : 1;
         else
             w[i] = lp[i];
     }
     for (int i = 0; i < n; i++) {
         float v;
-        if (ics->seq == LONG_START)
+        if (start)
             v = i < flat ? 1 : i < flat + s ? sc[s - 1 - (i - flat)] : 0;
         else
             v = lc[n - 1 - i];
@@ -1084,7 +1133,7 @@ static void apply_ltp(struct aac_dec *d, struct chan *c)
         pt[i] *= w[i] * 32768.0f * 2.0f;
     mdct_forward(d, pt, pf);
     if (c->tns.present)
-        apply_tns(d, pf, &c->tns, ics, 1);
+        aac_apply_tns(d, pf, &c->tns, ics, 1);
     int max = ics->max_sfb < MAX_LTP_SFB ? ics->max_sfb : MAX_LTP_SFB;
     for (int sfb = 0; sfb < max; sfb++)
         if (ics->ltp_used[sfb])
@@ -1094,12 +1143,16 @@ static void apply_ltp(struct aac_dec *d, struct chan *c)
 
 /* the inverse MDCT, windows and overlap (4.6.11, 4.6.18), into c->out
    (n samples) and c->overlap; z: the 2n samples windowed */
-static void synthesize(struct aac_dec *d, struct chan *c)
+void aac_synthesize(struct aac_dec *d, struct chan *c)
 {
     struct ics *ics = &c->ics;
     int n = d->frame, s = d->short_len;
     float *z = d->buf;
     float y[2048];
+    if (d->cfg.aot == AOT_ER_ELD) {
+        aac_eld_synth(d->mdct_long, n, c->coef, c->eld, c->out, y, z);
+        return;
+    }
     if (ics->seq == EIGHT_SHORT) {
         const float *sp = ics->prev_shape ? d->kbd_short : d->sine_short;
         const float *sc = ics->shape ? d->kbd_short : d->sine_short;
@@ -1137,7 +1190,7 @@ static void synthesize(struct aac_dec *d, struct chan *c)
 /* ---- the elements ---- */
 
 /* the element of type and tag, made at its first sight */
-static struct element *element(struct aac_dec *d, int type, int tag)
+struct element *aac_element(struct aac_dec *d, int type, int tag)
 {
     for (int i = 0; i < d->n_el; i++)
         if (d->el[i].type == type && d->el[i].tag == tag)
@@ -1160,6 +1213,7 @@ static struct element *element(struct aac_dec *d, int type, int tag)
     e->ch = ch;
     e->sbr = NULL;
     e->cce = NULL;
+    e->us = NULL;
     d->n_ch += ch;
     d->n_el++;
     return e;
@@ -1178,7 +1232,7 @@ static int read_sce(struct aac_dec *d, struct abr *b, struct element *e)
 static int read_cpe(struct aac_dec *d, struct abr *b, struct element *e)
 {
     struct chan *l = d->ch[e->first], *r = d->ch[e->first + 1];
-    int common = abr_bit(b), ms_present = 0;
+    int common = d->cfg.aot == AOT_ER_ELD || abr_bit(b), ms_present = 0;
     uint8_t ms[128] = {0};
     if (common) {
         if (read_ics_info(d, b, &l->ics) != 0)
@@ -1207,7 +1261,7 @@ static int read_cpe(struct aac_dec *d, struct abr *b, struct element *e)
     }
     if (common) {
         if (ms_present)
-            apply_ms(d, l, r, ms);
+            aac_apply_ms(d, l, r, ms);
         if (d->cfg.aot == AOT_MAIN) {
             apply_prediction(d, l);
             apply_prediction(d, r);
@@ -1397,7 +1451,30 @@ int aac_frame(struct aac_dec *d, const uint8_t *p, size_t n, char *why,
     struct element *prev = NULL;
     struct element *seen[MAX_ELEMENTS];
     int n_seen = 0;
-    for (;;) {
+    if (d->cfg.aot == AOT_USAC)
+        return usac_frame(d, &b, why, wn);
+    if (is_er(d->cfg.aot)) {
+        /* the elements the configuration says, in its order, without ids
+           (but for a tag before each, ELD's excepted) */
+        int tags[4] = {0};
+        for (const char *t = ER_LAYOUT[d->cfg.chan_config]; *t; t++) {
+            int type = *t == 'S' ? 0 : *t == 'C' ? 1 : 3;
+            if (d->cfg.aot != AOT_ER_ELD)
+                abr_bits(&b, 4);
+            struct element *e = aac_element(d, type, tags[type]++);
+            if (!e) {
+                snprintf(why, wn, "an AAC stream of too many channels");
+                return -1;
+            }
+            int rc = type == 1 ? read_cpe(d, &b, e) : read_sce(d, &b, e);
+            if (rc != 0 || abr_over(&b)) {
+                snprintf(why, wn, "an AAC frame that is none");
+                return -1;
+            }
+            seen[n_seen++] = e;
+        }
+    }
+    while (!is_er(d->cfg.aot)) {
         int id = (int)abr_bits(&b, 3);
         if (abr_over(&b)) {
             snprintf(why, wn, "an AAC frame cut short");
@@ -1412,7 +1489,7 @@ int aac_frame(struct aac_dec *d, const uint8_t *p, size_t n, char *why,
         case 2:
         case 3: {
             int tag = (int)abr_bits(&b, 4);
-            struct element *e = element(d, id, tag);
+            struct element *e = aac_element(d, id, tag);
             if (!e) {
                 snprintf(why, wn, "an AAC stream of too many channels");
                 return -1;
@@ -1451,10 +1528,10 @@ int aac_frame(struct aac_dec *d, const uint8_t *p, size_t n, char *why,
             continue;
         struct chan *c = d->ch[e->first];
         if (c->tns.present)
-            apply_tns(d, c->coef, &c->tns, &c->ics, 0);
+            aac_apply_tns(d, c->coef, &c->tns, &c->ics, 0);
         if (e->cce->point != AFTER_IMDCT)
             continue;
-        synthesize(d, c);
+        aac_synthesize(d, c);
         float *core[1] = {c->out}, *o[2] = {e->cce->out, NULL};
         if (d->sbr_on == 1) {
             if (!e->sbr && !(e->sbr = sbr_new(d->cfg.rate, 1, d->sbr_down)))
@@ -1481,13 +1558,13 @@ int aac_frame(struct aac_dec *d, const uint8_t *p, size_t n, char *why,
             if (d->cfg.aot == AOT_LTP)
                 apply_ltp(d, c);
             if (c->tns.present)
-                apply_tns(d, c->coef, &c->tns, &c->ics, 0);
+                aac_apply_tns(d, c->coef, &c->tns, &c->ics, 0);
         }
         if (coupled)
             couple(d, seen, n_seen, e, BETWEEN_TNS_AND_IMDCT, NULL, 0);
         for (int j = 0; j < e->ch; j++) {
             struct chan *c = d->ch[e->first + j];
-            synthesize(d, c);
+            aac_synthesize(d, c);
             core[j] = c->out;
         }
         int first_out = out;
@@ -1531,7 +1608,7 @@ int aac_frame(struct aac_dec *d, const uint8_t *p, size_t n, char *why,
 
 int aac_stream(const struct aac_cfg *c, const uint8_t *data, const size_t *off,
                const size_t *len, size_t count, const struct audio_edit *edit,
-               struct janas_audio *a, char *why, size_t wn)
+               struct audio_out *ao, char *why, size_t wn)
 {
     struct aac_dec *d = aac_new(c);
     if (!d) {
@@ -1558,14 +1635,8 @@ int aac_stream(const struct aac_cfg *c, const uint8_t *data, const size_t *off,
         }
         if (!rate)
             rate = aac_out_rate(d);
-        if ((size_t)ns > JANAS_AUDIO_MAX_SAMPLES - got) {
-            snprintf(why, wn, "a sound longer than this reads");
-            goto end;
-        }
-        if (got + (size_t)ns > cap) {
-            size_t nc = cap ? cap * 2 : 65536;
-            while (nc < got + (size_t)ns)
-                nc *= 2;
+        if ((size_t)ns > cap) { /* a frame's samples */
+            size_t nc = (size_t)ns;
             float *t = realloc(pcm, sizeof(float) * nc);
             if (!t) {
                 snprintf(why, wn, "out of memory");
@@ -1580,8 +1651,11 @@ int aac_stream(const struct aac_cfg *c, const uint8_t *data, const size_t *off,
             float s = 0;
             for (int j = 0; j < nch; j++)
                 s += o[j][k];
-            pcm[got + (size_t)k] = nch ? s / (float)nch : 0;
+            pcm[k] = nch ? s / (float)nch : 0;
         }
+        ao->rate = (uint32_t)rate;
+        if (audio_put(ao, pcm, (size_t)ns, why, wn) != 0)
+            goto end;
         got += (size_t)ns;
     }
     size_t skip = 0, total = got;
@@ -1590,11 +1664,8 @@ int aac_stream(const struct aac_cfg *c, const uint8_t *data, const size_t *off,
         snprintf(why, wn, "an AAC stream without sound");
         goto end;
     }
-    memmove(pcm, pcm + skip, sizeof(float) * total);
-    a->pcm = pcm;
-    a->n = total;
-    a->rate = (uint32_t)rate;
-    pcm = NULL;
+    ao->skip = skip;
+    ao->total = skip + total;
     rc = 0;
 end:
     free(pcm);
@@ -1604,7 +1675,7 @@ end:
 
 /* ---- ADTS ---- */
 
-int janas_audio_adts(const uint8_t *d, size_t n, struct janas_audio *a,
+int janas_audio_adts(const uint8_t *d, size_t n, struct audio_out *ao,
                      char *why, size_t wn)
 {
     /* two headers in a row, or one that fills the file */
@@ -1691,7 +1762,7 @@ int janas_audio_adts(const uint8_t *d, size_t n, struct janas_audio *a,
         }
         at += fl;
     }
-    rc = aac_stream(&c, d, off, len, count, NULL, a, why, wn);
+    rc = aac_stream(&c, d, off, len, count, NULL, ao, why, wn);
 end:
     free(off);
     free(len);

@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
    Copyright (C) 2026 Maurizio Cammalleri */
 /*
- * test_node.c - the module for Node.js (janas.node) without a model: node
+ * test_node.c - the module for Node.js (janas.node) without a model (a
+ * speech model neither): node
  * loads it; its classes refuse new, and their methods any other object;
  * wrong arguments and options throw TypeErrors that name them; a file that
  * is not there rejects with JANAS_EOPEN, several at once too, each engine
@@ -42,7 +43,7 @@ static const char script[] =
     "  assert.equal(typeof janas.open, 'function');\n"
     "  assert.equal(janas.abiVersion(), 1);\n"
     "  assert.equal(typeof janas.version, 'string');\n"
-    "  for (const c of ['Model', 'Chat', 'Reply'])\n"
+    "  for (const c of ['Model', 'Chat', 'Reply', 'Speech'])\n"
     "    assert.equal(typeof janas[c], 'function');\n"
     "  assert.equal(typeof janas.Reply.prototype[Symbol.asyncIterator], "
     "'function');\n"
@@ -51,6 +52,10 @@ static const char script[] =
     "  assert.throws(() => new janas.Model(), /comes from open\\(\\)/);\n"
     "  assert.throws(() => new janas.Chat(), TypeError);\n"
     "  assert.throws(() => new janas.Reply(), TypeError);\n"
+    "  assert.throws(() => new janas.Speech(), /comes from openSpeech/);\n"
+    "  assert.throws(() => janas.Speech.prototype.transcribe.call({}), "
+    "TypeError);\n"
+    "  assert.throws(() => janas.Chat.prototype.image.call({}), TypeError);\n"
     "  assert.throws(() => janas.Model.prototype.chat.call({}), TypeError);\n"
     "  assert.throws(() => janas.Reply.prototype.next.call("
     "janas.Chat.prototype), TypeError);\n"
@@ -70,11 +75,19 @@ static const char script[] =
     "  assert.throws(() => janas.open('m.jns', { expertBits: 3 }), "
     "/expertBits/);\n"
     "  assert.throws(() => janas.open('m.jns', { mtp: 5 }), TypeError);\n"
+    "  assert.throws(() => janas.openSpeech(), TypeError);\n"
+    "  assert.throws(() => janas.openSpeech('w.jns', { vad: 'x' }), "
+    "/no option 'vad'/);\n"
+    "  assert.throws(() => janas.openSpeech('w.jns', { threads: -1 }), "
+    "/threads/);\n"
     "});\n"
     "(async () => {\n"
     "  for (let i = 0; i < 3; i++)\n"
     "    await assert.rejects(janas.open('/nonexistent/janas-test.jns'),\n"
     "      (e) => e instanceof Error && e.code === 'EOPEN');\n"
+    "  checks++;\n"
+    "  await assert.rejects(janas.openSpeech('/nonexistent/janas-test.jns'),\n"
+    "    { code: 'EOPEN' });\n"
     "  checks++;\n"
     "  await Promise.all([0, 1, 2, 3].map(() => assert.rejects(\n"
     "    janas.open('/nonexistent/janas-test.jns', { context: 1024 }),\n"
@@ -96,7 +109,7 @@ int main(void)
     }
     const char *args[] = {addon, NULL};
     int st = node_run(node, NULL, script, args, NULL, 120, out, sizeof(out));
-    int ok = st == 0 && strstr(out, "checks 5") != NULL;
+    int ok = st == 0 && strstr(out, "checks 6") != NULL;
     printf("test_node: %s (%s, exit %d: %s)\n", ok ? "ok" : "FAIL", addon, st,
            out[0] ? strtok(out, "\n") : "no output");
     return ok ? 0 : 1;

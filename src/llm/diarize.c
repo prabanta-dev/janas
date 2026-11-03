@@ -6,9 +6,10 @@
  * (speaker.c) and normalized, grouped by WeSpeaker's spectral clustering:
  * the cosine affinities pruned to each window's nearest, the Laplacian's
  * smallest eigenvalues' largest gap for the number of speakers, k-means on
- * its eigenvectors. Known speakers' embeddings take the groups nearest
- * them, one each, where their cosine is above 0.5. Groups numbered in the
- * order they first speak.
+ * its eigenvectors; past 2000 windows (25 minutes of speech) by chunks,
+ * as NeMo's long-form clustering. Known speakers' embeddings take the groups
+ * nearest them, one each, where their cosine is above 0.5. Groups numbered in
+ * the order they first speak.
  */
 #include <math.h>
 #include <stdlib.h>
@@ -199,11 +200,12 @@ static uint64_t rng_next(uint64_t *s)
     return *s;
 }
 
-/* k-means of n points of k dimensions into k groups: k-means++ starts, ten
-   of them, the one of least inertia kept */
-static void kmeans(const double *x, int n, int k, uint32_t *label)
+/* k-means of n points of dim dimensions into k groups: k-means++ starts,
+   n_init of them, the one of least inertia kept */
+static void kmeans(const double *x, int n, int dim, int k, int n_init,
+                   uint32_t *label)
 {
-    double *c = malloc(sizeof(double) * (size_t)k * k);
+    double *c = malloc(sizeof(double) * (size_t)k * dim);
     double *dist2 = malloc(sizeof(double) * (size_t)n);
     uint32_t *lab = malloc(sizeof(uint32_t) * (size_t)n);
     if (!c || !dist2 || !lab) {
@@ -216,24 +218,25 @@ static void kmeans(const double *x, int n, int k, uint32_t *label)
     }
     uint64_t seed = 0x9e3779b97f4a7c15ull;
     double best = INFINITY;
-    for (int init = 0; init < 10; init++) {
-        /* k-means++ */
+    for (int init = 0; init < n_init; init++) {
+        /* k-means++: each point's distance to the nearest centre so far,
+           brought down by each new one */
         int first = (int)(rng_next(&seed) % (uint64_t)n);
-        memcpy(c, x + (size_t)first * k, sizeof(double) * (size_t)k);
+        memcpy(c, x + (size_t)first * dim, sizeof(double) * (size_t)dim);
+        for (int i = 0; i < n; i++)
+            dist2[i] = INFINITY;
         for (int j = 1; j < k; j++) {
             double tot = 0;
+            const double *cq = c + (size_t)(j - 1) * dim;
             for (int i = 0; i < n; i++) {
-                double m = INFINITY;
-                for (int q = 0; q < j; q++) {
-                    double s2 = 0;
-                    for (int t = 0; t < k; t++) {
-                        double dd = x[(size_t)i * k + t] - c[(size_t)q * k + t];
-                        s2 += dd * dd;
-                    }
-                    m = s2 < m ? s2 : m;
+                double s2 = 0;
+                for (int t = 0; t < dim; t++) {
+                    double dd = x[(size_t)i * dim + t] - cq[t];
+                    s2 += dd * dd;
                 }
-                dist2[i] = m;
-                tot += m;
+                if (s2 < dist2[i])
+                    dist2[i] = s2;
+                tot += dist2[i];
             }
             double r =
                 (double)(rng_next(&seed) >> 11) / 9007199254740992.0 * tot;
@@ -245,8 +248,8 @@ static void kmeans(const double *x, int n, int k, uint32_t *label)
                     break;
                 }
             }
-            memcpy(c + (size_t)j * k, x + (size_t)pick * k,
-                   sizeof(double) * (size_t)k);
+            memcpy(c + (size_t)j * dim, x + (size_t)pick * dim,
+                   sizeof(double) * (size_t)dim);
         }
         /* Lloyd's iterations */
         double inertia = 0;
@@ -258,8 +261,9 @@ static void kmeans(const double *x, int n, int k, uint32_t *label)
                 uint32_t bq = 0;
                 for (int q = 0; q < k; q++) {
                     double s2 = 0;
-                    for (int t = 0; t < k; t++) {
-                        double dd = x[(size_t)i * k + t] - c[(size_t)q * k + t];
+                    for (int t = 0; t < dim; t++) {
+                        double dd =
+                            x[(size_t)i * dim + t] - c[(size_t)q * dim + t];
                         s2 += dd * dd;
                     }
                     if (s2 < m) {
@@ -276,15 +280,15 @@ static void kmeans(const double *x, int n, int k, uint32_t *label)
                 break;
             for (int q = 0; q < k; q++) {
                 int cnt = 0;
-                double *cq = c + (size_t)q * k;
-                memset(cq, 0, sizeof(double) * (size_t)k);
+                double *cq = c + (size_t)q * dim;
+                memset(cq, 0, sizeof(double) * (size_t)dim);
                 for (int i = 0; i < n; i++)
                     if (lab[i] == (uint32_t)q) {
                         cnt++;
-                        for (int t = 0; t < k; t++)
-                            cq[t] += x[(size_t)i * k + t];
+                        for (int t = 0; t < dim; t++)
+                            cq[t] += x[(size_t)i * dim + t];
                     }
-                for (int t = 0; t < k && cnt; t++)
+                for (int t = 0; t < dim && cnt; t++)
                     cq[t] /= cnt;
             }
         }
@@ -383,13 +387,102 @@ static int spectral(const float *emb, uint32_t nw, uint32_t max_spk,
     for (int i = 0; i < n; i++)
         for (int q = 0; q < k; q++)
             x[(size_t)i * k + q] = m[(size_t)i * n + q];
-    kmeans(x, n, k, label);
+    kmeans(x, n, k, k, 10, label);
     free(x);
     free(m);
     free(row);
     free(d);
     free(idx);
     return 0;
+}
+
+/* past CHUNK windows, as NeMo's long-form clustering: each run of about
+   CHUNK windows reduced by k-means to REPS centroids, the centroids grouped
+   (reduced the same way again while they are more than CHUNK), each window
+   taking its centroid's group. Memory and time grow with the length, not
+   with its square; CHUNK windows or fewer are grouped as before */
+#define CHUNK 2000
+#define REPS 64
+int janas_diar_cluster(const float *emb, uint32_t n, uint32_t max_spk,
+                       uint32_t chunk, uint32_t *label)
+{
+    if (!chunk)
+        chunk = CHUNK;
+    if (n <= chunk)
+        return spectral(emb, n, max_spk, label);
+    uint32_t nc = (n + chunk - 1) / chunk, nr = nc * REPS, r = 0;
+    float *rep = calloc((size_t)nr * DIM, sizeof(float));
+    uint32_t *of = malloc(sizeof(uint32_t) * n);
+    uint32_t *rl = malloc(sizeof(uint32_t) * nr);
+    double *x = malloc(sizeof(double) * ((size_t)n / nc + 1) * DIM);
+    int rc = -1;
+    if (!rep || !of || !rl || !x)
+        goto end;
+    for (uint32_t ch = 0; ch < nc; ch++) {
+        uint32_t a = (uint32_t)((uint64_t)n * ch / nc);
+        uint32_t b = (uint32_t)((uint64_t)n * (ch + 1) / nc);
+        for (size_t i = 0; i < (size_t)(b - a) * DIM; i++)
+            x[i] = emb[(size_t)a * DIM + i];
+        kmeans(x, (int)(b - a), DIM, REPS, 1, of + a);
+        /* the centroids that took windows, numbered on from r */
+        uint32_t map[REPS];
+        for (int q = 0; q < REPS; q++)
+            map[q] = UINT32_MAX;
+        for (uint32_t i = a; i < b; i++) {
+            if (map[of[i]] == UINT32_MAX)
+                map[of[i]] = r++;
+            of[i] = map[of[i]];
+            float *p = rep + (size_t)of[i] * DIM;
+            for (int t = 0; t < DIM; t++)
+                p[t] += emb[(size_t)i * DIM + t];
+        }
+    }
+    for (uint32_t i = 0; i < r; i++)
+        normalize(rep + (size_t)i * DIM);
+    if (janas_diar_cluster(rep, r, max_spk, chunk, rl) != 0)
+        goto end;
+    for (uint32_t i = 0; i < n; i++)
+        label[i] = rl[of[i]];
+    /* a centroid may hold windows of two speakers: each window to the
+       group whose centre (of all its windows) is nearest */
+    uint32_t ng = 0;
+    for (uint32_t i = 0; i < n; i++)
+        ng = label[i] + 1 > ng ? label[i] + 1 : ng;
+    float *gc = calloc((size_t)ng * DIM, sizeof(float));
+    if (!gc)
+        goto end;
+    for (uint32_t i = 0; i < n; i++)
+        for (int t = 0; t < DIM; t++)
+            gc[(size_t)label[i] * DIM + t] += emb[(size_t)i * DIM + t];
+    for (uint32_t g = 0; g < ng; g++)
+        normalize(gc + (size_t)g * DIM);
+    for (uint32_t i = 0; i < n; i++) {
+        double best = -2;
+        for (uint32_t g = 0; g < ng; g++) {
+            double c = 0;
+            for (int t = 0; t < DIM; t++)
+                c += (double)emb[(size_t)i * DIM + t] * gc[(size_t)g * DIM + t];
+            if (c > best) {
+                best = c;
+                label[i] = g;
+            }
+        }
+    }
+    free(gc);
+    rc = 0;
+end:
+    free(rep);
+    free(of);
+    free(rl);
+    free(x);
+    return rc;
+}
+
+/* the whole filter banks' frames f0 on */
+static const float *whole_frames(void *user, uint32_t f0, uint32_t f1)
+{
+    (void)f1;
+    return (const float *)user + (size_t)f0 * 80;
 }
 
 int janas_diarize(struct janas_speaker *s, const float *pcm, size_t n,
@@ -401,6 +494,20 @@ int janas_diarize(struct janas_speaker *s, const float *pcm, size_t n,
     float *fb = janas_speaker_fbank(pcm, n, &frames);
     if (!fb)
         return -1;
+    int rc = janas_diarize_read(s, frames, whole_frames, fb, regions, n_regions,
+                                ref, n_ref, max_speakers, out);
+    free(fb);
+    return rc;
+}
+
+int janas_diarize_read(struct janas_speaker *s, uint32_t frames,
+                       const float *(*get)(void *user, uint32_t f0,
+                                           uint32_t f1),
+                       void *user, const size_t *regions, size_t n_regions,
+                       const float *ref, uint32_t n_ref, uint32_t max_speakers,
+                       struct janas_diar *out)
+{
+    memset(out, 0, sizeof *out);
     /* the windows, frames of the filter banks (10 ms each) */
     size_t cap = 64;
     uint32_t nw = 0;
@@ -444,8 +551,9 @@ int janas_diarize(struct janas_speaker *s, const float *pcm, size_t n,
     for (uint32_t i = 0; i < nw; i++) {
         out->win[2 * i] = (size_t)w[i][0] * 160;
         out->win[2 * i + 1] = (size_t)w[i][1] * 160 + 240;
-        if (janas_speaker_embed(s, fb, w[i][0], w[i][1] - w[i][0],
-                                emb + (size_t)i * DIM) != 0)
+        const float *fb = get(user, w[i][0], w[i][1]);
+        if (!fb || janas_speaker_embed(s, fb, 0, w[i][1] - w[i][0],
+                                       emb + (size_t)i * DIM) != 0)
             goto end;
         normalize(emb + (size_t)i * DIM);
     }
@@ -454,8 +562,9 @@ int janas_diarize(struct janas_speaker *s, const float *pcm, size_t n,
        similarities kept to each window's nearest (10, or the top 1% past
        1000 windows) and made symmetric, its Laplacian, as many groups as
        the largest gap among its smallest eigenvalues says, k-means on
-       their eigenvectors */
-    if (spectral(emb, nw, max_speakers ? max_speakers : 20, of) != 0)
+       their eigenvectors; long recordings by chunks */
+    if (janas_diar_cluster(emb, nw, max_speakers ? max_speakers : 20, 0, of) !=
+        0)
         goto end;
     /* numbered in order of first appearance */
     int *label = malloc(sizeof(int) * (nw ? nw : 1));
@@ -516,7 +625,6 @@ int janas_diarize(struct janas_speaker *s, const float *pcm, size_t n,
 end:
     if (rc != 0)
         janas_diar_free(out);
-    free(fb);
     free(w);
     free(emb);
     free(of);

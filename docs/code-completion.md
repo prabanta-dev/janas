@@ -54,6 +54,8 @@ Tab takes the proposal, Shift+Tab its first line, Ctrl+Right its first word; Ctr
 
 ## Continue
 
+Since 2 November 2026 Continue's `ollama` provider fills in too: it sends its own prompt with the markers, raw, and the server reads them as the model's tokens ([editor.md](editor.md)). What follows was tried before, with another provider.
+
 [Continue](https://www.continue.dev) works too, with three things to know: the provider must be one that sends the suffix (`siliconflow`, whose requests go to `{apiBase}completions` with `prompt` and `suffix`: the `openai` provider builds the prompt itself and sends it as raw text), its default `modelTimeout` of 150 ms cuts a proposal after ten pieces, and the snippets of other files it puts in front of the prefix change at every request. In `~/.continue/config.yaml`:
 
 ```yaml

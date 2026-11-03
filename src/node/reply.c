@@ -159,13 +159,13 @@ static void free_queue(struct janas_node_reply *r)
     r->q_tail = NULL;
 }
 
-static void unwatch_signal(napi_env env, struct janas_node_reply *r)
+void janas_node_unwatch(napi_env env, napi_ref *sig, napi_ref *listener)
 {
-    if (!r->signal)
+    if (!*sig)
         return;
     napi_value signal, fn, rm, argv[2];
-    if (napi_get_reference_value(env, r->signal, &signal) == napi_ok &&
-        napi_get_reference_value(env, r->listener, &fn) == napi_ok &&
+    if (napi_get_reference_value(env, *sig, &signal) == napi_ok &&
+        napi_get_reference_value(env, *listener, &fn) == napi_ok &&
         napi_get_named_property(env, signal, "removeEventListener", &rm) ==
             napi_ok) {
         argv[0] = janas_node_string(env, "abort", JANAS_NAPI_AUTO_LENGTH);
@@ -175,9 +175,9 @@ static void unwatch_signal(napi_env env, struct janas_node_reply *r)
             napi_get_and_clear_last_exception(env, &ignored);
         }
     }
-    napi_delete_reference(env, r->signal);
-    napi_delete_reference(env, r->listener);
-    r->signal = r->listener = NULL;
+    napi_delete_reference(env, *sig);
+    napi_delete_reference(env, *listener);
+    *sig = *listener = NULL;
 }
 
 static void unlink_reply(struct janas_node_reply *r)
@@ -197,7 +197,7 @@ static void reply_unref(napi_env env, struct janas_node_reply *r)
     int js = env && !m->st->teardown;
     free_queue(r);
     if (js) {
-        unwatch_signal(env, r);
+        janas_node_unwatch(env, &r->signal, &r->listener);
         if (r->chat)
             napi_delete_reference(env, r->chat);
     }
@@ -315,7 +315,7 @@ static void reply_after(napi_env env, struct janas_node_job *j)
     if (rj->have_stats)
         r->st = rj->st;
     unlink_reply(r);
-    unwatch_signal(env, r);
+    janas_node_unwatch(env, &r->signal, &r->listener);
     if (r->chat) {
         napi_delete_reference(env, r->chat);
         r->chat = NULL;
@@ -545,12 +545,12 @@ static napi_value on_abort(napi_env env, napi_callback_info info)
     void *data = NULL;
     napi_get_cb_info(env, info, NULL, NULL, NULL, &data);
     if (data)
-        atomic_store(&((struct janas_node_reply *)data)->stop, 1);
+        atomic_store((atomic_int *)data, 1);
     return NULL;
 }
 
-static int watch_signal(napi_env env, struct janas_node_reply *r,
-                        napi_value signal)
+int janas_node_watch(napi_env env, napi_value signal, atomic_int *stop,
+                     napi_ref *sig, napi_ref *listener)
 {
     napi_value aborted, add, fn, argv[2];
     napi_valuetype t;
@@ -565,18 +565,18 @@ static int watch_signal(napi_env env, struct janas_node_reply *r,
     }
     napi_get_value_bool(env, aborted, &b);
     if (b) {
-        atomic_store(&r->stop, 1);
+        atomic_store(stop, 1);
         return 0;
     }
-    if (napi_create_function(env, "abort", JANAS_NAPI_AUTO_LENGTH, on_abort, r,
-                             &fn) != napi_ok)
+    if (napi_create_function(env, "abort", JANAS_NAPI_AUTO_LENGTH, on_abort,
+                             stop, &fn) != napi_ok)
         return -1;
     argv[0] = janas_node_string(env, "abort", JANAS_NAPI_AUTO_LENGTH);
     argv[1] = fn;
     if (napi_call_function(env, signal, add, 2, argv, NULL) != napi_ok)
         return -1;
-    if (napi_create_reference(env, signal, 1, &r->signal) != napi_ok ||
-        napi_create_reference(env, fn, 1, &r->listener) != napi_ok) {
+    if (napi_create_reference(env, signal, 1, sig) != napi_ok ||
+        napi_create_reference(env, fn, 1, listener) != napi_ok) {
         janas_node_throw(env, JANAS_LLM_ENOMEM, "janas: out of memory");
         return -1;
     }
@@ -704,7 +704,8 @@ napi_value janas_node_reply(napi_env env, struct janas_node_chat *c,
         return NULL;
     }
     janas_node_hold(m); /* the object's, released when it is collected */
-    if (has_signal > 0 && watch_signal(env, r, signal) < 0) {
+    if (has_signal > 0 &&
+        janas_node_watch(env, signal, &r->stop, &r->signal, &r->listener) < 0) {
         /* the object exists: it ends at once, with nothing written */
         atomic_store(&r->stop, 1);
         r->ended = 1;

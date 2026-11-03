@@ -234,7 +234,7 @@ static int decode_element(struct alac *c, struct abr *b, int ch, int *nb)
 
 int janas_alac_stream(const uint8_t *cookie, size_t cn, const uint8_t *data,
                       const size_t *off, const size_t *len, size_t count,
-                      const struct audio_edit *edit, struct janas_audio *a,
+                      const struct audio_edit *edit, struct audio_out *ao,
                       char *why, size_t wn)
 {
     /* the cookie, past the atoms' heads it may carry */
@@ -317,14 +317,8 @@ int janas_alac_stream(const uint8_t *cookie, size_t cn, const uint8_t *data,
             nb = (int)c.frame_length;
             memset(mix, 0, sizeof(double) * c.frame_length);
         }
-        if ((size_t)nb > JANAS_AUDIO_MAX_SAMPLES - got) {
-            snprintf(why, wn, "a sound longer than this reads");
-            goto end;
-        }
-        if (got + (size_t)nb > cap) {
-            size_t nc = cap ? cap * 2 : 65536;
-            while (nc < got + (size_t)nb)
-                nc *= 2;
+        if ((size_t)nb > cap) { /* a packet's samples */
+            size_t nc = (size_t)nb;
             float *t = realloc(pcm, sizeof(float) * nc);
             if (!t)
                 goto oom2;
@@ -332,7 +326,10 @@ int janas_alac_stream(const uint8_t *cookie, size_t cn, const uint8_t *data,
             cap = nc;
         }
         for (int i = 0; i < nb; i++)
-            pcm[got + (size_t)i] = (float)(mix[i] * scale);
+            pcm[i] = (float)(mix[i] * scale);
+        ao->rate = c.rate;
+        if (audio_put(ao, pcm, (size_t)nb, why, wn) != 0)
+            goto end;
         got += (size_t)nb;
     }
     size_t skip = 0, total = got;
@@ -341,11 +338,8 @@ int janas_alac_stream(const uint8_t *cookie, size_t cn, const uint8_t *data,
         snprintf(why, wn, "an ALAC stream without sound");
         goto end;
     }
-    memmove(pcm, pcm + skip, sizeof(float) * total);
-    a->pcm = pcm;
-    a->n = total;
-    a->rate = c.rate;
-    pcm = NULL;
+    ao->skip = skip;
+    ao->total = skip + total;
     rc = 0;
     goto end;
 oom2:

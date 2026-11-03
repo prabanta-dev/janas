@@ -101,19 +101,30 @@ enum {
     AOT_SSR = 3,
     AOT_LTP = 4,
     AOT_SBR = 5,
+    AOT_ER_LC = 17, /* error resilient */
+    AOT_ER_LD = 23, /* low delay */
     AOT_PS = 29,
+    AOT_ER_ELD = 39, /* enhanced low delay */
+    AOT_USAC = 42,   /* xHE-AAC */
 };
 
 struct aac_cfg {
-    int aot;        /* the core's: 1, 2 or 4 */
+    int aot;        /* the core's: 1, 2, 4, 17, 23, 39 or 42 */
     int rate_index; /* the core's sampling frequency index, 0 to 12 */
     int rate;
     int chan_config; /* 0: a program config element says */
-    int frame;       /* 1024 or 960 */
+    int frame;       /* 1024 or 960; low delay 512 or 480; USAC 1024, 768 */
     int sbr;         /* 1 said present, 0 said absent, -1 not said */
     int ps;          /* the same */
     int sbr_rate;    /* the output's rate with SBR */
     int channels;    /* from the configuration, 0 when unknown */
+    /* USAC: the elements of each frame, in order */
+    int usac_n;
+    struct usac_el {
+        uint8_t type; /* 0 SCE, 1 CPE, 2 LFE, 3 extension */
+        uint8_t noise_fill, frag;
+        uint32_t default_len; /* an extension's payload, 0 none */
+    } usac_el[64];
 };
 
 /* the AudioSpecificConfig of an MP4 file or of Matroska: 0, or -1 with
@@ -136,11 +147,18 @@ int aac_out(const struct aac_dec *d, float ***pcm);
 /* the output's rate: the core's, or twice it once SBR was found */
 int aac_out_rate(const struct aac_dec *d);
 
+/* ELD's low-delay synthesis (audio_aac_eld.c, 4.6.20.2): n coefficients
+   (512 or 480, overwritten) to n samples, the three frames before kept in
+   hist (3n, zeros at first); y and z: 2n and 4n of room */
+struct aimdct;
+void aac_eld_synth(struct aimdct *m, int n, float *coef, float *hist,
+                   float *out, float *y, float *z);
+
 /* a whole stream: the packets (raw data blocks, data + off[i], len[i]),
    trimmed as the edit says (NULL: not at all); mixed to mono into a */
 int aac_stream(const struct aac_cfg *c, const uint8_t *data, const size_t *off,
                const size_t *len, size_t count, const struct audio_edit *edit,
-               struct janas_audio *a, char *why, size_t wn);
+               struct audio_out *ao, char *why, size_t wn);
 
 /* ---- spectral band replication (audio_aac_sbr.c) ---- */
 

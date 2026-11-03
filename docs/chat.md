@@ -50,6 +50,7 @@ Qwen3.5-0.8B does not take `--head 4`: with it, it answered "3" to "2+3". Gemma 
 | `--max <tokens>` | longest reply (default: no limit — a model can fill the whole context) |
 | `--no-spec` | no speculative decoding (slower, and the same text: see below) |
 | `--no-markdown` | print the model's marks instead of reading them |
+| `--speech-model <file>` | the Whisper model `/audio` transcribes with (default: one beside the model) |
 | `--no-gpu` | never give the GPU work, whatever the mode says |
 | `--prompt-on <devices>` | what reads the prompts: `auto` (default: what measures fastest on this machine), `cpu`, `gpu`, `npu`, `npu+gpu` (both in each pass), or a list apart by commas for the engine to choose from, such as `npu,gpu`; the CPU takes part in every pass, the NPU in blocks of 64 tokens and more; a choice wins over `--mode` |
 | `--drafts-on <devices>` | the same for the passes that check guessed tokens (2 to 16 at a time) |
@@ -82,6 +83,7 @@ In the chat, a line starting with `/` is a command, and it turns grey-blue as so
 | `/system [text\|off]` | show or change the system message |
 | `/temp <t>`, `/spec`, `/think` | sampling, drafts, reasoning (`/think 512`: on, at most 512 tokens of it) |
 | `/image <file>` | a picture (PNG or JPEG) for your next message, with a model that sees (Qwen3.5 or Gemma 4 with its `.vision.jns` beside it, [models.md](models.md)) |
+| `/audio [translate] <file>` | a recording (WAV, FLAC, MP3, Ogg, M4A, WebM) transcribed, or translated into English, its segments shown as they come; the text goes with your next message, headed by the file, its length and its language. The Whisper model is `--speech-model`'s, or one beside the model (large-v3-turbo first, then small, large-v3, any other `whisper-*.jns`: [models.md](models.md)), opened at the first recording |
 | `/mode [auto\|eco\|max]` | power mode, and what the engine chose |
 | `/experts [n]` | experts per token: fewer is faster and a little less accurate; any number, `0` included, turns off the leaving out of light experts not in memory |
 | `/markdown [on\|off]` | read the model's marks, or print them |
@@ -111,7 +113,7 @@ printf 'Explain mixture of experts in one paragraph.\n/quit\n' \
 
 ## Janas's services
 
-The chat starts by itself the services of Janas it finds beside it - `janas-flights`, `janas-git`, `janas-github`, `janas-maps`, `janas-prices`, `janas-quakes`, `janas-system`, `janas-weather` and `janas-wiki` - and the model uses their tools when a question needs them, without being told: ask "which flights are over the Tyrrhenian Sea now?", "what's the weather like?", "how do I get to Palermo by train?", "are there new issues on Janas?", "what has changed in this repository?", "where is diesel cheapest near here?", "what is filling my disk?", "was there an earthquake?" or "show me Wikipedia's page on Zeffirelli" (with no place, where you are: `JANAS_LOCATION`, or a guess from the internet connection). `--no-services` starts none. How they work, their keys, and how to use them in Claude Code and other clients: [src/services](../src/services/README.md).
+The chat starts by itself the services of Janas it finds beside it - `janas-files`, `janas-flights`, `janas-git`, `janas-github`, `janas-maps`, `janas-prices`, `janas-quakes`, `janas-system`, `janas-weather` and `janas-wiki` - and the model uses their tools when a question needs them, without being told: ask "which flights are over the Tyrrhenian Sea now?", "what's the weather like?", "how do I get to Palermo by train?", "are there new issues on Janas?", "what has changed in this repository?", "where is diesel cheapest near here?", "what is filling my disk?", "was there an earthquake?" or "show me Wikipedia's page on Zeffirelli" (with no place, where you are: `JANAS_LOCATION`, or a guess from the internet connection). `--no-services` starts none. How they work, their keys, and how to use them in Claude Code and other clients: [src/services](../src/services/README.md).
 
 **The services' tools are given when they are needed.** Written into the system message, the tools of three services made it four thousand tokens, over a minute of a large model before the first message, and every service more made it longer. The system message now holds a catalog, a line a service, and the model opens a service when a question needs it: that service's instructions and tools come back as the answer of the call, its tools can be called from then on, and the next reply is held to be a call (a small model told to call one made the answer up instead). With Qwen3.6-35B-A3B the system message went from 4,057 tokens to 616, and opening the weather costs about a thousand tokens, once in a conversation, when the first question about the weather comes. `--all-tools` writes them all into the system message as before.
 

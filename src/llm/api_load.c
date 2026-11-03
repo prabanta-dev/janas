@@ -49,6 +49,10 @@ int32_t janas_llm_chat_begin(janas_llm_chat *c)
     if (!c)
         return janas_api_fail(JANAS_LLM_EINVAL, "no chat");
     free_msgs(c);
+    /* a reply still being read is left where it is: the conversation
+       begun is another one (a server's client that went away, then a
+       request that only counts its tokens) */
+    c->replying = 0;
     return JANAS_LLM_OK;
 }
 
@@ -463,7 +467,12 @@ int32_t janas_llm_chat_prompt(janas_llm_chat *c, const char *text, int32_t len)
         janas_api_add_text(c, text, janas_api_text_len(text, len)) != 0)
         return janas_api_fail(JANAS_LLM_ENOMEM, "out of memory");
     c->in_think = 0;
-    return load_ids(c, UINT32_MAX);
+    /* a raw prompt is written in the model's own format, its special tokens
+       too (an editor's <|fim_prefix|>...), as llama.cpp and Ollama read it */
+    c->text_special = 1;
+    int32_t rc = load_ids(c, UINT32_MAX);
+    c->text_special = 0;
+    return rc;
 }
 
 int32_t janas_llm_chat_infill(janas_llm_chat *c, const char *prefix,

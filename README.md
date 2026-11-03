@@ -211,7 +211,8 @@ sudo pacman -S vulkan-headers glslang vulkan-tools           # the same, Arch
 - [docs/library.md](docs/library.md) — using it from a program, in C, in FreeBASIC and BASIC MODERN, or in Node.js and TypeScript, and MCP servers from a program
 - [examples/node-chat](examples/node-chat/README.md) — a chat in TypeScript on the module for Node.js: the model inside the server's process, its replies streamed to the browser
 - [examples/fb-chat](examples/fb-chat/README.md) — a chat in FreeBASIC, procedure by procedure and with Janas's classes
-- [docs/serving.md](docs/serving.md) — the model as tools for Claude Code, editors and other MCP clients (`janas-mcp`), and over HTTP, an API that follows OpenAI's with a chat page to try it from a browser (`janas-server`)
+- [docs/serving.md](docs/serving.md) — the model as tools for Claude Code, editors and other MCP clients (`janas-mcp`), and over HTTP, an API that follows OpenAI's, Ollama's and Anthropic's (Claude Code), with a chat page to try it from a browser (`janas-server`)
+- [docs/editor.md](docs/editor.md) — Continue, Cline, Roo Code, Claude Code, aider and Open WebUI with a model of this machine, each set up and tried on the same task; your files outside the editor (`janas-files`)
 - [docs/code-completion.md](docs/code-completion.md) — code filled in at an editor's cursor, in VSCodium and VS Code through `janas-server`: 1.5-2.2 s a proposal on a laptop, where a window slid a line was read again in 17 s
 - [docs/tools.md](docs/tools.md) — the converters, checkers and benchmarks built beside the programs
 - [docs/hardware.md](docs/hardware.md) — measuring your machine with `janas-bench`, and helping it run on more hardware: the machines wanted most, the one command that tries Janas and writes a report, and what to send

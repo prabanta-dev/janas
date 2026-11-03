@@ -151,25 +151,44 @@ static double mel(double f)
     return 1127.0 * log(1.0 + f / 700.0);
 }
 
-float *janas_speaker_fbank(const float *pcm, size_t n, uint32_t *frames)
+enum { FB_LEN = 400, FB_SHIFT = 160, FB_NFFT = 512, FB_BINS = 256 };
+
+struct janas_fbank {
+    struct afft *f;
+    float *bank;
+    float win[FB_LEN];
+};
+
+uint32_t janas_fbank_count(size_t n)
 {
-    const int len = 400, shift = 160, nfft = 512, bins = 256;
-    *frames = 0;
-    if (n < (size_t)len)
-        return calloc(1, sizeof(float));
-    size_t nf = 1 + (n - (size_t)len) / (size_t)shift;
-    if (nf > UINT32_MAX)
+    if (n < FB_LEN)
+        return 0;
+    size_t nf = 1 + (n - FB_LEN) / FB_SHIFT;
+    return nf > UINT32_MAX ? UINT32_MAX : (uint32_t)nf;
+}
+
+void janas_fbank_free(struct janas_fbank *b)
+{
+    if (!b)
+        return;
+    afft_free(b->f);
+    free(b->bank);
+    free(b);
+}
+
+struct janas_fbank *janas_fbank_new(void)
+{
+    const int len = FB_LEN, nfft = FB_NFFT, bins = FB_BINS;
+    struct janas_fbank *fb = calloc(1, sizeof *fb);
+    if (!fb)
         return NULL;
-    float *out = malloc(sizeof(float) * nf * MELS);
-    struct afft *f = afft_new(nfft);
-    float *bank = calloc((size_t)MELS * bins, sizeof(float));
-    float win[400], in[1024], spec[1024], frame[400];
-    if (!out || !f || !bank) {
-        free(out);
-        afft_free(f);
-        free(bank);
+    fb->f = afft_new(nfft);
+    fb->bank = calloc((size_t)MELS * bins, sizeof(float));
+    if (!fb->f || !fb->bank) {
+        janas_fbank_free(fb);
         return NULL;
     }
+    float *win = fb->win, *bank = fb->bank;
     for (int i = 0; i < len; i++)
         win[i] = (float)(0.54 - 0.46 * cos(2 * M_PI * i / (len - 1)));
     /* the triangles, on Kaldi's mel scale from 20 Hz to 8 kHz */
@@ -184,6 +203,16 @@ float *janas_speaker_fbank(const float *pcm, size_t n, uint32_t *frames)
             bank[m * bins + k] = v > 0 ? (float)v : 0;
         }
     }
+    return fb;
+}
+
+void janas_fbank_frames(struct janas_fbank *fb, const float *pcm, size_t nf,
+                        float *out)
+{
+    const int len = FB_LEN, shift = FB_SHIFT, bins = FB_BINS;
+    const float *win = fb->win, *bank = fb->bank;
+    struct afft *f = fb->f;
+    float in[1024], spec[1024], frame[400];
     for (size_t t = 0; t < nf; t++) {
         const float *x = pcm + t * (size_t)shift;
         float mean = 0;
@@ -213,8 +242,25 @@ float *janas_speaker_fbank(const float *pcm, size_t n, uint32_t *frames)
             out[t * MELS + m] = logf(e > 1.1920929e-07f ? e : 1.1920929e-07f);
         }
     }
-    afft_free(f);
-    free(bank);
+}
+
+float *janas_speaker_fbank(const float *pcm, size_t n, uint32_t *frames)
+{
+    *frames = 0;
+    if (n < FB_LEN)
+        return calloc(1, sizeof(float));
+    size_t nf = 1 + (n - FB_LEN) / FB_SHIFT;
+    if (nf > UINT32_MAX)
+        return NULL;
+    float *out = malloc(sizeof(float) * nf * MELS);
+    struct janas_fbank *fb = janas_fbank_new();
+    if (!out || !fb) {
+        free(out);
+        janas_fbank_free(fb);
+        return NULL;
+    }
+    janas_fbank_frames(fb, pcm, nf, out);
+    janas_fbank_free(fb);
     *frames = (uint32_t)nf;
     return out;
 }

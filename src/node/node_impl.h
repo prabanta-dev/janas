@@ -4,8 +4,9 @@
  * node_impl.h - what the files of the module for Node.js share: janas.node,
  * the library's API for JavaScript (janas.d.ts says it in TypeScript).
  *
- * Every open model has a thread of its own, the engine's: the library wants
- * a model and its chat used from one thread at a time, and JavaScript's
+ * Every open model, a speech model too, has a thread of its own, the
+ * engine's: the library wants a model and its chat used from one thread at
+ * a time, and JavaScript's
  * thread must never wait for a model. JavaScript's thread posts jobs to it
  * (open, a chat, a reply, close), and the engine's gives back each job when
  * done, and the pieces of a reply as they come, through a thread-safe
@@ -35,7 +36,7 @@ struct janas_node_env {
     int teardown;     /* it is going away: no JavaScript any more */
     int constructing; /* the module is making an object: without it the
                          classes refuse new */
-    napi_ref model_class, chat_class, reply_class;
+    napi_ref model_class, chat_class, reply_class, speech_class;
     struct janas_node_model *models; /* those whose engine runs */
 };
 
@@ -108,6 +109,7 @@ struct janas_node_model {
        the open is back and before close is asked for */
     janas_llm *llm;
     janas_llm_chat *chat;
+    janas_llm_speech *speech; /* a speech model's engine has this instead */
 };
 
 struct janas_node_reply {
@@ -170,7 +172,7 @@ napi_value janas_node_resolved(napi_env env, napi_value v);
 napi_value janas_node_rejected(napi_env env, napi_value err);
 /* the classes' tags: an object of one is never taken for another's */
 extern const napi_type_tag janas_node_model_tag, janas_node_chat_tag,
-    janas_node_reply_tag;
+    janas_node_reply_tag, janas_node_speech_tag;
 /* an object of a class, tagged and wrapping native, fin called when it is
    collected; NULL when it could not be made (fin not called then) */
 napi_value janas_node_new(napi_env env, napi_ref cls, const napi_type_tag *tag,
@@ -186,6 +188,10 @@ void *janas_node_self(napi_env env, napi_callback_info info,
 /* a string's UTF-8 bytes, NUL-terminated, malloc'd; NULL when v is not a
    string (nothing thrown) or memory ran out (*len SIZE_MAX) */
 char *janas_node_text(napi_env env, napi_value v, size_t *len);
+/* a copy of the bytes of a Buffer, a typed array or an ArrayBuffer,
+   malloc'd; NULL when v is none of them or is empty (nothing thrown), or
+   memory ran out (*len SIZE_MAX) */
+void *janas_node_bytes(napi_env env, napi_value v, size_t *len);
 /*
  * Options, held to the names known: janas_node_options throws a TypeError
  * for anything but an object, undefined or null, and for a name it does not
@@ -233,7 +239,18 @@ napi_value janas_node_chat_class(napi_env env);
 napi_value janas_node_chat(napi_env env, struct janas_node_model *m,
                            napi_value options);
 
+/* speech.c: openSpeech() and the Speech class, a Whisper model on an
+   engine of its own */
+napi_value janas_node_speech_class(napi_env env);
+napi_value janas_node_open_speech(napi_env env, napi_callback_info info);
+
 /* reply.c */
+/* an AbortSignal watched: *stop set to 1 when it aborts (at once if it
+   has); its references in *sig and *listener, for janas_node_unwatch,
+   which must come before stop's memory goes. 0, or -1 after throwing */
+int janas_node_watch(napi_env env, napi_value signal, atomic_int *stop,
+                     napi_ref *sig, napi_ref *listener);
+void janas_node_unwatch(napi_env env, napi_ref *sig, napi_ref *listener);
 napi_value janas_node_reply_class(napi_env env);
 /* a reply of c (its object chat_obj, kept alive while the reply runs) */
 napi_value janas_node_reply(napi_env env, struct janas_node_chat *c,

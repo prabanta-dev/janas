@@ -37,6 +37,10 @@ struct server {
 static const struct {
     const char *name, *about; /* for the catalog */
 } SERVICES[] = {
+    {"files", "the user's files and folders: what a folder holds, what a "
+              "file says, files found by name or by the text they hold; a "
+              "file written or edited, a folder made, each confirmed by the "
+              "user"},
     {"flights", "flights and aircraft: where a flight is and what it is "
                 "doing, today's flights of a route, what flies over a sea "
                 "or near a place"},

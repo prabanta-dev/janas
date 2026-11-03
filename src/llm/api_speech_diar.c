@@ -63,11 +63,60 @@ static int embed_ref(janas_llm_speech *s, const void *data, int64_t n,
     return rc;
 }
 
-int janas_speech_diarize(janas_llm_speech *s, const float *pcm, size_t n,
-                         const size_t *regions, size_t n_regions,
+/* the filter banks of a sound read going forward, the frames f0 .. f1
+   asked for kept (fb0 .. fb0 + fbn) */
+struct banks {
+    const struct janas_whisper_sound *snd;
+    struct janas_fbank *fb;
+    float *frames;
+    uint32_t fb0, fbn, cap;
+    char *err;
+    size_t err_len;
+};
+
+static const float *banks_get(void *user, uint32_t f0, uint32_t f1)
+{
+    struct banks *b = user;
+    if (f0 < b->fb0)
+        return NULL;
+    uint32_t drop = f0 - b->fb0 < b->fbn ? f0 - b->fb0 : b->fbn;
+    memmove(b->frames, b->frames + (size_t)drop * 80,
+            sizeof(float) * 80 * (b->fbn - drop));
+    b->fbn -= drop;
+    b->fb0 += drop;
+    if (b->fbn == 0)
+        b->fb0 = f0;
+    if (f1 - b->fb0 > b->cap) {
+        float *t = realloc(b->frames, sizeof(float) * 80 * (f1 - b->fb0));
+        if (!t)
+            return NULL;
+        b->frames = t;
+        b->cap = f1 - b->fb0;
+    }
+    uint32_t first = b->fb0 + b->fbn;
+    if (f1 > first) {
+        /* frame t reads 400 samples from 160 t */
+        size_t from = (size_t)first * 160,
+               count = (size_t)(f1 - first - 1) * 160 + 400;
+        const float *x =
+            b->snd->get(b->snd->user, from, count, b->err, b->err_len);
+        if (!x)
+            return NULL;
+        janas_fbank_frames(b->fb, x, f1 - first,
+                           b->frames + (size_t)b->fbn * 80);
+        b->fbn = f1 - b->fb0;
+    }
+    return b->frames;
+}
+
+int janas_speech_diarize(janas_llm_speech *s,
+                         const struct janas_whisper_sound *snd,
+                         const float *pcm, const size_t *regions,
+                         size_t n_regions,
                          const struct janas_llm_transcribe_params *p, char *err,
                          size_t err_len)
 {
+    size_t n = snd->n;
     int nk = p->n_speakers > 0 ? p->n_speakers : 0;
     if (nk > MAX_KNOWN) {
         snprintf(err, err_len, "at most %d known speakers", MAX_KNOWN);
@@ -89,7 +138,12 @@ int janas_speech_diarize(janas_llm_speech *s, const float *pcm, size_t n,
         n_regions = 1;
         if (s->vad) {
             float *probs = NULL;
-            long np = janas_vad_probs(s->vad, pcm, n, &probs);
+            long np = janas_vad_probs_read(s->vad, n, 1.0f, snd->get,
+                                           snd->user, &probs, err, err_len);
+            if (np < 0 || snd->rewind(snd->user, err, err_len) != 0) {
+                free(probs);
+                return -1;
+            }
             struct janas_vad_params vp = {.threshold = 0.5f,
                                           .min_speech_ms = 250,
                                           .min_silence_ms = 100,
@@ -107,11 +161,27 @@ int janas_speech_diarize(janas_llm_speech *s, const float *pcm, size_t n,
         }
     }
     struct janas_diar d;
-    int rc = janas_diarize(s->speaker, pcm, n, regions, n_regions, ref,
+    int rc;
+    err[0] = 0;
+    if (pcm)
+        rc = janas_diarize(s->speaker, pcm, n, regions, n_regions, ref,
                            (uint32_t)nk, 0, &d);
+    else {
+        struct banks b = {.snd = snd,
+                          .fb = janas_fbank_new(),
+                          .err = err,
+                          .err_len = err_len};
+        rc = b.fb ? janas_diarize_read(s->speaker, janas_fbank_count(n),
+                                       banks_get, &b, regions, n_regions, ref,
+                                       (uint32_t)nk, 0, &d)
+                  : -1;
+        janas_fbank_free(b.fb);
+        free(b.frames);
+    }
     free(found);
     if (rc != 0) {
-        snprintf(err, err_len, "out of memory");
+        if (!err[0])
+            snprintf(err, err_len, "out of memory");
         return -1;
     }
     /* each word's speaker: the windows overlapping it, weighed by how much */

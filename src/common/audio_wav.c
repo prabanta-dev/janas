@@ -51,7 +51,7 @@ static double sample(const uint8_t *p, int bits, int fl)
     }
 }
 
-int janas_audio_wav(const uint8_t *d, size_t n, struct janas_audio *a,
+int janas_audio_wav(const uint8_t *d, size_t n, struct audio_out *o,
                     char *why, size_t wn)
 {
     if (n < 12 || memcmp(d, "RIFF", 4) || memcmp(d + 8, "WAVE", 4))
@@ -100,24 +100,20 @@ int janas_audio_wav(const uint8_t *d, size_t n, struct janas_audio *a,
         return -1;
     }
     size_t frames = dn / align;
-    if (frames > JANAS_AUDIO_MAX_SAMPLES) {
-        snprintf(why, wn, "a WAV file longer than this reads");
-        return -1;
-    }
-    a->pcm = malloc(sizeof(float) * (frames ? frames : 1));
-    if (!a->pcm) {
-        snprintf(why, wn, "out of memory");
-        return -1;
-    }
     uint32_t bs = bits / 8;
-    for (size_t f = 0; f < frames; f++) {
-        const uint8_t *p = data + f * align;
-        double s = 0;
-        for (uint32_t c = 0; c < ch; c++)
-            s += sample(p + c * bs, (int)bits, fl);
-        a->pcm[f] = (float)(s / ch);
+    float buf[4096];
+    o->rate = rate;
+    for (size_t f0 = 0; f0 < frames; f0 += 4096) {
+        size_t k = frames - f0 < 4096 ? frames - f0 : 4096;
+        for (size_t f = 0; f < k; f++) {
+            const uint8_t *p = data + (f0 + f) * align;
+            double s = 0;
+            for (uint32_t c = 0; c < ch; c++)
+                s += sample(p + c * bs, (int)bits, fl);
+            buf[f] = (float)(s / ch);
+        }
+        if (audio_put(o, buf, k, why, wn) != 0)
+            return -1;
     }
-    a->n = frames;
-    a->rate = rate;
     return 0;
 }

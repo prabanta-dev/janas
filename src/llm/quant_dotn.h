@@ -17,6 +17,9 @@
  *                       plus u1 times s1, four by four into int32 lanes:
  *                       maddubs, add, madd on AVX2 (the products must fit
  *                       int16 two by two), two vpdpbusd on AVX-VNNI
+ *   DOTN_DPBUSD(acc, u, s)  with DOTN_HAS_VNNI: vpdpbusd, in its AVX-VNNI
+ *                       form or in AVX-512 VNNI's on 256 bits (Zen 4, the
+ *                       Intel cores with AVX-512 before AVX-VNNI)
  * Integer sums are exact, so every int32 lane holds the same value with
  * either definition, and the float operations are the same, in the same
  * order: all variants, single or multi-vector, give bit-identical results
@@ -977,8 +980,7 @@ DOTN(q4kg_tile)(const struct q4kg_blk *bk, int n, size_t b0,
                                x[(size_t)t * xs + b].qs + 64 * c + 32 * h +
                                    4 * q,
                                4);
-                        a32[t] = _mm256_dpbusd_avx_epi32(a32[t], wv,
-                                                         _mm256_set1_epi32(aw));
+                        a32[t] = DOTN_DPBUSD(a32[t], wv, _mm256_set1_epi32(aw));
                     }
                 }
                 __m256i sc =
@@ -1817,8 +1819,7 @@ DOTN(q6kg_tile)(const struct q6kg_blk *bk, int n, size_t b0,
                         int32_t aw;
                         memcpy(&aw, x[(size_t)t * xs + b].qs + 16 * g + 4 * q,
                                4);
-                        a32[t] = _mm256_dpbusd_avx_epi32(a32[t], wv,
-                                                         _mm256_set1_epi32(aw));
+                        a32[t] = DOTN_DPBUSD(a32[t], wv, _mm256_set1_epi32(aw));
                     }
                 }
                 __m256i sc = _mm256_loadu_si256((const __m256i *)k->sc32[g]);
@@ -2315,8 +2316,7 @@ DOTN(q5kg_tile)(const struct q5kg_blk *bk, int n, size_t b0,
                 {
                     int32_t aw;
                     memcpy(&aw, x[(size_t)t * xs + b].qs + 32 * sb + 4 * q, 4);
-                    a32[t] = _mm256_dpbusd_avx_epi32(a32[t], wv,
-                                                     _mm256_set1_epi32(aw));
+                    a32[t] = DOTN_DPBUSD(a32[t], wv, _mm256_set1_epi32(aw));
                 }
             }
             __m256i sc = _mm256_loadu_si256((const __m256i *)k->sc32[sb]);
@@ -2609,8 +2609,7 @@ DOTN(b32g_tile)(const int TY, const struct b32g_blk *bk, int n, size_t b0,
                     int32_t aw;
                     memcpy(&aw, x[(size_t)t * xs + b].qs32 + 32 * kb + 4 * q,
                            4);
-                    s[t] = _mm256_dpbusd_avx_epi32(s[t], wv,
-                                                   _mm256_set1_epi32(aw));
+                    s[t] = DOTN_DPBUSD(s[t], wv, _mm256_set1_epi32(aw));
                 }
             }
 #else
@@ -2847,8 +2846,7 @@ DOTN(iq4xsg_tile)(const struct q5kg_blk *bk, int n, size_t b0,
                 {
                     int32_t aw;
                     memcpy(&aw, x[(size_t)t * xs + b].qs + 32 * sb + 4 * q, 4);
-                    a32[t] = _mm256_dpbusd_avx_epi32(a32[t], wv,
-                                                     _mm256_set1_epi32(aw));
+                    a32[t] = DOTN_DPBUSD(a32[t], wv, _mm256_set1_epi32(aw));
                 }
             }
             __m256i sc = _mm256_loadu_si256((const __m256i *)k->sc32[sb]);
@@ -3530,7 +3528,7 @@ DOTN(b32_xt_body)(const int type, const uint8_t *w,
                 (const __m256i *)(xt + B32XT * ((size_t)v * nb + b));
             __m256i s = _mm256_setzero_si256();
             _Pragma("GCC unroll 8") for (int k = 0; k < 8; k++) s =
-                _mm256_dpbusd_avx_epi32(s, q[k], _mm256_loadu_si256(a + k));
+                DOTN_DPBUSD(s, q[k], _mm256_loadu_si256(a + k));
             __m256i as8 = _mm256_loadu_si256(a + 8);
             const struct janas_block_q8k *xb = x + (size_t)v * xs + b;
             __m256 dx = _mm256_loadu_ps(xb->d32);

@@ -116,7 +116,8 @@ static void axpy_block_ref(const struct janas_block_q6kp *b, const uint8_t *a1,
 }
 
 #if defined(__x86_64__)
-static int use_avx2, use_pn, use_vnni; /* use_pn: AVX2 and F16C */
+/* use_pn: AVX2 and F16C; use_vnni: 1 AVX-VNNI, 2 AVX-512 VNNI (as quant.c) */
+static int use_avx2, use_pn, use_vnni;
 
 /* Resolved before main, as quant.c's kernels; JANAS_KERNELS=avx2 leaves
    AVX-VNNI out here too. */
@@ -126,8 +127,12 @@ __attribute__((constructor)) static void q6k_init(void)
     use_avx2 = __builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma");
     const char *k = getenv("JANAS_KERNELS");
     use_pn = use_avx2 && __builtin_cpu_supports("f16c");
-    use_vnni = use_pn && __builtin_cpu_supports("avxvnni") &&
-               !(k && !strcmp(k, "avx2"));
+    int plain = k && !strcmp(k, "avx2");
+    if (use_pn && !plain && __builtin_cpu_supports("avxvnni"))
+        use_vnni = 1;
+    else if (use_pn && !plain && __builtin_cpu_supports("avx512vnni") &&
+             __builtin_cpu_supports("avx512vl"))
+        use_vnni = 2;
 }
 
 /* The same, 32 weights at a time: a byte of a plane holds the two bits of
@@ -265,7 +270,8 @@ void janas_q6kpn_chunk_ref(const struct janas_block_q6kp *base,
 }
 
 #if defined(__x86_64__)
-/* The kernel proper: quant_pn.h, once for AVX2 and once for AVX-VNNI. */
+/* The kernel proper: quant_pn.h, once for AVX2, once for AVX-VNNI and once
+   for AVX-512 VNNI on 256 bits. */
 #define PN(name) name##_avx2
 #define PN_TARGET __attribute__((target("avx2,fma,f16c")))
 #define PN_DOT(acc, u, s)                                                      \
@@ -283,6 +289,14 @@ void janas_q6kpn_chunk_ref(const struct janas_block_q6kp *base,
 #undef PN
 #undef PN_TARGET
 #undef PN_DOT
+
+#define PN(name) name##_evnni
+#define PN_TARGET __attribute__((target("avx2,fma,f16c,avx512vnni,avx512vl")))
+#define PN_DOT(acc, u, s) _mm256_dpbusd_epi32(acc, u, s)
+#include "quant_pn.h"
+#undef PN
+#undef PN_TARGET
+#undef PN_DOT
 #endif
 
 void janas_q6kpn_chunk(const struct janas_block_q6kp *base, const uint8_t *p1,
@@ -291,6 +305,10 @@ void janas_q6kpn_chunk(const struct janas_block_q6kp *base, const uint8_t *p1,
                        float *y)
 {
 #if defined(__x86_64__)
+    if (use_vnni == 2) {
+        q6kpn_chunk_evnni(base, p1, p0, rows, js, lv, h, n, b, y);
+        return;
+    }
     if (use_vnni) {
         q6kpn_chunk_vnni(base, p1, p0, rows, js, lv, h, n, b, y);
         return;

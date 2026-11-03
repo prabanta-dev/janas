@@ -19,6 +19,8 @@ const napi_type_tag janas_node_chat_tag = {0x6a616e6173636874ull,
                                            0x2b8e4f7a1c3d5e90ull};
 const napi_type_tag janas_node_reply_tag = {0x6a616e6173726570ull,
                                             0x7d3a9e1b4c6f2a58ull};
+const napi_type_tag janas_node_speech_tag = {0x6a616e6173737063ull,
+                                             0x4e2c8a6f1b9d3e75ull};
 
 struct janas_node_env *janas_node_env(napi_env env)
 {
@@ -238,6 +240,37 @@ char *janas_node_text(napi_env env, napi_value v, size_t *len)
     return s;
 }
 
+void *janas_node_bytes(napi_env env, napi_value v, size_t *len)
+{
+    bool is = false;
+    void *data = NULL;
+    size_t n = 0;
+    *len = 0;
+    if (!v)
+        return NULL;
+    if (napi_is_typedarray(env, v, &is) == napi_ok && is) {
+        napi_typedarray_type t;
+        size_t count = 0;
+        if (napi_get_typedarray_info(env, v, &t, &count, &data, NULL, NULL) !=
+            napi_ok)
+            return NULL;
+        static const unsigned char size[] = {1, 1, 1, 2, 2, 4, 4, 4, 8, 8, 8};
+        n = count * ((unsigned)t < sizeof(size) ? size[t] : 1);
+    } else if (napi_is_arraybuffer(env, v, &is) != napi_ok || !is ||
+               napi_get_arraybuffer_info(env, v, &data, &n) != napi_ok)
+        return NULL;
+    if (!n || !data)
+        return NULL;
+    void *copy = malloc(n);
+    if (!copy) {
+        *len = SIZE_MAX;
+        return NULL;
+    }
+    memcpy(copy, data, n);
+    *len = n;
+    return copy;
+}
+
 int janas_node_options(napi_env env, napi_value obj, const char *what,
                        const char *const *known)
 {
@@ -404,15 +437,20 @@ napi_register_module_v1(napi_env env, napi_value exports)
     napi_value model = janas_node_model_class(env);
     napi_value chat = janas_node_chat_class(env);
     napi_value reply = janas_node_reply_class(env);
+    napi_value speech = janas_node_speech_class(env);
     if (!keep_class(env, model, &st->model_class) ||
         !keep_class(env, chat, &st->chat_class) ||
         !keep_class(env, reply, &st->reply_class) ||
+        !keep_class(env, speech, &st->speech_class) ||
         napi_add_env_cleanup_hook(env, env_cleanup, st) != napi_ok)
         return janas_node_throw(env, JANAS_LLM_EFAIL,
                                 "janas: the module cannot define its classes");
     napi_property_descriptor d[] = {
         {.utf8name = "open",
          .method = janas_node_open,
+         .attributes = napi_enumerable},
+        {.utf8name = "openSpeech",
+         .method = janas_node_open_speech,
          .attributes = napi_enumerable},
         {.utf8name = "abiVersion",
          .method = abi_version,
@@ -423,6 +461,7 @@ napi_register_module_v1(napi_env env, napi_value exports)
         {.utf8name = "Model", .value = model, .attributes = napi_enumerable},
         {.utf8name = "Chat", .value = chat, .attributes = napi_enumerable},
         {.utf8name = "Reply", .value = reply, .attributes = napi_enumerable},
+        {.utf8name = "Speech", .value = speech, .attributes = napi_enumerable},
     };
     if (napi_define_properties(env, exports, sizeof(d) / sizeof(d[0]), d) !=
         napi_ok)

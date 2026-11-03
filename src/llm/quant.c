@@ -1569,7 +1569,11 @@ static inline void iq2_sub_mask(int type, const void *blk, int l,
     }
 }
 
-/* The kernels proper: quant_dotn.h, once for AVX2 and once for AVX-VNNI. */
+/* The kernels proper: quant_dotn.h, once for AVX2, once for AVX-VNNI and
+   once for AVX-512 VNNI, the same instructions in their EVEX form on 256
+   bits, for the processors that have them but not AVX-VNNI (Zen 4, Intel
+   from Ice Lake and Tiger Lake to before Alder Lake and Sapphire Rapids).
+   The integers are the same, so the three give the same bits. */
 #define DOTN(name) name##_avx2
 #define DOTN_TARGET __attribute__((target("avx2,fma,f16c")))
 #define DOTN_ACC(acc, p, s) _mm256_add_epi32(acc, _mm256_madd_epi16(p, s))
@@ -1587,13 +1591,24 @@ static inline void iq2_sub_mask(int type, const void *blk, int l,
 #define DOTN(name) name##_vnni
 #define DOTN_TARGET __attribute__((target("avx2,fma,f16c,avxvnni")))
 #define DOTN_ACC(acc, p, s) _mm256_dpwssd_avx_epi32(acc, p, s)
+#define DOTN_DPBUSD(acc, u, s) _mm256_dpbusd_avx_epi32(acc, u, s)
 #define DOTN_US2(u0, s0, u1, s1)                                               \
-    _mm256_dpbusd_avx_epi32(                                                   \
-        _mm256_dpbusd_avx_epi32(_mm256_setzero_si256(), u0, s0), u1, s1)
+    DOTN_DPBUSD(DOTN_DPBUSD(_mm256_setzero_si256(), u0, s0), u1, s1)
 #include "quant_dotn.h"
 #undef DOTN
 #undef DOTN_TARGET
 #undef DOTN_ACC
+#undef DOTN_DPBUSD
+
+#define DOTN(name) name##_evnni
+#define DOTN_TARGET __attribute__((target("avx2,fma,f16c,avx512vnni,avx512vl")))
+#define DOTN_ACC(acc, p, s) _mm256_dpwssd_epi32(acc, p, s)
+#define DOTN_DPBUSD(acc, u, s) _mm256_dpbusd_epi32(acc, u, s)
+#include "quant_dotn.h"
+#undef DOTN
+#undef DOTN_TARGET
+#undef DOTN_ACC
+#undef DOTN_DPBUSD
 #undef DOTN_US2
 #undef DOTN_HAS_VNNI
 #endif
@@ -1661,7 +1676,11 @@ typedef void (*dotn6p_fn)(const struct janas_block_q6kp *, const uint8_t *,
                           size_t, int, size_t, float *);
 static dotn6p_fn dot6p_impl; /* NULL: the scalar reference */
 static const char *dot_name = "ref";
-static int use_vnni;
+/* the products of bytes and words in one instruction: AVX-VNNI, or
+   AVX-512 VNNI (use_evnni too) */
+static int use_vnni, use_evnni;
+#define KPICK_VNNI(name) (use_evnni ? name##_evnni : name##_vnni)
+#define KPICK(name) (use_vnni ? KPICK_VNNI(name) : name##_avx2)
 /* Q3_K, Q4_K, Q5_K, Q6_K and Q6_K_P on many vectors through the tiles
    (quant_dotn.h q4k_gemm, q5k_gemm, q6k_gemm); JANAS_CPU_TILES=0 the rows'
    products */
@@ -1734,7 +1753,8 @@ __attribute__((constructor)) static void dot_kernels_init(void)
         const char *qg = getenv("JANAS_CPU_TILES");
         use_tiles = !(qg && atoi(qg) == 0);
         const char *k = getenv("JANAS_KERNELS"); /* avx2: no VNNI */
-        if (__builtin_cpu_supports("avxvnni") && !(k && !strcmp(k, "avx2"))) {
+        int plain = k && !strcmp(k, "avx2");
+        if (__builtin_cpu_supports("avxvnni") && !plain) {
             use_vnni = 1;
             dot_impl = q4k_dot_vnni;
             dot6_impl = q6k_dot_vnni;
@@ -1757,6 +1777,30 @@ __attribute__((constructor)) static void dot_kernels_init(void)
             dotis_impl = iq3s_dot_vnni;
             dot6p_impl = q6kp_dotn_vnni;
             dot_name = "avx-vnni";
+        } else if (__builtin_cpu_supports("avx512vnni") &&
+                   __builtin_cpu_supports("avx512vl") && !plain) {
+            use_vnni = use_evnni = 1;
+            dot_impl = q4k_dot_evnni;
+            dot6_impl = q6k_dot_evnni;
+            dot5_impl = q5k_dot_evnni;
+            dot80_impl = q8_0_dot_evnni;
+            dotnl_impl = iq4nl_dot_evnni;
+            dotmx_impl = mxfp4_dot_evnni;
+            dotxs_impl = iq4xs_dot_evnni;
+            dot40_impl = q4_0_dot_evnni;
+            dot51_impl = q5_1_dot_evnni;
+            dot41_impl = q4_1_dot_evnni;
+            dot50_impl = q5_0_dot_evnni;
+            dotx3_impl = iq3xxs_dot_evnni;
+            dotx2_impl = iq2_dot_evnni;
+            dotx1_impl = iq1m_dot_evnni;
+            dotx1s_impl = iq1s_dot_evnni;
+            dot2k_impl = q2k_dot_evnni;
+            dot20_impl = q2_0_dot_evnni;
+            dot3_impl = q3k_dot_evnni;
+            dotis_impl = iq3s_dot_evnni;
+            dot6p_impl = q6kp_dotn_evnni;
+            dot_name = "avx512-vnni";
         }
     }
 #endif
@@ -1764,7 +1808,7 @@ __attribute__((constructor)) static void dot_kernels_init(void)
 
 int janas_use_vnni(void)
 {
-    return use_vnni;
+    return use_vnni + use_evnni;
 }
 
 float janas_q4k_dot(const struct janas_block_q4k *w,
@@ -2049,8 +2093,8 @@ size_t janas_q6k_tile_rows(int type, const void *w, size_t row_bytes,
                 : p0                 ? 3
                 : p1                 ? 2
                                      : 1;
-    (use_vnni ? q6k_gemm_vnni : q6k_gemm_avx2)(
-        w, row_bytes, p1, p0, pb, x, x_stride, nv, nb, r8, y, y_stride, level);
+    (KPICK(q6k_gemm))(w, row_bytes, p1, p0, pb, x, x_stride, nv, nb, r8, y,
+                      y_stride, level);
     return r8;
 #else
     (void)type, (void)w, (void)row_bytes, (void)p1, (void)p0, (void)pb;
@@ -2355,58 +2399,58 @@ void janas_dot_rows(int type, const void *w, size_t row_bytes,
         rows_fn f = NULL;
         switch (type) {
         case JANAS_Q4_K:
-            f = use_vnni ? q4k_rows_vnni : q4k_rows_avx2;
+            f = KPICK(q4k_rows);
             break;
         case JANAS_Q6_K:
-            f = use_vnni ? q6k_rows_vnni : q6k_rows_avx2;
+            f = KPICK(q6k_rows);
             break;
         case JANAS_Q5_K:
-            f = use_vnni ? q5k_rows_vnni : q5k_rows_avx2;
+            f = KPICK(q5k_rows);
             break;
         case JANAS_Q8_0:
-            f = use_vnni ? q8_0_rows_vnni : q8_0_rows_avx2;
+            f = KPICK(q8_0_rows);
             break;
         case JANAS_IQ4_NL:
-            f = use_vnni ? iq4nl_rows_vnni : iq4nl_rows_avx2;
+            f = KPICK(iq4nl_rows);
             break;
         case JANAS_MXFP4:
-            f = use_vnni ? mxfp4_rows_vnni : mxfp4_rows_avx2;
+            f = KPICK(mxfp4_rows);
             break;
         case JANAS_IQ4_XS:
-            f = use_vnni ? iq4xs_rows_vnni : iq4xs_rows_avx2;
+            f = KPICK(iq4xs_rows);
             break;
         case JANAS_Q4_0:
-            f = use_vnni ? q4_0_rows_vnni : q4_0_rows_avx2;
+            f = KPICK(q4_0_rows);
             break;
         case JANAS_Q5_1:
-            f = use_vnni ? q5_1_rows_vnni : q5_1_rows_avx2;
+            f = KPICK(q5_1_rows);
             break;
         case JANAS_Q4_1:
-            f = use_vnni ? q4_1_rows_vnni : q4_1_rows_avx2;
+            f = KPICK(q4_1_rows);
             break;
         case JANAS_Q5_0:
-            f = use_vnni ? q5_0_rows_vnni : q5_0_rows_avx2;
+            f = KPICK(q5_0_rows);
             break;
         case JANAS_Q2_0:
-            f = use_vnni ? q2_0_rows_vnni : q2_0_rows_avx2;
+            f = KPICK(q2_0_rows);
             break;
         case JANAS_Q3_K:
-            f = use_vnni ? q3k_rows_vnni : q3k_rows_avx2;
+            f = KPICK(q3k_rows);
             break;
         case JANAS_Q2_K:
-            f = use_vnni ? q2k_rows_vnni : q2k_rows_avx2;
+            f = KPICK(q2k_rows);
             break;
         case JANAS_IQ3_S:
-            f = use_vnni ? iq3s_rows_vnni : iq3s_rows_avx2;
+            f = KPICK(iq3s_rows);
             break;
         case JANAS_IQ3_XXS:
-            f = use_vnni ? iq3xxs_rows_vnni : iq3xxs_rows_avx2;
+            f = KPICK(iq3xxs_rows);
             break;
         case JANAS_IQ1_M:
-            f = use_vnni ? iq1m_rows_vnni : iq1m_rows_avx2;
+            f = KPICK(iq1m_rows);
             break;
         case JANAS_IQ1_S:
-            f = use_vnni ? iq1s_rows_vnni : iq1s_rows_avx2;
+            f = KPICK(iq1s_rows);
             break;
         }
         if (f) {
@@ -2428,19 +2472,19 @@ void janas_dot_multi_rows(int type, const void *w, size_t row_bytes,
     if (type == JANAS_Q2_0 && use_avx2_fma && __builtin_cpu_supports("f16c")) {
         size_t r8 = use_tiles && nv >= TILES_MIN_NV_Q20 ? rows / 8 * 8 : 0;
         if (r8)
-            (use_vnni ? b32_gemm_vnni : b32_gemm_avx2)(
-                type, w, row_bytes, x, x_stride, nv, nb, r8, y, y_stride);
+            (KPICK(b32_gemm))(type, w, row_bytes, x, x_stride, nv, nb, r8, y,
+                              y_stride);
         if (rows > r8)
-            (use_vnni ? q2_0_multi_rows_vnni : q2_0_multi_rows_avx2)(
-                (const char *)w + r8 * row_bytes, row_bytes, x, x_stride, nv,
-                nb, rows - r8, y + r8, y_stride);
+            (KPICK(q2_0_multi_rows))((const char *)w + r8 * row_bytes,
+                                     row_bytes, x, x_stride, nv, nb, rows - r8,
+                                     y + r8, y_stride);
         return;
     }
     if (use_tiles && use_avx2_fma && nv >= (size_t)TILES_MIN_NV_B32 &&
         rows >= 8 && __builtin_cpu_supports("f16c")) {
         size_t r8 = rows / 8 * 8;
-        if ((use_vnni ? b32_gemm_vnni : b32_gemm_avx2)(
-                type, w, row_bytes, x, x_stride, nv, nb, r8, y, y_stride)) {
+        if ((KPICK(b32_gemm))(type, w, row_bytes, x, x_stride, nv, nb, r8, y,
+                              y_stride)) {
             w = (const char *)w + r8 * row_bytes;
             y += r8;
             rows -= r8;
@@ -2448,36 +2492,35 @@ void janas_dot_multi_rows(int type, const void *w, size_t row_bytes,
                 return;
         }
     }
-    if (use_vnni && b32_multi_rows_vnni(type, w, row_bytes, x, x_stride, nv, nb,
-                                        rows, y, y_stride))
+    if (use_vnni && KPICK_VNNI(b32_multi_rows)(type, w, row_bytes, x, x_stride,
+                                               nv, nb, rows, y, y_stride))
         return;
     if (type == JANAS_Q4_K && use_avx2_fma && __builtin_cpu_supports("f16c")) {
         size_t r8 = use_tiles && nv >= TILES_MIN_NV ? rows / 8 * 8 : 0;
         if (r8)
-            (use_vnni ? q4k_gemm_vnni : q4k_gemm_avx2)(
-                w, row_bytes, x, x_stride, nv, nb, r8, y, y_stride);
+            (KPICK(q4k_gemm))(w, row_bytes, x, x_stride, nv, nb, r8, y,
+                              y_stride);
         if (rows > r8)
-            (use_vnni ? q4k_multi_rows_vnni : q4k_multi_rows_avx2)(
-                (const char *)w + r8 * row_bytes, row_bytes, x, x_stride, nv,
-                nb, rows - r8, y + r8, y_stride);
+            (KPICK(q4k_multi_rows))((const char *)w + r8 * row_bytes, row_bytes,
+                                    x, x_stride, nv, nb, rows - r8, y + r8,
+                                    y_stride);
         return;
     }
     if (type == JANAS_Q5_K && use_avx2_fma && __builtin_cpu_supports("f16c")) {
         size_t r8 = use_tiles && nv >= TILES_MIN_NV ? rows / 8 * 8 : 0;
         if (r8)
-            (use_vnni ? q5k_gemm_vnni : q5k_gemm_avx2)(
-                w, row_bytes, x, x_stride, nv, nb, r8, y, y_stride);
+            (KPICK(q5k_gemm))(w, row_bytes, x, x_stride, nv, nb, r8, y,
+                              y_stride);
         if (rows > r8)
-            (use_vnni ? q5k_multi_rows_vnni : q5k_multi_rows_avx2)(
-                (const char *)w + r8 * row_bytes, row_bytes, x, x_stride, nv,
-                nb, rows - r8, y + r8, y_stride);
+            (KPICK(q5k_multi_rows))((const char *)w + r8 * row_bytes, row_bytes,
+                                    x, x_stride, nv, nb, rows - r8, y + r8,
+                                    y_stride);
         return;
     }
     if (type == JANAS_IQ4_XS && use_tiles && use_avx2_fma &&
         nv >= TILES_MIN_NV && rows >= 8 && __builtin_cpu_supports("f16c")) {
         size_t r8 = rows / 8 * 8;
-        (use_vnni ? iq4xs_gemm_vnni : iq4xs_gemm_avx2)(
-            w, row_bytes, x, x_stride, nv, nb, r8, y, y_stride);
+        (KPICK(iq4xs_gemm))(w, row_bytes, x, x_stride, nv, nb, r8, y, y_stride);
         w = (const char *)w + r8 * row_bytes;
         y += r8;
         rows -= r8;
@@ -2485,8 +2528,8 @@ void janas_dot_multi_rows(int type, const void *w, size_t row_bytes,
     if (use_tiles && use_avx2_fma && nv >= (size_t)TILES_MIN_NV_IQK &&
         rows >= 8 && __builtin_cpu_supports("f16c")) {
         size_t r8 = rows / 8 * 8;
-        if ((use_vnni ? iqk_gemm_vnni : iqk_gemm_avx2)(
-                type, w, row_bytes, x, x_stride, nv, nb, r8, y, y_stride)) {
+        if ((KPICK(iqk_gemm))(type, w, row_bytes, x, x_stride, nv, nb, r8, y,
+                              y_stride)) {
             w = (const char *)w + r8 * row_bytes;
             y += r8;
             rows -= r8;
@@ -2537,82 +2580,63 @@ void janas_dot_multi(int type, const void *w, const struct janas_block_q8k *x,
             const struct janas_block_q8k *xv = x + v * x_stride;
             switch (type) {
             case JANAS_Q4_K:
-                (use_vnni ? q4k_dotn_vnni : q4k_dotn_avx2)(w, xv, x_stride, g,
-                                                           nb, r);
+                (KPICK(q4k_dotn))(w, xv, x_stride, g, nb, r);
                 break;
             case JANAS_Q6_K:
-                (use_vnni ? q6k_dotn_vnni : q6k_dotn_avx2)(w, xv, x_stride, g,
-                                                           nb, r);
+                (KPICK(q6k_dotn))(w, xv, x_stride, g, nb, r);
                 break;
             case JANAS_Q5_K:
-                (use_vnni ? q5k_dotn_vnni : q5k_dotn_avx2)(w, xv, x_stride, g,
-                                                           nb, r);
+                (KPICK(q5k_dotn))(w, xv, x_stride, g, nb, r);
                 break;
             case JANAS_IQ4_NL:
-                (use_vnni ? iq4nl_dotn_vnni : iq4nl_dotn_avx2)(w, xv, x_stride,
-                                                               g, nb, r);
+                (KPICK(iq4nl_dotn))(w, xv, x_stride, g, nb, r);
                 break;
             case JANAS_MXFP4:
-                (use_vnni ? mxfp4_dotn_vnni : mxfp4_dotn_avx2)(w, xv, x_stride,
-                                                               g, nb, r);
+                (KPICK(mxfp4_dotn))(w, xv, x_stride, g, nb, r);
                 break;
             case JANAS_IQ4_XS:
-                (use_vnni ? iq4xs_dotn_vnni : iq4xs_dotn_avx2)(w, xv, x_stride,
-                                                               g, nb, r);
+                (KPICK(iq4xs_dotn))(w, xv, x_stride, g, nb, r);
                 break;
             case JANAS_Q4_0:
-                (use_vnni ? q4_0_dotn_vnni : q4_0_dotn_avx2)(w, xv, x_stride, g,
-                                                             nb, r);
+                (KPICK(q4_0_dotn))(w, xv, x_stride, g, nb, r);
                 break;
             case JANAS_Q5_1:
-                (use_vnni ? q5_1_dotn_vnni : q5_1_dotn_avx2)(w, xv, x_stride, g,
-                                                             nb, r);
+                (KPICK(q5_1_dotn))(w, xv, x_stride, g, nb, r);
                 break;
             case JANAS_Q4_1:
-                (use_vnni ? q4_1_dotn_vnni : q4_1_dotn_avx2)(w, xv, x_stride, g,
-                                                             nb, r);
+                (KPICK(q4_1_dotn))(w, xv, x_stride, g, nb, r);
                 break;
             case JANAS_Q5_0:
-                (use_vnni ? q5_0_dotn_vnni : q5_0_dotn_avx2)(w, xv, x_stride, g,
-                                                             nb, r);
+                (KPICK(q5_0_dotn))(w, xv, x_stride, g, nb, r);
                 break;
             case JANAS_Q2_0:
-                (use_vnni ? q2_0_dotn_vnni : q2_0_dotn_avx2)(w, xv, x_stride, g,
-                                                             nb, r);
+                (KPICK(q2_0_dotn))(w, xv, x_stride, g, nb, r);
                 break;
             case JANAS_Q3_K:
-                (use_vnni ? q3k_dotn_vnni : q3k_dotn_avx2)(w, xv, x_stride, g,
-                                                           nb, r);
+                (KPICK(q3k_dotn))(w, xv, x_stride, g, nb, r);
                 break;
             case JANAS_Q2_K:
-                (use_vnni ? q2k_dotn_vnni : q2k_dotn_avx2)(w, xv, x_stride, g,
-                                                           nb, r);
+                (KPICK(q2k_dotn))(w, xv, x_stride, g, nb, r);
                 break;
             case JANAS_IQ3_S:
-                (use_vnni ? iq3s_dotn_vnni : iq3s_dotn_avx2)(w, xv, x_stride, g,
-                                                             nb, r);
+                (KPICK(iq3s_dotn))(w, xv, x_stride, g, nb, r);
                 break;
             case JANAS_IQ3_XXS:
-                (use_vnni ? iq3xxs_dotn_vnni
-                          : iq3xxs_dotn_avx2)(w, xv, x_stride, g, nb, r);
+                (KPICK(iq3xxs_dotn))(w, xv, x_stride, g, nb, r);
                 break;
             case JANAS_IQ2_XXS:
             case JANAS_IQ2_XS:
             case JANAS_IQ2_S:
-                (use_vnni ? iq2_dotn_vnni : iq2_dotn_avx2)(type, w, xv,
-                                                           x_stride, g, nb, r);
+                (KPICK(iq2_dotn))(type, w, xv, x_stride, g, nb, r);
                 break;
             case JANAS_IQ1_M:
-                (use_vnni ? iq1m_dotn_vnni : iq1m_dotn_avx2)(w, xv, x_stride, g,
-                                                             nb, r);
+                (KPICK(iq1m_dotn))(w, xv, x_stride, g, nb, r);
                 break;
             case JANAS_IQ1_S:
-                (use_vnni ? iq1s_dotn_vnni : iq1s_dotn_avx2)(w, xv, x_stride, g,
-                                                             nb, r);
+                (KPICK(iq1s_dotn))(w, xv, x_stride, g, nb, r);
                 break;
             default:
-                (use_vnni ? q8_0_dotn_vnni : q8_0_dotn_avx2)(w, xv, x_stride, g,
-                                                             nb, r);
+                (KPICK(q8_0_dotn))(w, xv, x_stride, g, nb, r);
             }
             for (int i = 0; i < g; i++)
                 out[(v + (size_t)i) * out_stride] = r[i];

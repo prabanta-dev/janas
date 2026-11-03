@@ -461,7 +461,7 @@ static int read_moof(struct track *t, const uint8_t *moof, size_t n,
 
 /* MP3 in MP4: the frames one after another, as an MP3 file */
 static int mp4_mpeg(const struct track *t, const uint8_t *d,
-                    struct janas_audio *a, char *why, size_t wn)
+                    struct audio_out *ao, char *why, size_t wn)
 {
     /* the frames carry no gapless tag here: the edit list trims */
     size_t total = 0;
@@ -477,7 +477,7 @@ static int mp4_mpeg(const struct track *t, const uint8_t *d,
         memcpy(buf + at, d + t->off[i], t->len[i]);
         at += t->len[i];
     }
-    int rc = janas_audio_mpeg(buf, total, a, why, wn);
+    int rc = janas_audio_mpeg(buf, total, ao, why, wn);
     free(buf);
     if (rc > 0) {
         snprintf(why, wn, "an MP4 track of MPEG audio without frames");
@@ -485,24 +485,22 @@ static int mp4_mpeg(const struct track *t, const uint8_t *d,
     }
     if (rc == 0) {
         struct audio_edit ed = {t->media_time, t->edit_length,
-                                t->timescale ? t->timescale : a->rate,
+                                t->timescale ? t->timescale : ao->rate,
                                 t->movie_timescale};
-        size_t skip = 0, keep = a->n;
-        audio_edit_apply(&ed, a->rate, &skip, &keep);
+        size_t skip = 0, keep = (size_t)audio_out_kept(ao);
+        audio_edit_apply(&ed, ao->rate, &skip, &keep);
         if (!keep) {
-            janas_audio_free(a);
             snprintf(why, wn, "an MP4 track of MPEG audio without sound");
             return -1;
         }
-        memmove(a->pcm, a->pcm + skip, sizeof(float) * keep);
-        a->n = keep;
+        audio_out_trim(ao, skip, keep);
     }
     return rc;
 }
 
 /* FLAC in MP4: the dfLa's metadata blocks and the frames, as a FLAC file */
 static int mp4_flac(const struct track *t, const uint8_t *d,
-                    struct janas_audio *a, char *why, size_t wn)
+                    struct audio_out *ao, char *why, size_t wn)
 {
     if (!t->config || t->config_len < 4 + 4 + 34) {
         snprintf(why, wn, "an MP4 track of FLAC without its STREAMINFO");
@@ -523,7 +521,7 @@ static int mp4_flac(const struct track *t, const uint8_t *d,
         memcpy(buf + at, d + t->off[i], t->len[i]);
         at += t->len[i];
     }
-    int rc = janas_audio_flac(buf, total, a, why, wn);
+    int rc = janas_audio_flac(buf, total, ao, why, wn);
     free(buf);
     if (rc > 0) {
         snprintf(why, wn, "an MP4 track of FLAC that is none");
@@ -535,7 +533,7 @@ static int mp4_flac(const struct track *t, const uint8_t *d,
 /* Opus in MP4: an OpusHead made from the dOps, the edit list's length as
    the last granule position */
 static int mp4_opus(const struct track *t, const uint8_t *d,
-                    struct janas_audio *a, char *why, size_t wn)
+                    struct audio_out *ao, char *why, size_t wn)
 {
     const uint8_t *c = t->config;
     if (!c || t->config_len < 11 || c[0] != 0) {
@@ -582,7 +580,7 @@ static int mp4_opus(const struct track *t, const uint8_t *d,
         if (ogg_add_packet(&o, d + t->off[i], t->len[i],
                            i + 1 == t->count ? last : -1) != 0)
             goto oom;
-    rc = janas_opus_stream(&o, a, why, wn);
+    rc = janas_opus_stream(&o, ao, why, wn);
     ogg_packets_free(&o);
     return rc;
 oom:
@@ -593,7 +591,7 @@ oom:
 
 /* uncompressed sound in a sample entry of its own */
 static int mp4_pcm(const struct track *t, const uint8_t *d,
-                   struct janas_audio *a, char *why, size_t wn)
+                   struct audio_out *ao, char *why, size_t wn)
 {
     int big = !t->little, fl = 0, bits = t->bits, uns = 0;
     uint32_t c = t->codec;
@@ -621,19 +619,9 @@ static int mp4_pcm(const struct track *t, const uint8_t *d,
         snprintf(why, wn, "an MP4 track of uncompressed sound out of range");
         return -1;
     }
-    size_t frames = 0;
-    for (size_t i = 0; i < t->count; i++)
-        frames += t->len[i] / ((size_t)bps * (size_t)ch);
-    if (frames > JANAS_AUDIO_MAX_SAMPLES) {
-        snprintf(why, wn, "a sound longer than this reads");
-        return -1;
-    }
-    float *pcm = malloc(sizeof(float) * (frames ? frames : 1));
-    if (!pcm) {
-        snprintf(why, wn, "out of memory");
-        return -1;
-    }
+    float pcm[4096];
     size_t at = 0;
+    ao->rate = (uint32_t)t->rate;
     for (size_t i = 0; i < t->count; i++) {
         const uint8_t *p = d + t->off[i];
         size_t nf = t->len[i] / ((size_t)bps * (size_t)ch);
@@ -663,15 +651,17 @@ static int mp4_pcm(const struct track *t, const uint8_t *d,
                 s += v;
             }
             pcm[at++] = (float)(s / ch);
+            if (at == 4096) {
+                if (audio_put(ao, pcm, at, why, wn) != 0)
+                    return -1;
+                at = 0;
+            }
         }
     }
-    a->pcm = pcm;
-    a->n = at;
-    a->rate = (uint32_t)t->rate;
-    return 0;
+    return audio_put(ao, pcm, at, why, wn);
 }
 
-int janas_audio_mp4(const uint8_t *d, size_t n, struct janas_audio *a,
+int janas_audio_mp4(const uint8_t *d, size_t n, struct audio_out *ao,
                     char *why, size_t wn)
 {
     struct box ftyp;
@@ -755,7 +745,7 @@ int janas_audio_mp4(const uint8_t *d, size_t n, struct janas_audio *a,
     if (c == TAG("mp4a") || c == TAG("enca")) {
         int ot = t.object_type;
         if (ot == 0x69 || ot == 0x6B) {
-            rc = mp4_mpeg(&t, d, a, why, wn);
+            rc = mp4_mpeg(&t, d, ao, why, wn);
         } else if (ot == 0x40 || ot == 0x66 || ot == 0x67 || ot == 0x68 ||
                    (!ot && t.config)) {
             struct aac_cfg cfg;
@@ -772,7 +762,7 @@ int janas_audio_mp4(const uint8_t *d, size_t n, struct janas_audio *a,
                                     t.timescale ? t.timescale
                                                 : (uint32_t)cfg.rate,
                                     t.movie_timescale};
-            rc = aac_stream(&cfg, d, t.off, t.len, t.count, &ed, a, why, wn);
+            rc = aac_stream(&cfg, d, t.off, t.len, t.count, &ed, ao, why, wn);
         } else if (ot == 0xA5 || ot == 0xA6) {
             snprintf(why, wn, "an MP4 track of AC-3 or E-AC-3, not read");
         } else {
@@ -781,7 +771,7 @@ int janas_audio_mp4(const uint8_t *d, size_t n, struct janas_audio *a,
                      ot);
         }
     } else if (c == TAG(".mp3")) {
-        rc = mp4_mpeg(&t, d, a, why, wn);
+        rc = mp4_mpeg(&t, d, ao, why, wn);
     } else if (c == TAG("alac")) {
         if (!t.config) {
             snprintf(why, wn, "an MP4 track of ALAC without its configuration");
@@ -791,15 +781,15 @@ int janas_audio_mp4(const uint8_t *d, size_t n, struct janas_audio *a,
                                 t.timescale ? t.timescale : (uint32_t)t.rate,
                                 t.movie_timescale};
         rc = janas_alac_stream(t.config, t.config_len, d, t.off, t.len, t.count,
-                               &ed, a, why, wn);
+                               &ed, ao, why, wn);
     } else if (c == TAG("Opus")) {
-        rc = mp4_opus(&t, d, a, why, wn);
+        rc = mp4_opus(&t, d, ao, why, wn);
     } else if (c == TAG("fLaC")) {
-        rc = mp4_flac(&t, d, a, why, wn);
+        rc = mp4_flac(&t, d, ao, why, wn);
     } else if (c == TAG("sowt") || c == TAG("twos") || c == TAG("in24") ||
                c == TAG("in32") || c == TAG("fl32") || c == TAG("fl64") ||
                c == TAG("raw ") || c == TAG("lpcm")) {
-        rc = mp4_pcm(&t, d, a, why, wn);
+        rc = mp4_pcm(&t, d, ao, why, wn);
     } else {
         snprintf(why, wn, "an MP4 track of a codec not read (%s)", fourcc);
     }

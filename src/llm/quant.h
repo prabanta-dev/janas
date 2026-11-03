@@ -495,9 +495,10 @@ float janas_q4k_dot_ref(const struct janas_block_q4k *w,
 /* Name of the kernel janas_q4k_dot dispatches to ("avx2" or "ref"). */
 const char *janas_q4k_kernel_name(void);
 
-/* Whether the AVX-VNNI kernels are in use: the CPU has them and
-   JANAS_KERNELS does not ask for plain AVX2. Attention asks the same
-   question, and both answers give the same numbers. */
+/* Whether the VNNI kernels are in use: 1 AVX-VNNI's, 2 AVX-512 VNNI's on
+   256 bits, 0 none (the CPU has neither, or JANAS_KERNELS asks for plain
+   AVX2). Attention asks the same question, and every answer gives the
+   same numbers. */
 int janas_use_vnni(void);
 
 /* The same three entry points for Q6_K. */

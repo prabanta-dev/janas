@@ -4,14 +4,16 @@
  * api_speech.c - speech to text in the public API (janas/llm.h): a Whisper
  * model (whisper.h) and the last transcription it made.
  */
-#include <stdlib.h>
 #include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
 #include "api_speech.h"
 #include "chat.h"
 #include "common/audio.h"
+#include "common/sysinfo.h"
 #include "tokenizer.h"
 
 char *janas_speech_beside(const char *path, const char *file)
@@ -120,6 +122,148 @@ static void on_segment(void *user, uint32_t index)
     c->fn(c->user, (int32_t)index);
 }
 
+/*
+ * The sound a transcription reads, in memory or as a stream: the decoded
+ * sound kept whole while it fits in a share of the memory free, else read
+ * from the file a window at a time (common/audio.h), every pass opening
+ * the stream again - the same samples either way, and the same result.
+ * JANAS_SPEECH_STREAM=1 streams any recording, =0 none (to compare them).
+ */
+struct sound {
+    struct janas_whisper_sound snd;
+    const float *pcm; /* whole, or NULL */
+    const void *data; /* the file, for the stream */
+    size_t bytes;
+    struct janas_audio_info info;
+    uint32_t rate;
+    struct janas_audio_stream *st;
+    float *buf; /* samples b0 .. b0 + bn of the stream */
+    size_t b0, bn, cap;
+};
+
+static const float *sound_get(void *user, size_t from, size_t count,
+                              char *err, size_t err_len)
+{
+    struct sound *d = user;
+    if (from > d->snd.n)
+        from = d->snd.n;
+    if (count > d->snd.n - from)
+        count = d->snd.n - from;
+    if (d->pcm)
+        return d->pcm + from;
+    if (from < d->b0) {
+        snprintf(err, err_len, "a stream read backwards");
+        return NULL;
+    }
+    size_t drop = from - d->b0 < d->bn ? from - d->b0 : d->bn;
+    memmove(d->buf, d->buf + drop, sizeof(float) * (d->bn - drop));
+    d->bn -= drop;
+    d->b0 += drop;
+    if (count > d->cap || !d->cap) {
+        size_t c = count > 65536 ? count : 65536; /* room to read past */
+        float *b = realloc(d->buf, sizeof(float) * c);
+        if (!b) {
+            snprintf(err, err_len, "out of memory");
+            return NULL;
+        }
+        d->buf = b;
+        d->cap = c;
+    }
+    while (d->b0 + d->bn < from + count) {
+        /* samples before from are read and dropped */
+        size_t room = d->b0 < from ? (from - d->b0 < d->cap ? from - d->b0
+                                                             : d->cap)
+                                   : from + count - (d->b0 + d->bn);
+        float *at = d->b0 < from ? d->buf : d->buf + d->bn;
+        long k = janas_audio_stream_read(d->st, at, room, err, err_len);
+        if (k <= 0) {
+            if (!k)
+                snprintf(err, err_len, "the sound ended early");
+            return NULL;
+        }
+        if (d->b0 < from)
+            d->b0 += (size_t)k;
+        else
+            d->bn += (size_t)k;
+    }
+    return d->buf;
+}
+
+static int sound_rewind(void *user, char *err, size_t err_len)
+{
+    struct sound *d = user;
+    if (d->pcm)
+        return 0;
+    janas_audio_stream_close(d->st);
+    d->b0 = d->bn = 0;
+    d->st = janas_audio_stream_open(d->data, d->bytes, &d->info, d->rate);
+    if (!d->st) {
+        snprintf(err, err_len, "out of memory");
+        return -1;
+    }
+    return 0;
+}
+
+/* the share of the memory free the decoded sound may take whole: about
+   eight bytes a sample as decoded go to it, its resampling, the
+   spectrogram, the detector's copy */
+static size_t whole_most(void)
+{
+    const char *e = getenv("JANAS_SPEECH_STREAM");
+    if (e && *e)
+        return atoi(e) > 0 ? 0 : JANAS_AUDIO_MAX_SAMPLES;
+    uint64_t free_ = janas_mem_available(), most = JANAS_AUDIO_MAX_SAMPLES;
+    if (free_ && free_ / 4 / 8 < most)
+        most = free_ / 4 / 8;
+    return (size_t)most;
+}
+
+/* the stretches of speech for the chunking: 0, or -1 with err */
+static long chunk_regions(janas_llm_speech *s, struct sound *d,
+                          const struct janas_llm_transcribe_params *p,
+                          size_t **regions, char *err, size_t err_len)
+{
+    struct janas_vad_params vp = {.threshold = 0.5f,
+                                  .min_speech_ms = 250,
+                                  .min_silence_ms = 200,
+                                  .speech_pad_ms = 300};
+    size_t n = d->snd.n;
+    float g = 1;
+    if (p->chunking == 2) {
+        if (p->vad_threshold > 0)
+            vp.threshold = p->vad_threshold;
+        if (p->vad_silence_ms > 0)
+            vp.min_silence_ms = (uint32_t)p->vad_silence_ms;
+        if (p->vad_prefix_ms >= 0)
+            vp.speech_pad_ms = (uint32_t)p->vad_prefix_ms;
+    } else {
+        /* auto: the loudness normalized for the detector, its peak at
+           0.9 */
+        float peak = 0;
+        for (size_t at = 0; at < n; at += 1 << 20) {
+            size_t k = n - at < (1 << 20) ? n - at : 1 << 20;
+            const float *x = sound_get(d, at, k, err, err_len);
+            if (!x)
+                return -1;
+            for (size_t i = 0; i < k; i++)
+                peak = fabsf(x[i]) > peak ? fabsf(x[i]) : peak;
+        }
+        g = peak > 0 ? 0.9f / peak : 1;
+        if (sound_rewind(d, err, err_len) != 0)
+            return -1;
+    }
+    float *probs = NULL;
+    long np =
+        janas_vad_probs_read(s->vad, n, g, sound_get, d, &probs, err, err_len);
+    if (np < 0)
+        return -1;
+    long ns = janas_vad_segments(s->vad, probs, np, n, &vp, regions);
+    free(probs);
+    if (ns < 0)
+        snprintf(err, err_len, "out of memory");
+    return ns;
+}
+
 int32_t janas_llm_speech_transcribe(janas_llm_speech *s, const void *data,
                                     int64_t n,
                                     const struct janas_llm_transcribe_params *p)
@@ -128,14 +272,17 @@ int32_t janas_llm_speech_transcribe(janas_llm_speech *s, const void *data,
         (p && (p->temperature < 0 || p->temperature > 1)))
         return janas_api_fail(JANAS_LLM_EINVAL, "invalid argument");
     janas_whisper_result_free(&s->r);
-    struct janas_audio a;
-    char err[512];
-    if (janas_audio_decode(data, (size_t)n, &a, err, sizeof err) != 0)
-        return janas_api_fail(JANAS_LLM_EINVAL, "%s", err);
-    if (janas_audio_resample(&a, s->w->rate) != 0) {
-        janas_audio_free(&a);
-        return janas_api_fail(JANAS_LLM_ENOMEM, "out of memory");
-    }
+    janas_speech_turns_free(s);
+    if (p && p->chunking && !s->vad)
+        return janas_api_fail(JANAS_LLM_EINVAL,
+                              "chunking needs a voice activity detector: "
+                              "silero-vad.jns (made by silero2jns) beside "
+                              "the speech model, or vad_model");
+    if (p && p->diarize && !s->speaker)
+        return janas_api_fail(JANAS_LLM_EINVAL,
+                              "diarization needs a speaker model: "
+                              "wespeaker-resnet34.jns (made by wespeaker2jns) "
+                              "beside the speech model, or speaker_model");
     struct janas_whisper_opts o = {0};
     struct cb cb = {0};
     if (p) {
@@ -154,78 +301,90 @@ int32_t janas_llm_speech_transcribe(janas_llm_speech *s, const void *data,
         o.stop = (volatile int *)p->stop;
     }
     if (o.language && o.language[0] &&
-        janas_whisper_lang_index(s->w, o.language) < 0 && s->w->multilingual) {
-        janas_audio_free(&a);
+        janas_whisper_lang_index(s->w, o.language) < 0 && s->w->multilingual)
         return janas_api_fail(JANAS_LLM_EINVAL,
                               "a language this model does not know: %s",
                               o.language);
-    }
-    /* chunking: the stretches of speech the detector finds */
-    size_t *regions = NULL;
-    if (p && p->chunking) {
-        if (!s->vad) {
-            janas_audio_free(&a);
-            return janas_api_fail(JANAS_LLM_EINVAL,
-                                  "chunking needs a voice activity detector: "
-                                  "silero-vad.jns (made by silero2jns) beside "
-                                  "the speech model, or vad_model");
-        }
-        struct janas_vad_params vp = {.threshold = 0.5f,
-                                      .min_speech_ms = 250,
-                                      .min_silence_ms = 200,
-                                      .speech_pad_ms = 300};
-        float *src = a.pcm, *norm = NULL;
-        if (p->chunking == 2) {
-            if (p->vad_threshold > 0)
-                vp.threshold = p->vad_threshold;
-            if (p->vad_silence_ms > 0)
-                vp.min_silence_ms = (uint32_t)p->vad_silence_ms;
-            if (p->vad_prefix_ms >= 0)
-                vp.speech_pad_ms = (uint32_t)p->vad_prefix_ms;
-        } else if ((norm = malloc(sizeof(float) * (a.n ? a.n : 1)))) {
-            /* auto: the loudness normalized for the detector, its peak at
-               0.9 */
-            float peak = 0;
-            for (size_t i = 0; i < a.n; i++)
-                peak = fabsf(a.pcm[i]) > peak ? fabsf(a.pcm[i]) : peak;
-            float g = peak > 0 ? 0.9f / peak : 1;
-            for (size_t i = 0; i < a.n; i++)
-                norm[i] = a.pcm[i] * g;
-            src = norm;
-        }
-        float *probs = NULL;
-        long np = janas_vad_probs(s->vad, src, a.n, &probs);
-        long ns =
-            np < 0 ? -1
-                   : janas_vad_segments(s->vad, probs, np, a.n, &vp, &regions);
-        free(probs);
-        free(norm);
-        if (ns < 0) {
+    /* the sound whole, or streamed when it does not fit */
+    struct janas_audio a = {0};
+    struct sound d = {.snd = {.get = sound_get, .rewind = sound_rewind},
+                      .data = data,
+                      .bytes = (size_t)n,
+                      .rate = s->w->rate};
+    d.snd.user = &d;
+    char err[512];
+    int k = janas_audio_decode_max(data, (size_t)n, &a, whole_most(), err,
+                                   sizeof err);
+    if (k < 0)
+        return janas_api_fail(strstr(err, "memory") ? JANAS_LLM_ENOMEM
+                                                    : JANAS_LLM_EINVAL,
+                              "%s", err);
+    if (k == 0) {
+        if (janas_audio_resample(&a, s->w->rate) != 0) {
             janas_audio_free(&a);
             return janas_api_fail(JANAS_LLM_ENOMEM, "out of memory");
         }
+        d.pcm = a.pcm;
+        d.snd.n = a.n;
+    } else {
+        if (janas_audio_scan(data, (size_t)n, &d.info, err, sizeof err) != 0)
+            return janas_api_fail(JANAS_LLM_EINVAL, "%s", err);
+        d.snd.n = (size_t)janas_audio_stream_length(&d.info, s->w->rate);
+        if (sound_rewind(&d, err, sizeof err) != 0)
+            return janas_api_fail(JANAS_LLM_ENOMEM, "out of memory");
+    }
+    /* chunking: the stretches of speech the detector finds */
+    size_t *regions = NULL, *merged = NULL;
+    long n_stretches = 0;
+    int rc = 0;
+    if (p && p->chunking) {
+        long ns = chunk_regions(s, &d, p, &regions, err, sizeof err);
+        if (ns < 0 || sound_rewind(&d, err, sizeof err) != 0)
+            rc = -1;
         static const size_t NONE[2] = {0, 0};
-        o.regions = ns ? regions : NONE;
-        o.n_regions = ns ? (size_t)ns : 1;
+        o.regions = ns > 0 ? regions : NONE;
+        o.n_regions = ns > 0 ? (size_t)ns : 1;
+        /* the model reads the stretches together, a window of them up to
+           its chunk with the pauses between (as WhisperX merges them): a
+           stretch of half a second read on its own loses the words around
+           it ("Ask... | NOT!" for "ask not"); diarization keeps them
+           apart */
+        if (ns > 1 && (merged = malloc(sizeof(size_t) * 2 * (size_t)ns))) {
+            size_t most = (size_t)s->w->chunk * s->w->rate, m = 0;
+            for (long i = 0; i < ns; i++) {
+                if (m && regions[2 * i + 1] - merged[2 * m - 2] <= most) {
+                    merged[2 * m - 1] = regions[2 * i + 1];
+                    continue;
+                }
+                merged[2 * m] = regions[2 * i];
+                merged[2 * m + 1] = regions[2 * i + 1];
+                m++;
+            }
+            o.regions = merged;
+            o.n_regions = m;
+            n_stretches = ns;
+        }
     }
-    janas_speech_turns_free(s);
-    if (p && p->diarize && !s->speaker) {
-        free(regions);
-        janas_audio_free(&a);
-        return janas_api_fail(JANAS_LLM_EINVAL,
-                              "diarization needs a speaker model: "
-                              "wespeaker-resnet34.jns (made by wespeaker2jns) "
-                              "beside the speech model, or speaker_model");
+    if (rc == 0)
+        rc = d.pcm ? janas_whisper_transcribe(s->w, d.pcm, d.snd.n, &o, &s->r,
+                                              err, sizeof err)
+                   : janas_whisper_transcribe_sound(s->w, &d.snd, &o, &s->r,
+                                                    err, sizeof err);
+    if (merged) { /* diarization looks at the stretches themselves */
+        o.regions = regions;
+        o.n_regions = (size_t)n_stretches;
     }
-    int rc =
-        janas_whisper_transcribe(s->w, a.pcm, a.n, &o, &s->r, err, sizeof err);
     if (rc == 0 && p && p->diarize &&
-        janas_speech_diarize(s, a.pcm, a.n, p->chunking ? o.regions : NULL,
-                             p->chunking ? o.n_regions : 0, p, err,
-                             sizeof err) != 0)
+        (sound_rewind(&d, err, sizeof err) != 0 ||
+         janas_speech_diarize(s, &d.snd, d.pcm, p->chunking ? o.regions : NULL,
+                              p->chunking ? o.n_regions : 0, p, err,
+                              sizeof err) != 0))
         rc = -1;
+    free(merged);
     free(regions);
     janas_audio_free(&a);
+    janas_audio_stream_close(d.st);
+    free(d.buf);
     if (rc != 0)
         return janas_api_fail(strstr(err, "memory")         ? JANAS_LLM_ENOMEM
                               : strstr(err, "English only") ? JANAS_LLM_EINVAL

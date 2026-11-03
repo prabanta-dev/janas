@@ -26,6 +26,16 @@ uint32_t janas_vad_rate(const struct janas_vad *v);
 long janas_vad_probs(struct janas_vad *v, const float *pcm, size_t n,
                      float **probs);
 
+/* the same from a sound read a piece at a time, each sample times gain:
+   get gives samples [from, from + count) of the n, as a
+   janas_whisper_sound does (NULL with err when it cannot); -1 with err */
+long janas_vad_probs_read(struct janas_vad *v, size_t n, float gain,
+                          const float *(*get)(void *user, size_t from,
+                                              size_t count, char *err,
+                                              size_t err_len),
+                          void *user, float **probs, char *err,
+                          size_t err_len);
+
 struct janas_vad_params {
     float threshold;         /* 0.5 */
     uint32_t min_speech_ms;  /* 250 */

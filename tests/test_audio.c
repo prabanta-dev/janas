@@ -11,12 +11,19 @@
  * Opus in WebM and Vorbis in Matroska made by FFmpeg (audio_clips.h) give
  * back FFmpeg's decoding of them, sample for sample; a tone resampled from
  * 44.1 and 8 kHz to 16 kHz is the same tone, one above the new Nyquist
- * frequency is gone; then truncations and thousands of corrupted copies of
+ * frequency is gone; every clip read as a stream (audio_stream.c) gives
+ * the samples decoding it whole and resampling it does, read in pieces of
+ * any size, and a stream closed before its end lets its thread go; the
+ * configurations of AAC-LD, AAC-ELD and USAC read, or refused where they
+ * need what is not read (low-delay SBR, error protection, USAC's SBR and
+ * time-warped MDCT); then
+ * truncations and thousands of corrupted copies of
  * every file must be read or refused, never crash (the sanitizer builds
  * watch).
  */
 #include "audio_clips.h"
 #include "common/audio.h"
+#include "common/audio_aac.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -213,6 +220,128 @@ static void formats(void)
     }
 }
 
+/* the stream of a file at rate against janas_audio_decode and
+   janas_audio_resample, read piece pieces at a time */
+static void stream_same(const char *what, const void *data, size_t n,
+                        uint32_t rate, size_t piece)
+{
+    char why[200];
+    struct janas_audio a;
+    struct janas_audio_info info;
+    if (janas_audio_decode(data, n, &a, why, sizeof why) != 0) {
+        CHECK(janas_audio_scan(data, n, &info, why, sizeof why) != 0,
+              "%s: scanned, not decoded", what);
+        return;
+    }
+    if (janas_audio_resample(&a, rate) != 0)
+        exit(1);
+    CHECK(janas_audio_scan(data, n, &info, why, sizeof why) == 0,
+          "%s: not scanned: %s", what, why);
+    CHECK(janas_audio_stream_length(&info, rate) == a.n,
+          "%s: a stream of %llu samples, %zu decoded", what,
+          (unsigned long long)janas_audio_stream_length(&info, rate), a.n);
+    struct janas_audio_stream *st =
+        janas_audio_stream_open(data, n, &info, rate);
+    float *buf = malloc(sizeof(float) * piece);
+    if (!st || !buf)
+        exit(1);
+    size_t at = 0;
+    int same = 1;
+    long k;
+    while ((k = janas_audio_stream_read(st, buf, piece, why, sizeof why)) > 0) {
+        if (at + (size_t)k > a.n ||
+            memcmp(buf, a.pcm + at, sizeof(float) * (size_t)k))
+            same = 0;
+        at += (size_t)k;
+    }
+    CHECK(k == 0 && same && at == a.n,
+          "%s at %u Hz in pieces of %zu: %zu samples streamed of %zu%s", what,
+          rate, piece, at, a.n, same ? "" : ", not the same");
+    janas_audio_stream_close(st);
+    /* closed before its end: its thread waiting for room goes */
+    st = janas_audio_stream_open(data, n, &info, rate);
+    if (!st)
+        exit(1);
+    janas_audio_stream_read(st, buf, 1, why, sizeof why);
+    janas_audio_stream_close(st);
+    free(buf);
+    janas_audio_free(&a);
+}
+
+/* an AudioSpecificConfig written bit by bit: its fields as "value:bits" */
+static size_t asc(uint8_t *p, const char *fields)
+{
+    size_t pos = 0;
+    memset(p, 0, 16);
+    for (const char *f = fields; *f;) {
+        unsigned v = 0, n = 0;
+        while (*f == ' ')
+            f++;
+        if (!*f)
+            break;
+        v = (unsigned)strtoul(f, (char **)&f, 0);
+        n = (unsigned)strtoul(f + 1, (char **)&f, 10);
+        for (unsigned i = n; i-- > 0; pos++)
+            if (v >> i & 1)
+                p[pos / 8] |= (uint8_t)(0x80 >> (pos % 8));
+    }
+    return (pos + 7) / 8;
+}
+
+/* the configurations of AAC's low-delay kinds and of USAC: read, or
+   refused for the reason that is theirs */
+static void configs(void)
+{
+    static const struct {
+        const char *what, *fields, *refused;
+        int frame, channels;
+    } C[] = {
+        {"AAC-ELD, frames of 480", "31:5 7:6 3:4 2:4 1:1 0:3 0:1 0:4 0:2", NULL,
+         480, 2},
+        {"AAC-ELD with low-delay SBR", "31:5 7:6 3:4 2:4 0:1 0:3 1:1 0:8",
+         "low-delay SBR", 0, 0},
+        {"AAC-LD, 5.1", "23:5 4:4 6:4 0:1 0:1 1:1 0:3 0:1 0:2", NULL, 512, 6},
+        {"AAC-LD with error protection", "23:5 4:4 2:4 0:1 0:1 1:1 0:3 0:1 1:2",
+         "error protection", 0, 0},
+        {"AAC-LD at 96 kHz", "23:5 0:4 1:4 0:1 0:1 1:1 0:3 0:1 0:2", "no bands",
+         0, 0},
+        {"USAC, a pair", "31:5 10:6 3:4 2:4 3:5 1:3 2:5 0:4 1:2 0:1 1:1 0:1",
+         NULL, 1024, 2},
+        {"USAC with SBR", "31:5 10:6 3:4 2:4 3:5 3:3 2:5 0:4 1:2 0:1 1:1 0:1",
+         "SBR", 0, 0},
+        {"USAC with the time-warped MDCT",
+         "31:5 10:6 3:4 2:4 3:5 1:3 2:5 0:4 1:2 1:1 1:1 0:1", "time-warped", 0,
+         0},
+    };
+    for (size_t k = 0; k < sizeof C / sizeof *C; k++) {
+        uint8_t p[16];
+        size_t n = asc(p, C[k].fields);
+        struct aac_cfg c;
+        char why[200] = "";
+        int rc = aac_config(p, n, &c, why, sizeof why);
+        if (C[k].refused)
+            CHECK(rc != 0 && strstr(why, C[k].refused),
+                  "%s: read, or refused as \"%s\"", C[k].what, why);
+        else
+            CHECK(rc == 0 && c.frame == C[k].frame &&
+                      c.channels == C[k].channels,
+                  "%s: %s (frames of %d, %d channels)", C[k].what,
+                  rc ? why : "read", c.frame, c.channels);
+    }
+}
+
+static void streams(void)
+{
+    static const size_t PIECES[] = {1, 777, 1 << 17};
+    for (size_t k = 0; k < sizeof CLIPS / sizeof *CLIPS; k++)
+        for (size_t i = 0; i < 3; i++)
+            stream_same(CLIPS[k].what, CLIPS[k].data, CLIPS[k].size,
+                        i == 1 ? CLIPS[k].rate : 16000, PIECES[i]);
+    struct buf b = wav(1, 16, 2, 44100, 3 * 44100, 0, 0, 0);
+    stream_same("a WAV of three seconds", b.p, b.n, 16000, 4096);
+    free(b.p);
+}
+
 /* the largest gap to the tone at the new rate, away from the ends */
 static double resampled(unsigned from, unsigned to, double hz, double *rms)
 {
@@ -266,8 +395,10 @@ static unsigned next(void)
 int main(void)
 {
     kinds();
+    configs();
     formats();
     resampling();
+    streams();
     long read = 0, refused = 0;
     char why[200];
     struct buf w[3] = {wav(1, 16, 2, 8000, 300, 0, 1, 0),

@@ -430,6 +430,8 @@ declare function janas_llm_chat_token_top(byval c as const janas_llm_chat ptr, _
                                           byval n as long ptr) as long
 
 declare function janas_llm_reasons(byval llm as const janas_llm ptr) as long
+declare function janas_llm_uses_tools(byval llm as const janas_llm ptr) as long
+declare function janas_llm_sees(byval llm as const janas_llm ptr) as long
 declare function janas_llm_chat_reset(byval c as janas_llm_chat ptr) as long
 declare function janas_llm_chat_stats(byval c as const janas_llm_chat ptr, _
                                       byval s as janas_llm_chat_stats ptr) as long

@@ -213,8 +213,9 @@ int janas_api_flush_text(janas_llm_chat *c)
 {
     if (c->n_text == 0)
         return 0;
+    int sp = c->text_special;
     long need =
-        janas_tokenizer_encode(c->llm->tok, c->text, c->n_text, 0, NULL, 0);
+        janas_tokenizer_encode(c->llm->tok, c->text, c->n_text, sp, NULL, 0);
     if (need < 0)
         return -1;
     if (c->n_ids + (size_t)need + 1 > c->cap_ids) {
@@ -225,7 +226,7 @@ int janas_api_flush_text(janas_llm_chat *c)
         c->ids = t;
         c->cap_ids = cap;
     }
-    janas_tokenizer_encode(c->llm->tok, c->text, c->n_text, 0,
+    janas_tokenizer_encode(c->llm->tok, c->text, c->n_text, sp,
                            c->ids + c->n_ids, (size_t)need);
     c->n_ids += (size_t)need;
     c->n_text = 0;
@@ -492,6 +493,11 @@ int32_t janas_llm_chat_thinking(const janas_llm_chat *c)
 int32_t janas_llm_reasons(const janas_llm *llm)
 {
     return llm ? llm->thinker : 0;
+}
+
+int32_t janas_llm_uses_tools(const janas_llm *llm)
+{
+    return llm && llm->tools != JANAS_TOOLS_NONE;
 }
 
 /*

@@ -135,6 +135,13 @@ SUFFIX=""
 # with intrinsics stay
 CFLAGS=(-std=gnu11 -D_GNU_SOURCE= -Wall -Wextra -Werror -pthread
     -ffp-contract=off -Isrc -Iinclude)
+# gcc's format-truncation is a guess that changes with each version (gcc
+# 15 sees truncations gcc 14 does not, issues #50 and #51): shown, not an
+# error, so that a newer compiler still builds; clang has no such option
+# before 18 and would warn of it
+if ! "$CC" -dM -E -x c /dev/null 2>/dev/null | grep -q __clang__; then
+    CFLAGS+=(-Wno-error=format-truncation)
+fi
 if [ "$OS" = windows ]; then
     # Windows 10 and later; printf with the C99 formats (%zu, %lld); what
     # MinGW's C library lacks, in one header every file starts with
@@ -650,6 +657,11 @@ for src in tests/*.c tools/*.c src/*/main.c src/services/*/main.c; do
         exit 2
     fi
     [ "$src" = src/janet/main.c ] && continue # below
+    # janas-files reads POSIX paths (links, the home's private folders):
+    # not on Windows yet, where a path is another thing
+    [ "$OS" = windows ] && case "$src" in
+    src/services/files/main.c | tests/test_files.c) continue ;;
+    esac
     exe="$BIN/$(basename "${src%.c}")$SUFFIX$EXE"
     own=()
     if [ "$(basename "$src")" = main.c ]; then

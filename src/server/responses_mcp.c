@@ -351,8 +351,10 @@ static void run_web(struct resp_mcp *mc, yyjson_mut_doc *d, yyjson_mut_val *arr,
         for (int i = 0; ns && i < n; i++) {
             mc->src = ns;
             struct web_src *w = &mc->src[mc->n_src++];
-            snprintf(w->url, sizeof w->url, "%s", hits[i].url);
-            snprintf(w->title, sizeof w->title, "%s", hits[i].title);
+            snprintf(w->url, sizeof w->url, "%.*s", (int)sizeof w->url - 1,
+                     hits[i].url);
+            snprintf(w->title, sizeof w->title, "%.*s",
+                     (int)sizeof w->title - 1, hits[i].title);
             yyjson_mut_val *o = yyjson_mut_arr_add_obj(d, srcs);
             yyjson_mut_obj_add_str(d, o, "type", "url");
             yyjson_mut_obj_add_strcpy(d, o, "url", hits[i].url);

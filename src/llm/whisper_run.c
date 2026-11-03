@@ -402,10 +402,13 @@ static int detect_language(struct run *r)
     return best;
 }
 
-int janas_whisper_transcribe(struct janas_whisper *w, const float *pcm,
-                             size_t n, const struct janas_whisper_opts *o,
-                             struct janas_whisper_result *res, char *err,
-                             size_t err_len)
+/* the sound in memory (pcm), or from a source (snd): the spectrogram
+   whole, or a window at a time */
+static int transcribe(struct janas_whisper *w, const float *pcm,
+                      const struct janas_whisper_sound *snd, size_t n,
+                      const struct janas_whisper_opts *o,
+                      struct janas_whisper_result *res, char *err,
+                      size_t err_len)
 {
     memset(res, 0, sizeof *res);
     struct run r = {.w = w, .o = o, .lang = -1, .rng = o->seed};
@@ -468,7 +471,15 @@ int janas_whisper_transcribe(struct janas_whisper *w, const float *pcm,
             goto done;
         }
     }
-    mel = janas_whisper_mel(w, pcm, n, (size_t)w->chunk * w->rate, &frames);
+    size_t pad = (size_t)w->chunk * w->rate;
+    float mx = 0;
+    if (pcm)
+        mel = janas_whisper_mel(w, pcm, n, pad, &frames);
+    else if (janas_whisper_mel_max(w, snd, pad, &mx, err, err_len) != 0 ||
+             snd->rewind(snd->user, err, err_len) != 0)
+        goto done;
+    else
+        mel = malloc(sizeof(float) * win_frames * w->n_mels);
     if (!mel) {
         snprintf(err, err_len, "out of memory");
         goto done;
@@ -503,7 +514,11 @@ int janas_whisper_transcribe(struct janas_whisper *w, const float *pcm,
             goto done;
         }
         uint32_t size = rend - seek < win_frames ? rend - seek : win_frames;
-        if (janas_whisper_encode(w, mel, frames, seek, size) != 0) {
+        if (!pcm && janas_whisper_mel_window(w, snd, pad, mx, seek, size, mel,
+                                             win_frames, err, err_len) != 0)
+            goto done;
+        if (pcm ? janas_whisper_encode(w, mel, frames, seek, size)
+                : janas_whisper_encode(w, mel, win_frames, 0, size)) {
             snprintf(err, err_len, "out of memory");
             goto done;
         }
@@ -636,6 +651,25 @@ done:
     free(r.suppress);
     free(r.all);
     return rc;
+}
+
+int janas_whisper_transcribe(struct janas_whisper *w, const float *pcm,
+                             size_t n, const struct janas_whisper_opts *o,
+                             struct janas_whisper_result *res, char *err,
+                             size_t err_len)
+{
+    static const float none = 0;
+    return transcribe(w, pcm ? pcm : &none, NULL, pcm ? n : 0, o, res, err,
+                      err_len);
+}
+
+int janas_whisper_transcribe_sound(struct janas_whisper *w,
+                                   const struct janas_whisper_sound *snd,
+                                   const struct janas_whisper_opts *o,
+                                   struct janas_whisper_result *res, char *err,
+                                   size_t err_len)
+{
+    return transcribe(w, NULL, snd, snd->n, o, res, err, err_len);
 }
 
 void janas_whisper_result_free(struct janas_whisper_result *r)

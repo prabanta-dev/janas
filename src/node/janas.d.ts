@@ -151,6 +151,11 @@ export declare class Chat {
     /** A user message, in the conversation kept here; the reply follows. */
     send(text: string, options?: ReplyOptions): Reply;
     /**
+     * A picture (the bytes of a PNG or a JPEG) for the next message, with a
+     * model that sees: Qwen3.5 or Gemma 4 with its .vision.jns beside it.
+     */
+    image(data: Uint8Array | ArrayBuffer): Promise<void>;
+    /**
      * A whole conversation, as an HTTP client keeps it (only the first may be
      * the system's; the last is the user's): what it shares with the one
      * already computed is not read again.
@@ -232,6 +237,77 @@ export interface ReplyStats {
     peakRssBytes: number;
     /** maxReasoning closed the reasoning, not the model */
     reasoningCut: boolean;
+}
+
+/**
+ * Opens a Whisper model (.jns, made by hf2jns_whisper) on a thread of its
+ * own: recordings are transcribed in the language they are spoken in, or
+ * translated into English. A voice activity detector (silero-vad.jns) and a
+ * speaker model (wespeaker-resnet34.jns) beside it are opened with it.
+ */
+export declare function openSpeech(path: string, options?: SpeechOptions): Promise<Speech>;
+
+export interface SpeechOptions {
+    /** Threads; 0 or absent: one a performance core. */
+    threads?: number;
+    /** The voice activity detector, for chunking (default: silero-vad.jns beside the model). */
+    vadModel?: string;
+    /** The speaker model, for diarize (default: wespeaker-resnet34.jns beside the model). */
+    speakerModel?: string;
+}
+
+/** An open speech model: one recording at a time, the others waiting in order. */
+export declare class Speech {
+    private constructor();
+    readonly path: string;
+    /** The bytes of a sound file: WAV, FLAC, MP3, Ogg, M4A, WebM; any rate and channels. */
+    transcribe(data: Uint8Array | ArrayBuffer, options?: TranscribeOptions): Promise<Transcription>;
+    /** Closes it once the recordings asked for are done. */
+    close(): Promise<void>;
+}
+
+export interface TranscribeOptions {
+    /** Into English (false). */
+    translate?: boolean;
+    /** "it" or "italian"; absent: found out. */
+    language?: string;
+    /** Text said before, or the words and spelling expected (names, terms). */
+    prompt?: string;
+    /** 0: the likeliest words, a higher one only where they loop or are unlikely (default); up to 1: sampled at it. */
+    temperature?: number;
+    seed?: number;
+    /** The words' times too (false). */
+    words?: boolean;
+    /** Only the speech read: "auto" (loudness normalized, then voice activity detection), or the detector's settings. */
+    chunking?: "auto" | { threshold?: number; prefixMs?: number; silenceMs?: number };
+    /** Who speaks when (false): turns, with the known speakers' names, at most 8, or A, B... */
+    diarize?: boolean;
+    /** Known speakers: a name and a short recording (2-10 s) of each. */
+    speakers?: readonly { name: string; data: Uint8Array | ArrayBuffer }[];
+    /** Stops it between windows of thirty seconds: it rejects then ("stopped"). */
+    signal?: AbortSignal;
+}
+
+export interface Transcription {
+    text: string;
+    /** its code ("it") */
+    language: string;
+    /** seconds */
+    duration: number;
+    segments: {
+        start: number;
+        end: number;
+        /** beginning with a space, as the model writes it */
+        text: string;
+        avgLogprob: number;
+        noSpeechProb: number;
+        temperature: number;
+        compressionRatio: number;
+    }[];
+    /** with words: true */
+    words?: { start: number; end: number; text: string; probability: number }[];
+    /** with diarize: true */
+    turns?: { start: number; end: number; speaker: string; text: string }[];
 }
 
 /** The error a promise or a reply rejects with when the engine fails: its code is

@@ -51,9 +51,9 @@ int ogg_read(const uint8_t *d, size_t n, struct ogg_packets *o, char *why,
 void ogg_packets_free(struct ogg_packets *o);
 
 /* the codecs: 0, or -1 with why */
-int janas_vorbis_stream(const struct ogg_packets *o, struct janas_audio *a,
+int janas_vorbis_stream(const struct ogg_packets *o, struct audio_out *ao,
                         char *why, size_t wn);
-int janas_opus_stream(const struct ogg_packets *o, struct janas_audio *a,
+int janas_opus_stream(const struct ogg_packets *o, struct audio_out *ao,
                       char *why, size_t wn);
 /* the samples at 48 kHz an Opus packet makes (its TOC and frame count) */
 int janas_opus_packet_samples(const uint8_t *p, size_t n);
@@ -61,7 +61,7 @@ int janas_opus_packet_samples(const uint8_t *p, size_t n);
    and alac atoms' heads), the packets at data + off[i] */
 int janas_alac_stream(const uint8_t *cookie, size_t cn, const uint8_t *data,
                       const size_t *off, const size_t *len, size_t count,
-                      const struct audio_edit *edit, struct janas_audio *a,
+                      const struct audio_edit *edit, struct audio_out *ao,
                       char *why, size_t wn);
 
 #endif

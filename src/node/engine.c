@@ -223,6 +223,10 @@ static void close_run(struct janas_node_job *j)
         janas_llm_close(m->llm);
         m->llm = NULL;
     }
+    if (m->speech) {
+        janas_llm_speech_close(m->speech);
+        m->speech = NULL;
+    }
     j->last = 1;
 }
 

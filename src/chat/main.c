@@ -34,6 +34,7 @@
 #include "common/model_pick.h"
 #include "common/sysinfo.h"
 #include "common/words.h"
+#include "audio_cmd.h"
 #include "edit.h"
 #include "layout.h"
 #include "janas/llm.h"
@@ -61,7 +62,13 @@ static double sess_tokens, sess_seconds;
 static const char *const commands[] = {
     "/help",    "/about", "/stats", "/reset",   "/system",   "/temp",
     "/spec",    "/think", "/mode",  "/experts", "/markdown", "/mcp",
-    "/context", "/image", "/quit",  "/exit",    NULL};
+    "/context", "/image", "/audio", "/quit",    "/exit",     NULL};
+
+/* a line /audio says, on the terminal */
+static void say_line(void *user, const char *line)
+{
+    term_printf(user, "%s\n", line);
+}
 
 static void on_sigwinch(int sig)
 {
@@ -385,6 +392,9 @@ static void usage(void)
         "                   the MCP servers whose tools the model may call\n"
         "                   (default ~/.config/janas/mcp.json, in the\n"
         "                   format of the other clients: mcpServers)\n"
+        "  --speech-model <file>\n"
+        "                   the Whisper model /audio transcribes with\n"
+        "                   (default: one beside the model)\n"
         "  --no-mcp         start no MCP server, Janas's services included\n"
         "  --no-services    start none of Janas's own services (janas-flights\n"
         "                   and the others beside janas-chat, started by\n"
@@ -426,6 +436,10 @@ static const struct {
     {"/image <file>",
      "a picture (PNG or JPEG) for your next message, for models that see "
      "(their vision file beside them)"},
+    {"/audio [translate] <file>",
+     "a recording (WAV, FLAC, MP3, Ogg, M4A, WebM) transcribed, or translated "
+     "into English, for your next message: by --speech-model's Whisper "
+     "model, or one beside the model"},
     {"/spec [on|off]", "speculative decoding (toggles)"},
     {"/mode [auto|eco|max]", "power mode, and what the engine chose"},
     {"/experts [n]",
@@ -960,6 +974,7 @@ struct chat_opts { /* where the words land: main keeps them, this names them */
        when read, for the next model to open */
     int *devices;
     int *npu_int8;
+    const char **speech_model;
 };
 
 /* every option, for the nearest to one mistyped: the first N_ALONE stand
@@ -975,7 +990,8 @@ static const char *const OPTIONS[] = {
     "--system",      "--mcp-config", "--progress",    "--temp",
     "--top-k",       "--top-p",      "--min-p",       "--seed",
     "--max",         "--head",       "--profile",     "--models",
-    "--quality",     "--prompt-on",  "--drafts-on",   "--reply-on"};
+    "--quality",     "--prompt-on",  "--drafts-on",   "--reply-on",
+    "--speech-model"};
 #define N_OPTIONS (sizeof OPTIONS / sizeof *OPTIONS)
 
 /* v of option a as a whole number or a number within limits; on a
@@ -1168,6 +1184,8 @@ static int take_options(int n, char **w, struct chat_opts *o, char *why,
             *o->system_arg = v;
         else if (strcmp(a, "--mcp-config") == 0)
             *o->mcp_config = v;
+        else if (strcmp(a, "--speech-model") == 0)
+            *o->speech_model = v;
         else if (strcmp(a, "--progress") == 0) {
             if (opt_real(a, v, 0, 86400, &r, why, why_len) != 0)
                 return -1;
@@ -1389,6 +1407,8 @@ static void conf_write(const char *path, const struct chat_opts *o)
         fprintf(f, "--npu-int8\n");
     if (*o->mcp_config)
         fprintf(f, "--mcp-config %s\n", *o->mcp_config);
+    if (*o->speech_model)
+        fprintf(f, "--speech-model %s\n", *o->speech_model);
     if (!*o->mcp)
         fprintf(f, "--no-mcp\n");
     if (!*o->services)
@@ -1476,8 +1496,9 @@ static char *call_part(const janas_llm_chat *c, int32_t i, int args)
  */
 /* The calls that failed in this exchange, as "name args": one asked for
    again is not run (it would fail the same way), and at the second time
-   the exchange stops. A model at temperature 0 can otherwise ask for it
-   until the rounds run out, without ever answering. */
+   the exchange stops; until a call that changes something succeeds. A model at
+   temperature 0 can otherwise ask for it until the rounds run out, without ever
+   answering. */
 #define FAILED_MAX 16
 static struct {
     char *call[FAILED_MAX];
@@ -1597,6 +1618,10 @@ static int run_calls(janas_llm_chat *c, int autorun)
             if (rc != 0 && key && failed.n < FAILED_MAX) {
                 failed.call[failed.n++] = key;
                 key = NULL;
+            } else if (rc == 0 && writes) {
+                /* something changed: a call that failed before may not
+                   fail now (a file written once its folder is made) */
+                failed_clear();
             }
             char *t = term_cleaned(texts[i] ? texts[i] : "");
             const char *tt = t ? t : "";
@@ -1810,17 +1835,18 @@ int main(int argc, char **argv)
     int stats = 0;
     int markdown = 1; /* the marks read, not printed; never on a pipe */
     int gpu = 1;      /* the GPU may be given work, if there is one */
-    const char *mcp_config = NULL; /* NULL: the default file */
+    const char *mcp_config = NULL;   /* NULL: the default file */
+    const char *speech_model = NULL; /* NULL: one beside the model */
     int mcp = 1, mcp_auto = 0, mcp_instructions = 0, services = 1, no_mtp = 0;
     /* profile: the catalog's faster choices, at --quality low asked */
     int all_tools = 0, profile = 0, tune = 0, npu_int8 = 0;
     int devices[JANAS_DEVICES_OPTIONS] = {0, 0, 0};
     static char mtp_found[4096];
     struct chat_opts o = {
-        &mp,       &cp,         &system_arg, &stats,     &markdown,
-        &gpu,      &mcp_config, &mcp,        &mcp_auto,  &mcp_instructions,
-        &services, &no_mtp,     mtp_found,   &all_tools, &profile,
-        &tune,     devices,     &npu_int8};
+        &mp,       &cp,         &system_arg, &stats,       &markdown,
+        &gpu,      &mcp_config, &mcp,        &mcp_auto,    &mcp_instructions,
+        &services, &no_mtp,     mtp_found,   &all_tools,   &profile,
+        &tune,     devices,     &npu_int8,   &speech_model};
     /*
      * The settings in layers, each over the one before: the catalog's
      * profile for the model, the chat's own file, the model's file, the
@@ -2104,6 +2130,10 @@ int main(int argc, char **argv)
     char *msg = NULL;
     size_t cap = 0;
     long n;
+    /* /audio's speech model, opened at the first recording, and the text
+       that goes with the next message */
+    struct chat_audio *audio = chat_audio_new(speech_model, cm.path);
+    char *heard = NULL;
     while ((n = read_message(&msg, &cap, tty)) >= 0) {
         if (n == 0)
             continue;
@@ -2284,6 +2314,15 @@ int main(int argc, char **argv)
                     term_printf(&term, "the picture goes with your next "
                                        "message\n");
                 free(data);
+            } else if (strcmp(msg, "/audio") == 0) {
+                char *t =
+                    audio ? chat_audio_run(audio, arg, say_line, &term) : NULL;
+                if (!audio)
+                    term_printf(&term, "not enough memory for it\n");
+                if (t) {
+                    free(heard);
+                    heard = t;
+                }
             } else if (strcmp(msg, "/temp") == 0 && *arg) {
                 cp.temperature = (float)atof(arg);
                 if (janas_llm_chat_set_params(c, &cp) != JANAS_LLM_OK)
@@ -2338,6 +2377,21 @@ int main(int argc, char **argv)
             }
             continue;
         }
+        if (heard) { /* the recording's text, then the message */
+            size_t hl = strlen(heard);
+            char *both = malloc(hl + 2 + (size_t)n + 1);
+            if (both) {
+                memcpy(both, heard, hl);
+                memcpy(both + hl, "\n\n", 2);
+                memcpy(both + hl + 2, msg, (size_t)n + 1);
+                n += (long)hl + 2;
+                free(msg);
+                msg = both;
+                cap = (size_t)n + 1;
+            }
+            free(heard);
+            heard = NULL;
+        }
         if (janas_llm_chat_send(c, msg, (int32_t)n) != JANAS_LLM_OK) {
             term_gap(&term);
             term_printf(&term, "%s\n", janas_llm_last_error());
@@ -2355,6 +2409,8 @@ int main(int argc, char **argv)
     watch_stop();
     failed_clear();
     free(msg);
+    free(heard);
+    chat_audio_free(audio);
     free(system);
     free(mcp_extra);
     mcpc_stop();

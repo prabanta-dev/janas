@@ -23,6 +23,14 @@ void janas_speaker_close(struct janas_speaker *s);
    torchaudio's kaldi.fbank) of n samples at 16 kHz in [-1, 1]: *frames x
    80 (malloc'd), or NULL when out of memory */
 float *janas_speaker_fbank(const float *pcm, size_t n, uint32_t *frames);
+/* the same a few frames at a time: their count for n samples; nf frames
+   from the samples at pcm (frame t reads 400 from 160 t) into out */
+struct janas_fbank;
+struct janas_fbank *janas_fbank_new(void);
+void janas_fbank_free(struct janas_fbank *b);
+uint32_t janas_fbank_count(size_t n);
+void janas_fbank_frames(struct janas_fbank *b, const float *pcm, size_t nf,
+                        float *out);
 
 /* the embedding (256) of frames f0 .. f0 + nf of the filter banks, their
    mean taken off first: 0, or -1 when out of memory or nf too short */
@@ -46,6 +54,20 @@ int janas_diarize(struct janas_speaker *s, const float *pcm, size_t n,
                   const size_t *regions, size_t n_regions, const float *ref,
                   uint32_t n_ref, uint32_t max_speakers,
                   struct janas_diar *out);
+/* the same from filter banks read going forward: get gives frames f0 .. f1
+   of the frames in all (contiguous, valid until the next call, which
+   never asks for any before f0), or NULL when it cannot */
+int janas_diarize_read(struct janas_speaker *s, uint32_t frames,
+                       const float *(*get)(void *user, uint32_t f0,
+                                           uint32_t f1),
+                       void *user, const size_t *regions, size_t n_regions,
+                       const float *ref, uint32_t n_ref, uint32_t max_speakers,
+                       struct janas_diar *out);
 void janas_diar_free(struct janas_diar *d);
+/* the grouping alone: n normalized embeddings (256 each) into labels, at
+   most max_spk groups; past chunk windows (0: 2000) by chunks of about that
+   many, each reduced to 64 centroids. 0, or -1 when out of memory */
+int janas_diar_cluster(const float *emb, uint32_t n, uint32_t max_spk,
+                       uint32_t chunk, uint32_t *label);
 
 #endif

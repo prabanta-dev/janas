@@ -39,6 +39,7 @@ struct srv_engine {
     char desc[1024];
     char system[1024]; /* the system message Janas's programs use */
     int64_t created;
+    struct srv_model_info info;
 };
 
 struct srv_job *srv_job_new(void)
@@ -726,6 +727,27 @@ int srv_engine_submit(struct srv_engine *e, struct srv_job *j)
     return 0;
 }
 
+/* What the model is, from the library: its name, its architecture (the
+   description's "name (arch), ..."), its context and what it can do. */
+static void model_info(struct srv_engine *e)
+{
+    struct srv_model_info *mi = &e->info;
+    int32_t n;
+    janas_llm_name(e->llm, mi->name, sizeof(mi->name), &n);
+    const char *open = strstr(e->desc, " ("), *close = NULL;
+    if (open)
+        close = strchr(open + 2, ')');
+    if (open && close && close - open - 2 < (long)sizeof(mi->arch))
+        snprintf(mi->arch, sizeof(mi->arch), "%.*s", (int)(close - open - 2),
+                 open + 2);
+    const char *ctx = strstr(e->desc, ", context ");
+    if (ctx)
+        mi->n_ctx = (uint32_t)strtoul(ctx + 10, NULL, 10);
+    mi->tools = janas_llm_uses_tools(e->llm);
+    mi->sees = janas_llm_sees(e->llm);
+    mi->reasons = janas_llm_reasons(e->llm);
+}
+
 struct srv_engine *srv_engine_start(const struct srv_config *cfg, char *err,
                                     size_t err_len)
 {
@@ -791,6 +813,7 @@ struct srv_engine *srv_engine_start(const struct srv_config *cfg, char *err,
     janas_llm_describe(e->llm, e->desc, sizeof(e->desc), &n);
     janas_llm_default_system(e->llm, e->system, sizeof(e->system), &n);
     e->created = (int64_t)time(NULL);
+    model_info(e);
     e->fim = srv_fim_new(cfg->fim_prefix, cfg->fim_suffix);
     e->fim_max = cfg->fim_max;
     if (pthread_create(&e->th, NULL, engine_main, e) != 0) {
@@ -880,4 +903,9 @@ const char *srv_engine_system(const struct srv_engine *e)
 int64_t srv_engine_created(const struct srv_engine *e)
 {
     return e->created;
+}
+
+const struct srv_model_info *srv_engine_info(const struct srv_engine *e)
+{
+    return &e->info;
 }

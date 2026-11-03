@@ -472,7 +472,7 @@ static int decode_packet(struct odec *st, const uint8_t *data, int len,
 
 /* ---- the stream ---- */
 
-int janas_opus_stream(const struct ogg_packets *o, struct janas_audio *a,
+int janas_opus_stream(const struct ogg_packets *o, struct audio_out *ao,
                       char *why, size_t wn)
 {
     const uint8_t *h = o->data + o->off[0];
@@ -517,11 +517,12 @@ int janas_opus_stream(const struct ogg_packets *o, struct janas_audio *a,
     }
     struct odec **dec = calloc((size_t)streams, sizeof *dec);
     float *buf = malloc(sizeof(float) * 2 * 5760 * (size_t)streams);
-    float *out = NULL;
+    float *out = malloc(sizeof(float) * 5760);
     int rc = -1;
-    size_t got = 0, cap = 0;
-    if (!dec || !buf)
+    size_t got = 0;
+    if (!dec || !buf || !out)
         goto oom;
+    ao->rate = 48000;
     for (int s = 0; s < streams; s++)
         if (!(dec[s] = odec_new(s < coupled ? 2 : 1)))
             goto oom;
@@ -554,20 +555,6 @@ int janas_opus_stream(const struct ogg_packets *o, struct janas_audio *a,
         }
         if (n <= 0)
             continue; /* a packet that does not read: skipped */
-        if (got + (size_t)n > JANAS_AUDIO_MAX_SAMPLES) {
-            snprintf(why, wn, "an Opus stream longer than this reads");
-            goto end;
-        }
-        if (got + (size_t)n > cap) {
-            size_t c = cap ? cap * 2 : 1 << 18;
-            while (c < got + (size_t)n)
-                c *= 2;
-            float *q = realloc(out, sizeof(float) * c);
-            if (!q)
-                goto oom;
-            out = q;
-            cap = c;
-        }
         for (int i = 0; i < n; i++) {
             double sum = 0;
             int used_ch = 0;
@@ -582,8 +569,10 @@ int janas_opus_stream(const struct ogg_packets *o, struct janas_audio *a,
                 sum += buf[(size_t)s * 2 * 5760 + (size_t)sc * 5760 + i];
                 used_ch++;
             }
-            out[got + (size_t)i] = (float)(sum / used_ch) * gain;
+            out[i] = (float)(sum / used_ch) * gain;
         }
+        if (audio_put(ao, out, (size_t)n, why, wn) != 0)
+            goto end;
         got += (size_t)n;
     }
     size_t skip = (size_t)pre_skip, total = got;
@@ -593,11 +582,8 @@ int janas_opus_stream(const struct ogg_packets *o, struct janas_audio *a,
         snprintf(why, wn, "an Opus stream without sound");
         goto end;
     }
-    memmove(out, out + skip, sizeof(float) * (total - skip));
-    a->pcm = out;
-    a->n = total - skip;
-    a->rate = 48000;
-    out = NULL;
+    ao->skip = skip;
+    ao->total = total;
     rc = 0;
     goto end;
 oom:

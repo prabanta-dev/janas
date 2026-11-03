@@ -34,12 +34,15 @@ struct janas_llm_speech {
 char *janas_speech_beside(const char *path, const char *file);
 
 /* the speakers of the transcription just made (s->r, its words' times)
-   of pcm (n samples at 16 kHz), from the stretches of speech regions (NULL:
-   found here, or the whole recording without a detector): its turns in
+   of the sound snd (at 16 kHz, read from its start; pcm: all of it in
+   memory, or NULL), from the stretches of speech regions (NULL: found
+   here, or the whole recording without a detector): its turns in
    s->turns. 0, or -1 with the reason in err (also a known speaker's
    recording that cannot be read) */
-int janas_speech_diarize(janas_llm_speech *s, const float *pcm, size_t n,
-                         const size_t *regions, size_t n_regions,
+int janas_speech_diarize(janas_llm_speech *s,
+                         const struct janas_whisper_sound *snd,
+                         const float *pcm, const size_t *regions,
+                         size_t n_regions,
                          const struct janas_llm_transcribe_params *p, char *err,
                          size_t err_len);
 void janas_speech_turns_free(janas_llm_speech *s);

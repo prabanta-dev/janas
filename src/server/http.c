@@ -270,6 +270,12 @@ static void stream_free(void *cls)
 int srv_reply_stream(struct srv_req *r, srv_stream_next next,
                      srv_stream_done done, void *ctx)
 {
+    return srv_reply_stream_as(r, next, done, ctx, "text/event-stream");
+}
+
+int srv_reply_stream_as(struct srv_req *r, srv_stream_next next,
+                        srv_stream_done done, void *ctx, const char *type)
+{
     struct stream *s = malloc(sizeof(*s));
     if (!s) {
         done(ctx);
@@ -305,7 +311,7 @@ int srv_reply_stream(struct srv_req *r, srv_stream_next next,
         return MHD_NO;
     }
     MHD_add_response_header(resp, "Cache-Control", "no-cache");
-    return queue(r->conn, 200, resp, "text/event-stream");
+    return queue(r->conn, 200, resp, type);
 }
 
 /* Does the path match the route's pattern? Its {…} segments go to param. */
@@ -354,9 +360,12 @@ static int key_ok(struct srv_req *r)
         return 1;
     const char *h = MHD_lookup_connection_value(r->conn, MHD_HEADER_KIND,
                                                 MHD_HTTP_HEADER_AUTHORIZATION);
-    if (!h || strncmp(h, "Bearer ", 7) != 0)
+    if (h && strncmp(h, "Bearer ", 7) == 0)
+        h += 7;
+    else /* Anthropic's clients send it as x-api-key */
+        h = MHD_lookup_connection_value(r->conn, MHD_HEADER_KIND, "x-api-key");
+    if (!h)
         return 0;
-    h += 7;
     size_t a = strlen(h), b = strlen(want);
     unsigned diff = (unsigned)(a ^ b);
     for (size_t i = 0; i < b; i++)
@@ -401,6 +410,14 @@ static enum MHD_Result dispatch(struct srv_req *r)
         MHD_add_response_header(resp, "Access-Control-Max-Age", "600");
         return queue(r->conn, 204, resp, NULL);
     }
+    if (strcmp(r->path, "/") == 0 &&
+        (strcmp(r->method, "GET") == 0 || strcmp(r->method, "HEAD") == 0)) {
+        /* where Ollama's clients look for a server */
+        static const char up[] = "Janas-LLM is running";
+        return queue(r->conn, 200,
+                     MHD_create_response_from_buffer_static(sizeof(up) - 1, up),
+                     "text/plain; charset=utf-8");
+    }
     if (strcmp(r->path, "/health") == 0 && strcmp(r->method, "GET") == 0) {
         static const char ok[] = "{\"status\":\"ok\"}";
         return queue(r->conn, 200,
@@ -434,6 +451,18 @@ static enum MHD_Result dispatch(struct srv_req *r)
        made for it ask: not OpenAI's, so not in routes.inc */
     if (strcmp(r->path, "/infill") == 0 && strcmp(r->method, "POST") == 0)
         return (enum MHD_Result)srv_infill(r);
+    /* Ollama's API, for the programs that know a local model only as
+       Ollama's (ollama.c) */
+    srv_handler ol = srv_ollama_route(r->method, r->path);
+    if (ol)
+        return (enum MHD_Result)ol(r);
+    /* Anthropic's Messages API, for Claude Code and the clients made for
+       it (anthropic.c) */
+    if (strcmp(r->method, "POST") == 0 && strcmp(r->path, "/messages") == 0)
+        return (enum MHD_Result)srv_anthropic_messages(r);
+    if (strcmp(r->method, "POST") == 0 &&
+        strcmp(r->path, "/messages/count_tokens") == 0)
+        return (enum MHD_Result)srv_anthropic_count(r);
     const struct route *other = NULL;
     for (size_t i = 0; i < sizeof(routes) / sizeof(routes[0]); i++) {
         const struct route *rt = &routes[i];

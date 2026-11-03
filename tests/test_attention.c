@@ -364,7 +364,9 @@ int main(void)
         return 1;
     }
     printf("test_attention: ok (%s, checksum %016llx)\n",
-           janas_use_vnni() ? "avx-vnni" : "avx2",
+           janas_use_vnni() == 2 ? "avx512-vnni"
+           : janas_use_vnni()    ? "avx-vnni"
+                                 : "avx2",
            (unsigned long long)checksum);
     return 0;
 }

@@ -363,8 +363,8 @@ static int vorbis_headers(const uint8_t *p, size_t n, struct ogg_packets *o)
 static int concat_decode(const uint8_t *head, size_t hn, const uint8_t *d,
                          const struct mframes *f,
                          int (*dec)(const uint8_t *, size_t,
-                                    struct janas_audio *, char *, size_t),
-                         struct janas_audio *a, char *why, size_t wn)
+                                    struct audio_out *, char *, size_t),
+                         struct audio_out *ao, char *why, size_t wn)
 {
     size_t total = hn;
     for (size_t i = 0; i < f->count; i++)
@@ -381,7 +381,7 @@ static int concat_decode(const uint8_t *head, size_t hn, const uint8_t *d,
         memcpy(buf + at, d + f->off[i], f->len[i]);
         at += f->len[i];
     }
-    int rc = dec(buf, total, a, why, wn);
+    int rc = dec(buf, total, ao, why, wn);
     free(buf);
     if (rc > 0) {
         snprintf(why, wn, "a Matroska track that is not what it says");
@@ -412,7 +412,7 @@ static size_t aac_config_of(const struct mtrack *t, uint8_t *asc)
 }
 
 static int pcm_decode(const struct mtrack *t, const uint8_t *d,
-                      const struct mframes *f, struct janas_audio *a, char *why,
+                      const struct mframes *f, struct audio_out *ao, char *why,
                       size_t wn)
 {
     int big = strstr(t->codec, "BIG") != NULL;
@@ -424,19 +424,9 @@ static int pcm_decode(const struct mtrack *t, const uint8_t *d,
         snprintf(why, wn, "a Matroska track of PCM out of range");
         return -1;
     }
-    size_t frames = 0;
-    for (size_t i = 0; i < f->count; i++)
-        frames += f->len[i] / ((size_t)bps * (size_t)ch);
-    if (frames > JANAS_AUDIO_MAX_SAMPLES) {
-        snprintf(why, wn, "a sound longer than this reads");
-        return -1;
-    }
-    float *pcm = malloc(sizeof(float) * (frames ? frames : 1));
-    if (!pcm) {
-        snprintf(why, wn, "out of memory");
-        return -1;
-    }
+    float pcm[4096];
     size_t at = 0;
+    ao->rate = (uint32_t)t->rate;
     for (size_t i = 0; i < f->count; i++) {
         const uint8_t *p = d + f->off[i];
         size_t nf = f->len[i] / ((size_t)bps * (size_t)ch);
@@ -464,15 +454,17 @@ static int pcm_decode(const struct mtrack *t, const uint8_t *d,
                 }
             }
             pcm[at++] = (float)(s / ch);
+            if (at == 4096) {
+                if (audio_put(ao, pcm, at, why, wn) != 0)
+                    return -1;
+                at = 0;
+            }
         }
     }
-    a->pcm = pcm;
-    a->n = at;
-    a->rate = (uint32_t)t->rate;
-    return 0;
+    return audio_put(ao, pcm, at, why, wn);
 }
 
-int janas_audio_mkv(const uint8_t *d, size_t n, struct janas_audio *a,
+int janas_audio_mkv(const uint8_t *d, size_t n, struct audio_out *ao,
                     char *why, size_t wn)
 {
     if (n < 4 || memcmp(d, "\x1a\x45\xdf\xa3", 4))
@@ -586,7 +578,7 @@ int janas_audio_mkv(const uint8_t *d, size_t n, struct janas_audio *a,
                 snprintf(why, wn, "out of memory");
                 goto end;
             }
-        rc = janas_opus_stream(&o, a, why, wn);
+        rc = janas_opus_stream(&o, ao, why, wn);
         ogg_packets_free(&o);
     } else if (!strcmp(c, "A_VORBIS")) {
         struct ogg_packets o;
@@ -604,15 +596,15 @@ int janas_audio_mkv(const uint8_t *d, size_t n, struct janas_audio *a,
                 snprintf(why, wn, "out of memory");
                 goto end;
             }
-        rc = janas_vorbis_stream(&o, a, why, wn);
+        rc = janas_vorbis_stream(&o, ao, why, wn);
         ogg_packets_free(&o);
     } else if (!strcmp(c, "A_FLAC")) {
         if (!t.priv || t.priv_len < 4 + 4 + 34 || memcmp(t.priv, "fLaC", 4)) {
             snprintf(why, wn, "a Matroska track of FLAC without its header");
             goto end;
         }
-        rc = concat_decode(t.priv, t.priv_len, d, &f, janas_audio_flac, a, why,
-                           wn);
+        rc = concat_decode(t.priv, t.priv_len, d, &f, janas_audio_flac, ao,
+                           why, wn);
     } else if (!strncmp(c, "A_AAC", 5)) {
         struct aac_cfg cfg;
         uint8_t asc[8];
@@ -624,9 +616,9 @@ int janas_audio_mkv(const uint8_t *d, size_t n, struct janas_audio *a,
         }
         if (aac_config(cp, cn, &cfg, why, wn) != 0)
             goto end;
-        rc = aac_stream(&cfg, d, f.off, f.len, f.count, NULL, a, why, wn);
+        rc = aac_stream(&cfg, d, f.off, f.len, f.count, NULL, ao, why, wn);
     } else if (!strncmp(c, "A_MPEG/L", 8)) {
-        rc = concat_decode(NULL, 0, d, &f, janas_audio_mpeg, a, why, wn);
+        rc = concat_decode(NULL, 0, d, &f, janas_audio_mpeg, ao, why, wn);
     } else if (!strcmp(c, "A_ALAC")) {
         if (!t.priv) {
             snprintf(why, wn,
@@ -634,9 +626,9 @@ int janas_audio_mkv(const uint8_t *d, size_t n, struct janas_audio *a,
             goto end;
         }
         rc = janas_alac_stream(t.priv, t.priv_len, d, f.off, f.len, f.count,
-                               NULL, a, why, wn);
+                               NULL, ao, why, wn);
     } else if (!strncmp(c, "A_PCM/", 6)) {
-        rc = pcm_decode(&t, d, &f, a, why, wn);
+        rc = pcm_decode(&t, d, &f, ao, why, wn);
     } else {
         snprintf(why, wn, "a Matroska track of a codec not read (%s)",
                  c[0] ? c : "none named");
@@ -645,19 +637,17 @@ int janas_audio_mkv(const uint8_t *d, size_t n, struct janas_audio *a,
        codecs that do not take them themselves (Opus does) */
     if (rc == 0 && strcmp(c, "A_OPUS") && (t.codec_delay || f.discard > 0)) {
         uint64_t skip =
-            (t.codec_delay * a->rate + 500000000ull) / 1000000000ull;
+            (t.codec_delay * ao->rate + 500000000ull) / 1000000000ull;
         uint64_t cut =
             f.discard > 0
-                ? ((uint64_t)f.discard * a->rate + 500000000ull) / 1000000000ull
+                ? ((uint64_t)f.discard * ao->rate + 500000000ull) / 1000000000ull
                 : 0;
-        if (skip + cut >= a->n) {
-            janas_audio_free(a);
+        uint64_t kept = audio_out_kept(ao);
+        if (skip + cut >= kept) {
             snprintf(why, wn, "a Matroska track without sound");
             rc = -1;
-        } else {
-            memmove(a->pcm, a->pcm + skip, sizeof(float) * (a->n - skip - cut));
-            a->n -= (size_t)(skip + cut);
-        }
+        } else
+            audio_out_trim(ao, skip, kept - skip - cut);
     }
 end:
     (void)err;
