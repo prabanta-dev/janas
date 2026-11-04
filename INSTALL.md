@@ -4,7 +4,7 @@ Janas-LLM runs large mixture-of-experts language models on ordinary computers: t
 
 ## Requirements
 
-- **Linux on x86-64**, or **Windows 10 (1903 or later) and 11 on x86-64**: the binary package of each release, or a build made on Linux with MinGW-w64 (below).
+- **Linux on x86-64**, or **Windows 10 (1903 or later) and 11 on x86-64**: the binary package of each release, or a build made on Linux with MinGW-w64 or on Windows with MSYS2 (below).
 - **CPU:** any x86-64 runs it; AVX2 with FMA and F16C (Intel since 2013, AMD since 2015) is needed for good speed, and AVX-VNNI is used when present.
 - **Memory:** at least 16 GB; 32 GB or more for large models (Qwen3-Next-80B-A3B: about 2 GB of resident weights, plus as much expert cache as the memory allows).
 - **Disk:** the model on an **NVMe SSD** (the experts are read directly from it while generating).
@@ -46,6 +46,16 @@ On Linux, with MinGW-w64 (`sudo apt install gcc-mingw-w64-x86-64` on Debian or U
 JANAS_OS=windows ./build.sh             # into bin/x86_64-windows/: .exe, the two .dll
 JANAS_OS=windows ./build.sh release test   # the tests, under Wine
 ```
+
+On Windows itself, with [MSYS2](https://www.msys2.org) installed in `C:\msys64` (or where `MSYS2_ROOT` says), from a command prompt in the repository's folder:
+
+```bat
+build.bat setup          :: once: gcc, git, glslang and the Vulkan headers, from MSYS2
+build.bat                :: into bin\x86_64-windows\, as above
+build.bat release test   :: and the tests
+```
+
+`build.bat` runs `build.sh` in MSYS2's MINGW64 shell, which `build.sh` recognizes (so does UCRT64's). It is new and has not been run on Windows yet: if it stops, an issue with its output helps.
 
 The GPU's support comes in when `glslangValidator` and the Vulkan headers are there, as for Linux. The programs need nothing but Windows's own DLLs. On Windows what Janas keeps goes to `%LOCALAPPDATA%\janas` (the models, what it learns about the machine) and `%APPDATA%\janas` (the settings, the MCP servers).
 
@@ -96,11 +106,11 @@ The model is a name of the catalog, downloaded after asking if it is not there y
 
 ## Troubleshooting
 
-- `JANAS_GPU=0` turns the GPU off; `JANAS_GPU_DEVICE=integrated` or `discrete` picks one when there are both; `JANAS_GPU_FAST_PROMPT=0` reads prompts the exact way, bit for bit as the CPU (the fast prompt, on by default, rounds them group by group on the GPU).
+- `JANAS_GPU=0` turns the GPU off; `JANAS_GPU_DEVICE=integrated` or `discrete` picks one when there are both, a number the device of that index in Vulkan's list (from 0, as `vulkaninfo --summary` counts them), other text the first device whose name holds it (`JANAS_GPU_DEVICE=V100`); `JANAS_GPU_FAST_PROMPT=0` reads prompts the exact way, bit for bit as the CPU (the fast prompt, on by default, rounds them group by group on the GPU).
 - `JANAS_GPU_BLOCK=0` keeps the dense models' prompts off the whole-block path (every layer of a block in one submission to the GPU) while leaving the fast prompt's products on; `JANAS_PREFILL_BLOCK=n` sets the tokens of a prompt's block (256 by default, 512 where the GPU takes the feed-forwards whole).
 - `JANAS_PREFETCH=0` never reads experts ahead (by default it turns itself on when the cache misses many experts a token).
 - `JANAS_ARENA_HUGE=1` asks the kernel for huge pages for the expert cache, as before 30 September 2026 (with transparent huge pages on `always` and their defrag on `madvise` it made the first writes to the cache slow).
-- `JANAS_KERNELS=avx2` uses the AVX2 kernels even where AVX-VNNI is available.
+- `JANAS_KERNELS=avx2` uses the AVX2 kernels even where AVX-VNNI is available; `JANAS_KERNELS=256` keeps the prompt's tiles on 256 bits where AVX-512 would give them 512.
 - `JANAS_TUNE=0` turns self-tuning off (fixed defaults); delete `~/.cache/janas/tuning.txt` to start tuning from scratch.
 - `JANAS_TUNE_THREADS=0` keeps every usable thread instead of letting the first passes choose between every thread, one per performance core and the performance cores' threads; the choice is kept for that machine and model, and moves only when other threads win several tries in a row.
 - The expert cache takes the free memory, leaving a fifth of the machine's memory to the rest of the system; `--cache <GiB>` in `janas-chat` sets it.

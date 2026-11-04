@@ -1671,7 +1671,7 @@ static int layers_fit(const struct janas_llm_model *m)
     if ((a->rec != JANAS_REC_NONE && a->rec != JANAS_REC_Q35) ||
         (a->attn_gate && a->rec != JANAS_REC_Q35) || a->shared_expert ||
         a->hc || ((a->sandwich || a->swa || m->ple_dim) && !gemma) ||
-        m->n_expert > 1 || m->janet || m->pred_fn || !m->cache)
+        m->n_expert > 1 || m->pred_fn || !m->cache)
         return 0;
     uint32_t qd = 0;
     for (uint32_t l = 0; l < m->n_layer; l++) {

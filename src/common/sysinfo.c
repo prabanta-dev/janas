@@ -231,7 +231,9 @@ void janas_cpu_name(char *buf, size_t len)
 
 int janas_on_mains(void)
 {
-    /* every power supply of type Mains; on mains if any is online */
+    /* every power supply of type Mains, and the USB ones (a laptop fed
+       by USB-C may have its Mains offline): on mains if any is online;
+       on battery only if there is a Mains and none is */
     DIR *d = opendir("/sys/class/power_supply");
     if (!d)
         return -1;
@@ -249,16 +251,17 @@ int janas_on_mains(void)
         if (!fgets(type, sizeof(type), f))
             type[0] = 0;
         fclose(f);
-        if (strncmp(type, "Mains", 5) != 0)
+        int mains = strncmp(type, "Mains", 5) == 0;
+        if (!mains && strncmp(type, "USB", 3) != 0)
             continue;
-        found = 1;
+        found |= mains;
         snprintf(path, sizeof(path), "/sys/class/power_supply/%s/online",
                  e->d_name);
         if (read_long(path) > 0)
             online = 1;
     }
     closedir(d);
-    return found ? online : -1;
+    return online ? 1 : found ? 0 : -1;
 }
 
 /* A field of /proc/meminfo, in bytes (0 if missing). */

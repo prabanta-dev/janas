@@ -1009,7 +1009,9 @@ int32_t janas_llm_describe(const janas_llm *llm, char *buf, int32_t cap,
         int use = janas_llm_model_gpu_used(llm->m);
         if (janas_llm_model_gpu_prompts(llm->m))
             use |= 1 << 2; /* the fast prompt: every block */
-        if (!use)
+        if (janas_llm_model_gpu_whole(llm->m))
+            gpu = ", GPU present (active: every pass whole on the card)";
+        else if (!use)
             gpu = ", GPU present (not used)";
         else {
             const char *where[4] = {"single tokens", "draft checks", "blocks",

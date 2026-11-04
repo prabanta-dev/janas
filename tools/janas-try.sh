@@ -185,11 +185,16 @@ machine()
         GPU_BUILD="with GPU support"
     fi
     if command -v vulkaninfo >/dev/null; then
+        # a device once: two drivers' files for one card list it twice
+        # (issue #54, an RTX 3060), with the same deviceUUID
         GPU_VK=$(vulkaninfo --summary 2>/dev/null | awk '
+            function put() { printf "%s%s", n++ ? "; " : "", d; p = 0 }
             /apiVersion/ { v = $3 }
             /deviceType/ { t = $3; sub("PHYSICAL_DEVICE_TYPE_", "", t) }
-            /deviceName/ { sub(/^[^=]*= */, ""); printf "%s%s (%s, Vulkan %s)",
-                           n++ ? "; " : "", $0, tolower(t), v }')
+            /deviceName/ { if (p) put(); sub(/^[^=]*= */, "")
+                           d = $0 " (" tolower(t) ", Vulkan " v ")"; p = 1 }
+            /deviceUUID/ { if (p && !($3 in seen)) put(); seen[$3]; p = 0 }
+            END { if (p) put() }')
         [ -n "$GPU_VK" ] || GPU_VK="Vulkan sees no device"
     else
         GPU_VK="vulkaninfo not installed"
@@ -197,7 +202,10 @@ machine()
     CC_VER=$( (${CC:-gcc} --version 2>/dev/null || clang --version 2>/dev/null) |
         head -1)
     # mains when an adapter (or a USB-C source) is plugged in, battery when
-    # none is and there is a battery; a port with nothing in it says nothing
+    # none is and there is a battery of the system's; a port with nothing in
+    # it says nothing, nor does a mouse's or a keyboard's battery (scope
+    # Device: issue #53, a desktop said to be on battery; USB-C sources say
+    # Device too, and they count)
     POWER="unknown"
     local d
     for d in /sys/class/power_supply/*; do
@@ -205,7 +213,8 @@ machine()
         Mains | USB*)
             [ "$(cat "$d/online" 2>/dev/null)" = 1 ] && POWER="mains" ;;
         Battery)
-            [ "$POWER" = unknown ] && POWER="battery" ;;
+            [ "$(cat "$d/scope" 2>/dev/null)" = Device ] ||
+                [ "$POWER" != unknown ] || POWER="battery" ;;
         esac
     done
     LOAD=$(cut -d' ' -f1 /proc/loadavg)

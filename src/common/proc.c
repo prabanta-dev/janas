@@ -19,7 +19,9 @@
 #include <time.h>
 #include <unistd.h>
 
+#ifndef environ /* MinGW's stdlib.h: a macro for _environ (issue #40) */
 extern char **environ;
+#endif
 
 /* This process's environment with env laid over it: a KEY=VALUE of env
    replaces the variable of the same name. */

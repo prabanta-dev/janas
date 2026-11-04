@@ -1611,6 +1611,7 @@ static inline void iq2_sub_mask(int type, const void *blk, int l,
 #undef DOTN_DPBUSD
 #undef DOTN_US2
 #undef DOTN_HAS_VNNI
+#include "quant_z.h"
 #endif
 
 typedef float (*dot_fn)(const struct janas_block_q4k *,
@@ -1679,6 +1680,8 @@ static const char *dot_name = "ref";
 /* the products of bytes and words in one instruction: AVX-VNNI, or
    AVX-512 VNNI (use_evnni too) */
 static int use_vnni, use_evnni;
+/* the prompt's tiles on 512 bits (quant_z.h), where AVX-512 VNNI is */
+static int use_z;
 #define KPICK_VNNI(name) (use_evnni ? name##_evnni : name##_vnni)
 #define KPICK(name) (use_vnni ? KPICK_VNNI(name) : name##_avx2)
 /* Q3_K, Q4_K, Q5_K, Q6_K and Q6_K_P on many vectors through the tiles
@@ -1754,6 +1757,12 @@ __attribute__((constructor)) static void dot_kernels_init(void)
         use_tiles = !(qg && atoi(qg) == 0);
         const char *k = getenv("JANAS_KERNELS"); /* avx2: no VNNI */
         int plain = k && !strcmp(k, "avx2");
+        /* 256: the tiles on 256 bits even where 512 are there */
+        int z = !plain && !(k && !strcmp(k, "256")) &&
+                __builtin_cpu_supports("avx512f") &&
+                __builtin_cpu_supports("avx512bw") &&
+                __builtin_cpu_supports("avx512vl") &&
+                __builtin_cpu_supports("avx512vnni");
         if (__builtin_cpu_supports("avxvnni") && !plain) {
             use_vnni = 1;
             dot_impl = q4k_dot_vnni;
@@ -1776,7 +1785,7 @@ __attribute__((constructor)) static void dot_kernels_init(void)
             dot3_impl = q3k_dot_vnni;
             dotis_impl = iq3s_dot_vnni;
             dot6p_impl = q6kp_dotn_vnni;
-            dot_name = "avx-vnni";
+            dot_name = z ? "avx-vnni (512-bit tiles)" : "avx-vnni";
         } else if (__builtin_cpu_supports("avx512vnni") &&
                    __builtin_cpu_supports("avx512vl") && !plain) {
             use_vnni = use_evnni = 1;
@@ -1800,12 +1809,13 @@ __attribute__((constructor)) static void dot_kernels_init(void)
             dot3_impl = q3k_dot_evnni;
             dotis_impl = iq3s_dot_evnni;
             dot6p_impl = q6kp_dotn_evnni;
-            dot_name = "avx512-vnni";
+            dot_name = z ? "avx512-vnni (512-bit tiles)" : "avx512-vnni";
         } else if (plain && (__builtin_cpu_supports("avxvnni") ||
                              (__builtin_cpu_supports("avx512vnni") &&
                               __builtin_cpu_supports("avx512vl")))) {
             dot_name = "avx2 (VNNI left out: JANAS_KERNELS=avx2)";
         }
+        use_z = z && use_vnni;
     }
 #endif
 }
@@ -2097,8 +2107,15 @@ size_t janas_q6k_tile_rows(int type, const void *w, size_t row_bytes,
                 : p0                 ? 3
                 : p1                 ? 2
                                      : 1;
-    (KPICK(q6k_gemm))(w, row_bytes, p1, p0, pb, x, x_stride, nv, nb, r8, y,
-                      y_stride, level);
+    size_t r16 = use_z ? r8 / 16 * 16 : 0;
+    if (r16)
+        q6k_gemm_z(w, row_bytes, p1, p0, pb, x, x_stride, nv, nb, r16, y,
+                   y_stride, level);
+    if (r8 > r16)
+        (KPICK(q6k_gemm))((const char *)w + r16 * row_bytes, row_bytes,
+                          p1 ? p1 + r16 * pb : NULL, p0 ? p0 + r16 * pb : NULL,
+                          pb, x, x_stride, nv, nb, r8 - r16, y + r16, y_stride,
+                          level);
     return r8;
 #else
     (void)type, (void)w, (void)row_bytes, (void)p1, (void)p0, (void)pb;
@@ -2475,8 +2492,13 @@ void janas_dot_multi_rows(int type, const void *w, size_t row_bytes,
 #if defined(__x86_64__)
     if (type == JANAS_Q2_0 && use_avx2_fma && __builtin_cpu_supports("f16c")) {
         size_t r8 = use_tiles && nv >= TILES_MIN_NV_Q20 ? rows / 8 * 8 : 0;
-        if (r8)
-            (KPICK(b32_gemm))(type, w, row_bytes, x, x_stride, nv, nb, r8, y,
+        size_t r16 = use_z ? r8 / 16 * 16 : 0;
+        if (r16)
+            b32_gemm_z(type, w, row_bytes, x, x_stride, nv, nb, r16, y,
+                       y_stride);
+        if (r8 > r16)
+            (KPICK(b32_gemm))(type, (const char *)w + r16 * row_bytes,
+                              row_bytes, x, x_stride, nv, nb, r8 - r16, y + r16,
                               y_stride);
         if (rows > r8)
             (KPICK(q2_0_multi_rows))((const char *)w + r8 * row_bytes,
@@ -2486,8 +2508,13 @@ void janas_dot_multi_rows(int type, const void *w, size_t row_bytes,
     }
     if (use_tiles && use_avx2_fma && nv >= (size_t)TILES_MIN_NV_B32 &&
         rows >= 8 && __builtin_cpu_supports("f16c")) {
-        size_t r8 = rows / 8 * 8;
-        if ((KPICK(b32_gemm))(type, w, row_bytes, x, x_stride, nv, nb, r8, y,
+        size_t r8 = rows / 8 * 8, r16 = use_z ? r8 / 16 * 16 : 0;
+        if (r16 && !b32_gemm_z(type, w, row_bytes, x, x_stride, nv, nb, r16, y,
+                               y_stride))
+            r16 = 0; /* not a type of theirs */
+        if (r8 == r16 ||
+            (KPICK(b32_gemm))(type, (const char *)w + r16 * row_bytes,
+                              row_bytes, x, x_stride, nv, nb, r8 - r16, y + r16,
                               y_stride)) {
             w = (const char *)w + r8 * row_bytes;
             y += r8;
@@ -2501,9 +2528,12 @@ void janas_dot_multi_rows(int type, const void *w, size_t row_bytes,
         return;
     if (type == JANAS_Q4_K && use_avx2_fma && __builtin_cpu_supports("f16c")) {
         size_t r8 = use_tiles && nv >= TILES_MIN_NV ? rows / 8 * 8 : 0;
-        if (r8)
-            (KPICK(q4k_gemm))(w, row_bytes, x, x_stride, nv, nb, r8, y,
-                              y_stride);
+        size_t r16 = use_z ? r8 / 16 * 16 : 0;
+        if (r16)
+            q4k_gemm_z(w, row_bytes, x, x_stride, nv, nb, r16, y, y_stride);
+        if (r8 > r16)
+            (KPICK(q4k_gemm))((const char *)w + r16 * row_bytes, row_bytes, x,
+                              x_stride, nv, nb, r8 - r16, y + r16, y_stride);
         if (rows > r8)
             (KPICK(q4k_multi_rows))((const char *)w + r8 * row_bytes, row_bytes,
                                     x, x_stride, nv, nb, rows - r8, y + r8,
@@ -2512,9 +2542,12 @@ void janas_dot_multi_rows(int type, const void *w, size_t row_bytes,
     }
     if (type == JANAS_Q5_K && use_avx2_fma && __builtin_cpu_supports("f16c")) {
         size_t r8 = use_tiles && nv >= TILES_MIN_NV ? rows / 8 * 8 : 0;
-        if (r8)
-            (KPICK(q5k_gemm))(w, row_bytes, x, x_stride, nv, nb, r8, y,
-                              y_stride);
+        size_t r16 = use_z ? r8 / 16 * 16 : 0;
+        if (r16)
+            q5k_gemm_z(w, row_bytes, x, x_stride, nv, nb, r16, y, y_stride);
+        if (r8 > r16)
+            (KPICK(q5k_gemm))((const char *)w + r16 * row_bytes, row_bytes, x,
+                              x_stride, nv, nb, r8 - r16, y + r16, y_stride);
         if (rows > r8)
             (KPICK(q5k_multi_rows))((const char *)w + r8 * row_bytes, row_bytes,
                                     x, x_stride, nv, nb, rows - r8, y + r8,
@@ -2523,16 +2556,25 @@ void janas_dot_multi_rows(int type, const void *w, size_t row_bytes,
     }
     if (type == JANAS_IQ4_XS && use_tiles && use_avx2_fma &&
         nv >= TILES_MIN_NV && rows >= 8 && __builtin_cpu_supports("f16c")) {
-        size_t r8 = rows / 8 * 8;
-        (KPICK(iq4xs_gemm))(w, row_bytes, x, x_stride, nv, nb, r8, y, y_stride);
+        size_t r8 = rows / 8 * 8, r16 = use_z ? r8 / 16 * 16 : 0;
+        if (r16)
+            iq4xs_gemm_z(w, row_bytes, x, x_stride, nv, nb, r16, y, y_stride);
+        if (r8 > r16)
+            (KPICK(iq4xs_gemm))((const char *)w + r16 * row_bytes, row_bytes, x,
+                                x_stride, nv, nb, r8 - r16, y + r16, y_stride);
         w = (const char *)w + r8 * row_bytes;
         y += r8;
         rows -= r8;
     }
     if (use_tiles && use_avx2_fma && nv >= (size_t)TILES_MIN_NV_IQK &&
         rows >= 8 && __builtin_cpu_supports("f16c")) {
-        size_t r8 = rows / 8 * 8;
-        if ((KPICK(iqk_gemm))(type, w, row_bytes, x, x_stride, nv, nb, r8, y,
+        size_t r8 = rows / 8 * 8, r16 = use_z ? r8 / 16 * 16 : 0;
+        if (r16 && !iqk_gemm_z(type, w, row_bytes, x, x_stride, nv, nb, r16, y,
+                               y_stride))
+            r16 = 0; /* not a type of theirs */
+        if (r8 == r16 ||
+            (KPICK(iqk_gemm))(type, (const char *)w + r16 * row_bytes,
+                              row_bytes, x, x_stride, nv, nb, r8 - r16, y + r16,
                               y_stride)) {
             w = (const char *)w + r8 * row_bytes;
             y += r8;

@@ -155,6 +155,14 @@ static const char *not_for_gpu(const struct janas_llm_model *m)
     return NULL;
 }
 
+int janas_llm_model_gpu_whole(const struct janas_llm_model *m)
+{
+    if (!m->gpu || m->gpu_off || !janas_m_gpu_whole() ||
+        janas_gpu_shares_host(m->gpu) || m->lp_cpu || m->gtok_state < 0)
+        return 0;
+    return m->gtok_state == 1 || !not_for_gpu(m);
+}
+
 static struct janas_matvec_task task_of(const struct janas_llm_model *m,
                                         const struct janas_jns_tensor *t,
                                         uint32_t rows, uint32_t cols)

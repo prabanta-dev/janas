@@ -255,14 +255,15 @@ static void test_q6k_planes(void)
 }
 
 /*
- * Q6_K and Q6_K_P as tiles of eight rows (janas_q6k_tile_rows): 11 rows, 9
- * blocks (past the eight transposed at a time), 1 to 65 vectors (past the
- * 64 tokens at a time), Q6_K_P at every level; each result janas_q6k_dot's
- * or janas_q6kp_dot's to the bit, and the rows done a multiple of eight.
+ * Q6_K and Q6_K_P as tiles of eight rows (janas_q6k_tile_rows), and of
+ * sixteen on 512 bits where AVX-512 VNNI is: 27 rows, 9 blocks (past the eight
+ * transposed at a time), 1 to 65 vectors (past the 64 tokens at a time), Q6_K_P
+ * at every level; each result janas_q6k_dot's or janas_q6kp_dot's to the bit,
+ * and the rows done a multiple of eight.
  */
 static void test_q6k_tiles(void)
 {
-    enum { ROWS = 11, NB = 9, NV = 65, N = NB * JANAS_QK };
+    enum { ROWS = 27, NB = 9, NV = 65, N = NB * JANAS_QK };
     size_t pb = NB * JANAS_Q6KP_PLANE;
     struct janas_block_q6k *w = malloc(ROWS * NB * sizeof(*w));
     struct janas_block_q6kp *base = malloc(ROWS * NB * sizeof(*base));
@@ -294,7 +295,7 @@ static void test_q6k_tiles(void)
                 out[i] = -12345.0f;
             size_t done = janas_q6k_tile_rows(t, wr, rb, a1, a0, pb, x, NB,
                                               (size_t)nv, NB, ROWS, out, ROWS);
-            CHECK(done == (nv >= 12 ? 8u : 0u), "q6k tiles: %zu rows", done);
+            CHECK(done == (nv >= 12 ? 24u : 0u), "q6k tiles: %zu rows", done);
             for (size_t r = 0; r < done; r++)
                 for (int v = 0; v < nv; v++) {
                     float one = level
@@ -1139,10 +1140,10 @@ static void random_blocks(int type, unsigned char *w, size_t n)
  */
 static void test_multi_rows_long(void)
 {
-    /* 11 rows: Q4_K's tiles take eight (q4k_gemm), the products the
-       rest; up to 65 vectors, then 300: past the tiles' 256 tokens at a
-       time */
-    enum { ROWS = 11, NV = 300 };
+    /* 27 rows: Q4_K's tiles take 24 (sixteen on 512 bits where AVX-512
+       VNNI is, q4k_gemm_z, then eight, q4k_gemm), the products the rest;
+       up to 65 vectors, then 300: past the tiles' 256 tokens at a time */
+    enum { ROWS = 27, NV = 300 };
     static const size_t lens[] = {2, 48, 130};
     static const int types[] = {
         JANAS_Q2_0,    JANAS_Q4_K,    JANAS_Q5_K,   JANAS_Q6_K,  JANAS_Q8_0,

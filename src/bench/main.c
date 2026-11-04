@@ -300,9 +300,20 @@ int main(int argc, char **argv)
             return 2;
         }
     }
-    if (n_prompt < 2 || n_gen < 1 || n_prompt + 2 * n_gen + 64 > p.n_ctx) {
-        fprintf(stderr, "janas-bench: prompt and generation must fit the "
-                        "context\n");
+    if (n_prompt < 2 || n_gen < 1) {
+        fprintf(stderr, "janas-bench: --prompt 2 or more, --gen 1 or more\n");
+        return 2;
+    }
+    /* the generated tokens twice (the drafts' rounds after the plain
+       ones) and 64 for the chat's turns: issue #27 met it without
+       knowing why */
+    if (n_prompt + 2 * n_gen + 64 > p.n_ctx) {
+        fprintf(stderr,
+                "janas-bench: --ctx %u is too small for --prompt %u and "
+                "--gen %u: it needs %u tokens (the prompt, the generated "
+                "tokens twice, 64 more)\n",
+                (unsigned)p.n_ctx, (unsigned)n_prompt, (unsigned)n_gen,
+                (unsigned)(n_prompt + 2 * n_gen + 64));
         return 2;
     }
     if (no_mtp && p.mtp_path) {
@@ -361,7 +372,7 @@ int main(int argc, char **argv)
     }
     struct janas_llm_model *m = janas_llm_internal_model(llm);
     struct janas_gpu *gpu = janas_llm_model_gpu(m);
-    char desc[256];
+    char desc[1024]; /* 256 cut it short (issue #47) */
     int32_t dl;
     janas_llm_describe(llm, desc, sizeof(desc), &dl);
     if (gpu)
@@ -482,6 +493,7 @@ int main(int argc, char **argv)
     }
     struct run sum[JANAS_TUNE_MAX_CANDS];
     memset(sum, 0, sizeof(sum));
+    int has_cache[JANAS_TUNE_MAX_CANDS] = {0};
     uint64_t drafted = 0, accepted = 0, drafted_s = 0, accepted_s = 0;
     /* several rounds, every other one in reverse order: heat and cache
        drift affect every configuration alike */
@@ -505,6 +517,7 @@ int main(int argc, char **argv)
         janas_expert_cache_stats(janas_llm_model_cache(m), &s1);
         uint64_t req = s1.requests - s0.requests;
         r.hits = req ? 100.0 * (double)(s1.hits - s0.hits) / (double)req : 0;
+        has_cache[c] |= req > 0;
         sum[c].prefill += r.prefill / rounds;
         sum[c].decode += r.decode / rounds;
         sum[c].mtp += r.mtp / rounds;
@@ -529,8 +542,12 @@ int main(int argc, char **argv)
             snprintf(mt, sizeof(mt), "%.1f tok/s", r->mtp);
             snprintf(ms, sizeof(ms), "%.1f tok/s", r->mtp_s);
         }
-        out("%-22s %8.1f tok/s %6.1f tok/s %12s %12s %8.1f%%\n", name,
-            r->prefill, r->decode, mt, ms, r->hits);
+        /* no expert asked for (a dense model): no cache to speak of */
+        char hit[16] = "-";
+        if (has_cache[c])
+            snprintf(hit, sizeof(hit), "%.1f%%", r->hits);
+        out("%-22s %8.1f tok/s %6.1f tok/s %12s %12s %9s\n", name, r->prefill,
+            r->decode, mt, ms, hit);
     }
     /* the fast prompt runs on the GPU in every row, so that a prompt gives
        the same results whatever the configuration: the rows without
@@ -539,7 +556,15 @@ int main(int argc, char **argv)
     int cpu_rows = 0;
     for (int c = 0; c < nc; c++)
         cpu_rows += rows[c] && !gp[c];
-    if (cpu_rows && janas_llm_model_gpu_prompts(m))
+    /* a card with memory of its own takes every pass whole, in every row
+       (issue #54: a "12 threads" row at 834 tokens/s where the CPU alone
+       read 152) */
+    if (janas_llm_model_gpu_whole(m))
+        out("note:    on this card every pass of the model runs whole on "
+            "the GPU, in every row: the threads only feed it; "
+            "JANAS_GPU=0 measures the CPU alone, JANAS_GPU_WHOLE=0 the "
+            "products shared with the CPU\n");
+    else if (cpu_rows && janas_llm_model_gpu_prompts(m))
         out("note:    in every row the GPU reads a prompt's blocks of %d "
             "tokens or more (the fast prompt); \"+ GPU\" also gives it a "
             "part in the shorter passes%s\n",

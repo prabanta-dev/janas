@@ -9,6 +9,7 @@
  */
 #include "gpu.h"
 
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -167,6 +168,22 @@ static int has_extension(struct janas_gpu *g, const char *name)
     return found;
 }
 
+/* Whether name holds part, ignoring case (ASCII) */
+static int name_has(const char *name, const char *part)
+{
+    size_t lp = strlen(part);
+    for (; *name; name++) {
+        size_t k = 0;
+        while (k < lp && name[k] &&
+               tolower((unsigned char)name[k]) ==
+                   tolower((unsigned char)part[k]))
+            k++;
+        if (k == lp)
+            return 1;
+    }
+    return 0;
+}
+
 /* An integrated GPU with everything the shader needs, or -1. */
 static int pick_device(struct janas_gpu *g, uint32_t *family, char *err,
                        size_t err_len)
@@ -178,8 +195,23 @@ static int pick_device(struct janas_gpu *g, uint32_t *family, char *err,
         n = 16;
     g->vkEnumeratePhysicalDevices(g->inst, &n, pds);
     /* a discrete GPU first (memory and power of its own), then an
-       integrated one; JANAS_GPU_DEVICE=integrated|discrete restricts */
+       integrated one; JANAS_GPU_DEVICE=integrated|discrete restricts, a
+       number takes the device of that index in Vulkan's list (from 0, as
+       vulkaninfo counts), other text the first whose name holds it,
+       ignoring case (issue #27: a V100 beside an RTX 4070) */
     const char *want_dev = getenv("JANAS_GPU_DEVICE");
+    if (want_dev && !*want_dev)
+        want_dev = NULL;
+    int want_kind = 0; /* 1 discrete, 2 integrated, 3 index, 4 name */
+    long want_idx = -1;
+    if (want_dev) {
+        char *end;
+        want_idx = strtol(want_dev, &end, 10);
+        want_kind = !strcmp(want_dev, "discrete")     ? 1
+                    : !strcmp(want_dev, "integrated") ? 2
+                    : (!*end && want_idx >= 0)        ? 3
+                                                      : 4;
+    }
     /* the first device turned down and why, for the message: a tester
        with a GPU the engine does not take has to be able to tell why */
     char why[192] = "";
@@ -197,9 +229,17 @@ static int pick_device(struct janas_gpu *g, uint32_t *family, char *err,
             VkPhysicalDeviceType type =
                 pass == 0 ? VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU
                           : VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU;
-            if (pp.deviceType != type ||
-                (want_dev &&
-                 strcmp(want_dev, pass == 0 ? "discrete" : "integrated") != 0))
+            if (want_kind >= 3) {
+                /* the device asked for, of either kind, in one pass */
+                if (pass ||
+                    (pp.deviceType != VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU &&
+                     pp.deviceType != VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU) ||
+                    (want_kind == 3 ? (long)i != want_idx
+                                    : !name_has(pp.deviceName, want_dev)))
+                    continue;
+                type = pp.deviceType;
+            } else if (pp.deviceType != type ||
+                       (want_kind && want_kind != pass + 1))
                 continue;
             if (pp.apiVersion < VK_API_VERSION_1_3)
                 REJECT("its driver offers Vulkan below 1.3")
@@ -330,7 +370,12 @@ static int pick_device(struct janas_gpu *g, uint32_t *family, char *err,
     else if (n == 0)
         snprintf(err, err_len, "Vulkan sees no GPU");
     else if (want_dev)
-        snprintf(err, err_len, "no %.20s GPU, as JANAS_GPU_DEVICE asks",
+        snprintf(err, err_len,
+                 want_kind == 3 ? "no GPU of index %.20s, as JANAS_GPU_DEVICE "
+                                  "asks"
+                 : want_kind == 4 ? "no GPU named like \"%.40s\", as "
+                                    "JANAS_GPU_DEVICE asks"
+                                  : "no %.20s GPU, as JANAS_GPU_DEVICE asks",
                  want_dev);
     else
         snprintf(err, err_len, "Vulkan sees no integrated or discrete GPU");

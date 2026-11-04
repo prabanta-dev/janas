@@ -53,7 +53,9 @@
 #include <time.h>
 #include <unistd.h>
 
+#ifndef environ /* MinGW's stdlib.h: a macro for _environ (issue #40) */
 extern char **environ;
+#endif
 
 /* ---- the builder (a fresh process: plain calls are safe) ---- */
 

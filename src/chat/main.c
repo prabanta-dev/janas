@@ -2091,7 +2091,7 @@ int main(int argc, char **argv)
     if (janas_llm_chat_keep(c, 2, 0) != JANAS_LLM_OK ||
         janas_llm_chat_keep_disk(c, (uint64_t)2 << 30) != JANAS_LLM_OK)
         fprintf(stderr, "janas-chat: %s\n", janas_llm_last_error());
-    char desc[512];
+    char desc[1024];
     int32_t dl;
     janas_llm_describe(llm, desc, sizeof(desc), &dl);
     char name[96] = "";

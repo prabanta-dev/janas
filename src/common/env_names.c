@@ -11,7 +11,9 @@
 
 #include "common/words.h"
 
+#ifndef environ /* MinGW's stdlib.h: a macro for _environ (issue #40) */
 extern char **environ;
+#endif
 
 const char *const JANAS_ENV_NAMES[] = {"JANAS_ALPHAVANTAGE_KEY",
                                        "JANAS_API_KEY",
@@ -86,9 +88,6 @@ const char *const JANAS_ENV_NAMES[] = {"JANAS_ALPHAVANTAGE_KEY",
                                        "JANAS_HC_MIX",
                                        "JANAS_HEAD_BITS",
                                        "JANAS_IMAGE_MAX_TOKENS",
-                                       "JANAS_JANET_FFN",
-                                       "JANAS_JANET_REC",
-                                       "JANAS_JANET_REC_LAYERS",
                                        "JANAS_KERNELS",
                                        "JANAS_ROW_PIECE_KB",
                                        "JANAS_CPU_TILES",

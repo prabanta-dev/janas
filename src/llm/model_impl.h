@@ -405,9 +405,6 @@ struct janas_llm_model {
     int ana_gulow;
     uint8_t *ana_low;
     uint32_t ana_layer, ana_width;
-    /* the Janet probe (model_janet.c): a layer's feed-forward recorded, or
-       run by Janet's detectors in its place; NULL when off */
-    struct janas_janet *janet;
     uint8_t *ana_frame;
     char ana_dir[512];
     int ana_frames, ana_frames_max;
@@ -633,11 +630,6 @@ void janas_m_ana_grade(struct janas_llm_model *m, const uint8_t *down,
                        uint32_t b);
 void janas_m_ana_frame(struct janas_llm_model *m, uint32_t n);
 void janas_m_ana_free(struct janas_llm_model *m);
-int janas_m_janet_init(struct janas_llm_model *m);
-void janas_m_janet_rec(struct janas_llm_model *m, uint32_t l, uint32_t n,
-                       int after);
-int janas_m_janet_ffn(struct janas_llm_model *m, uint32_t l, uint32_t n);
-void janas_m_janet_free(struct janas_llm_model *m);
 /* The experts' down matrix by neuron (model_neurons.c): set up at load (0,
    or -1 out of memory), the levels of a pass's neurons, its experts' down
    products, freed. An expert whose down matrix is by neuron, applied to the

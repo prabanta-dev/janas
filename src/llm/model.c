@@ -684,10 +684,7 @@ static int forward(struct janas_llm_model *m, const int32_t *tokens, uint32_t n,
             memcpy(m->xres, m->x, (size_t)n * dm * sizeof(float));
             memset(m->x, 0, (size_t)n * dm * sizeof(float));
         }
-        janas_m_janet_rec(m, l, n, 0); /* the Janet probe (model_janet.c) */
-        if (janas_m_janet_ffn(m, l, n)) {
-            /* Janet's detectors in place of the layer's feed-forward */
-        } else if (ly->pre_norm2) {
+        if (ly->pre_norm2) {
             /* Gemma 4's mixture: the dense branch on xn / xq as normed
                above, then the experts' branch */
             size_t bytes = (size_t)n * dm * sizeof(float);
@@ -707,7 +704,6 @@ static int forward(struct janas_llm_model *m, const int32_t *tokens, uint32_t n,
                                      MOE_ALL) != 0) {
             return -1;
         }
-        janas_m_janet_rec(m, l, n, 1);
         if (ly->post_ffn) {
             struct tok_job st = {
                 .m = m, .ly = ly, .w = f32(m, ly->post_ffn), .n = n};

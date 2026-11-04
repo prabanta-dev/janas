@@ -1152,10 +1152,6 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
         snprintf(err, err_len, "out of memory for the Ana-Net probe");
         goto fail;
     }
-    if (janas_m_janet_init(m) != 0) {
-        snprintf(err, err_len, "the Janet probe could not start");
-        goto fail;
-    }
     if (janas_m_neurons_init(m, P) != 0) {
         snprintf(err, err_len, "out of memory for the neurons' levels");
         goto fail;
@@ -1601,7 +1597,6 @@ void janas_llm_model_free(struct janas_llm_model *m)
     free(m->xbr);
     free(m->hlen);
     janas_m_ana_free(m);
-    janas_m_janet_free(m);
     janas_m_neurons_free(m);
     free(m->xq);
     free(m->attq);

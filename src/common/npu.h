@@ -7,7 +7,7 @@
  *
  * Level Zero is loaded at run time: without its loader, the NPU's driver or
  * an NPU, janas_npu_create returns NULL and the caller computes on the CPU.
- * Nothing here knows a model: Janas-LLM and Janet hand it matrices.
+ * Nothing here knows a model: Janas-LLM hands it matrices.
  *
  * The NPU runs graphs its driver compiles, of fixed shapes. A product is
  * compiled once with its weights inside (as a constant: integer weights
