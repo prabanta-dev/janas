@@ -127,17 +127,17 @@ ul.plain { margin: 0; padding-left: 1.1em; display: grid; gap: 6px; }
   <p class="lede">A small language model trained over and over with a different feed-forward block each time, at a range of peak learning rates, then pushed past each block's best observed rate to see how and where it degrades.</p>
   <p class="meta">TinyStories · 3.34 M parameters · 3,000 steps · 42 training runs on an Intel Arc integrated GPU</p>
   <p class="meta">© 2026 Maurizio "camauri" Cammalleri · licensed under <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a></p>
+  <p class="meta">Revised on 4 November 2026 after a critical review: the summary now leads with the learning-rate tolerance and gives the optimum as a range, the order of the classic blocks is no longer stated, the training step time moved to an appendix, and the planned measurements include three seeds per rate and a test of the training settings.</p>
   <p class="note">This is a first, exploratory comparison. Janet received more runs than the other blocks, and the classic blocks were not taken to their breaking point. Further measurements will follow with the same runs for every block: the same grid of rates, the same two seeds at every rate, and every block taken to its breaking point. Until then the results below are trends to be confirmed, not settled findings.</p>
 </header>
 
 <section class="prose">
   <h2>In short</h2>
   <div class="findings">
-    <div class="finding"><span class="v">2.020</span><span class="k">Janet's lowest validation loss (mean of two seeds, peak rate 6e-3; 8e-3 is indistinguishable). The best of the others: 2.061 (ReLU²).</span></div>
-    <div class="finding"><span class="v">−0.041</span><span class="k">Janet's lead over the best classic block, about three times its estimated standard error. With two seeds, a trend to confirm.</span></div>
-    <div class="finding"><span class="v">2.7×</span><span class="k">At 2.7 times its best rate Janet (2.050) is still better than every classic block at its own best (2.061-2.084). At 4× it is within 0.002 of GeGLU's best.</span></div>
+    <div class="finding"><span class="v">2.7×</span><span class="k">At 2.7 times its best observed rate Janet (2.050) is still better than every classic block at its own best (2.061-2.084). At 8e-3: Janet 2.019-2.024, the others 2.21-2.28. The others were not yet taken past 8e-3.</span></div>
+    <div class="finding"><span class="v">2.016-2.025</span><span class="k">Janet's four runs at its two best rates. The classic blocks' best single runs: 2.055-2.070. With two seeds and more runs for Janet, a trend to confirm.</span></div>
     <div class="finding"><span class="v">56-85%</span><span class="k">Janet's layer-2 units inactive at 5.3 times its best rate, against under 1% around the optimum. ReLU² loses its units too, and sooner.</span></div>
-    <div class="finding"><span class="v">2.165</span><span class="k">Janet at 1e-3, the worst of the four there: below its optimum Janet is the weakest.</span></div>
+    <div class="finding"><span class="v">2.165</span><span class="k">Janet at 1e-3, the worst of the four there (2.118-2.133): below its optimum Janet is the weakest.</span></div>
   </div>
 </section>
 
@@ -228,11 +228,7 @@ ul.plain { margin: 0; padding-left: 1.1em; display: grid; gap: 6px; }
   <figcaption><b>Training stability.</b> In every block the final gradient norm falls as the rate rises, from about 0.85-1.0 at 1e-3 to about 0.21-0.30, and clipping acts only in the first thousand steps, less at higher rates, so it does not hold anything back below the breaking point. Two exceptions: Janet at 1e-3, whose gradient norm ends at the clipping threshold, with 43% of its last thousand steps clipped; and Janet at 4.8e-2, with norm 3.7-5.0 and clipping on 40-48% of the first thousand steps and 50-67% at the end (off scale).</figcaption>
 </figure>
 
-<figure id="f8">
-  <div class="fig-head"><span class="fig-num">FIGURE 8</span></div>
-  <div class="chart" id="c8"></div>
-  <figcaption><b>Training step time on the Arc integrated GPU</b> (median over all runs of each block). Janet's step costs about 16% more. This is the whole model's step, attention and embeddings included, so the block's own overhead is larger. It was measured on the project's own GPU training program and does not transfer to other software. That program computes every unit, silent or not, so this says nothing about inference, where a silent unit's weights are not read. No claim about speed is made here.</figcaption>
-</figure>
+
 
 <section class="prose">
   <h2>Why do Janet's units become inactive?</h2>
@@ -253,7 +249,7 @@ ul.plain { margin: 0; padding-left: 1.1em; display: grid; gap: 6px; }
     <li><b>Selected second seeds:</b> the second seed's rates were chosen from the first seed's results, so each two-seed mean at a best rate carries part of the first seed's selection, equally for every block.</li>
     <li><b>Two seeds</b> show trends, not significance. GeGLU's best two-seed mean, 2.084 at 3e-3, could move by about ±0.02; its single run at 4e-3 scored 2.078.</li>
     <li><b>The classic blocks were not pushed to their breaking point;</b> above 8e-3 their behaviour is not measured.</li>
-    <li><b>Inactive units</b> are counted on 8,192 positions with a 0.5% threshold, and only for Janet and ReLU². With four layers, "the middle layers" are two of four.</li>
+    <li><b>Inactive units</b> are counted on 8,192 positions with a 0.5% threshold, the same for both blocks, and only for Janet and ReLU². How the counts depend on the threshold is not yet measured. With four layers, "the middle layers" are two of four.</li>
     <li><b>The training settings</b> are the training program's defaults, set during Janet's development, and not tuned for any block.</li>
     <li><b>The step time</b> is the whole model's, on the project's own training program and one integrated GPU; it is not an inference measurement.</li>
   </ul>
@@ -263,14 +259,25 @@ ul.plain { margin: 0; padding-left: 1.1em; display: grid; gap: 6px; }
   <h2>Next</h2>
   <p>Further measurements will follow, so that the comparison is more precise and fair:</p>
   <ul class="plain">
-    <li><b>Equal runs for every block:</b> the same grid of rates, extended past 8e-3 for the classic blocks; the same two seeds at every rate, three or more at the best; every block taken to its breaking point.</li>
+    <li><b>Equal runs for every block:</b> the same grid of rates from 1e-3 to 4.8e-2 for all four, three seeds at every rate, and every block taken to its breaking point.</li>
+    <li><b>The training settings:</b> each block at its best rate again with a different weight decay (0.05 and 0.2), a longer warm-up and a different beta2, to see whether the ranking depends on settings that came from Janet's development.</li>
+    <li><b>The activity threshold:</b> inactive units counted again at 0.1%, 1% and 5% as well as 0.5%.</li>
     <li><b>Weight sizes through training,</b> to test the third explanation.</li>
     <li><b>One rate for the feed-forward block and another for the rest,</b> to test the fourth.</li>
-    <li><b>A remedy against inactive units,</b> to see whether it widens the safe region without costing loss at the optimum.</li>
-    <li><b>A larger model and a longer run.</b></li>
+    <li><b>Then:</b> a larger vocabulary, a larger model and a longer run, and a remedy against inactive units.</li>
   </ul>
   <p>The machine running these measurements is shared with other work, so they will come in stages.</p>
 </section>
+
+<section class="prose">
+  <h2>Appendix: training step time</h2>
+</section>
+
+<figure id="f8">
+  <div class="fig-head"><span class="fig-num">APPENDIX FIGURE</span></div>
+  <div class="chart" id="c8"></div>
+  <figcaption><b>Training step time on the Arc integrated GPU</b> (median over all runs of each block). Janet's step costs about 16% more. This is the whole model's step, attention and embeddings included, so the block's own overhead is larger. It was measured on the project's own GPU training program and does not transfer to other software. That program computes every unit, silent or not, so this says nothing about inference, where a silent unit's weights are not read. No claim about speed is made here.</figcaption>
+</figure>
 
 <section class="prose">
   <h2>License</h2>

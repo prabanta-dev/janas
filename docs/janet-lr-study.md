@@ -4,17 +4,18 @@
 
 *© 2026 Maurizio "camauri" Cammalleri. Licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).*
 
+*Revised on 4 November 2026 after a critical review: the summary now leads with the learning-rate tolerance and gives the optimum as a range, the order of the classic blocks is no longer stated, the training step time moved to an appendix, and the planned measurements include three seeds per rate and a test of the training settings.*
+
 A small language model was trained over and over with a different feed-forward block each time, at a range of peak learning rates. Each block was then pushed past its best observed rate, to see how and where it degrades.
 
 This is a first, exploratory comparison. Janet received more runs than the other blocks, and the classic blocks were not taken to their breaking point. Further measurements will follow with the same runs for every block: the same grid of rates, the same two seeds at every rate, and every block taken to its breaking point. Until then the results below are trends to be confirmed, not settled findings.
 
 ## In short
 
-- **2.020:** Janet's lowest validation loss (mean of two seeds, peak learning rate 6e-3; 8e-3 is indistinguishable). The best of the others: 2.061 (ReLU²).
-- **−0.041:** Janet's lead over the best classic block, about three times its estimated standard error. With two seeds this is a trend to confirm, not a test.
-- **2.7×:** at 1.6e-2, 2.7 times its best rate, Janet (2.050) is still better than every classic block at its own best rate (2.061-2.084). At 4× it is within 0.002 of GeGLU's best.
-- **56-85%:** the share of Janet's layer-2 units below the activity threshold at 5.3 times its best rate (depending on the seed), against under 1% around its optimum. Past the optimum the inactive units grow with no plateau. ReLU² loses its units too, and sooner.
-- **Below its optimum Janet is the weakest:** at 1e-3 it scores 2.165, the worst of the four.
+- **Learning-rate tolerance.** At 1.6e-2, 2.7 times its best observed rate, Janet (2.050) is still better than every classic block at its own best observed rate (2.061-2.084). At 8e-3 Janet's runs score 2.019-2.024, the classic blocks' 2.21-2.28. The classic blocks were not yet taken past 8e-3, so how they degrade beyond it is not known.
+- **The optimum, as a range.** Janet's four runs at its two best rates (6e-3 and 8e-3) score 2.016-2.025. The best single runs of the classic blocks score 2.055-2.070. With two seeds, and more runs for Janet, this is a trend to confirm, not a measured gap.
+- **Inactive units.** Around its optimum fewer than 1% of Janet's units are inactive. At 5.3 times its best rate, 56-85% of layer 2's are, depending on the seed: past the optimum they grow with no plateau. ReLU² loses its units too, and sooner.
+- **The weak side.** Below its optimum Janet is the weakest of the four: at 1e-3 it scores 2.165, against 2.118-2.133.
 
 ## What was compared
 
@@ -129,10 +130,6 @@ The units that stay active also speak less: in layer 2 the median active unit sp
 - **Janet at 1e-3:** its gradient norm ends at the clipping threshold, and 43% of its last thousand steps are clipped.
 - **Janet at 4.8e-2:** norm 3.7-5.0, clipping on 40-48% of the first thousand steps and 50-67% at the end (off scale).
 
-![Training step time](janet-lr-study/f8_step.png)
-
-**Figure 8. Training step time on the Arc integrated GPU** (median over all runs of each block). Janet's step costs about 16% more. This is the whole model's step, attention and embeddings included, so the block's own overhead is larger. It was measured on the project's own GPU training program and does not transfer to other software. That program computes every unit, silent or not, so this figure says nothing about inference, where a silent unit's weights are not read. No claim about speed is made here.
-
 ## Why do Janet's units become inactive?
 
 Four explanations were on the table. The data rule out one and support one.
@@ -149,20 +146,27 @@ Four explanations were on the table. The data rule out one and support one.
 - **Selected second seeds:** the second seed's rates were chosen from the first seed's results. So each two-seed mean at a best rate carries part of the first seed's selection, equally for every block.
 - **Two seeds** show trends, not significance. GeGLU's best two-seed mean, 2.084 at 3e-3, could move by about ±0.02; its single run at 4e-3 scored 2.078.
 - **The classic blocks were not pushed to their breaking point;** above 8e-3 their behaviour is not measured.
-- **Inactive units** are counted on 8,192 positions with a 0.5% threshold, and only for Janet and ReLU². With four layers, "the middle layers" are two of four.
+- **Inactive units** are counted on 8,192 positions with a 0.5% threshold, the same for both blocks, and only for Janet and ReLU². How the counts depend on the threshold is not yet measured. With four layers, "the middle layers" are two of four.
 - **The training settings** are the training program's defaults, set during Janet's development, and not tuned for any block.
 - **The step time** is the whole model's, on the project's own training program and one integrated GPU. It is not an inference measurement.
 
 ## Next
 
 Further measurements will follow, so that the comparison is more precise and fair:
-- **Equal runs for every block:** the same grid of rates, extended past 8e-3 for the classic blocks; the same two seeds at every rate, three or more at the best; and every block taken to its breaking point.
+- **Equal runs for every block:** the same grid of rates from 1e-3 to 4.8e-2 for all four, three seeds at every rate, and every block taken to its breaking point.
+- **The training settings:** each block at its best rate again with a different weight decay (0.05 and 0.2), a longer warm-up and a different beta2, to see whether the ranking depends on settings that came from Janet's development.
+- **The activity threshold:** inactive units counted again at 0.1%, 1% and 5% as well as 0.5%.
 - **Weight sizes through training,** to test the third explanation.
 - **One rate for the feed-forward block and another for the rest,** to test the fourth.
-- **A remedy against inactive units,** to see whether it widens the safe region without costing loss at the optimum.
-- **A larger model and a longer run.**
+- **Then:** a larger vocabulary, a larger model and a longer run, and a remedy against inactive units.
 
 The machine running these measurements is shared with other work, so they will come in stages.
+
+## Appendix: training step time
+
+![Training step time](janet-lr-study/f8_step.png)
+
+**Appendix figure. Training step time on the Arc integrated GPU** (median over all runs of each block). Janet's step costs about 16% more. This is the whole model's step, attention and embeddings included, so the block's own overhead is larger. It was measured on the project's own GPU training program and does not transfer to other software. That program computes every unit, silent or not, so this figure says nothing about inference, where a silent unit's weights are not read. No claim about speed is made here.
 
 ## License
 
