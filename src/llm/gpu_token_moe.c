@@ -578,6 +578,7 @@ static int plan(struct janas_gpu *g, struct janas_gpu_tok *t,
             int32_t s2 = tier_take(t, base + e);
             if (s2 >= 0) {
                 dst[nl] = s2;
+                t->miss[nl] = e; /* nl <= i: read already */
                 src[nl++] = t->cpu_slots[i];
                 t->on_gpu[ng] = e;
                 t->gpu_slot[ng++] = (uint32_t)s2;
@@ -588,6 +589,10 @@ static int plan(struct janas_gpu *g, struct janas_gpu_tok *t,
         }
         if (nl && (ncp = tier_load(g, t, src, dst, nl, md->slot_bytes)) < 0)
             return -1;
+        /* once on the card the cache's copies go first: JANAS_GPU_DEMOTE=0
+           keeps them where they were */
+        if (nl && md->demote)
+            md->demote(md->ctx, l, t->miss, nl);
         for (uint32_t i = 0; i < ng; i++)
             t->ids[i] = t->on_gpu[i];
         t->cpu_experts += nc;

@@ -55,8 +55,12 @@ static const char *not_for_gpu(const struct janas_llm_model *m)
     if (!janas_gpu_shares_host(m->gpu) && (m->a->hc || m->ix_heads))
         return "qwen4exp's streams on a card with memory of its own";
     /* qwen3.5: its recurrent layers and gated queries; an MTP block or a
-       drafting model gets the final hidden states */
-    int q35 = m->a->rec == JANAS_REC_Q35 && m->a->attn_gate;
+       drafting model gets the final hidden states. qwen3next's are the
+       same layers, its q|k|v and z apart as llama.cpp writes them since
+       2026 and its betas and alphas split at load (model_load.c
+       ba_split) */
+    int q35 = (m->a->rec == JANAS_REC_Q35 || m->a->rec == JANAS_REC_NEXT) &&
+              m->a->attn_gate;
     /* qwen4exp: qwen3.5's layers inside its streams (model_hc.c), with its
        mixes in bf16 as the file has them, or their down and up rewritten
        as Q8_0 (JANAS_HC_MIX=q8) */
@@ -140,8 +144,10 @@ static const char *not_for_gpu(const struct janas_llm_model *m)
     for (uint32_t l = 0; l < m->n_layer; l++) {
         const struct layer *ly = &m->layers[l];
         if (ly->rec) {
-            if (!ly->ssm_qkv || !ly->ssm_z || !ly->ssm_out || !ly->ssm_beta ||
-                !ly->ssm_alpha || !ly->conv_t || !ly->ssm_norm)
+            /* qwen3next's fused q|k|v|z is moved apart in build */
+            if ((!ly->ssm_qkv && !ly->ssm_in) || (!ly->ssm_z && !ly->ssm_in) ||
+                !ly->ssm_out || !ly->ssm_beta || !ly->ssm_alpha ||
+                !ly->conv_t || !ly->ssm_norm)
                 return "a layer the token's shaders do not take yet";
             continue;
         }
@@ -161,6 +167,40 @@ int janas_llm_model_gpu_whole(const struct janas_llm_model *m)
         janas_gpu_shares_host(m->gpu) || m->lp_cpu || m->gtok_state < 0)
         return 0;
     return m->gtok_state == 1 || !not_for_gpu(m);
+}
+
+void janas_llm_model_gpu_report(const struct janas_llm_model *m, char *buf,
+                                size_t len)
+{
+    if (!len)
+        return;
+    buf[0] = 0;
+    if (!m->gpu)
+        return;
+    char card[320];
+    janas_gpu_card(m->gpu, card, sizeof(card));
+    size_t n = (size_t)snprintf(buf, len, "card:    %s\n", card);
+    if (n >= len || janas_gpu_shares_host(m->gpu))
+        return;
+    /* a card with memory of its own: every pass whole on it, or why not */
+    const char *why = !janas_m_gpu_whole() ? "JANAS_GPU_WHOLE=0"
+                      : m->gpu_off         ? "the GPU turned off"
+                      : m->lp_cpu          ? "the low-power cores' mode"
+                                           : not_for_gpu(m);
+    if (!why && m->gtok_state < 0)
+        why = "it failed on the card (JANAS_GPU_VERBOSE=1 says why)";
+    if (why)
+        n += (size_t)snprintf(buf + n, len - n,
+                              "passes:  shared with the CPU, not whole on "
+                              "the card: %s\n",
+                              why);
+    else
+        n += (size_t)snprintf(buf + n, len - n,
+                              "passes:  every pass whole on the card%s\n",
+                              m->gtok_state == 1 ? "" : " (not run yet)");
+    if (n >= len || !m->gtok)
+        return;
+    janas_gpu_tok_report(m->gtok, buf + n, len - n);
 }
 
 static struct janas_matvec_task task_of(const struct janas_llm_model *m,
@@ -314,6 +354,22 @@ static int gtok_fetch(void *ctx, uint32_t layer, const uint32_t *ids, size_t n,
 {
     struct janas_llm_model *m = ctx;
     return janas_expert_cache_fetch_many(m->cache, layer, ids, n, slots);
+}
+
+/* JANAS_GPU_DEMOTE=0: the experts copied into the card's tier keep their
+   place in the cache */
+static int demote_on(void)
+{
+    const char *e = getenv("JANAS_GPU_DEMOTE");
+    return !(e && atoi(e) == 0);
+}
+
+/* ... the experts the card's tier took, the cache's copies first to go */
+static void gtok_demote(void *ctx, uint32_t layer, const uint32_t *ids,
+                        size_t n)
+{
+    struct janas_llm_model *m = ctx;
+    janas_expert_cache_demote(m->cache, layer, ids, n);
 }
 
 /* ... and the router's choice, for those who watch it and for the counts
@@ -512,9 +568,67 @@ static size_t tier_bytes(const struct janas_llm_model *m)
 }
 
 /* The layers described for the GPU, the KV cache imported: 0, or -1. */
+/* qwen3next's fused ssm_in, per key head g its q (ds rows), k (ds), the
+   values (ds rf) and the z gates (ds rf), as qwen35's q|k|v (the
+   convolution's channels: every q, every k, every value) and z (by head):
+   the same quantized rows moved, nothing recomputed, made the GPU's. The
+   CPU keeps the fused matrix. */
+static int split_qkvz(struct janas_llm_model *m, char *err, size_t len)
+{
+    uint32_t ds = m->ds, rf = m->n_vh / m->n_kh, nkh = m->n_kh;
+    uint32_t kd = nkh * ds, gsz = 2 * ds + 2 * ds * rf;
+    size_t per = 0, rb = 0;
+    for (uint32_t l = 0; l < m->n_layer; l++)
+        if (m->layers[l].rec && m->layers[l].ssm_in) {
+            rb = janas_qtype_row_bytes((int)m->layers[l].ssm_in->type,
+                                       m->d_model);
+            per += (size_t)m->qkvz_dim * rb;
+        }
+    if (!per)
+        return 0;
+    size_t bytes = (per + 4095) & ~(size_t)4095;
+    uint8_t *buf = janas_aligned_alloc(4096, bytes);
+    if (!buf) {
+        snprintf(err, len, "out of memory for qwen3next's q, k, v and z");
+        return -1;
+    }
+    uint8_t *at = buf;
+    for (uint32_t l = 0; l < m->n_layer; l++) {
+        struct layer *ly = &m->layers[l];
+        if (!ly->rec || !ly->ssm_in)
+            continue;
+        rb = janas_qtype_row_bytes((int)ly->ssm_in->type, m->d_model);
+        const uint8_t *src = data(m, ly->ssm_in);
+        uint8_t *qkv = at, *z = at + (size_t)m->conv_ch * rb;
+        for (uint32_t g = 0; g < nkh; g++) {
+            const uint8_t *s = src + (size_t)g * gsz * rb;
+            memcpy(qkv + (size_t)g * ds * rb, s, ds * rb);
+            memcpy(qkv + (size_t)(kd + g * ds) * rb, s + ds * rb, ds * rb);
+            memcpy(qkv + (size_t)(2 * kd + g * ds * rf) * rb, s + 2 * ds * rb,
+                   (size_t)ds * rf * rb);
+            memcpy(z + (size_t)g * ds * rf * rb, s + (2 * ds + ds * rf) * rb,
+                   (size_t)ds * rf * rb);
+        }
+        ly->qkv_split = qkv;
+        ly->z_split = z;
+        at += (size_t)m->qkvz_dim * rb;
+    }
+    if (janas_gpu_import(m->gpu, buf, bytes) != 0) {
+        janas_aligned_free(buf);
+        for (uint32_t l = 0; l < m->n_layer; l++)
+            m->layers[l].qkv_split = m->layers[l].z_split = NULL;
+        snprintf(err, len, "qwen3next's q, k, v and z cannot reach the GPU");
+        return -1;
+    }
+    m->qkvz_split = buf;
+    return 0;
+}
+
 static int build(struct janas_llm_model *m, char *err, size_t len)
 {
     uint32_t dm = m->d_model;
+    if (!m->qkvz_split && split_qkvz(m, err, len) != 0)
+        return -1;
     if (!m->gtok_kv) {
         if (janas_gpu_import(m->gpu, m->kcache, m->kv_bytes) != 0 ||
             janas_gpu_import(m->gpu, m->vcache, m->kv_bytes) != 0 ||
@@ -594,8 +708,20 @@ static int build(struct janas_llm_model *m, char *err, size_t len)
         if (ly->rec) {
             g->rec = 1;
             g->slot = ly->slot;
-            g->ssm_qkv = task_of(m, ly->ssm_qkv, m->conv_ch, dm);
-            g->ssm_z = task_of(m, ly->ssm_z, m->d_inner, dm);
+            if (ly->ssm_in) { /* qwen3next's, moved apart (split_qkvz) */
+                int ty = (int)ly->ssm_in->type;
+                g->ssm_qkv = (struct janas_matvec_task){.type = ty,
+                                                        .w = ly->qkv_split,
+                                                        .rows = m->conv_ch,
+                                                        .cols = dm};
+                g->ssm_z = (struct janas_matvec_task){.type = ty,
+                                                      .w = ly->z_split,
+                                                      .rows = m->d_inner,
+                                                      .cols = dm};
+            } else {
+                g->ssm_qkv = task_of(m, ly->ssm_qkv, m->conv_ch, dm);
+                g->ssm_z = task_of(m, ly->ssm_z, m->d_inner, dm);
+            }
             g->ssm_out = task_of(m, ly->ssm_out, dm, m->d_inner);
             g->ssm_beta = ly->ssm_beta;
             g->ssm_alpha = ly->ssm_alpha;
@@ -781,6 +907,7 @@ static int build(struct janas_llm_model *m, char *err, size_t len)
         .k = moe ? m->k_use : 0,
         .eff = eff,
         .fetch = moe ? gtok_fetch : NULL,
+        .demote = moe && demote_on() ? gtok_demote : NULL,
         .routed = moe ? gtok_routed : NULL,
         .prefetch = moe && janas_expert_cache_can_prefetch(m->cache)
                         ? gtok_prefetch

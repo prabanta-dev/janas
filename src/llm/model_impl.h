@@ -61,6 +61,10 @@ struct layer {
     /* qwen35: q|k|v (conv_ch rows), z (d_inner rows), alpha and beta
        (n_vh rows each, as f32: the file's, or made from its Q8_0) */
     const struct janas_jns_tensor *ssm_qkv, *ssm_z;
+    /* qwen3next's fused ssm_in as q|k|v and z apart, the same rows in
+       qwen35's order, for the whole token on the GPU (in m->qkvz_split;
+       NULL until it is built) */
+    const uint8_t *qkv_split, *z_split;
     const float *ssm_alpha, *ssm_beta;
     float *alpha_own, *beta_own;
     /* shared expert: gate, up, down as matrices of a slot at offset 0 */
@@ -252,6 +256,7 @@ struct janas_llm_model {
        tried yet, 1 ready, -1 not for this model; loads: the experts' loads
        it was built with (a change and it is built again) */
     struct janas_gpu_tok *gtok;
+    uint8_t *qkvz_split; /* the layers' qkv_split and z_split (aligned) */
     struct janas_gpu_tok_model gtok_md;
     struct janas_gpu_tok_layer *gtok_layers;
     struct janas_gpu_tok_layer *gblk_layers; /* the weights as they are,

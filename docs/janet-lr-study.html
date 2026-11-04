@@ -1,0 +1,600 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Janet Learning-Rate Study</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column (~68ch) with charts allowed to run a little wider; lab-notebook restraint. */
+:root {
+  --bg: #f6f7f9;
+  --surface: #fcfcfb;
+  --fg: #14161a;
+  --fg-2: #4b5059;
+  --muted: #858a93;
+  --grid: #e3e5e9;
+  --axis: #c3c6cc;
+  --rule: rgba(20, 22, 26, 0.10);
+  --accent: #2a78d6;
+  --s-janet: #2a78d6;
+  --s-swiglu: #eb6834;
+  --s-geglu: #1baf7a;
+  --s-relu2: #eda100;
+  --l1: #86b6ef;
+  --l2: #3987e5;
+  --l3: #1c5cab;
+  --l4: #0d366b;
+  --tip-bg: #ffffff;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111317; --surface: #181a1e; --fg: #eceef1; --fg-2: #b9bdc5; --muted: #8a8f98;
+    --grid: #2a2d33; --axis: #3a3e45; --rule: rgba(255, 255, 255, 0.10); --accent: #5598e7;
+    --s-janet: #3987e5; --s-swiglu: #d95926; --s-geglu: #199e70; --s-relu2: #c98500;
+    --l1: #b7d3f6; --l2: #6da7ec; --l3: #2a78d6; --l4: #184f95; --tip-bg: #22252a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111317; --surface: #181a1e; --fg: #eceef1; --fg-2: #b9bdc5; --muted: #8a8f98;
+  --grid: #2a2d33; --axis: #3a3e45; --rule: rgba(255, 255, 255, 0.10); --accent: #5598e7;
+  --s-janet: #3987e5; --s-swiglu: #d95926; --s-geglu: #199e70; --s-relu2: #c98500;
+  --l1: #b7d3f6; --l2: #6da7ec; --l3: #2a78d6; --l4: #184f95; --tip-bg: #22252a;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 16px/1.6 var(--font-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 80px;
+}
+main { max-width: 980px; margin: 0 auto; display: grid; gap: 28px; }
+.prose { max-width: 68ch; }
+header.top { display: grid; gap: 10px; border-bottom: 1px solid var(--rule); padding-bottom: 24px; }
+.eyebrow { font: 500 12px/1 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+h1 { font-size: clamp(28px, 4.4vw, 40px); line-height: 1.15; margin: 0; font-weight: 600; text-wrap: balance; letter-spacing: -0.01em; }
+h2 { font-size: 22px; line-height: 1.3; margin: 12px 0 0; font-weight: 600; text-wrap: balance; }
+h3 { font-size: 17px; margin: 0; font-weight: 600; }
+p { margin: 0; }
+section { display: grid; gap: 14px; }
+.lede { font-size: 18px; color: var(--fg-2); max-width: 62ch; }
+.meta { font: 13px/1.5 var(--font-mono); color: var(--muted); }
+.findings { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+.finding { background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 14px 16px; display: grid; gap: 4px; align-content: start; }
+.finding .v { font-size: 26px; font-weight: 600; line-height: 1.2; }
+.finding .k { font-size: 13px; color: var(--fg-2); line-height: 1.45; }
+figure { margin: 0; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 16px 16px 12px; display: grid; gap: 10px; min-width: 0; }
+figcaption { font-size: 14px; color: var(--fg-2); max-width: 75ch; }
+figcaption b { color: var(--fg); font-weight: 600; }
+.fig-head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; justify-content: space-between; }
+.fig-num { font: 500 12px var(--font-mono); color: var(--muted); letter-spacing: 0.06em; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px; }
+.legend button {
+  font: 13px var(--font-body); color: var(--fg); background: transparent; cursor: pointer;
+  border: 1px solid var(--rule); border-radius: 999px; padding: 3px 10px 3px 8px;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.legend button[aria-pressed="false"] { color: var(--muted); }
+.legend button[aria-pressed="false"] .key { opacity: 0.25; }
+.legend button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.key { width: 16px; height: 2px; border-radius: 1px; display: inline-block; }
+.key.dot { width: 8px; height: 8px; border-radius: 50%; }
+.chart { position: relative; width: 100%; min-width: 0; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart text { font-family: var(--font-body); }
+.multi { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); gap: 14px 18px; }
+#c5 { grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr)); }
+.multi h3 { font-size: 14px; color: var(--fg-2); font-weight: 500; }
+.tip {
+  position: absolute; pointer-events: none; z-index: 5; background: var(--tip-bg); color: var(--fg);
+  border: 1px solid var(--rule); border-radius: 6px; padding: 8px 10px; font-size: 12.5px; line-height: 1.45;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12); min-width: 150px; max-width: 260px;
+}
+.tip .t { font: 500 11px var(--font-mono); color: var(--muted); margin-bottom: 4px; }
+.tip .r { display: grid; grid-template-columns: 14px auto 1fr; gap: 6px; align-items: center; }
+.tip .r b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.tip .r span:last-child { color: var(--fg-2); }
+a { color: var(--accent); }
+details { font-size: 14px; }
+details summary { cursor: pointer; color: var(--fg-2); }
+.tbl { overflow-x: auto; margin-top: 8px; }
+table { border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; min-width: 100%; }
+th, td { text-align: right; padding: 5px 10px; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; }
+th { font-weight: 600; color: var(--fg-2); }
+td.best { font-weight: 600; }
+ul.plain { margin: 0; padding-left: 1.1em; display: grid; gap: 6px; }
+.note { font-size: 14px; color: var(--fg-2); border-left: 2px solid var(--axis); padding-left: 12px; }
+@media (max-width: 520px) { body { font-size: 15px; padding-block: 24px 56px; } .lede { font-size: 16px; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<main>
+<header class="top">
+  <div class="eyebrow">Janet · research note · 4 November 2026 · first comparison</div>
+  <h1>How Janet responds to the learning rate</h1>
+  <p class="lede">A small language model trained over and over with a different feed-forward block each time, at a range of peak learning rates, then pushed past each block's best observed rate to see how and where it degrades.</p>
+  <p class="meta">TinyStories · 3.34 M parameters · 3,000 steps · 42 training runs on an Intel Arc integrated GPU</p>
+  <p class="meta">© 2026 Maurizio "camauri" Cammalleri · licensed under <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a></p>
+  <p class="note">This is a first, exploratory comparison. Janet received more runs than the other blocks, and the classic blocks were not taken to their breaking point. Further measurements will follow with the same runs for every block: the same grid of rates, the same two seeds at every rate, and every block taken to its breaking point. Until then the results below are trends to be confirmed, not settled findings.</p>
+</header>
+
+<section class="prose">
+  <h2>In short</h2>
+  <div class="findings">
+    <div class="finding"><span class="v">2.020</span><span class="k">Janet's lowest validation loss (mean of two seeds, peak rate 6e-3; 8e-3 is indistinguishable). The best of the others: 2.061 (ReLU²).</span></div>
+    <div class="finding"><span class="v">−0.041</span><span class="k">Janet's lead over the best classic block, about three times its estimated standard error. With two seeds, a trend to confirm.</span></div>
+    <div class="finding"><span class="v">2.7×</span><span class="k">At 2.7 times its best rate Janet (2.050) is still better than every classic block at its own best (2.061-2.084). At 4× it is within 0.002 of GeGLU's best.</span></div>
+    <div class="finding"><span class="v">56-85%</span><span class="k">Janet's layer-2 units inactive at 5.3 times its best rate, against under 1% around the optimum. ReLU² loses its units too, and sooner.</span></div>
+    <div class="finding"><span class="v">2.165</span><span class="k">Janet at 1e-3, the worst of the four there: below its optimum Janet is the weakest.</span></div>
+  </div>
+</section>
+
+<section class="prose">
+  <h2>What was compared</h2>
+  <p>A transformer language model alternates two kinds of block: attention, which mixes information across positions, and a feed-forward block, which transforms each position on its own. Almost all of a model's weights, and most of the reading of weights at inference time, sit in the feed-forward blocks. This study keeps the whole model fixed and swaps only that block.</p>
+  <p><b>Janet</b> is the feed-forward block of the Janas project. Each of its units looks at its input through a few separate branches, each branch seeing its own part of the input, and the unit speaks only when its branches agree. When they do not, the unit is silent: its output is exactly zero and, at inference time, its weights need not be read at all. The silence is designed in.</p>
+  <p>The other three are the blocks used by today's language models. <b>SwiGLU</b> (LLaMA, Qwen, Mistral and most others) and <b>GeGLU</b> (Gemma) multiply two projections of the input, one passed through a smooth gate. Their units are practically never exactly silent. <b>ReLU²</b> (the squared rectifier, used for instance in Nemotron-H) zeroes negative values and squares the rest, so some of its units are silent on any given input, but not by design.</p>
+  <p>All four were given the same number of parameters (3.34 million in the whole model, within 0.01%). Each classic block uses the standard recipe from the literature: SwiGLU and GeGLU with a hidden width of 8/3 the model width (512 units), ReLU² with four times it (768). Janet has 752 units. None of Janet's own block settings were given to the others.</p>
+</section>
+
+<section class="prose">
+  <h2>How it was measured</h2>
+  <p>The model is small: width 192, 4 layers, 3 attention heads, a context of 128 tokens and a vocabulary of 4,096 tokens. Each run trains for 3,000 steps of 32 sequences of 128 tokens, about 12 million tokens of TinyStories. Every block uses the same settings: AdamW with weight decay 0.1, beta2 0.99 and gradient clipping at norm 1, a 200-step warm-up to the peak learning rate then a cosine decay down to 1e-4, and the same data order. These are the training program's defaults, set during Janet's development, and were not tuned for any block. The score is the cross-entropy loss on held-out text (lower is better), in nats per token.</p>
+  <p>Every block was trained at six peak learning rates from 1e-3 to 8e-3 with one seed; the grid steps are 1.33 to 2 times apart. Each block then got a second seed at its two best rates according to the first seed. Because Janet was still flat at 8e-3, it alone was taken higher, with two seeds per rate, until it broke (at 4.8e-2). So Janet has 18 runs, against 8 for each classic block, and two seeds at every rate from 6e-3 up where the others have them only at their two best.</p>
+  <p>Activity is measured in two ways. During training, the program records the share of unit-positions where a unit speaks, layer by layer: the <i>speaking share</i> of figure 5 and of the tables. After training, each saved Janet and ReLU² model was probed on 8,192 held-out positions. A unit counts as <i>active</i> if it speaks on at least 0.5% of them (41 positions), and as <i>inactive</i> otherwise; figure 4 gives the median share of positions where an active unit speaks. "Dead" below is shorthand for inactive in this sense: an inactive unit may still speak on a few positions. SwiGLU and GeGLU have no comparable measure, since their units never fall silent.</p>
+</section>
+
+<figure id="f1">
+  <div class="fig-head"><span class="fig-num">FIGURE 1</span><div class="legend" data-for="c1"></div></div>
+  <div class="chart" id="c1"></div>
+  <figcaption><b>Final validation loss against peak learning rate.</b> Dots are single runs, lines join the mean at each rate. The three classic blocks have a shallow minimum between 2e-3 and 4e-3 (flat within about 0.02) and climb steeply after it. Janet improves up to 6e-3, stays flat to 8e-3, then rises slowly up to 3.2e-2, where it is still better than any classic block at 8e-3. At 4.8e-2 it breaks (3.42, off this scale).</figcaption>
+  <details><summary>Table: every run</summary><div class="tbl" id="t1"></div></details>
+</figure>
+
+<section class="prose">
+  <h2>The optimum</h2>
+  <p>At each block's best observed rate, averaged over two seeds, Janet reaches 2.020 (6e-3), ReLU² 2.061 (3e-3), SwiGLU 2.070 (4e-3) and GeGLU 2.084 (3e-3).</p>
+  <p>How large is the noise? Over every rate where a block has two seeds, the two differ by 0.003 to 0.016 for Janet and by 0.003 to 0.039 for the classic blocks. Estimated from these pairs, the standard deviation of a single run is about 0.007 for Janet and 0.018 for the classic blocks, and the standard error of the difference between two two-seed means about 0.013. Janet's 0.041 lead over ReLU² is about three standard errors: a clear trend, but not established with two seeds. Janet's runs also look less scattered than the others', but six pairs per side are too few to be sure. The three classic blocks are within 0.023 of each other and their order is not resolved.</p>
+  <p>Below the optimum the four lose alike: 0.04 to 0.07 at a third or a quarter of their best rate. At 1e-3, a sixth of its best, Janet is the worst of the four (2.165, against 2.118-2.133), and it is the only run in which clipping still acts at the end of training (43% of the last thousand steps). Janet needs its higher rate.</p>
+</section>
+
+<figure id="f2">
+  <div class="fig-head"><span class="fig-num">FIGURE 2</span><div class="legend" data-for="c2"></div></div>
+  <div class="chart" id="c2"></div>
+  <figcaption><b>Distance from each block's own best, against the peak learning rate as a multiple of its best.</b> This puts the four on the same footing: how much does each lose when the rate is wrong by a given factor? The multiples are only as precise as the grid (steps of 1.33 to 2) and the one or two seeds that located each best. At twice their best rate the classic blocks lose 0.008 (GeGLU), 0.066 (ReLU²) and 0.179 (SwiGLU). The gap between GeGLU and SwiGLU comes from their bests falling one grid step apart (3e-3 and 4e-3): in absolute rate their curves agree within 0.035 at every rate (figure 1). At 8e-3 all three are 0.13 to 0.21 above their best. Janet loses 0.016 at 2×, 0.030 at 2.7× and 0.065 at 4×.</figcaption>
+</figure>
+
+<section class="prose">
+  <h2>Past the optimum: two ways of degrading</h2>
+  <p>Above its best observed rate, Janet degrades in two distinct regimes. Between 1.2e-2 and 3.2e-2 the loss rises gradually, by 0.015 to 0.035 per step up the ladder, steepening towards the top (from about 0.05 to about 0.11 per e-fold of the rate). Training stays stable: the gradient stays small and clipping does not act after the first thousand steps. At 4.8e-2 training becomes unstable in the usual way: the gradient grows roughly twentyfold, clipping acts on half the steps or more, and the loss ends at 3.4.</p>
+  <p>The gradual regime is where Janet's units become inactive.</p>
+</section>
+
+<figure id="f3">
+  <div class="fig-head"><span class="fig-num">FIGURE 3</span><div class="legend" data-for="c3a"></div></div>
+  <div class="multi">
+    <div><h3>Janet: units active, % of 752</h3><div class="chart" id="c3a"></div></div>
+    <div><h3>ReLU²: units active, % of 768</h3><div class="chart" id="c3b"></div></div>
+  </div>
+  <figcaption><b>Units still active, by layer.</b> Points are the mean of the seeds trained at that rate. The hollow points at 4.8e-2 belong to the broken regime, where the network no longer learns (loss 3.4) and "active" means something else, so they are not joined to the curves. Around its optimum (6e-3 and 8e-3) Janet has at most 7 inactive units out of 752 in any layer. From 1.2e-2 upwards more become inactive at every step, starting from layers 2 and 3: at 3.2e-2 layer 2 keeps between 15% and 44% of its units, depending on the seed. ReLU² already has 7% of its layer-2 units inactive at its best rate (3e-3), and loses them faster with the rate: a third of layer 2 at 6e-3, twice its best, and 47% at 8e-3, where Janet has 1%.</figcaption>
+  <details><summary>Table: active units by layer</summary><div class="tbl" id="t3"></div></details>
+</figure>
+
+<section class="prose">
+  <p>The two pictures go together. Janet's loss is lowest at 6e-3 and 8e-3, indistinguishable within the seed spread, where fewer than 1% of the units are inactive. It starts to rise at 1.2e-2, where layer 2 has lost 9%, and the rise steepens from 2.4e-2, where layer 2 has lost 45-75% of its units depending on the seed. The units that stay active also speak less: in layer 2 the median active unit speaks on 10-11% of positions at the optimum and 3.5-4.6% at 3.2e-2.</p>
+  <p>Inactive units are not peculiar to Janet. ReLU², the other block whose units can fall silent, shows the same thing, and sooner: measured against each block's own best rate, at twice the optimum Janet has lost 9% of layer 2 and ReLU² 33%. In both, units that can be switched off become inactive when the steps are too large; Janet's resist longer.</p>
+  <p>One reading, consistent with figures 1 and 3 but not tested directly, is that Janet degrades gradually because it sheds capacity one unit at a time while the rest of the network carries on with the units that remain. What the classic blocks do above 8e-3 was not measured. Whatever the mechanism, the flat region above Janet's optimum has a cost that the loss alone hides; on a larger model or a longer run that loss of units could accumulate, and it has to be measured there.</p>
+</section>
+
+<figure id="f4">
+  <div class="fig-head"><span class="fig-num">FIGURE 4</span><div class="legend" data-for="c4a"></div></div>
+  <div class="multi">
+    <div><h3>Janet: median share of positions where an active unit speaks</h3><div class="chart" id="c4a"></div></div>
+    <div><h3>ReLU²: the same</h3><div class="chart" id="c4b"></div></div>
+  </div>
+  <figcaption><b>How often an active unit speaks.</b> At its optimum the median Janet unit speaks on 10-18% of positions, depending on the layer. As the rate rises the middle layers fall to 3.5-6%. At 4.8e-2 (hollow points, broken regime) layers 3 and 4 jump to 37-40%, two to three times the optimum, as the unstable network loses its sparsity.</figcaption>
+</figure>
+
+<figure id="f5">
+  <div class="fig-head"><span class="fig-num">FIGURE 5</span><div class="legend" data-for="c5_0"></div></div>
+  <div class="multi" id="c5"></div>
+  <figcaption><b>Janet's speaking share during training, by layer, at four learning rates.</b> Measured on held-out text at steps 1,000, 2,000 and 3,000. At the optimum (6e-3) the layers settle at 10-19%. At higher rates the middle layers are lower from the first measurement and recover only slightly, by a point or two, as the cosine schedule lowers the rate. At 4.8e-2 layers 3 and 4 rise instead.</figcaption>
+</figure>
+
+<figure id="f6">
+  <div class="fig-head"><span class="fig-num">FIGURE 6</span><div class="legend" data-for="c6"></div></div>
+  <div class="chart" id="c6"></div>
+  <figcaption><b>Validation loss after 1,000 of the 3,000 steps.</b> High rates do most of their damage early. Janet at 1.2e-2 is behind its optimum by 0.08 at step 1,000 and by only 0.017 at the end: the decay repairs most of it. The classic blocks at 8e-3 are 0.21 to 0.25 behind at step 1,000 and still 0.13 to 0.21 at the end. Janet at 4.8e-2 sits at 4.15 (off scale).</figcaption>
+</figure>
+
+<figure id="f7">
+  <div class="fig-head"><span class="fig-num">FIGURE 7</span><div class="legend" data-for="c7a"></div></div>
+  <div class="multi">
+    <div><h3>Gradient norm at the end of training</h3><div class="chart" id="c7a"></div></div>
+    <div><h3>Steps clipped in the first 1,000, %</h3><div class="chart" id="c7b"></div></div>
+  </div>
+  <figcaption><b>Training stability.</b> In every block the final gradient norm falls as the rate rises, from about 0.85-1.0 at 1e-3 to about 0.21-0.30, and clipping acts only in the first thousand steps, less at higher rates, so it does not hold anything back below the breaking point. Two exceptions: Janet at 1e-3, whose gradient norm ends at the clipping threshold, with 43% of its last thousand steps clipped; and Janet at 4.8e-2, with norm 3.7-5.0 and clipping on 40-48% of the first thousand steps and 50-67% at the end (off scale).</figcaption>
+</figure>
+
+<figure id="f8">
+  <div class="fig-head"><span class="fig-num">FIGURE 8</span></div>
+  <div class="chart" id="c8"></div>
+  <figcaption><b>Training step time on the Arc integrated GPU</b> (median over all runs of each block). Janet's step costs about 16% more. This is the whole model's step, attention and embeddings included, so the block's own overhead is larger. It was measured on the project's own GPU training program and does not transfer to other software. That program computes every unit, silent or not, so this says nothing about inference, where a silent unit's weights are not read. No claim about speed is made here.</figcaption>
+</figure>
+
+<section class="prose">
+  <h2>Why do Janet's units become inactive?</h2>
+  <p>Four explanations were on the table. The data rule out one and support one.</p>
+  <ul class="plain">
+    <li><b>Clipping holds back the updates.</b> Ruled out: below the breaking point clipping acts only early on, and less at high rates (figure 7).</li>
+    <li><b>Units go silent at high rates and stop learning.</b> Supported only as the accompaniment of the gradual regime: the loss rises as units fall below the threshold (figures 3 and 4). Whether silent units stop learning, and what silences them, was not measured.</li>
+    <li><b>Janet's weights grow until the effective step stays the same whatever the nominal rate.</b> Not yet tested: it needs the size of each group of weights through training. The falling gradient norm in every block (figure 7) is consistent with growing weights, but does not prove it.</li>
+    <li><b>Janet steadies the rest of the network.</b> Attention and embeddings train at the same rate as the feed-forward block; if Janet's block keeps the signal tame, they too tolerate higher rates. Not yet tested: it needs one rate for the feed-forward block and another for the rest.</li>
+  </ul>
+</section>
+
+<section class="prose">
+  <h2>Limits</h2>
+  <ul class="plain">
+    <li><b>One small model and a short run:</b> 3.34 M parameters, 3,000 steps, about 12 M tokens, one dataset and one tokenizer. This is far from a fully trained model, and a preference for high learning rates in short runs may not hold in long ones. The differences may shrink or grow with size and length.</li>
+    <li><b>Unequal runs:</b> Janet had 18 runs and each of the others 8; Janet had a second seed at every rate from 6e-3 up, the others only at their two best. More runs give more chances of a lucky minimum, so the comparison slightly favours Janet.</li>
+    <li><b>Selected second seeds:</b> the second seed's rates were chosen from the first seed's results, so each two-seed mean at a best rate carries part of the first seed's selection, equally for every block.</li>
+    <li><b>Two seeds</b> show trends, not significance. GeGLU's best two-seed mean, 2.084 at 3e-3, could move by about ±0.02; its single run at 4e-3 scored 2.078.</li>
+    <li><b>The classic blocks were not pushed to their breaking point;</b> above 8e-3 their behaviour is not measured.</li>
+    <li><b>Inactive units</b> are counted on 8,192 positions with a 0.5% threshold, and only for Janet and ReLU². With four layers, "the middle layers" are two of four.</li>
+    <li><b>The training settings</b> are the training program's defaults, set during Janet's development, and not tuned for any block.</li>
+    <li><b>The step time</b> is the whole model's, on the project's own training program and one integrated GPU; it is not an inference measurement.</li>
+  </ul>
+</section>
+
+<section class="prose">
+  <h2>Next</h2>
+  <p>Further measurements will follow, so that the comparison is more precise and fair:</p>
+  <ul class="plain">
+    <li><b>Equal runs for every block:</b> the same grid of rates, extended past 8e-3 for the classic blocks; the same two seeds at every rate, three or more at the best; every block taken to its breaking point.</li>
+    <li><b>Weight sizes through training,</b> to test the third explanation.</li>
+    <li><b>One rate for the feed-forward block and another for the rest,</b> to test the fourth.</li>
+    <li><b>A remedy against inactive units,</b> to see whether it widens the safe region without costing loss at the optimum.</li>
+    <li><b>A larger model and a longer run.</b></li>
+  </ul>
+  <p>The machine running these measurements is shared with other work, so they will come in stages.</p>
+</section>
+
+<section class="prose">
+  <h2>License</h2>
+  <p>This document, its text, charts and tables, is © 2026 Maurizio "camauri" Cammalleri and is licensed under the Creative Commons Attribution 4.0 International License (CC BY 4.0): you may copy, redistribute and adapt it for any purpose, including commercially, provided you give appropriate credit, link to the license, and indicate if changes were made. The license text is at <a href="https://creativecommons.org/licenses/by/4.0/">https://creativecommons.org/licenses/by/4.0/</a>. It covers this document only, not the Janas or Janet source code.</p>
+</section>
+</main>
+
+<script>
+const DATA = {"runs":[{"net":"geglu","lr":0.001,"seed":1,"evals":[{"it":1000,"train":3.3305,"val":2.5335,"speak":[100.0,100.0,100.0,100.0],"ms":133.7,"gnorm":0.831,"clip":8},{"it":2000,"train":2.3583,"val":2.2392,"speak":[100.0,100.0,100.0,100.0],"ms":134.2,"gnorm":0.772,"clip":0},{"it":3000,"train":2.1497,"val":2.1196,"speak":[100.0,100.0,100.0,100.0],"ms":134.1,"gnorm":0.846,"clip":0}],"units":512,"params":3344064,"final":2.1196,"secs":504.5},{"net":"geglu","lr":0.002,"seed":1,"evals":[{"it":1000,"train":3.1881,"val":2.5099,"speak":[100.0,100.0,100.0,100.0],"ms":135.9,"gnorm":0.63,"clip":6},{"it":2000,"train":2.3252,"val":2.1981,"speak":[100.0,100.0,100.0,100.0],"ms":136.6,"gnorm":0.506,"clip":0},{"it":3000,"train":2.0986,"val":2.07,"speak":[100.0,100.0,100.0,100.0],"ms":136.0,"gnorm":0.543,"clip":0}],"units":512,"params":3344064,"final":2.07,"secs":517.4},{"net":"geglu","lr":0.002,"seed":2,"evals":[{"it":1000,"train":3.1962,"val":2.5196,"speak":[100.0,100.0,100.0,100.0],"ms":134.5,"gnorm":0.624,"clip":6},{"it":2000,"train":2.3479,"val":2.2297,"speak":[100.0,100.0,100.0,100.0],"ms":133.8,"gnorm":0.496,"clip":0},{"it":3000,"train":2.1316,"val":2.1092,"speak":[100.0,100.0,100.0,100.0],"ms":133.4,"gnorm":0.53,"clip":0}],"units":512,"params":3344064,"final":2.1092,"secs":507.1},{"net":"geglu","lr":0.003,"seed":1,"evals":[{"it":1000,"train":3.1472,"val":2.5259,"speak":[100.0,100.0,100.0,100.0],"ms":134.4,"gnorm":0.534,"clip":5},{"it":2000,"train":2.341,"val":2.2082,"speak":[100.0,100.0,100.0,100.0],"ms":135.1,"gnorm":0.394,"clip":0},{"it":3000,"train":2.1006,"val":2.0729,"speak":[100.0,100.0,100.0,100.0],"ms":134.1,"gnorm":0.424,"clip":0}],"units":512,"params":3344064,"final":2.0729,"secs":515.0},{"net":"geglu","lr":0.003,"seed":2,"evals":[{"it":1000,"train":3.1556,"val":2.5302,"speak":[100.0,100.0,100.0,100.0],"ms":133.6,"gnorm":0.535,"clip":5},{"it":2000,"train":2.3523,"val":2.2249,"speak":[100.0,100.0,100.0,100.0],"ms":133.4,"gnorm":0.394,"clip":0},{"it":3000,"train":2.1185,"val":2.0946,"speak":[100.0,100.0,100.0,100.0],"ms":134.8,"gnorm":0.423,"clip":0}],"units":512,"params":3344064,"final":2.0946,"secs":511.6},{"net":"geglu","lr":0.004,"seed":1,"evals":[{"it":1000,"train":3.1393,"val":2.55,"speak":[100.0,100.0,100.0,100.0],"ms":135.7,"gnorm":0.473,"clip":4},{"it":2000,"train":2.3584,"val":2.2202,"speak":[100.0,100.0,100.0,100.0],"ms":136.0,"gnorm":0.33,"clip":0},{"it":3000,"train":2.1091,"val":2.0782,"speak":[100.0,100.0,100.0,100.0],"ms":136.5,"gnorm":0.358,"clip":0}],"units":512,"params":3344064,"final":2.0782,"secs":515.5},{"net":"geglu","lr":0.006,"seed":1,"evals":[{"it":1000,"train":3.1524,"val":2.6021,"speak":[100.0,100.0,100.0,100.0],"ms":135.7,"gnorm":0.397,"clip":4},{"it":2000,"train":2.4002,"val":2.2502,"speak":[100.0,100.0,100.0,100.0],"ms":135.6,"gnorm":0.257,"clip":0},{"it":3000,"train":2.1282,"val":2.0917,"speak":[100.0,100.0,100.0,100.0],"ms":134.4,"gnorm":0.286,"clip":0}],"units":512,"params":3344064,"final":2.0917,"secs":513.3},{"net":"geglu","lr":0.008,"seed":1,"evals":[{"it":1000,"train":3.2197,"val":2.7391,"speak":[100.0,100.0,99.9,99.4],"ms":134.4,"gnorm":0.374,"clip":3},{"it":2000,"train":2.5434,"val":2.3863,"speak":[100.0,100.0,100.0,99.7],"ms":134.3,"gnorm":0.247,"clip":0},{"it":3000,"train":2.2566,"val":2.2139,"speak":[100.0,100.0,100.0,99.9],"ms":134.6,"gnorm":0.257,"clip":0}],"units":512,"params":3344064,"final":2.2139,"secs":521.7},{"net":"janet","lr":0.012,"seed":1,"evals":[{"it":1000,"train":3.0881,"val":2.6036,"speak":[14.2,6.9,7.6,12.1],"ms":156.3,"gnorm":0.331,"clip":3},{"it":2000,"train":2.3986,"val":2.2309,"speak":[11.5,7.1,9.6,14.2],"ms":155.8,"gnorm":0.229,"clip":0},{"it":3000,"train":2.0882,"val":2.0396,"speak":[10.9,7.8,10.6,15.6],"ms":155.8,"gnorm":0.268,"clip":0}],"units":752,"params":3344320,"final":2.0396,"secs":558.4},{"net":"janet","lr":0.012,"seed":2,"evals":[{"it":1000,"train":3.0856,"val":2.5919,"speak":[14.2,5.7,8.7,10.8],"ms":157.0,"gnorm":0.329,"clip":3},{"it":2000,"train":2.3908,"val":2.2252,"speak":[11.5,6.1,10.0,13.2],"ms":155.8,"gnorm":0.231,"clip":0},{"it":3000,"train":2.0792,"val":2.0338,"speak":[11.0,6.8,11.2,14.7],"ms":155.6,"gnorm":0.267,"clip":0}],"units":752,"params":3344320,"final":2.0338,"secs":558.9},{"net":"janet","lr":0.016,"seed":1,"evals":[{"it":1000,"train":3.11,"val":2.6526,"speak":[12.0,5.6,5.4,9.4],"ms":156.1,"gnorm":0.307,"clip":3},{"it":2000,"train":2.4468,"val":2.2692,"speak":[9.5,5.7,6.1,10.6],"ms":156.0,"gnorm":0.215,"clip":0},{"it":3000,"train":2.1115,"val":2.0518,"speak":[8.9,6.5,7.2,11.8],"ms":156.0,"gnorm":0.244,"clip":0}],"units":752,"params":3344320,"final":2.0518,"secs":553.2},{"net":"janet","lr":0.016,"seed":2,"evals":[{"it":1000,"train":3.107,"val":2.6355,"speak":[12.4,4.0,7.7,9.7],"ms":156.9,"gnorm":0.321,"clip":3},{"it":2000,"train":2.441,"val":2.264,"speak":[9.5,3.9,8.9,10.9],"ms":156.8,"gnorm":0.22,"clip":0},{"it":3000,"train":2.1045,"val":2.0487,"speak":[9.1,4.5,10.0,12.3],"ms":156.0,"gnorm":0.249,"clip":0}],"units":752,"params":3344320,"final":2.0487,"secs":558.4},{"net":"janet","lr":0.001,"seed":1,"evals":[{"it":1000,"train":3.3212,"val":2.5447,"speak":[15.6,12.0,14.2,17.8],"ms":154.9,"gnorm":0.871,"clip":9},{"it":2000,"train":2.3809,"val":2.2723,"speak":[14.8,12.4,15.6,20.9],"ms":154.1,"gnorm":0.854,"clip":0},{"it":3000,"train":2.1892,"val":2.1649,"speak":[14.4,12.7,16.3,22.2],"ms":155.1,"gnorm":0.998,"clip":43}],"units":752,"params":3344320,"final":2.1649,"secs":555.8},{"net":"janet","lr":0.024,"seed":1,"evals":[{"it":1000,"train":3.1692,"val":2.7376,"speak":[11.9,1.3,2.1,7.7],"ms":155.9,"gnorm":0.289,"clip":3},{"it":2000,"train":2.5456,"val":2.3549,"speak":[9.3,1.1,2.0,7.9],"ms":157.3,"gnorm":0.215,"clip":0},{"it":3000,"train":2.1725,"val":2.0933,"speak":[8.7,1.3,2.4,9.2],"ms":155.6,"gnorm":0.229,"clip":0}],"units":752,"params":3344320,"final":2.0933,"secs":552.6},{"net":"janet","lr":0.024,"seed":2,"evals":[{"it":1000,"train":3.1678,"val":2.7248,"speak":[12.3,3.3,4.6,8.0],"ms":155.6,"gnorm":0.385,"clip":3},{"it":2000,"train":2.5346,"val":2.3429,"speak":[9.4,2.8,4.8,8.4],"ms":156.0,"gnorm":0.209,"clip":0},{"it":3000,"train":2.1544,"val":2.0774,"speak":[8.8,3.3,5.4,9.6],"ms":156.2,"gnorm":0.227,"clip":0}],"units":752,"params":3344320,"final":2.0774,"secs":551.3},{"net":"janet","lr":0.002,"seed":1,"evals":[{"it":1000,"train":3.1681,"val":2.5037,"speak":[17.5,11.1,13.1,16.6],"ms":155.2,"gnorm":0.673,"clip":6},{"it":2000,"train":2.3229,"val":2.1961,"speak":[16.1,12.1,15.7,20.5],"ms":156.3,"gnorm":0.581,"clip":0},{"it":3000,"train":2.0961,"val":2.069,"speak":[15.4,12.5,16.3,21.9],"ms":154.8,"gnorm":0.667,"clip":0}],"units":752,"params":3344320,"final":2.069,"secs":557.1},{"net":"janet","lr":0.032,"seed":1,"evals":[{"it":1000,"train":3.222,"val":2.8115,"speak":[10.9,0.8,1.8,5.8],"ms":156.8,"gnorm":0.375,"clip":2},{"it":2000,"train":2.6219,"val":2.4277,"speak":[8.1,0.6,1.5,5.7],"ms":156.7,"gnorm":0.207,"clip":0},{"it":3000,"train":2.2201,"val":2.1225,"speak":[7.5,0.8,1.9,6.6],"ms":156.5,"gnorm":0.213,"clip":0}],"units":752,"params":3344320,"final":2.1225,"secs":552.2},{"net":"janet","lr":0.032,"seed":2,"evals":[{"it":1000,"train":3.2276,"val":2.8102,"speak":[5.8,2.5,3.3,7.8],"ms":156.5,"gnorm":0.286,"clip":3},{"it":2000,"train":2.6154,"val":2.4044,"speak":[3.0,2.0,3.2,7.9],"ms":157.6,"gnorm":0.193,"clip":0},{"it":3000,"train":2.2035,"val":2.1092,"speak":[3.0,2.4,3.7,9.0],"ms":156.5,"gnorm":0.211,"clip":0}],"units":752,"params":3344320,"final":2.1092,"secs":560.6},{"net":"janet","lr":0.003,"seed":1,"evals":[{"it":1000,"train":3.1235,"val":2.5098,"speak":[18.4,10.6,12.9,16.4],"ms":155.9,"gnorm":0.576,"clip":5},{"it":2000,"train":2.3154,"val":2.178,"speak":[16.1,11.6,15.2,20.3],"ms":155.2,"gnorm":0.47,"clip":0},{"it":3000,"train":2.0753,"val":2.0473,"speak":[15.5,12.0,16.0,21.6],"ms":155.1,"gnorm":0.529,"clip":0}],"units":752,"params":3344320,"final":2.0473,"secs":553.5},{"net":"janet","lr":0.048,"seed":1,"evals":[{"it":1000,"train":4.286,"val":4.2266,"speak":[9.6,13.1,28.9,26.4],"ms":165.2,"gnorm":2.75,"clip":40},{"it":2000,"train":4.0104,"val":3.8396,"speak":[9.3,8.7,35.6,36.0],"ms":168.8,"gnorm":4.07,"clip":56},{"it":3000,"train":3.5798,"val":3.4009,"speak":[9.7,9.8,32.8,36.8],"ms":166.4,"gnorm":3.72,"clip":50}],"units":752,"params":3344320,"final":3.4009,"secs":591.0},{"net":"janet","lr":0.048,"seed":2,"evals":[{"it":1000,"train":4.2541,"val":4.0829,"speak":[6.9,7.9,31.6,29.5],"ms":161.3,"gnorm":2.91,"clip":48},{"it":2000,"train":3.9888,"val":3.7883,"speak":[3.6,3.9,38.3,37.3],"ms":160.7,"gnorm":4.93,"clip":65},{"it":3000,"train":3.5747,"val":3.4452,"speak":[4.4,4.5,38.8,37.2],"ms":160.8,"gnorm":5.01,"clip":67}],"units":752,"params":3344320,"final":3.4452,"secs":570.4},{"net":"janet","lr":0.004,"seed":1,"evals":[{"it":1000,"train":3.0947,"val":2.5074,"speak":[17.7,10.7,12.6,15.8],"ms":155.5,"gnorm":0.513,"clip":4},{"it":2000,"train":2.3039,"val":2.1654,"speak":[15.3,12.2,15.0,19.4],"ms":157.2,"gnorm":0.387,"clip":0},{"it":3000,"train":2.0564,"val":2.0277,"speak":[14.7,12.5,15.9,20.7],"ms":157.0,"gnorm":0.437,"clip":0}],"units":752,"params":3344320,"final":2.0277,"secs":556.6},{"net":"janet","lr":0.006,"seed":1,"evals":[{"it":1000,"train":3.0703,"val":2.5241,"speak":[16.0,10.1,11.1,14.7],"ms":160.0,"gnorm":0.427,"clip":4},{"it":2000,"train":2.32,"val":2.1733,"speak":[13.3,11.3,13.3,17.7],"ms":159.5,"gnorm":0.29,"clip":0},{"it":3000,"train":2.0576,"val":2.0246,"speak":[12.6,11.8,14.2,19.2],"ms":159.4,"gnorm":0.336,"clip":0}],"units":752,"params":3344320,"final":2.0246,"secs":564.1},{"net":"janet","lr":0.006,"seed":2,"evals":[{"it":1000,"train":3.0722,"val":2.5155,"speak":[16.5,8.6,12.4,14.7],"ms":156.3,"gnorm":0.429,"clip":4},{"it":2000,"train":2.3136,"val":2.1674,"speak":[13.8,9.7,14.5,17.7],"ms":154.8,"gnorm":0.29,"clip":0},{"it":3000,"train":2.0459,"val":2.0158,"speak":[13.2,10.3,15.7,18.9],"ms":155.4,"gnorm":0.335,"clip":0}],"units":752,"params":3344320,"final":2.0158,"secs":553.2},{"net":"janet","lr":0.008,"seed":1,"evals":[{"it":1000,"train":3.0737,"val":2.5467,"speak":[15.4,8.9,9.4,12.7],"ms":156.2,"gnorm":0.38,"clip":4},{"it":2000,"train":2.3401,"val":2.182,"speak":[13.1,9.9,12.0,15.8],"ms":157.3,"gnorm":0.26,"clip":0},{"it":3000,"train":2.0576,"val":2.0191,"speak":[12.4,10.3,13.2,17.1],"ms":155.8,"gnorm":0.304,"clip":0}],"units":752,"params":3344320,"final":2.0191,"secs":561.8},{"net":"janet","lr":0.008,"seed":2,"evals":[{"it":1000,"train":3.0694,"val":2.5456,"speak":[15.0,7.8,10.9,12.7],"ms":155.7,"gnorm":0.381,"clip":3},{"it":2000,"train":2.3431,"val":2.1873,"speak":[12.3,9.0,13.1,15.7],"ms":154.0,"gnorm":0.254,"clip":0},{"it":3000,"train":2.059,"val":2.024,"speak":[11.9,9.6,14.4,17.4],"ms":155.1,"gnorm":0.296,"clip":0}],"units":752,"params":3344320,"final":2.024,"secs":554.0},{"net":"relu2","lr":0.001,"seed":1,"evals":[{"it":1000,"train":3.3252,"val":2.5327,"speak":[34.5,12.4,14.7,20.5],"ms":132.8,"gnorm":0.852,"clip":9},{"it":2000,"train":2.3654,"val":2.2504,"speak":[32.4,11.4,15.1,20.6],"ms":134.8,"gnorm":0.781,"clip":0},{"it":3000,"train":2.1627,"val":2.1334,"speak":[31.9,12.3,15.4,21.8],"ms":132.6,"gnorm":0.85,"clip":0}],"units":768,"params":3344064,"final":2.1334,"secs":500.2},{"net":"relu2","lr":0.002,"seed":1,"evals":[{"it":1000,"train":3.1849,"val":2.5206,"speak":[36.2,6.4,10.8,14.0],"ms":132.5,"gnorm":0.636,"clip":6},{"it":2000,"train":2.3414,"val":2.2143,"speak":[35.2,7.2,11.1,15.5],"ms":132.9,"gnorm":0.512,"clip":0},{"it":3000,"train":2.1163,"val":2.0888,"speak":[35.1,8.3,11.7,16.1],"ms":132.7,"gnorm":0.549,"clip":0}],"units":768,"params":3344064,"final":2.0888,"secs":496.8},{"net":"relu2","lr":0.003,"seed":1,"evals":[{"it":1000,"train":3.1398,"val":2.5379,"speak":[36.2,6.3,8.8,12.1],"ms":133.0,"gnorm":0.54,"clip":5},{"it":2000,"train":2.3441,"val":2.2057,"speak":[36.2,6.4,8.9,13.3],"ms":132.2,"gnorm":0.4,"clip":0},{"it":3000,"train":2.0979,"val":2.0669,"speak":[36.3,7.2,10.1,14.4],"ms":133.0,"gnorm":0.43,"clip":0}],"units":768,"params":3344064,"final":2.0669,"secs":494.0},{"net":"relu2","lr":0.003,"seed":2,"evals":[{"it":1000,"train":3.1364,"val":2.5141,"speak":[34.0,6.1,8.7,11.9],"ms":133.8,"gnorm":0.543,"clip":5},{"it":2000,"train":2.3293,"val":2.1901,"speak":[33.8,6.7,8.9,13.2],"ms":134.2,"gnorm":0.402,"clip":0},{"it":3000,"train":2.0826,"val":2.0549,"speak":[33.7,7.3,9.6,14.5],"ms":134.4,"gnorm":0.43,"clip":0}],"units":768,"params":3344064,"final":2.0549,"secs":502.2},{"net":"relu2","lr":0.004,"seed":1,"evals":[{"it":1000,"train":3.128,"val":2.5542,"speak":[37.0,6.0,7.3,10.3],"ms":134.7,"gnorm":0.479,"clip":4},{"it":2000,"train":2.362,"val":2.2178,"speak":[37.2,5.9,7.7,11.9],"ms":135.2,"gnorm":0.336,"clip":0},{"it":3000,"train":2.1041,"val":2.0722,"speak":[36.9,6.5,8.7,12.8],"ms":135.1,"gnorm":0.364,"clip":0}],"units":768,"params":3344064,"final":2.0722,"secs":503.0},{"net":"relu2","lr":0.004,"seed":2,"evals":[{"it":1000,"train":3.1255,"val":2.5447,"speak":[34.8,5.1,7.5,10.0],"ms":134.6,"gnorm":0.48,"clip":4},{"it":2000,"train":2.3578,"val":2.216,"speak":[34.4,5.2,7.6,11.4],"ms":134.8,"gnorm":0.335,"clip":0},{"it":3000,"train":2.1039,"val":2.0751,"speak":[34.9,5.9,8.3,12.6],"ms":135.0,"gnorm":0.362,"clip":0}],"units":768,"params":3344064,"final":2.0751,"secs":505.8},{"net":"relu2","lr":0.006,"seed":1,"evals":[{"it":1000,"train":3.164,"val":2.6484,"speak":[37.0,3.8,6.4,8.7],"ms":133.9,"gnorm":0.41,"clip":4},{"it":2000,"train":2.4425,"val":2.2872,"speak":[37.5,4.1,7.1,10.6],"ms":133.3,"gnorm":0.27,"clip":0},{"it":3000,"train":2.1652,"val":2.127,"speak":[37.6,4.8,7.8,12.2],"ms":133.4,"gnorm":0.291,"clip":0}],"units":768,"params":3344064,"final":2.127,"secs":498.8},{"net":"relu2","lr":0.008,"seed":1,"evals":[{"it":1000,"train":3.2293,"val":2.7786,"speak":[37.4,3.1,6.1,8.8],"ms":133.3,"gnorm":0.395,"clip":3},{"it":2000,"train":2.5983,"val":2.4453,"speak":[39.9,3.8,7.4,10.8],"ms":133.4,"gnorm":0.287,"clip":0},{"it":3000,"train":2.3201,"val":2.2753,"speak":[40.3,4.9,8.6,12.0],"ms":132.8,"gnorm":0.281,"clip":0}],"units":768,"params":3344064,"final":2.2753,"secs":498.3},{"net":"swiglu","lr":0.001,"seed":1,"evals":[{"it":1000,"train":3.3333,"val":2.5359,"speak":[100.0,100.0,100.0,100.0],"ms":134.6,"gnorm":0.834,"clip":8},{"it":2000,"train":2.3588,"val":2.2402,"speak":[100.0,100.0,100.0,100.0],"ms":134.3,"gnorm":0.779,"clip":0},{"it":3000,"train":2.1464,"val":2.1177,"speak":[100.0,100.0,100.0,100.0],"ms":134.2,"gnorm":0.855,"clip":0}],"units":512,"params":3344064,"final":2.1177,"secs":514.8},{"net":"swiglu","lr":0.002,"seed":1,"evals":[{"it":1000,"train":3.1946,"val":2.5153,"speak":[100.0,100.0,100.0,100.0],"ms":135.6,"gnorm":0.63,"clip":6},{"it":2000,"train":2.328,"val":2.1966,"speak":[100.0,100.0,100.0,100.0],"ms":135.4,"gnorm":0.506,"clip":0},{"it":3000,"train":2.0975,"val":2.0684,"speak":[100.0,100.0,100.0,100.0],"ms":136.0,"gnorm":0.544,"clip":0}],"units":512,"params":3344064,"final":2.0684,"secs":518.3},{"net":"swiglu","lr":0.002,"seed":2,"evals":[{"it":1000,"train":3.1982,"val":2.5192,"speak":[100.0,100.0,100.0,100.0],"ms":133.9,"gnorm":0.626,"clip":6},{"it":2000,"train":2.3467,"val":2.2264,"speak":[100.0,100.0,100.0,100.0],"ms":133.4,"gnorm":0.497,"clip":0},{"it":3000,"train":2.1264,"val":2.1037,"speak":[100.0,100.0,100.0,100.0],"ms":134.1,"gnorm":0.531,"clip":0}],"units":512,"params":3344064,"final":2.1037,"secs":514.1},{"net":"swiglu","lr":0.003,"seed":1,"evals":[{"it":1000,"train":3.1524,"val":2.5282,"speak":[100.0,100.0,100.0,100.0],"ms":134.5,"gnorm":0.533,"clip":5},{"it":2000,"train":2.342,"val":2.2065,"speak":[100.0,100.0,100.0,100.0],"ms":134.6,"gnorm":0.393,"clip":0},{"it":3000,"train":2.1011,"val":2.0716,"speak":[100.0,100.0,100.0,100.0],"ms":134.3,"gnorm":0.422,"clip":0}],"units":512,"params":3344064,"final":2.0716,"secs":512.5},{"net":"swiglu","lr":0.004,"seed":1,"evals":[{"it":1000,"train":3.1394,"val":2.5435,"speak":[100.0,100.0,100.0,100.0],"ms":135.9,"gnorm":0.474,"clip":4},{"it":2000,"train":2.3489,"val":2.2055,"speak":[100.0,100.0,100.0,100.0],"ms":134.6,"gnorm":0.33,"clip":0},{"it":3000,"train":2.0923,"val":2.0615,"speak":[100.0,100.0,100.0,100.0],"ms":135.9,"gnorm":0.359,"clip":0}],"units":512,"params":3344064,"final":2.0615,"secs":516.9},{"net":"swiglu","lr":0.004,"seed":2,"evals":[{"it":1000,"train":3.1383,"val":2.5417,"speak":[100.0,100.0,100.0,100.0],"ms":134.1,"gnorm":0.473,"clip":4},{"it":2000,"train":2.3584,"val":2.2194,"speak":[100.0,100.0,100.0,100.0],"ms":134.8,"gnorm":0.327,"clip":0},{"it":3000,"train":2.1058,"val":2.0781,"speak":[100.0,100.0,100.0,100.0],"ms":133.8,"gnorm":0.356,"clip":0}],"units":512,"params":3344064,"final":2.0781,"secs":514.4},{"net":"swiglu","lr":0.006,"seed":1,"evals":[{"it":1000,"train":3.1472,"val":2.5911,"speak":[100.0,100.0,100.0,100.0],"ms":136.8,"gnorm":0.399,"clip":4},{"it":2000,"train":2.3947,"val":2.2514,"speak":[100.0,100.0,100.0,100.0],"ms":135.6,"gnorm":0.255,"clip":0},{"it":3000,"train":2.1304,"val":2.0969,"speak":[100.0,100.0,100.0,100.0],"ms":135.3,"gnorm":0.283,"clip":0}],"units":512,"params":3344064,"final":2.0969,"secs":512.8},{"net":"swiglu","lr":0.008,"seed":1,"evals":[{"it":1000,"train":3.2317,"val":2.766,"speak":[100.0,100.0,100.0,100.0],"ms":135.5,"gnorm":0.379,"clip":3},{"it":2000,"train":2.574,"val":2.4202,"speak":[100.0,100.0,100.0,100.0],"ms":136.1,"gnorm":0.254,"clip":0},{"it":3000,"train":2.291,"val":2.2486,"speak":[100.0,100.0,100.0,100.0],"ms":135.1,"gnorm":0.258,"clip":0}],"units":512,"params":3344064,"final":2.2486,"secs":516.0}],"tend":[{"net":"janet","lr":0.012,"seed":1,"layers":[{"live":752,"of":752,"med":10.1,"top5":36,"neff":64},{"live":694,"of":752,"med":8.2,"top5":36,"neff":55,"noise_unit":0.99,"noise_pop":0.9943},{"live":717,"of":752,"med":10.7,"top5":35,"neff":63,"noise_unit":0.989,"noise_pop":0.9936},{"live":737,"of":752,"med":15.4,"top5":30,"neff":93,"noise_unit":0.99,"noise_pop":0.9956}]},{"net":"janet","lr":0.012,"seed":2,"layers":[{"live":751,"of":752,"med":10.1,"top5":36,"neff":65},{"live":669,"of":752,"med":7.3,"top5":38,"neff":48,"noise_unit":0.99,"noise_pop":0.9942},{"live":722,"of":752,"med":11.1,"top5":32,"neff":75,"noise_unit":0.99,"noise_pop":0.9946},{"live":735,"of":752,"med":14.3,"top5":30,"neff":90,"noise_unit":0.99,"noise_pop":0.996}]},{"net":"janet","lr":0.016,"seed":1,"layers":[{"live":746,"of":752,"med":8.3,"top5":40,"neff":53},{"live":644,"of":752,"med":7.1,"top5":38,"neff":49,"noise_unit":0.99,"noise_pop":0.9942},{"live":639,"of":752,"med":8.1,"top5":34,"neff":62,"noise_unit":0.989,"noise_pop":0.9933},{"live":691,"of":752,"med":12.0,"top5":32,"neff":79,"noise_unit":0.99,"noise_pop":0.9959}]},{"net":"janet","lr":0.016,"seed":2,"layers":[{"live":744,"of":752,"med":8.5,"top5":37,"neff":57},{"live":539,"of":752,"med":5.7,"top5":42,"neff":40,"noise_unit":0.989,"noise_pop":0.9936},{"live":689,"of":752,"med":10.4,"top5":32,"neff":74,"noise_unit":0.99,"noise_pop":0.9941},{"live":688,"of":752,"med":12.6,"top5":31,"neff":84,"noise_unit":0.989,"noise_pop":0.9954}]},{"net":"janet","lr":0.001,"seed":1,"layers":[{"live":752,"of":752,"med":14.0,"top5":38,"neff":61},{"live":752,"of":752,"med":12.2,"top5":38,"neff":58,"noise_unit":0.992,"noise_pop":0.9964},{"live":752,"of":752,"med":15.7,"top5":34,"neff":79,"noise_unit":0.992,"noise_pop":0.9956},{"live":752,"of":752,"med":21.5,"top5":29,"neff":107,"noise_unit":0.992,"noise_pop":0.9962}]},{"net":"janet","lr":0.024,"seed":1,"layers":[{"live":747,"of":752,"med":7.8,"top5":41,"neff":48},{"live":187,"of":752,"med":4.5,"top5":57,"neff":19,"noise_unit":0.982,"noise_pop":0.9888},{"live":282,"of":752,"med":5.2,"top5":40,"neff":44,"noise_unit":0.985,"noise_pop":0.9899},{"live":608,"of":752,"med":10.4,"top5":33,"neff":72,"noise_unit":0.99,"noise_pop":0.996}]},{"net":"janet","lr":0.024,"seed":2,"layers":[{"live":741,"of":752,"med":7.7,"top5":40,"neff":49},{"live":417,"of":752,"med":4.9,"top5":46,"neff":33,"noise_unit":0.987,"noise_pop":0.9914},{"live":509,"of":752,"med":7.3,"top5":36,"neff":52,"noise_unit":0.988,"noise_pop":0.9934},{"live":616,"of":752,"med":10.9,"top5":32,"neff":74,"noise_unit":0.99,"noise_pop":0.996}]},{"net":"janet","lr":0.002,"seed":1,"layers":[{"live":752,"of":752,"med":15.0,"top5":35,"neff":72},{"live":752,"of":752,"med":12.1,"top5":40,"neff":52,"noise_unit":0.993,"noise_pop":0.9962},{"live":752,"of":752,"med":16.0,"top5":31,"neff":91,"noise_unit":0.992,"noise_pop":0.9955},{"live":752,"of":752,"med":21.4,"top5":30,"neff":106,"noise_unit":0.992,"noise_pop":0.9967}]},{"net":"janet","lr":0.032,"seed":1,"layers":[{"live":733,"of":752,"med":6.9,"top5":42,"neff":45},{"live":113,"of":752,"med":3.5,"top5":57,"neff":19,"noise_unit":0.972,"noise_pop":0.9405},{"live":248,"of":752,"med":4.7,"top5":37,"neff":51,"noise_unit":0.982,"noise_pop":0.9896},{"live":498,"of":752,"med":9.2,"top5":34,"neff":67,"noise_unit":0.99,"noise_pop":0.9962}]},{"net":"janet","lr":0.032,"seed":2,"layers":[{"live":484,"of":752,"med":3.6,"top5":56,"neff":21},{"live":328,"of":752,"med":4.6,"top5":44,"neff":35,"noise_unit":0.984,"noise_pop":0.993},{"live":401,"of":752,"med":6.1,"top5":42,"neff":40,"noise_unit":0.988,"noise_pop":0.9932},{"live":564,"of":752,"med":11.5,"top5":31,"neff":80,"noise_unit":0.991,"noise_pop":0.9967}]},{"net":"janet","lr":0.003,"seed":1,"layers":[{"live":752,"of":752,"med":14.8,"top5":34,"neff":77},{"live":752,"of":752,"med":11.6,"top5":39,"neff":57,"noise_unit":0.992,"noise_pop":0.9964},{"live":752,"of":752,"med":15.5,"top5":32,"neff":83,"noise_unit":0.991,"noise_pop":0.9948},{"live":752,"of":752,"med":21.2,"top5":29,"neff":108,"noise_unit":0.991,"noise_pop":0.9969}]},{"net":"janet","lr":0.048,"seed":1,"layers":[{"live":396,"of":752,"med":12.2,"top5":35,"neff":76},{"live":384,"of":752,"med":13.1,"top5":36,"neff":68,"noise_unit":0.973,"noise_pop":0.9992},{"live":653,"of":752,"med":38.8,"top5":29,"neff":123,"noise_unit":0.987,"noise_pop":0.9999},{"live":706,"of":752,"med":39.1,"top5":31,"neff":117,"noise_unit":0.98,"noise_pop":0.9992}]},{"net":"janet","lr":0.048,"seed":2,"layers":[{"live":239,"of":752,"med":5.8,"top5":35,"neff":60},{"live":252,"of":752,"med":7.3,"top5":35,"neff":63,"noise_unit":0.957,"noise_pop":0.9987},{"live":726,"of":752,"med":39.9,"top5":29,"neff":124,"noise_unit":0.982,"noise_pop":0.9998},{"live":714,"of":752,"med":37.3,"top5":29,"neff":129,"noise_unit":0.974,"noise_pop":0.9993}]},{"net":"janet","lr":0.004,"seed":1,"layers":[{"live":752,"of":752,"med":13.8,"top5":34,"neff":77},{"live":752,"of":752,"med":12.1,"top5":36,"neff":62,"noise_unit":0.991,"noise_pop":0.9957},{"live":752,"of":752,"med":15.2,"top5":31,"neff":87,"noise_unit":0.99,"noise_pop":0.9946},{"live":752,"of":752,"med":19.9,"top5":29,"neff":104,"noise_unit":0.991,"noise_pop":0.9963}]},{"net":"janet","lr":0.006,"seed":1,"layers":[{"live":752,"of":752,"med":12.2,"top5":34,"neff":75},{"live":751,"of":752,"med":11.4,"top5":36,"neff":63,"noise_unit":0.991,"noise_pop":0.9958},{"live":752,"of":752,"med":13.7,"top5":33,"neff":79,"noise_unit":0.99,"noise_pop":0.995},{"live":752,"of":752,"med":18.4,"top5":28,"neff":107,"noise_unit":0.991,"noise_pop":0.9962}]},{"net":"janet","lr":0.006,"seed":2,"layers":[{"live":752,"of":752,"med":12.5,"top5":34,"neff":74},{"live":750,"of":752,"med":10.1,"top5":36,"neff":61,"noise_unit":0.991,"noise_pop":0.9945},{"live":752,"of":752,"med":15.3,"top5":32,"neff":81,"noise_unit":0.991,"noise_pop":0.9949},{"live":752,"of":752,"med":18.2,"top5":28,"neff":105,"noise_unit":0.991,"noise_pop":0.9958}]},{"net":"janet","lr":0.008,"seed":1,"layers":[{"live":752,"of":752,"med":11.6,"top5":36,"neff":70},{"live":745,"of":752,"med":10.0,"top5":36,"neff":63,"noise_unit":0.991,"noise_pop":0.9947},{"live":745,"of":752,"med":13.0,"top5":33,"neff":74,"noise_unit":0.99,"noise_pop":0.9941},{"live":750,"of":752,"med":16.6,"top5":29,"neff":97,"noise_unit":0.99,"noise_pop":0.9959}]},{"net":"janet","lr":0.008,"seed":2,"layers":[{"live":752,"of":752,"med":11.2,"top5":37,"neff":66},{"live":747,"of":752,"med":9.2,"top5":37,"neff":58,"noise_unit":0.991,"noise_pop":0.9943},{"live":747,"of":752,"med":14.2,"top5":31,"neff":85,"noise_unit":0.991,"noise_pop":0.995},{"live":749,"of":752,"med":16.5,"top5":29,"neff":99,"noise_unit":0.99,"noise_pop":0.9955}]},{"net":"relu2","lr":0.001,"seed":1,"layers":[{"live":768,"of":768,"med":31.0,"top5":35,"neff":91},{"live":768,"of":768,"med":11.9,"top5":43,"neff":45,"noise_unit":0.999,"noise_pop":0.9994},{"live":768,"of":768,"med":14.9,"top5":36,"neff":61,"noise_unit":0.999,"noise_pop":0.9994},{"live":768,"of":768,"med":20.6,"top5":36,"neff":72,"noise_unit":0.999,"noise_pop":0.9996}]},{"net":"relu2","lr":0.002,"seed":1,"layers":[{"live":768,"of":768,"med":34.5,"top5":33,"neff":97},{"live":744,"of":768,"med":7.8,"top5":46,"neff":36,"noise_unit":0.999,"noise_pop":0.9992},{"live":765,"of":768,"med":10.6,"top5":36,"neff":57,"noise_unit":0.999,"noise_pop":0.9993},{"live":765,"of":768,"med":14.9,"top5":39,"neff":56,"noise_unit":0.999,"noise_pop":0.9995}]},{"net":"relu2","lr":0.003,"seed":1,"layers":[{"live":768,"of":768,"med":35.4,"top5":32,"neff":104},{"live":727,"of":768,"med":7.0,"top5":46,"neff":35,"noise_unit":0.999,"noise_pop":0.9988},{"live":746,"of":768,"med":9.5,"top5":40,"neff":46,"noise_unit":0.999,"noise_pop":0.9991},{"live":757,"of":768,"med":13.1,"top5":37,"neff":58,"noise_unit":0.999,"noise_pop":0.9994}]},{"net":"relu2","lr":0.003,"seed":2,"layers":[{"live":768,"of":768,"med":32.7,"top5":32,"neff":101},{"live":703,"of":768,"med":7.2,"top5":51,"neff":29,"noise_unit":0.999,"noise_pop":0.9989},{"live":739,"of":768,"med":8.7,"top5":38,"neff":50,"noise_unit":0.999,"noise_pop":0.9992},{"live":759,"of":768,"med":13.2,"top5":36,"neff":59,"noise_unit":0.999,"noise_pop":0.9995}]},{"net":"relu2","lr":0.004,"seed":1,"layers":[{"live":768,"of":768,"med":35.7,"top5":32,"neff":106},{"live":700,"of":768,"med":6.4,"top5":45,"neff":35,"noise_unit":0.999,"noise_pop":0.9987},{"live":710,"of":768,"med":8.2,"top5":42,"neff":43,"noise_unit":0.999,"noise_pop":0.9991},{"live":736,"of":768,"med":12.0,"top5":39,"neff":53,"noise_unit":0.999,"noise_pop":0.9994}]},{"net":"relu2","lr":0.004,"seed":2,"layers":[{"live":768,"of":768,"med":33.9,"top5":31,"neff":108},{"live":609,"of":768,"med":6.2,"top5":51,"neff":27,"noise_unit":0.999,"noise_pop":0.9989},{"live":711,"of":768,"med":7.9,"top5":42,"neff":43,"noise_unit":0.999,"noise_pop":0.999},{"live":733,"of":768,"med":12.0,"top5":38,"neff":56,"noise_unit":0.999,"noise_pop":0.9994}]},{"net":"relu2","lr":0.006,"seed":1,"layers":[{"live":768,"of":768,"med":36.1,"top5":32,"neff":103},{"live":516,"of":768,"med":6.2,"top5":49,"neff":30,"noise_unit":0.999,"noise_pop":0.9987},{"live":663,"of":768,"med":7.8,"top5":46,"neff":36,"noise_unit":0.999,"noise_pop":0.999},{"live":707,"of":768,"med":11.9,"top5":39,"neff":51,"noise_unit":0.999,"noise_pop":0.9993}]},{"net":"relu2","lr":0.008,"seed":1,"layers":[{"live":768,"of":768,"med":39.4,"top5":34,"neff":97},{"live":410,"of":768,"med":6.5,"top5":60,"neff":18,"noise_unit":0.998,"noise_pop":0.9991},{"live":589,"of":768,"med":9.4,"top5":45,"neff":38,"noise_unit":0.999,"noise_pop":0.999},{"live":663,"of":768,"med":12.5,"top5":40,"neff":51,"noise_unit":0.999,"noise_pop":0.9992}]}]};
+const NETS = [
+  { id: "janet", name: "Janet", v: "--s-janet" },
+  { id: "swiglu", name: "SwiGLU", v: "--s-swiglu" },
+  { id: "geglu", name: "GeGLU", v: "--s-geglu" },
+  { id: "relu2", name: "ReLU²", v: "--s-relu2" },
+];
+const LAYERS = [1, 2, 3, 4].map(i => ({ id: "L" + i, name: "Layer " + i, v: "--l" + i }));
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const NS = "http://www.w3.org/2000/svg";
+function el(tag, attrs, parent) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+const fmtLr = x => {
+  const e = Math.floor(Math.log10(x) + 1e-9), m = +(x / 10 ** e).toFixed(2);
+  return m + "e" + e;
+};
+const mean = a => a.reduce((s, x) => s + x, 0) / a.length;
+const lrs = net => [...new Set(DATA.runs.filter(r => r.net === net).map(r => r.lr))].sort((a, b) => a - b);
+const runsAt = (net, lr) => DATA.runs.filter(r => r.net === net && r.lr === lr).sort((a, b) => a.seed - b.seed);
+const evalAt = (r, it) => r.evals.find(e => e.it === it);
+
+/* A line chart over a log or linear x: series of {name, v, pts:[{x,y,seeds:[..]}]}; points
+   beyond [y0,y1] are drawn at the edge with an arrow and their value. */
+const charts = {};
+function lineChart(id, cfg) {
+  const host = document.getElementById(id);
+  const W = cfg.w || 900, H = cfg.h || 380, m = { l: 66, r: 18, t: 14, b: 44 };
+  const pw = W - m.l - m.r, ph = H - m.t - m.b;
+  const lx = cfg.logx !== false;
+  const X = x => m.l + (lx ? (Math.log(x) - Math.log(cfg.x0)) / (Math.log(cfg.x1) - Math.log(cfg.x0)) : (x - cfg.x0) / (cfg.x1 - cfg.x0)) * pw;
+  const Y = y => m.t + (1 - (y - cfg.y0) / (cfg.y1 - cfg.y0)) * ph;
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": cfg.label || "" }, host);
+  const g = el("g", {}, svg);
+  for (const t of cfg.yt) {
+    el("line", { x1: m.l, x2: W - m.r, y1: Y(t), y2: Y(t), stroke: "var(--grid)", "stroke-width": 1 }, g);
+    const tx = el("text", { x: m.l - 8, y: Y(t) + 4, "text-anchor": "end", "font-size": 12, fill: "var(--muted)" }, g);
+    tx.textContent = cfg.yf ? cfg.yf(t) : t;
+  }
+  el("line", { x1: m.l, x2: W - m.r, y1: m.t + ph, y2: m.t + ph, stroke: "var(--axis)", "stroke-width": 1 }, g);
+  for (const t of cfg.xt) {
+    el("line", { x1: X(t), x2: X(t), y1: m.t + ph, y2: m.t + ph + 4, stroke: "var(--axis)" }, g);
+    const tx = el("text", { x: X(t), y: m.t + ph + 18, "text-anchor": "middle", "font-size": 12, fill: "var(--muted)" }, g);
+    tx.textContent = cfg.xf ? cfg.xf(t) : fmtLr(t);
+  }
+  const xl = el("text", { x: m.l + pw / 2, y: H - 6, "text-anchor": "middle", "font-size": 12.5, fill: "var(--fg-2)" }, g);
+  xl.textContent = cfg.xlabel;
+  const yl = el("text", { x: 14, y: m.t + ph / 2, "text-anchor": "middle", "font-size": 12.5, fill: "var(--fg-2)", transform: `rotate(-90 14 ${m.t + ph / 2})` }, g);
+  yl.textContent = cfg.ylabel;
+  const cross = el("line", { y1: m.t, y2: m.t + ph, stroke: "var(--axis)", "stroke-width": 1, visibility: "hidden" }, svg);
+  const layers = {};
+  const clampY = y => Math.max(cfg.y0, Math.min(cfg.y1, y));
+  cfg.series.forEach(s => {
+    const sg = el("g", {}, svg);
+    layers[s.name] = sg;
+    const col = `var(${s.v})`;
+    const all = s.pts.filter(p => p.y != null);
+    const pts = cfg.breakX ? all.filter(p => p.x < cfg.breakX) : all;
+    const broken = cfg.breakX ? all.filter(p => p.x >= cfg.breakX) : [];
+    broken.forEach(p => {
+      el("circle", { cx: X(p.x), cy: Y(clampY(p.y)), r: 4, fill: "var(--surface)", stroke: col, "stroke-width": 2 }, sg);
+    });
+    const inr = pts.filter(p => p.y >= cfg.y0 && p.y <= cfg.y1);
+    // the line runs through in-range points and stops at the edge toward an off-scale one
+    let d = "";
+    pts.forEach((p, i) => {
+      const yy = Y(clampY(p.y));
+      d += (i ? "L" : "M") + X(p.x).toFixed(1) + " " + yy.toFixed(1);
+    });
+    el("path", { d, fill: "none", stroke: col, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round", "stroke-dasharray": s.dash || "" }, sg);
+    if (cfg.seeds) pts.forEach(p => (p.seeds || []).forEach(v => {
+      if (v < cfg.y0 || v > cfg.y1) return;
+      el("circle", { cx: X(p.x), cy: Y(v), r: 3, fill: col, "fill-opacity": 0.45 }, sg);
+    }));
+    pts.forEach(p => {
+      const off = p.y > cfg.y1 || p.y < cfg.y0;
+      if (off) {
+        const yy = p.y > cfg.y1 ? m.t : m.t + ph, dir = p.y > cfg.y1 ? -1 : 1;
+        el("path", { d: `M${X(p.x) - 5} ${yy - dir * 2} L${X(p.x)} ${yy + dir * 5} L${X(p.x) + 5} ${yy - dir * 2} Z`, fill: col }, sg);
+        const t = el("text", { x: X(p.x) - 8, y: yy + (dir < 0 ? 12 : -6), "text-anchor": "end", "font-size": 11.5, fill: "var(--fg-2)" }, sg);
+        t.textContent = (cfg.yv ? cfg.yv(p.y) : p.y.toFixed(3)) + " ↑";
+        if (dir > 0) t.textContent = (cfg.yv ? cfg.yv(p.y) : p.y.toFixed(3)) + " ↓";
+      } else {
+        el("circle", { cx: X(p.x), cy: Y(p.y), r: 4, fill: col, stroke: "var(--surface)", "stroke-width": 2 }, sg);
+      }
+    });
+    if (s.label && inr.length) {
+      const last = inr[inr.length - 1];
+      const t = el("text", { x: X(last.x) + 8, y: Y(last.y) + 4, "font-size": 12, fill: "var(--fg-2)" }, sg);
+      t.textContent = s.name;
+      if (X(last.x) + 60 > W) { t.setAttribute("x", X(last.x) - 8); t.setAttribute("text-anchor", "end"); t.setAttribute("y", Y(last.y) - 9); }
+    }
+  });
+  // hover: snap to the nearest x present in any visible series
+  const xs = [...new Set(cfg.series.flatMap(s => s.pts.map(p => p.x)))].sort((a, b) => a - b);
+  const tip = document.createElement("div");
+  tip.className = "tip"; tip.hidden = true; host.appendChild(tip);
+  const hit = el("rect", { x: m.l, y: m.t, width: pw, height: ph, fill: "transparent", tabindex: 0 }, svg);
+  let fi = -1;
+  function show(i) {
+    const x = xs[i];
+    cross.setAttribute("x1", X(x)); cross.setAttribute("x2", X(x)); cross.setAttribute("visibility", "visible");
+    tip.replaceChildren();
+    const h = document.createElement("div"); h.className = "t";
+    h.textContent = (cfg.tipx ? cfg.tipx(x) : "learning rate " + fmtLr(x));
+    tip.appendChild(h);
+    cfg.series.forEach(s => {
+      if (layers[s.name].style.display === "none") return;
+      const p = s.pts.find(q => q.x === x);
+      if (!p || p.y == null) return;
+      const r = document.createElement("div"); r.className = "r";
+      const k = document.createElement("span"); k.className = "key"; k.style.background = `var(${s.v})`;
+      const b = document.createElement("b"); b.textContent = cfg.yv ? cfg.yv(p.y) : p.y.toFixed(4);
+      const n = document.createElement("span");
+      n.textContent = s.name + (p.seeds && p.seeds.length > 1 ? "  (" + p.seeds.map(v => cfg.yv ? cfg.yv(v) : v.toFixed(4)).join(" · ") + ")" : "");
+      r.append(k, b, n); tip.appendChild(r);
+    });
+    tip.hidden = false;
+    const box = host.getBoundingClientRect(), sx = box.width / W;
+    let left = X(x) * sx + 12;
+    if (left + tip.offsetWidth > box.width) left = X(x) * sx - tip.offsetWidth - 12;
+    tip.style.left = Math.max(0, left) + "px";
+    tip.style.top = (m.t * sx) + "px";
+  }
+  function hide() { tip.hidden = true; cross.setAttribute("visibility", "hidden"); fi = -1; }
+  hit.addEventListener("pointermove", ev => {
+    const box = svg.getBoundingClientRect(), px = (ev.clientX - box.left) * W / box.width;
+    let bi = 0, bd = 1e9;
+    xs.forEach((x, i) => { const dd = Math.abs(X(x) - px); if (dd < bd) { bd = dd; bi = i; } });
+    show(bi);
+  });
+  hit.addEventListener("pointerleave", hide);
+  hit.addEventListener("blur", hide);
+  hit.addEventListener("keydown", ev => {
+    if (ev.key === "ArrowRight") { fi = Math.min(xs.length - 1, fi + 1); show(fi); ev.preventDefault(); }
+    if (ev.key === "ArrowLeft") { fi = Math.max(0, fi < 0 ? 0 : fi - 1); show(fi); ev.preventDefault(); }
+    if (ev.key === "Escape") hide();
+  });
+  hit.addEventListener("focus", () => { fi = 0; show(0); });
+  charts[id] = layers;
+  return layers;
+}
+/* One legend row may drive several charts (the same series in each). */
+function legend(forId, series, targets, dot) {
+  const box = document.querySelector(`.legend[data-for="${forId}"]`);
+  if (!box) return;
+  series.forEach(s => {
+    const b = document.createElement("button");
+    b.type = "button"; b.setAttribute("aria-pressed", "true");
+    const k = document.createElement("span"); k.className = "key" + (dot ? " dot" : ""); k.style.background = `var(${s.v})`;
+    const t = document.createElement("span"); t.textContent = s.name;
+    b.append(k, t);
+    b.addEventListener("click", () => {
+      const on = b.getAttribute("aria-pressed") !== "true";
+      b.setAttribute("aria-pressed", on ? "true" : "false");
+      targets.forEach(id => { const g = charts[id] && charts[id][s.name]; if (g) g.style.display = on ? "" : "none"; });
+    });
+    box.appendChild(b);
+  });
+}
+function table(id, head, rows, bestCol) {
+  const t = document.createElement("table");
+  const tr = document.createElement("tr");
+  head.forEach(h => { const th = document.createElement("th"); th.textContent = h; tr.appendChild(th); });
+  t.appendChild(tr);
+  rows.forEach(r => {
+    const row = document.createElement("tr");
+    r.forEach((c, i) => { const td = document.createElement("td"); td.textContent = c; if (r.best === i) td.className = "best"; row.appendChild(td); });
+    t.appendChild(row);
+  });
+  document.getElementById(id).appendChild(t);
+}
+
+const LRT = [1e-3, 2e-3, 4e-3, 8e-3, 1.6e-2, 3.2e-2];
+const best = {};
+NETS.forEach(n => {
+  let b = null;
+  lrs(n.id).filter(lr => runsAt(n.id, lr).length > 1).forEach(lr => { const v = mean(runsAt(n.id, lr).map(r => r.final)); if (!b || v < b.v) b = { lr, v }; });
+  best[n.id] = b;
+});
+
+// Figure 1
+lineChart("c1", {
+  x0: 8.5e-4, x1: 5.6e-2, y0: 2.0, y1: 2.30, yt: [2.0, 2.05, 2.1, 2.15, 2.2, 2.25, 2.3], yf: t => t.toFixed(2),
+  xt: [...LRT, 4.8e-2], xlabel: "Peak learning rate (log scale)", ylabel: "Validation loss (nats/token)", seeds: true,
+  label: "Final validation loss against learning rate for four feed-forward blocks",
+  series: NETS.map(n => ({ name: n.name, v: n.v, label: true, pts: lrs(n.id).map(lr => { const s = runsAt(n.id, lr).map(r => r.final); return { x: lr, y: mean(s), seeds: s }; }) })),
+});
+legend("c1", NETS, ["c1"]);
+{
+  const rows = [];
+  NETS.forEach(n => lrs(n.id).forEach(lr => runsAt(n.id, lr).forEach(r => {
+    const e1 = evalAt(r, 1000), e3 = evalAt(r, 3000);
+    const row = [n.name, fmtLr(lr), r.seed, r.final.toFixed(4), e1.val.toFixed(4), e3.speak.map(v => v.toFixed(1)).join(" / "), e1.clip + "%", e3.gnorm.toFixed(3), e3.ms.toFixed(0)];
+    if (lr === best[n.id].lr) row.best = 3;
+    rows.push(row);
+  })));
+  table("t1", ["Block", "Peak LR", "Seed", "Val loss", "Val at 1k", "Speaking share % by layer", "Clipped in 1k", "Grad norm", "ms/step"], rows);
+}
+
+// Figure 2
+lineChart("c2", {
+  x0: 0.2, x1: 9, y0: -0.01, y1: 0.25, yt: [0, 0.05, 0.1, 0.15, 0.2, 0.25], yf: t => "+" + t.toFixed(2),
+  xt: [0.25, 0.5, 1, 2, 4, 8], xf: t => t + "×", xlabel: "Learning rate as a multiple of the block's best (log scale)",
+  ylabel: "Loss above the block's best", tipx: x => x.toFixed(2) + "× the block's best rate", yv: v => "+" + v.toFixed(3),
+  label: "Loss above each block's best against the learning rate as a multiple of the best",
+  series: NETS.map(n => ({ name: n.name, v: n.v, label: true, pts: lrs(n.id).map(lr => ({ x: +(lr / best[n.id].lr).toFixed(4), y: mean(runsAt(n.id, lr).map(r => r.final)) - best[n.id].v })) })),
+});
+legend("c2", NETS, ["c2"]);
+
+// Figure 3 and 4: the probes
+const probeLrs = net => [...new Set(DATA.tend.filter(t => t.net === net).map(t => t.lr))].sort((a, b) => a - b);
+const probes = (net, lr) => DATA.tend.filter(t => t.net === net && t.lr === lr);
+function probeSeries(net, f) {
+  return LAYERS.map((L, li) => ({ name: L.name, v: L.v, label: false, pts: probeLrs(net).map(lr => {
+    const s = probes(net, lr).map(t => f(t.layers[li]));
+    return { x: lr, y: mean(s), seeds: s };
+  }) }));
+}
+const aliveCfg = (net, x1) => ({
+  x0: 8.5e-4, x1, y0: 0, y1: 100, yt: [0, 25, 50, 75, 100], xt: x1 > 4e-2 ? [1e-3, 4e-3, 1.6e-2, 4.8e-2] : [1e-3, 2e-3, 4e-3, 8e-3],
+  xlabel: "Peak learning rate (log scale)", ylabel: "Units active, %", w: 460, h: 340, breakX: 4e-2, yv: v => v.toFixed(1) + "%",
+  label: "Units active by layer against learning rate",
+  series: probeSeries(net, l => 100 * l.live / l.of),
+});
+lineChart("c3a", aliveCfg("janet", 5.6e-2));
+lineChart("c3b", aliveCfg("relu2", 1e-2));
+legend("c3a", LAYERS, ["c3a", "c3b"]);
+{
+  const rows = [];
+  ["janet", "relu2"].forEach(net => probeLrs(net).forEach(lr => probes(net, lr).forEach(t => {
+    rows.push([net === "janet" ? "Janet" : "ReLU²", fmtLr(lr), t.seed, ...t.layers.map(l => `${l.live} of ${l.of} (${l.med}%)`)]);
+  })));
+  table("t3", ["Block", "Peak LR", "Seed", "Layer 1", "Layer 2", "Layer 3", "Layer 4"], rows);
+}
+const medCfg = (net, x1) => ({
+  x0: 8.5e-4, x1, y0: 0, y1: 45, yt: [0, 10, 20, 30, 40], xt: x1 > 4e-2 ? [1e-3, 4e-3, 1.6e-2, 4.8e-2] : [1e-3, 2e-3, 4e-3, 8e-3],
+  xlabel: "Peak learning rate (log scale)", ylabel: "Median speaking, %", w: 460, h: 340, breakX: 4e-2, yv: v => v.toFixed(1) + "%",
+  label: "Median share of positions where a living unit speaks, by layer",
+  series: probeSeries(net, l => l.med),
+});
+lineChart("c4a", medCfg("janet", 5.6e-2));
+lineChart("c4b", medCfg("relu2", 1e-2));
+legend("c4a", LAYERS, ["c4a", "c4b"]);
+
+// Figure 5: speaking through training, Janet, four rates
+{
+  const host = document.getElementById("c5"), ids = [];
+  [6e-3, 1.6e-2, 3.2e-2, 4.8e-2].forEach((lr, i) => {
+    const d = document.createElement("div");
+    const h = document.createElement("h3"); h.textContent = "Learning rate " + fmtLr(lr) + (lr === 6e-3 ? " (best)" : "");
+    const c = document.createElement("div"); c.className = "chart"; c.id = "c5_" + i;
+    d.append(h, c); host.appendChild(d); ids.push(c.id);
+    const rs = runsAt("janet", lr);
+    lineChart(c.id, {
+      logx: false, x0: 800, x1: 3200, y0: 0, y1: 45, yt: [0, 10, 20, 30, 40], xt: [1000, 2000, 3000], xf: t => t / 1000 + "k",
+      xlabel: "Training step", ylabel: "Speaking, %", w: 400, h: 300, tipx: x => "step " + x, yv: v => v.toFixed(1) + "%",
+      label: "Janet's units speaking during training at learning rate " + fmtLr(lr),
+      series: LAYERS.map((L, li) => ({ name: L.name, v: L.v, pts: [1000, 2000, 3000].map(it => {
+        const s = rs.map(r => evalAt(r, it).speak[li]); return { x: it, y: mean(s), seeds: s };
+      }) })),
+    });
+  });
+  legend("c5_0", LAYERS, ids);
+}
+
+// Figure 6
+lineChart("c6", {
+  x0: 8.5e-4, x1: 5.6e-2, y0: 2.45, y1: 2.90, yt: [2.5, 2.6, 2.7, 2.8, 2.9], yf: t => t.toFixed(1),
+  xt: [...LRT, 4.8e-2], xlabel: "Peak learning rate (log scale)", ylabel: "Validation loss at step 1,000", seeds: true,
+  label: "Validation loss after 1000 steps against learning rate",
+  series: NETS.map(n => ({ name: n.name, v: n.v, label: true, pts: lrs(n.id).map(lr => { const s = runsAt(n.id, lr).map(r => evalAt(r, 1000).val); return { x: lr, y: mean(s), seeds: s }; }) })),
+});
+legend("c6", NETS, ["c6"]);
+
+// Figure 7
+lineChart("c7a", {
+  x0: 8.5e-4, x1: 5.6e-2, y0: 0, y1: 1.2, yt: [0, 0.4, 0.8, 1.2], yf: t => t.toFixed(1), w: 460, h: 340,
+  xt: [1e-3, 4e-3, 1.6e-2, 4.8e-2], xlabel: "Peak learning rate (log scale)", ylabel: "Gradient norm", yv: v => v.toFixed(3),
+  label: "Final gradient norm against learning rate",
+  series: NETS.map(n => ({ name: n.name, v: n.v, pts: lrs(n.id).map(lr => { const s = runsAt(n.id, lr).map(r => evalAt(r, 3000).gnorm); return { x: lr, y: mean(s), seeds: s }; }) })),
+});
+lineChart("c7b", {
+  x0: 8.5e-4, x1: 5.6e-2, y0: 0, y1: 50, yt: [0, 10, 20, 30, 40, 50], w: 460, h: 340,
+  xt: [1e-3, 4e-3, 1.6e-2, 4.8e-2], xlabel: "Peak learning rate (log scale)", ylabel: "Clipped steps, %", yv: v => v.toFixed(0) + "%",
+  label: "Share of the first thousand steps clipped against learning rate",
+  series: NETS.map(n => ({ name: n.name, v: n.v, pts: lrs(n.id).map(lr => { const s = runsAt(n.id, lr).map(r => evalAt(r, 1000).clip); return { x: lr, y: mean(s), seeds: s }; }) })),
+});
+legend("c7a", NETS, ["c7a", "c7b"]);
+
+// Figure 8: bars
+{
+  const host = document.getElementById("c8");
+  const W = 900, rowH = 34, m = { l: 80, r: 70, t: 6, b: 30 }, H = m.t + m.b + rowH * NETS.length;
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Median training step time by block" }, host);
+  const med = a => { const s = [...a].sort((x, y) => x - y); return s[Math.floor(s.length / 2)]; };
+  const vals = NETS.map(n => med(DATA.runs.filter(r => r.net === n.id && r.final < 2.5).map(r => evalAt(r, 3000).ms)));
+  const X = v => m.l + v / 180 * (W - m.l - m.r);
+  [0, 50, 100, 150].forEach(t => {
+    el("line", { x1: X(t), x2: X(t), y1: m.t, y2: H - m.b, stroke: "var(--grid)" }, svg);
+    const tx = el("text", { x: X(t), y: H - m.b + 18, "text-anchor": "middle", "font-size": 12, fill: "var(--muted)" }, svg);
+    tx.textContent = t + " ms";
+  });
+  NETS.forEach((n, i) => {
+    const y = m.t + i * rowH + 6, h = 20;
+    const name = el("text", { x: m.l - 10, y: y + 15, "text-anchor": "end", "font-size": 13, fill: "var(--fg)" }, svg);
+    name.textContent = n.name;
+    const w = X(vals[i]) - m.l;
+    el("path", { d: `M${m.l} ${y} H${m.l + w - 4} Q${m.l + w} ${y} ${m.l + w} ${y + 4} V${y + h - 4} Q${m.l + w} ${y + h} ${m.l + w - 4} ${y + h} H${m.l} Z`, fill: `var(${n.v})` }, svg);
+    const v = el("text", { x: m.l + w + 8, y: y + 15, "font-size": 13, fill: "var(--fg-2)" }, svg);
+    v.textContent = vals[i].toFixed(0) + " ms";
+  });
+}
+</script>
+</body>
+</html>

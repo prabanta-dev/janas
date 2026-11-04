@@ -1223,6 +1223,36 @@ int janas_expert_cache_begin(struct janas_expert_cache *c, uint32_t layer,
     return begin_req(c, layer, ids, n, slots, ready, 0);
 }
 
+void janas_expert_cache_demote(struct janas_expert_cache *c, uint32_t layer,
+                               const uint32_t *ids, size_t n)
+{
+    if (c->wide && layer >= c->n_layer) {
+        janas_expert_cache_demote(c->wide, layer, ids, n);
+        return;
+    }
+    uint32_t ne = c->j->h.n_expert;
+    if (layer >= c->n_layer)
+        return;
+    size_t base = (size_t)layer * ne;
+    pthread_mutex_lock(&c->api_lock);
+    for (size_t i = 0; i < n; i++) {
+        if (ids[i] >= ne)
+            continue;
+        int32_t s = c->where[base + ids[i]];
+        if (s == NONE || c->pf_flag[s])
+            continue;
+        if (c->tail != s) {
+            unlink_slot(c, s);
+            push_back(c, s);
+        }
+        if (c->ltail[layer] != s) {
+            layer_unlink(c, s);
+            layer_push_back(c, s);
+        }
+    }
+    pthread_mutex_unlock(&c->api_lock);
+}
+
 void janas_expert_cache_present(struct janas_expert_cache *c, uint32_t layer,
                                 const uint32_t *ids, size_t n, uint8_t *in)
 {

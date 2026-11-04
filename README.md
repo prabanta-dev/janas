@@ -217,6 +217,7 @@ sudo pacman -S vulkan-headers glslang vulkan-tools           # the same, Arch
 - [docs/tools.md](docs/tools.md) — the converters, checkers and benchmarks built beside the programs
 - [docs/hardware.md](docs/hardware.md) — measuring your machine with `janas-bench`, and helping it run on more hardware: the machines wanted most, the one command that tries Janas and writes a report, and what to send
 - [docs/reports.md](docs/reports.md) — what testers measured on their own machines
+- [docs/janet-lr-study.md](docs/janet-lr-study.md) — Janet, a new feed-forward block: a first comparison with SwiGLU, GeGLU and ReLU² across learning rates
 - [AUTHORS](AUTHORS) — who wrote it, and what it owes to others
 - [LICENSE](LICENSE) — GNU GPL, version 3 or later
 

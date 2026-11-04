@@ -9,6 +9,7 @@
 #include "gpu_token.h"
 
 #include <math.h>
+#include <stdarg.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -734,40 +735,75 @@ struct janas_gpu_tok *janas_gpu_tok_create(struct janas_gpu *g,
     return t;
 }
 
+/* snprintf at the end of buf */
+static void add(char *buf, size_t len, const char *fmt, ...)
+    __attribute__((format(printf, 3, 4)));
+static void add(char *buf, size_t len, const char *fmt, ...)
+{
+    size_t n = strlen(buf);
+    if (n + 1 >= len)
+        return;
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf + n, len - n, fmt, ap);
+    va_end(ap);
+}
+
+void janas_gpu_tok_report(const struct janas_gpu_tok *t, char *buf, size_t len)
+{
+    if (!len)
+        return;
+    buf[0] = 0;
+    if (!t)
+        return;
+    uint64_t asked = t->tier_hits + t->tier_loads + t->cpu_experts;
+    if (t->n_slot)
+        add(buf, len,
+            "experts' tier: %u slots, %zu MiB of the card's memory; of %llu "
+            "experts asked for, %.1f%% found there, %.1f%% read into it, "
+            "%.1f%% computed by the CPU\n",
+            t->n_slot, (t->n_slot * t->slot_bytes) >> 20,
+            (unsigned long long)asked,
+            asked ? 100.0 * (double)t->tier_hits / (double)asked : 0.0,
+            asked ? 100.0 * (double)t->tier_loads / (double)asked : 0.0,
+            asked ? 100.0 * (double)t->cpu_experts / (double)asked : 0.0);
+    if (!t->qp || !t->tokens)
+        return;
+    double all = 0;
+    for (int i = 0; i < PH_N; i++)
+        all += t->ph_ns[i];
+    add(buf, len,
+        "gpu token profile, %llu passes of %.1f tokens, %.2f ms a pass "
+        "(%.2f ms from submission to fence, %.2f ms copying the logits):\n",
+        (unsigned long long)t->tokens, (double)t->pass_tokens / t->tokens,
+        all / t->tokens * 1e-6, t->wall_ns / t->tokens * 1e-6,
+        t->copy_ns / t->tokens * 1e-6);
+    if (t->plan_ns > 0)
+        add(buf, len, "  (the CPU's plans %.3f ms a pass)\n",
+            t->plan_ns / t->tokens * 1e-6);
+    if (t->n_slot)
+        add(buf, len,
+            "  (a pass's experts: %.1f in the tier, %.1f read into it, %.1f "
+            "by the CPU in %.3f ms; the cache %.3f ms)\n",
+            (double)t->tier_hits / t->tokens, (double)t->tier_loads / t->tokens,
+            (double)t->cpu_experts / t->tokens, t->cpu_ns / t->tokens * 1e-6,
+            t->fetch_ns / t->tokens * 1e-6);
+    for (int i = 0; i < PH_N; i++)
+        if (t->ph_ns[i] > 0)
+            add(buf, len, "  %-14s %7.3f ms %5.1f%%\n", ph_name[i],
+                t->ph_ns[i] / t->tokens * 1e-6,
+                all > 0 ? 100.0 * t->ph_ns[i] / all : 0.0);
+}
+
 void janas_gpu_tok_destroy(struct janas_gpu *g, struct janas_gpu_tok *t)
 {
     if (!t)
         return;
     if (t->qp) {
-        double all = 0;
-        for (int i = 0; i < PH_N; i++)
-            all += t->ph_ns[i];
-        if (t->tokens) {
-            fprintf(stderr,
-                    "gpu token profile, %llu passes of %.1f tokens, %.2f ms "
-                    "a pass (%.2f ms from submission to fence, %.2f ms "
-                    "copying the logits):\n",
-                    (unsigned long long)t->tokens,
-                    (double)t->pass_tokens / t->tokens, all / t->tokens * 1e-6,
-                    t->wall_ns / t->tokens * 1e-6,
-                    t->copy_ns / t->tokens * 1e-6);
-            if (t->plan_ns > 0)
-                fprintf(stderr, "  (the CPU's plans %.3f ms a pass)\n",
-                        t->plan_ns / t->tokens * 1e-6);
-            if (t->n_slot)
-                fprintf(stderr,
-                        "  (a pass's experts: %.1f in the tier, %.1f read into "
-                        "it, %.1f by the CPU in %.3f ms; the cache %.3f ms)\n",
-                        (double)t->tier_hits / t->tokens,
-                        (double)t->tier_loads / t->tokens,
-                        (double)t->cpu_experts / t->tokens,
-                        t->cpu_ns / t->tokens * 1e-6,
-                        t->fetch_ns / t->tokens * 1e-6);
-            for (int i = 0; i < PH_N; i++)
-                fprintf(stderr, "  %-14s %7.3f ms %5.1f%%\n", ph_name[i],
-                        t->ph_ns[i] / t->tokens * 1e-6,
-                        all > 0 ? 100.0 * t->ph_ns[i] / all : 0.0);
-        }
+        char rep[4096];
+        janas_gpu_tok_report(t, rep, sizeof(rep));
+        if (t->tokens)
+            fputs(rep, stderr);
         g->vkDestroyQueryPool(g->dev, t->qp, NULL);
     }
     for (uint32_t n = 0; n <= TOK_MAX_BLOCK; n++)
@@ -1457,6 +1493,13 @@ void janas_gpu_tok_destroy(struct janas_gpu *g, struct janas_gpu_tok *t)
 {
     (void)g;
     (void)t;
+}
+
+void janas_gpu_tok_report(const struct janas_gpu_tok *t, char *buf, size_t len)
+{
+    (void)t;
+    if (len)
+        buf[0] = 0;
 }
 
 uint32_t janas_gpu_tok_max_block(const struct janas_gpu_tok *t)

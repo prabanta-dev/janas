@@ -176,6 +176,10 @@ void janas_gpu_subgroup_range(const struct janas_gpu *g, unsigned *min,
    and its version, Vulkan, subgroups, the float controls that keep its
    results the CPU's. */
 const char *janas_gpu_about(const struct janas_gpu *g);
+/* The card's memory and, on Linux, its PCIe link as running and at most
+   (from sysfs, through VK_EXT_pci_bus_info), into buf: what a report on
+   a card with memory of its own needs to judge its numbers. */
+void janas_gpu_card(const struct janas_gpu *g, char *buf, size_t len);
 /* What the check of the GPU's products against the CPU's on opening left
    out on this driver ("" if nothing; gpu_selfcheck.c). */
 const char *janas_gpu_check_note(const struct janas_gpu *g);

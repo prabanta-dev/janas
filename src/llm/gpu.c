@@ -1377,6 +1377,65 @@ const char *janas_gpu_about(const struct janas_gpu *g)
     return g->about;
 }
 
+/* The first line of a sysfs file, its newline gone, or "" */
+static void sys_line(const char *path, char *out, size_t len)
+{
+    out[0] = 0;
+    FILE *f = fopen(path, "r");
+    if (!f)
+        return;
+    if (fgets(out, (int)len, f))
+        out[strcspn(out, "\n")] = 0;
+    fclose(f);
+}
+
+void janas_gpu_card(const struct janas_gpu *g, char *buf, size_t len)
+{
+    if (!len)
+        return;
+    /* the memory heaps of the device's own (on an integrated GPU, the
+       share of the host's memory the driver offers) */
+    VkDeviceSize own = 0;
+    for (uint32_t h = 0; h < g->mp.memoryHeapCount; h++)
+        if (g->mp.memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
+            own += g->mp.memoryHeaps[h].size;
+    int n = snprintf(buf, len, "%s, %.1f GiB of %s memory",
+                     g->discrete ? "discrete" : "integrated",
+                     (double)own / (1 << 30),
+                     g->discrete ? "its own" : "device-local");
+    if (n < 0 || (size_t)n >= len)
+        return;
+    char link[160] = "not known";
+#ifdef __linux__
+    if (has_extension((struct janas_gpu *)g,
+                      VK_EXT_PCI_BUS_INFO_EXTENSION_NAME)) {
+        VkPhysicalDevicePCIBusInfoPropertiesEXT pci = {
+            .sType =
+                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PCI_BUS_INFO_PROPERTIES_EXT};
+        VkPhysicalDeviceProperties2 pp2 = {
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
+            .pNext = &pci};
+        g->vkGetPhysicalDeviceProperties2(g->pd, &pp2);
+        char dir[96], path[160], sp[48], wd[16], msp[48], mwd[16];
+        snprintf(dir, sizeof(dir), "/sys/bus/pci/devices/%04x:%02x:%02x.%x",
+                 pci.pciDomain, pci.pciBus, pci.pciDevice, pci.pciFunction);
+        snprintf(path, sizeof(path), "%s/current_link_speed", dir);
+        sys_line(path, sp, sizeof(sp));
+        snprintf(path, sizeof(path), "%s/current_link_width", dir);
+        sys_line(path, wd, sizeof(wd));
+        snprintf(path, sizeof(path), "%s/max_link_speed", dir);
+        sys_line(path, msp, sizeof(msp));
+        snprintf(path, sizeof(path), "%s/max_link_width", dir);
+        sys_line(path, mwd, sizeof(mwd));
+        if (sp[0] && wd[0])
+            snprintf(link, sizeof(link), "%s x%s (at most %s x%s)", sp, wd,
+                     msp[0] ? msp : "?", mwd[0] ? mwd : "?");
+    }
+#endif
+    if (g->discrete)
+        snprintf(buf + n, len - (size_t)n, "; PCIe link %s", link);
+}
+
 size_t janas_gpu_min_n(const struct janas_gpu *g)
 {
     return g->min_n;
@@ -3405,6 +3464,13 @@ const char *janas_gpu_about(const struct janas_gpu *g)
 {
     (void)g;
     return "";
+}
+
+void janas_gpu_card(const struct janas_gpu *g, char *buf, size_t len)
+{
+    (void)g;
+    if (len)
+        buf[0] = 0;
 }
 
 int janas_gpu_sync(struct janas_gpu *g, void *p, size_t bytes, int to_device)

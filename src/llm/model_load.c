@@ -149,6 +149,45 @@ static int load_swa_params(struct janas_llm_model *m, const uint8_t **pat)
  * requantized), exactly - d_model x value heads, too few to be worth a
  * kernel.
  */
+/* qwen3next's ssm_ba (per key head g: rf betas, then rf alphas) as the
+   betas' and the alphas' rows by head, f32 (ly->ssm_beta, ly->ssm_alpha):
+   the values the file's rows hold, dequantized */
+static int ba_split(struct janas_llm_model *m, struct layer *ly, char *err,
+                    size_t err_len)
+{
+    const struct janas_jns_tensor *t = ly->ssm_ba;
+    uint32_t dm = m->d_model, nv = m->n_vh, rf = nv / m->n_kh;
+    size_t row = (size_t)dm;
+    float *all = malloc(2 * nv * row * sizeof(float));
+    ly->beta_own = malloc(nv * row * sizeof(float));
+    ly->alpha_own = malloc(nv * row * sizeof(float));
+    if (!all || !ly->beta_own || !ly->alpha_own) {
+        free(all);
+        snprintf(err, err_len, "out of memory");
+        return -1;
+    }
+    if (t->type == 0)
+        memcpy(all, data(m, t), 2 * nv * row * sizeof(float));
+    else if (t->type == 1 || t->type == 30) {
+        const uint16_t *h = data(m, t);
+        for (size_t i = 0; i < 2 * nv * row; i++)
+            all[i] = t->type == 1 ? janas_fp16_to_fp32(h[i])
+                                  : janas_u2f((uint32_t)h[i] << 16);
+    } else
+        janas_dequantize((int)t->type, data(m, t), all, 2 * nv * row);
+    for (uint32_t h = 0; h < nv; h++) {
+        uint32_t g = h / rf, r = h % rf;
+        memcpy(ly->beta_own + h * row, all + (size_t)(2 * g * rf + r) * row,
+               row * sizeof(float));
+        memcpy(ly->alpha_own + h * row,
+               all + (size_t)(2 * g * rf + rf + r) * row, row * sizeof(float));
+    }
+    free(all);
+    ly->ssm_beta = ly->beta_own;
+    ly->ssm_alpha = ly->alpha_own;
+    return 0;
+}
+
 static int rows_f32(struct janas_llm_model *m, const struct janas_jns *j,
                     uint32_t l, const char *suffix, uint64_t d0, uint64_t d1,
                     const float **out, float **own, char *err, size_t err_len)
@@ -391,6 +430,11 @@ static int load_layer(struct janas_llm_model *m, const struct janas_jns *j,
                 NEED(ssm_in, "ssm_in.weight", T_QUANT, dm, m->qkvz_dim)
             }
             NEED(ssm_ba, "ssm_ba.weight", T_QUANT, dm, 2 * m->n_vh)
+            /* the betas and the alphas apart, by head, in f32, as qwen35
+               has them: what the whole token on the GPU reads (the CPU
+               keeps the fused product) */
+            if (ba_split(m, ly, err, err_len) != 0)
+                return -1;
         }
         NEED(conv, "ssm_conv1d.weight", T_F32, m->d_conv, m->conv_ch)
         ly->conv_t = malloc((size_t)m->d_conv * m->conv_ch * sizeof(float));
@@ -1597,6 +1641,7 @@ void janas_llm_model_free(struct janas_llm_model *m)
     free(m->xbr);
     free(m->hlen);
     janas_m_ana_free(m);
+    janas_aligned_free(m->qkvz_split);
     janas_m_neurons_free(m);
     free(m->xq);
     free(m->attq);

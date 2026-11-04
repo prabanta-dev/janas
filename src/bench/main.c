@@ -20,6 +20,9 @@
  *                    choose for some kind)
  *                    [--npu-int8] (the NPU's rows with eight-bit
  *                    activations)
+ *                    [--gpu-profile] (the GPU's own timestamps of each
+ *                    phase of a pass on the card, in the report: as
+ *                    JANAS_GPU_TOKEN_PROFILE=1)
  *                    [--settle <seconds>] (after the warm-up, wait up to
  *                    that long for the cache's background filling to end:
  *                    the configurations measured on a warm cache, as a
@@ -214,7 +217,7 @@ int main(int argc, char **argv)
                 "[--gen <tokens>] [--ctx <tokens>] [--cache <GiB>] "
                 "[--reserve <GiB>] [--rounds <n>] [--settle <seconds>] "
                 "[--no-npu] [--prompt-on <devices>] [--drafts-on <devices>] "
-                "[--reply-on <devices>] [--npu-int8]\n"
+                "[--reply-on <devices>] [--npu-int8] [--gpu-profile]\n"
                 "<model>: a .jns file, or a name of the models Janas knows "
                 "(downloaded if it is not there yet); none: the list\n"
                 "<devices>: auto (default), cpu, gpu, npu, npu+gpu (both in "
@@ -231,9 +234,10 @@ int main(int argc, char **argv)
     const char *model = NULL, *models = NULL;
     int no_mtp = 0;
     static const char *const options[] = {
-        "--mtp",    "--no-mtp",    "--models",    "--prompt",   "--gen",
-        "--ctx",    "--rounds",    "--cache",     "--reserve",  "--settle",
-        "--no-npu", "--prompt-on", "--drafts-on", "--reply-on", "--npu-int8"};
+        "--mtp",       "--no-mtp",   "--models",   "--prompt",
+        "--gen",       "--ctx",      "--rounds",   "--cache",
+        "--reserve",   "--settle",   "--no-npu",   "--prompt-on",
+        "--drafts-on", "--reply-on", "--npu-int8", "--gpu-profile"};
     for (int i = 1; i < argc; i += 2) {
         const char *a = argv[i], *v = i + 1 < argc ? argv[i + 1] : NULL;
         char why[200] = "";
@@ -256,6 +260,11 @@ int main(int argc, char **argv)
         }
         if (strcmp(a, "--npu-int8") == 0) {
             setenv("JANAS_NPU_A8", "1", 1); /* so is this */
+            i--;
+            continue;
+        }
+        if (strcmp(a, "--gpu-profile") == 0) {
+            setenv("JANAS_GPU_TOKEN_PROFILE", "1", 1); /* and this */
             i--;
             continue;
         }
@@ -561,7 +570,8 @@ int main(int argc, char **argv)
        read 152) */
     if (janas_llm_model_gpu_whole(m))
         out("note:    on this card every pass of the model runs whole on "
-            "the GPU, in every row: the threads only feed it; "
+            "the GPU, in every row: the threads feed it and compute a "
+            "mixture's experts the card does not hold; "
             "JANAS_GPU=0 measures the CPU alone, JANAS_GPU_WHOLE=0 the "
             "products shared with the CPU\n");
     else if (cpu_rows && janas_llm_model_gpu_prompts(m))
@@ -626,6 +636,12 @@ int main(int argc, char **argv)
             100.0 * (double)accepted / (double)drafted,
             100.0 * (double)accepted_s / (double)drafted_s);
     out("\nchoices: %s\n", tune);
+    /* what the card did: a tester's report has to tell, without the card
+       here, where a discrete GPU's time went */
+    char gr[8192];
+    janas_llm_model_gpu_report(m, gr, sizeof(gr));
+    if (gr[0])
+        out("%s", gr);
     janas_llm_close(llm); /* saves the tuning profile */
     if (report) {
         fclose(report);

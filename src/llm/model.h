@@ -366,6 +366,13 @@ int janas_llm_model_gpu_prompts(const struct janas_llm_model *m);
    own, whatever the tuner chooses (JANAS_GPU_WHOLE): so once it has, or,
    before the first pass, where nothing stands in its way. */
 int janas_llm_model_gpu_whole(const struct janas_llm_model *m);
+/* What the GPU did for the model, for a report, into buf (len bytes, a
+   line a fact, each ending in a newline): the card, its memory and link;
+   on a card with memory of its own whether every pass runs whole there,
+   or why not; the experts' tier and where the experts were found; the
+   phases' times with JANAS_GPU_TOKEN_PROFILE=1. Empty without a GPU. */
+void janas_llm_model_gpu_report(const struct janas_llm_model *m, char *buf,
+                                size_t len);
 /* Whether the engine gives the NPU a prompt's blocks by itself, where it
    measures faster: on the models whose answers on the NPU measured at par
    with the CPU's against llama.cpp; on the others only when asked

@@ -151,6 +151,9 @@ struct janas_gpu_tok_model {
                  const uint8_t **slots);
     void (*routed)(void *ctx, uint32_t layer, uint32_t n, uint32_t k,
                    const uint32_t *ids);
+    /* the experts just copied into the card's tier, which the cache may
+       give up first (or NULL): the card's memory added to the machine's */
+    void (*demote)(void *ctx, uint32_t layer, const uint32_t *ids, size_t n);
     /* reads every expert of the layer that is not in the cache, while the
        caller goes on (or NULL): a block of many tokens chooses nearly all
        of them, so none is read for nothing */
@@ -219,6 +222,12 @@ struct janas_gpu_tok *janas_gpu_tok_create(struct janas_gpu *g,
                                            const struct janas_gpu_tok_model *md,
                                            char *err, size_t err_len);
 void janas_gpu_tok_destroy(struct janas_gpu *g, struct janas_gpu_tok *t);
+/* What the whole token did on the card, for a report, into buf (len
+   bytes, one line a fact, each ending in a newline): the tier of experts
+   and how the experts asked for were found; with JANAS_GPU_TOKEN_PROFILE
+   the time a pass took and its phases. Empty when there is nothing to
+   say. */
+void janas_gpu_tok_report(const struct janas_gpu_tok *t, char *buf, size_t len);
 
 /* The most tokens janas_gpu_tok_run takes at once (0 without t). */
 uint32_t janas_gpu_tok_max_block(const struct janas_gpu_tok *t);

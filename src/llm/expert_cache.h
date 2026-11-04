@@ -213,6 +213,16 @@ int janas_expert_cache_can_prefetch(const struct janas_expert_cache *c);
 void janas_expert_cache_present(struct janas_expert_cache *c, uint32_t layer,
                                 const uint32_t *ids, size_t n, uint8_t *in);
 
+/*
+ * Experts ids[0..n) of the layer, where the cache holds them, put first
+ * in line to be replaced: their copy lives elsewhere now (a card's tier of
+ * experts), and the cache's memory is better spent on others - the card's
+ * memory added to the machine's instead of holding the same experts twice.
+ * Between requests, not between begin and finish.
+ */
+void janas_expert_cache_demote(struct janas_expert_cache *c, uint32_t layer,
+                               const uint32_t *ids, size_t n);
+
 void janas_expert_cache_stats(const struct janas_expert_cache *c,
                               struct janas_expert_cache_stats *s);
 void janas_expert_cache_reset_stats(struct janas_expert_cache *c);
