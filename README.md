@@ -13,6 +13,8 @@
 ▀ ▀ ▀ ▀ ▀ ▀ ▀ ▀    
 ```
 
+> **Download Janas only from here.** Janas is published only at [github.com/prabanta-dev/janas](https://github.com/prabanta-dev/janas), its [releases](https://github.com/prabanta-dev/janas/releases) and its models at [huggingface.co/prabanta-dev](https://huggingface.co/prabanta-dev). Other sites using its name are not the project's: one, `joaniberian9588.github.io`, offers a Windows download that is malware, with no part of Janas in it (reported to GitHub on 6 November 2026). Do not run it; if you did, treat that computer as compromised.
+
 **Qwen3-Next-80B, a 48 GB model, on a laptop with 32 GB of memory: 26 tok/s writing a reply, where llama.cpp manages 3.0, and 68 tok/s reading a prompt, against 18.** On the same laptop (Debian 13 Linux, Intel Core Ultra 9 185H with its integrated Arc GPU and its NPU, 32 GB, an NVMe SSD; the whole machine [below](#the-machine-it-grew-on)) Janas-LLM read a prompt and wrote a reply faster than llama.cpp on every model compared, under the same conditions wherever possible - the same laptop, the same files, the same day, each engine in its best configuration (21 October 2026):
 
 | Model | reading 1,024 tokens: Janas-LLM | how | llama.cpp | writing: Janas-LLM | how | llama.cpp |
