@@ -759,10 +759,10 @@ void janas_gpu_tok_report(const struct janas_gpu_tok *t, char *buf, size_t len)
     uint64_t asked = t->tier_hits + t->tier_loads + t->cpu_experts;
     if (t->n_slot)
         add(buf, len,
-            "experts' tier: %u slots, %zu MiB of the card's memory; of %llu "
+            "experts' tier: %u slots, %llu MiB of the card's memory; of %llu "
             "experts asked for, %.1f%% found there, %.1f%% read into it, "
             "%.1f%% computed by the CPU\n",
-            t->n_slot, (t->n_slot * t->slot_bytes) >> 20,
+            t->n_slot, (unsigned long long)((t->n_slot * t->slot_bytes) >> 20),
             (unsigned long long)asked,
             asked ? 100.0 * (double)t->tier_hits / (double)asked : 0.0,
             asked ? 100.0 * (double)t->tier_loads / (double)asked : 0.0,

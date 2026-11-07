@@ -1377,6 +1377,7 @@ const char *janas_gpu_about(const struct janas_gpu *g)
     return g->about;
 }
 
+#ifdef __linux__
 /* The first line of a sysfs file, its newline gone, or "" */
 static void sys_line(const char *path, char *out, size_t len)
 {
@@ -1388,6 +1389,7 @@ static void sys_line(const char *path, char *out, size_t len)
         out[strcspn(out, "\n")] = 0;
     fclose(f);
 }
+#endif
 
 void janas_gpu_card(const struct janas_gpu *g, char *buf, size_t len)
 {
