@@ -471,17 +471,19 @@ int main(int argc, char **argv)
     }
 
     int th[JANAS_TUNE_MAX_CANDS], gp[JANAS_TUNE_MAX_CANDS],
-        np[JANAS_TUNE_MAX_CANDS];
-    int nc = janas_llm_model_candidates(m, th, gp, np, JANAS_TUNE_MAX_CANDS);
+        np[JANAS_TUNE_MAX_CANDS], al[JANAS_TUNE_MAX_CANDS];
+    int nc =
+        janas_llm_model_candidates(m, th, gp, np, al, JANAS_TUNE_MAX_CANDS);
     /* the rows: the configurations the engine may choose for some kind of
        pass, every one unless the devices are limited - the NPU's for
        blocks only, the GPU's for replies only where it takes single
-       tokens */
+       tokens, the CPU alone for blocks only (its replies are the row
+       without "+ GPU") */
     int rows[JANAS_TUNE_MAX_CANDS], n_rows = 0, npu_row = -1;
     int gpu_one = gpu && janas_gpu_min_n(gpu) <= 1;
     for (int c = 0; c < nc; c++) {
         rows[c] = !on_p || on_p >> (gp[c] | np[c] << 1) & 1;
-        if (!np[c])
+        if (!np[c] && !al[c])
             rows[c] |= (!on_d || on_d >> gp[c] & 1) ||
                        ((!gp[c] || gpu_one) && (!on_r || on_r >> gp[c] & 1));
         n_rows += rows[c];
@@ -516,7 +518,7 @@ int main(int argc, char **argv)
         janas_expert_cache_stats(janas_llm_model_cache(m), &s0);
         struct run r = {0};
         if (measure(m, prompt, n_prompt, n_gen, &r.prefill, &r.decode) != 0 ||
-            (has_mtp &&
+            (has_mtp && !al[c] &&
              (measure_chat(llm, n_gen, 0, &r.mtp, &drafted, &accepted) != 0 ||
               measure_chat(llm, n_gen, 1, &r.mtp_s, &drafted_s, &accepted_s) !=
                   0))) {
@@ -542,12 +544,13 @@ int main(int argc, char **argv)
         if (!rows[c])
             continue;
         snprintf(name, sizeof(name), "%d threads%s", th[c],
-                 gp[c] && np[c] ? " + GPU + NPU"
-                 : gp[c]        ? " + GPU"
-                 : np[c]        ? " + NPU"
-                                : "");
-        char mt[32] = "", ms[32] = "";
-        if (has_mtp) {
+                 al[c]            ? ", CPU alone"
+                 : gp[c] && np[c] ? " + GPU + NPU"
+                 : gp[c]          ? " + GPU"
+                 : np[c]          ? " + NPU"
+                                  : "");
+        char mt[32] = "", ms[32] = "", dec[32] = "-";
+        if (has_mtp && !al[c]) {
             snprintf(mt, sizeof(mt), "%.1f tok/s", r->mtp);
             snprintf(ms, sizeof(ms), "%.1f tok/s", r->mtp_s);
         }
@@ -555,30 +558,37 @@ int main(int argc, char **argv)
         char hit[16] = "-";
         if (has_cache[c])
             snprintf(hit, sizeof(hit), "%.1f%%", r->hits);
-        out("%-22s %8.1f tok/s %6.1f tok/s %12s %12s %9s\n", name, r->prefill,
-            r->decode, mt, ms, hit);
+        /* the CPU alone: a block's row; its replies are the row of the
+           same threads without "+ GPU" */
+        if (!al[c])
+            snprintf(dec, sizeof(dec), "%.1f tok/s", r->decode);
+        out("%-22s %8.1f tok/s %12s %12s %12s %9s\n", name, r->prefill, dec, mt,
+            ms, hit);
     }
-    /* the fast prompt runs on the GPU in every row, so that a prompt gives
-       the same results whatever the configuration: the rows without
-       "+ GPU" are not the CPU alone (issue #16 read them so, and found the
-       GPU of no help where it read the prompt 5.2 times faster) */
-    int cpu_rows = 0;
-    for (int c = 0; c < nc; c++)
-        cpu_rows += rows[c] && !gp[c];
+    /* the fast prompt runs on the GPU in every row but the CPU alone's:
+       the rows without "+ GPU" are not the CPU alone (issue #16 read them
+       so, and found the GPU of no help where it read the prompt 5.2 times
+       faster) */
+    int cpu_rows = 0, alone_rows = 0;
+    for (int c = 0; c < nc; c++) {
+        cpu_rows += rows[c] && !gp[c] && !al[c];
+        alone_rows += rows[c] && al[c];
+    }
     /* a card with memory of its own takes every pass whole, in every row
        (issue #54: a "12 threads" row at 834 tokens/s where the CPU alone
        read 152) */
     if (janas_llm_model_gpu_whole(m))
         out("note:    on this card every pass of the model runs whole on "
-            "the GPU, in every row: the threads feed it and compute a "
+            "the GPU, in every row%s: the threads feed it and compute a "
             "mixture's experts the card does not hold; "
             "JANAS_GPU=0 measures the CPU alone, JANAS_GPU_WHOLE=0 the "
-            "products shared with the CPU\n");
+            "products shared with the CPU\n",
+            alone_rows ? " but a prompt's in \"CPU alone\"" : "");
     else if (cpu_rows && janas_llm_model_gpu_prompts(m))
-        out("note:    in every row the GPU reads a prompt's blocks of %d "
+        out("note:    in every row%s the GPU reads a prompt's blocks of %d "
             "tokens or more (the fast prompt); \"+ GPU\" also gives it a "
             "part in the shorter passes%s\n",
-            JANAS_GPU_FAST_N,
+            alone_rows ? " but \"CPU alone\"" : "", JANAS_GPU_FAST_N,
             gpu && janas_gpu_min_n(gpu) > 1
                 ? ", from 2 tokens on: a reply's single tokens are the "
                   "CPU's in every row"
@@ -617,10 +627,11 @@ int main(int argc, char **argv)
     for (int k = 0; k < 3; k++) {
         int t = janas_llm_model_threads(m, k),
             g = (janas_llm_model_gpu_used(m) >> k) & 1,
-            u = (janas_llm_model_npu_used(m) >> k) & 1;
+            u = (janas_llm_model_npu_used(m) >> k) & 1,
+            a = k == 2 && janas_llm_model_blocks_alone(m);
         row[k] = 0;
         for (int c = 0; c < nc; c++)
-            if (rows[c] && th[c] == t && gp[c] == g && np[c] == u)
+            if (rows[c] && th[c] == t && gp[c] == g && np[c] == u && al[c] == a)
                 row[k] = c;
     }
     out("\nresult:  prefill %.1f tok/s, decode %.1f tok/s", sum[row[2]].prefill,

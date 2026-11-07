@@ -387,9 +387,12 @@ int janas_llm_model_devices(const struct janas_llm_model *m, int cls);
    short one); 0 unknown. */
 int janas_llm_model_threads(const struct janas_llm_model *m, int cls);
 
-/* The tuner's candidates: threads, GPU and NPU (npu may be NULL). */
+/* The tuner's candidates: threads, GPU, NPU and the CPU alone for a
+   prompt's blocks (npu and alone may be NULL). */
 int janas_llm_model_candidates(const struct janas_llm_model *m, int *threads,
-                               int *gpu, int *npu, int max);
+                               int *gpu, int *npu, int *alone, int max);
+/* Whether the tuner holds the CPU alone best for a prompt's blocks. */
+int janas_llm_model_blocks_alone(const struct janas_llm_model *m);
 /* As janas_llm_model_gpu_used, for the NPU (looked for at load unless
    JANAS_NPU=0). */
 int janas_llm_model_npu_used(const struct janas_llm_model *m);

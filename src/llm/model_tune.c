@@ -171,6 +171,20 @@ void janas_m_init_tuner(struct janas_llm_model *m)
         for (int k = 0; k < n; k++)
             if (!c[k].gpu && !c[k].npu && c[k].threads == m->p_threads)
                 def[2] = k;
+    /* every thread on a performance core with a sibling (no efficiency
+       cores): one thread per core first, for replies and blocks. Of nine
+       testers' processors (Zen 2 to Zen 5, an i5-1135G7) one thread per
+       core wrote a reply faster in every run, 5-54% (a 9800X3D 27.6
+       tokens/s against 20.1, issue #24), and read a prompt up to 35%
+       faster (a 9800X3D 207.7 against 187.6; with the fast prompt on an
+       RTX 5080 149.5 against 70.6, which the first runs chose), where
+       both threads of a core won by 17% at most (Ryzen 5 5500, #45; 9900X
+       609 against 561, #50). The tuner tries the others all the same */
+    int smt = m->all_threads == m->p_threads && m->p_threads > m->p_cores;
+    if (smt && !bt)
+        for (int k = 0; k < n; k++)
+            if (!c[k].gpu && !c[k].npu && c[k].threads == m->p_cores)
+                def[0] = def[2] = k;
     const char *ga = getenv("JANAS_GPU_ALWAYS");
     if (ga && atoi(ga) > 0)
         for (int k = 0; k < n; k++)
@@ -189,6 +203,18 @@ void janas_m_init_tuner(struct janas_llm_model *m)
     if (bt && block != c[def[1]].threads && n < JANAS_TUNE_MAX_CANDS) {
         c[n] = (struct janas_tune_cand){.threads = block, .gpu = 0};
         def[1] = def[2] = def[3] = n++;
+    }
+    /* with the fast prompt, which reads a prompt's blocks in every
+       candidate above, the CPU alone for blocks too: a fast CPU reads them
+       sooner - a Ryzen 9 9900X read Qwen3.6-35B-A3B's prompt at 413
+       tokens/s on its own, with its 512-bit tiles, and at 346 with the fast
+       prompt on an RTX 5060 Ti (issue #50) */
+    for (int i = 0; fast && i < n_opts && n < JANAS_TUNE_MAX_CANDS; i++) {
+        int dup = 0;
+        for (int k = 0; k < n; k++)
+            dup |= c[k].alone && c[k].threads == opts[i];
+        if (!dup)
+            c[n++] = (struct janas_tune_cand){.threads = opts[i], .alone = 1};
     }
     janas_tuner_init(&m->tuner, c, n, def, (tn && atoi(tn) == 0) || bt);
     janas_tuner_allow_gpu(&m->tuner, 1);
@@ -226,8 +252,8 @@ void janas_m_init_tuner(struct janas_llm_model *m)
                       "on %x%x%x|", on[0], on[1], on[2]);
     for (int k = 0; k < n && w > 0 && (size_t)w < sizeof(m->tune_key); k++)
         w += snprintf(m->tune_key + w, sizeof(m->tune_key) - (size_t)w,
-                      "%d%s%s,", c[k].threads, c[k].gpu ? "g" : "",
-                      c[k].npu ? "n" : "");
+                      "%d%s%s%s,", c[k].threads, c[k].gpu ? "g" : "",
+                      c[k].npu ? "n" : "", c[k].alone ? "a" : "");
     janas_tuner_load(&m->tuner, m->tune_key);
 }
 
@@ -245,6 +271,8 @@ void janas_m_apply_candidate(struct janas_llm_model *m, int cand, uint32_t nv)
     if (m->own_compute)
         janas_pool_set_active(m->compute, m->tuner.cand[cand].threads);
     m->gpu_use = m->tuner.cand[cand].gpu;
+    /* a block the tuner gives the CPU alone */
+    m->prompt_cpu = m->tuner.cand[cand].alone && nv >= JANAS_GPU_FAST_N;
     if (m->gpu && nv >= JANAS_GPU_FAST_N && janas_gpu_repeatable() &&
         janas_gpu_fast_prompt())
         m->gpu_use = 0; /* the fast products alone: gpu.h */
@@ -316,7 +344,7 @@ int janas_llm_model_npu_used(const struct janas_llm_model *m)
 }
 
 int janas_llm_model_candidates(const struct janas_llm_model *m, int *threads,
-                               int *gpu, int *npu, int max)
+                               int *gpu, int *npu, int *alone, int max)
 {
     int n = m->tuner.n_cand < max ? m->tuner.n_cand : max;
     for (int i = 0; i < n; i++) {
@@ -324,8 +352,16 @@ int janas_llm_model_candidates(const struct janas_llm_model *m, int *threads,
         gpu[i] = m->tuner.cand[i].gpu;
         if (npu)
             npu[i] = m->tuner.cand[i].npu;
+        if (alone)
+            alone[i] = m->tuner.cand[i].alone;
     }
     return n;
+}
+
+int janas_llm_model_blocks_alone(const struct janas_llm_model *m)
+{
+    return m->tuner.n_cand > 0 &&
+           m->tuner.cand[janas_tuner_best(&m->tuner, 2)].alone;
 }
 
 void janas_llm_model_force(struct janas_llm_model *m, int cand)

@@ -134,6 +134,9 @@ struct janas_llm_model {
     /* the user keeps prompts off the GPU (--prompt-on cpu, npu): its fast
        prompt, which reads them whatever the tuner chose, does not */
     int prompts_off_gpu;
+    /* this pass a block the tuner gave the CPU alone: neither the fast
+       prompt nor the whole pass on the GPU (janas_m_apply_candidate) */
+    int prompt_cpu;
     /* a long prompt's blocks: the GPU's whole pass against the path
        without it, measured in turn every LP_BLOCKS blocks (model.c
        long_prompt_*); lp_cpu: this block without it */
@@ -928,8 +931,8 @@ static inline struct janas_gpu *janas_m_gpu(const struct janas_llm_model *m,
     if (!m->gpu || m->gpu_off || (arena && m->arena_stale) ||
         (arena && janas_gpu_repeatable()))
         return NULL;
-    if (m->gpu_use ||
-        (m->tuner.allow_gpu && janas_gpu_fast_prompt() && !m->prompts_off_gpu))
+    if (m->gpu_use || (m->tuner.allow_gpu && janas_gpu_fast_prompt() &&
+                       !m->prompts_off_gpu && !m->prompt_cpu))
         return m->gpu;
     return NULL;
 }

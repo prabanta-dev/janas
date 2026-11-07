@@ -35,6 +35,8 @@ struct janas_tune_cand {
     int threads; /* compute threads (a prefix of the pool) */
     int gpu;     /* the GPU takes part in the products */
     int npu;     /* the NPU takes the blocks' products it can (blocks only) */
+    int alone;   /* blocks only: the CPU alone, without the GPU's fast
+                    prompt (which reads them in the other candidates) */
 };
 
 /* " + GPU", " + NPU", " + GPU + NPU" or "": a candidate's devices */
@@ -68,6 +70,12 @@ struct janas_tuner {
         uint32_t retry_at, retry_gap;
         int retry_best, retry_cand; /* and the candidate tried */
         int threads; /* settled by the first tries (0: not yet) */
+        /* blocks: whether the CPU reads them alone, settled with the
+           threads (-1: not yet). The GPU's fast prompt sums in an order of
+           its own, its results differ from the CPU's in the last bits:
+           later tries keep to the side settled, so that a chat's prompts
+           give the same results once it is */
+        int alone;
     } cls[JANAS_TUNE_CLASSES];
 };
 

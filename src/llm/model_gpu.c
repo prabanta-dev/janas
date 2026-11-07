@@ -985,6 +985,9 @@ int janas_m_gpu_token(struct janas_llm_model *m, uint32_t pos, uint32_t n,
     /* a picture whose tokens attend both ways: the CPU's attention */
     if (m->n_media && janas_m_media_both(m, pos, n))
         return -1;
+    /* a block the tuner gave the CPU alone */
+    if (m->prompt_cpu)
+        return -1;
     /* JANAS_GPU_TOKEN=1: tokens, and blocks with JANAS_GPU_BLOCK=1. With the
        fast prompt a prompt's blocks (from JANAS_GPU_FAST_N tokens) come
        here by themselves, JANAS_GPU_BLOCK=0 aside: the whole block in one

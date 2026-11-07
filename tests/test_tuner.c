@@ -302,6 +302,62 @@ int main(void)
               janas_devices_option("--reply-on", NULL, why, sizeof why) < 0,
           "devices options");
 
+    /* the CPU alone for a prompt's blocks (issue #50): chosen where it is
+       faster, never for the other passes, and once its side is settled
+       the tries keep to it (the fast prompt's sums differ from the CPU's
+       in the last bits); the side saved and loaded */
+    const struct janas_tune_cand ca[4] = {{.threads = 6},
+                                          {.threads = 12},
+                                          {.threads = 6, .alone = 1},
+                                          {.threads = 12, .alone = 1}};
+    const int da[JANAS_TUNE_CLASSES] = {0, 0, 0, 0};
+    janas_tuner_init(&t, ca, 4, da, 0);
+    run(&t, (const double[]){1.0, 1.1, 0.7, 0.8}, 40);
+    CHECK(janas_tuner_best(&t, 2) == 2 && t.cls[2].alone == 1,
+          "CPU alone: best %d (side %d), want 2 (1)", janas_tuner_best(&t, 2),
+          t.cls[2].alone);
+    int alone_picked = 0;
+    for (int i = 0; i < 400; i++)
+        for (int k = 0; k < JANAS_TUNE_CLASSES; k++) {
+            if (k == 2)
+                continue;
+            int c = janas_tuner_pick(&t, k);
+            alone_picked += ca[c].alone;
+            janas_tuner_record(&t, k, c, ca[c].alone ? 0.1 : 1.0);
+        }
+    CHECK(alone_picked == 0, "CPU alone picked %d times for other passes",
+          alone_picked);
+    snprintf(dir, sizeof(dir), "%s/janas_test_tuner_XXXXXX",
+             tmp && *tmp ? tmp : "/tmp");
+    CHECK(mkdtemp(dir) != NULL, "cannot make a directory in %s\n",
+          tmp && *tmp ? tmp : "/tmp");
+    snprintf(home_dir, sizeof(home_dir), "%s/cache", dir);
+    setenv("XDG_CACHE_HOME", home_dir, 1);
+    janas_tuner_save(&t, "alone|key");
+    janas_tuner_init(&u, ca, 4, da, 0);
+    janas_tuner_load(&u, "alone|key");
+    CHECK(u.cls[2].alone == 1 && janas_tuner_best(&u, 2) == 2,
+          "loaded side %d, best %d, want 1, 2", u.cls[2].alone,
+          janas_tuner_best(&u, 2));
+    janas_tuner_init(&t, ca, 4, da, 0);
+    run(&t, (const double[]){1.0, 1.1, 1.5, 1.6}, 40);
+    CHECK(t.cls[2].alone == 0, "fast prompt settled: side %d, want 0",
+          t.cls[2].alone);
+    alone_picked = 0;
+    for (int i = 0; i < 4000; i++) {
+        int c = janas_tuner_pick(&t, 2);
+        alone_picked += ca[c].alone;
+        janas_tuner_record(&t, 2, c, ca[c].alone ? 0.3 : 1.0);
+    }
+    CHECK(alone_picked == 0 && !ca[janas_tuner_best(&t, 2)].alone,
+          "side settled, yet the CPU alone picked %d times", alone_picked);
+    snprintf(f, sizeof(f), "%s/janas/tuning.txt", home_dir);
+    unlink(f);
+    snprintf(f, sizeof(f), "%s/janas", home_dir);
+    rmdir(f);
+    rmdir(home_dir);
+    rmdir(dir);
+
     printf("test_tuner: %s\n", failures ? "FAILED" : "ok");
     return failures ? 1 : 0;
 }

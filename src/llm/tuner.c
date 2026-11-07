@@ -54,6 +54,7 @@ void janas_tuner_init(struct janas_tuner *t, const struct janas_tune_cand *c,
         t->cls[k].def = def[k] < n ? def[k] : 0;
         t->cls[k].retry_at = t->cls[k].retry_gap = RETRY_EVERY;
         t->cls[k].retry_best = -1;
+        t->cls[k].alone = -1;
     }
 }
 
@@ -67,9 +68,18 @@ static int allowed(const struct janas_tuner *t, int cls, int i)
     return !t->allowed[cls] || (t->allowed[cls] >> combo & 1);
 }
 
+/* the CPU alone for blocks only; once settled, the side settled */
+static int same_side(const struct janas_tuner *t, int cls, int i)
+{
+    if (cls != 2)
+        return !t->cand[i].alone;
+    return t->cls[cls].alone < 0 || t->cand[i].alone == t->cls[cls].alone;
+}
+
 static int usable(const struct janas_tuner *t, int cls, int i)
 {
-    return allowed(t, cls, i) && (!t->cand[i].npu || cls == 2) &&
+    return allowed(t, cls, i) && same_side(t, cls, i) &&
+           (!t->cand[i].npu || cls == 2) &&
            (!t->cand[i].gpu || (t->allow_gpu && (cls > 0 || t->gpu_one))) &&
            (!t->cls[cls].threads || t->cand[i].threads == t->cls[cls].threads);
 }
@@ -80,12 +90,15 @@ static int usable(const struct janas_tuner *t, int cls, int i)
    can move them */
 static int retryable(const struct janas_tuner *t, int cls, int i)
 {
-    return allowed(t, cls, i) && (!t->cand[i].npu || cls == 2) &&
+    return allowed(t, cls, i) && same_side(t, cls, i) &&
+           (!t->cand[i].npu || cls == 2) &&
            (!t->cand[i].gpu || (t->allow_gpu && (cls > 0 || t->gpu_one)));
 }
 
 /* The default of a class: its own, or once the threads are settled the
-   candidate with those threads and no GPU */
+   candidate with those threads and the default's devices (no GPU unless
+   the default has it), on the side settled for blocks (the CPU alone or
+   not) */
 static int class_def(const struct janas_tuner *t, int cls)
 {
     int def = t->cls[cls].def;
@@ -96,7 +109,8 @@ static int class_def(const struct janas_tuner *t, int cls)
                                      : t->cand[def].threads,
             first = -1;
         for (int i = 0; i < t->n_cand; i++)
-            if (allowed(t, cls, i) && (!t->cand[i].npu || cls == 2)) {
+            if (allowed(t, cls, i) && same_side(t, cls, i) &&
+                (!t->cand[i].npu || cls == 2)) {
                 if (t->cand[i].threads == th)
                     return i;
                 if (first < 0)
@@ -105,11 +119,13 @@ static int class_def(const struct janas_tuner *t, int cls)
         if (first >= 0)
             return first;
     }
-    if (!t->cls[cls].threads || t->cand[def].threads == t->cls[cls].threads)
+    int alone = t->cls[cls].alone > 0;
+    if (!t->cls[cls].threads || (t->cand[def].threads == t->cls[cls].threads &&
+                                 t->cand[def].alone == alone))
         return def;
     for (int i = 0; i < t->n_cand; i++)
-        if (!t->cand[i].gpu && !t->cand[i].npu && allowed(t, cls, i) &&
-            t->cand[i].threads == t->cls[cls].threads)
+        if (!t->cand[i].gpu && !t->cand[i].npu && t->cand[i].alone == alone &&
+            allowed(t, cls, i) && t->cand[i].threads == t->cls[cls].threads)
             return i;
     return def;
 }
@@ -122,18 +138,23 @@ static void settle_threads(struct janas_tuner *t, int cls)
     for (int i = 0; i < t->n_cand; i++)
         if (usable(t, cls, i) && t->cls[cls].tried[i] < TRIES)
             return;
-    t->cls[cls].threads = t->cand[janas_tuner_best(t, cls)].threads;
+    int b = janas_tuner_best(t, cls);
+    t->cls[cls].threads = t->cand[b].threads;
+    if (cls == 2)
+        t->cls[cls].alone = t->cand[b].alone;
     if (tracing())
-        fprintf(stderr, "tune class %d pass %u: threads settled on %d\n", cls,
-                t->cls[cls].passes, t->cls[cls].threads);
+        fprintf(stderr, "tune class %d pass %u: threads settled on %d%s\n", cls,
+                t->cls[cls].passes, t->cls[cls].threads,
+                t->cand[b].alone ? ", the CPU alone" : "");
 }
 
 const char *janas_tune_devices(const struct janas_tune_cand *c)
 {
-    return c->gpu && c->npu ? " + GPU + NPU"
-           : c->gpu         ? " + GPU"
-           : c->npu         ? " + NPU"
-                            : "";
+    return c->alone           ? ", the CPU alone"
+           : c->gpu && c->npu ? " + GPU + NPU"
+           : c->gpu           ? " + GPU"
+           : c->npu           ? " + NPU"
+                              : "";
 }
 
 void janas_tuner_allow(struct janas_tuner *t, int cls, int mask)
@@ -375,7 +396,8 @@ void janas_tuner_load(struct janas_tuner *t, const char *key)
         t->cls[cls].tried[cand] = tries;
     }
     fclose(f);
-    /* the threads settled: a line of their own, candidate -1 */
+    /* the threads settled: a line of their own, candidate -1; whether the
+       CPU reads blocks alone, candidate -2 */
     if (!(f = fopen(path, "r")))
         return;
     while (fgets(line, sizeof(line), f)) {
@@ -385,8 +407,13 @@ void janas_tuner_load(struct janas_tuner *t, const char *key)
         if (strncmp(line, key, kl) != 0 || line[kl] != '\t' ||
             sscanf(line + kl + 1, "%d\t%d\t%lf\t%u", &cls, &cand, &threads,
                    &zero) != 4 ||
-            cls < 0 || cls >= JANAS_TUNE_CLASSES || cand != -1)
+            cls < 0 || cls >= JANAS_TUNE_CLASSES || cand > -1 || cand < -2)
             continue;
+        if (cand == -2) {
+            if (cls == 2)
+                t->cls[cls].alone = threads != 0;
+            continue;
+        }
         for (int i = 0; i < t->n_cand; i++)
             if (t->cand[i].threads == (int)threads)
                 t->cls[cls].threads = (int)threads;
@@ -419,6 +446,8 @@ void janas_tuner_save(const struct janas_tuner *t, const char *key)
     for (int k = 0; k < JANAS_TUNE_CLASSES; k++)
         if (t->cls[k].threads)
             fprintf(out, "%s\t%d\t-1\t%d\t0\n", key, k, t->cls[k].threads);
+    if (t->cls[2].alone >= 0)
+        fprintf(out, "%s\t2\t-2\t%d\t0\n", key, t->cls[2].alone);
     if (fclose(out) == 0)
         rename(tmp, path);
     else
