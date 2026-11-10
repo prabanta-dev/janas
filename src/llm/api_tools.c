@@ -262,6 +262,8 @@ static uint32_t calls_rule(struct janas_gbuild *b, const janas_llm *llm,
 
 void janas_api_reply_clear(janas_llm_chat *c)
 {
+    c->nuc_route = JANAS_LLM_ROUTE_SELF; /* Nucleus mode (api_nucleus.c) */
+    c->nuc_pending = 0;
     if (c->s)
         janas_llm_session_filter(c->s, NULL);
     janas_constraint_free(c->cons);
@@ -411,6 +413,8 @@ void janas_api_close_call(janas_llm_chat *c, struct janas_buf *text)
 
 int32_t janas_llm_chat_calls(const janas_llm_chat *c)
 {
+    if (c && c->nuc_route == JANAS_LLM_ROUTE_SPECIALIST && c->nuc_chat)
+        c = c->nuc_chat; /* Nucleus mode: the Specialist's reply */
     return c ? (int32_t)c->n_calls : 0;
 }
 
@@ -418,6 +422,8 @@ int32_t janas_llm_chat_call(const janas_llm_chat *c, int32_t i, char *name,
                             int32_t name_cap, int32_t *name_len, char *args,
                             int32_t args_cap, int32_t *args_len)
 {
+    if (c && c->nuc_route == JANAS_LLM_ROUTE_SPECIALIST && c->nuc_chat)
+        c = c->nuc_chat; /* Nucleus mode: the Specialist's reply */
     if (!c || i < 0 || (size_t)i >= c->n_calls)
         return janas_api_fail(JANAS_LLM_EINVAL, "no such call");
     const struct rcall *r = &c->calls[i];
@@ -480,6 +486,8 @@ int janas_api_record(janas_llm_chat *c, int32_t t, int32_t part,
 
 int32_t janas_llm_chat_tokens(const janas_llm_chat *c)
 {
+    if (c && c->nuc_route == JANAS_LLM_ROUTE_SPECIALIST && c->nuc_chat)
+        c = c->nuc_chat; /* Nucleus mode: the Specialist's reply */
     return c ? (int32_t)c->n_toks : 0;
 }
 
@@ -487,6 +495,8 @@ int32_t janas_llm_chat_token(const janas_llm_chat *c, int32_t i, int32_t *id,
                              int32_t *part, float *logprob, char *buf,
                              int32_t cap, int32_t *len)
 {
+    if (c && c->nuc_route == JANAS_LLM_ROUTE_SPECIALIST && c->nuc_chat)
+        c = c->nuc_chat; /* Nucleus mode: the Specialist's reply */
     if (!c || i < 0 || (size_t)i >= c->n_toks)
         return janas_api_fail(JANAS_LLM_EINVAL, "no such token");
     const struct rtok *r = &c->toks[i];
@@ -505,6 +515,8 @@ int32_t janas_llm_chat_token_top(const janas_llm_chat *c, int32_t i,
                                  int32_t max, int32_t *ids, float *logprobs,
                                  int32_t *n)
 {
+    if (c && c->nuc_route == JANAS_LLM_ROUTE_SPECIALIST && c->nuc_chat)
+        c = c->nuc_chat; /* Nucleus mode: the Specialist's reply */
     if (!c || i < 0 || (size_t)i >= c->n_toks || max < 0 || !n)
         return janas_api_fail(JANAS_LLM_EINVAL, "no such token");
     const struct rtok *r = &c->toks[i];

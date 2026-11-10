@@ -145,6 +145,7 @@ void janas_api_update_stats(janas_llm_chat *c)
     s->input_eta_seconds = s->stage == JANAS_LLM_STAGE_INPUT
                                ? input_eta(c, s->input_tokens - s->input_done)
                                : 0;
+    janas_api_monitor_note(c);
 }
 
 /*
@@ -313,6 +314,21 @@ int32_t janas_llm_chat_next(janas_llm_chat *c, char *buf, int32_t cap,
     *len = 0;
     if (!c->replying)
         return JANAS_LLM_DONE;
+    /* Nucleus mode: the Specialist's reply, passed through */
+    if (c->nuc_route == JANAS_LLM_ROUTE_SPECIALIST && c->nuc_chat) {
+        int32_t r = janas_llm_chat_next(c->nuc_chat, buf, cap, len);
+        if (r != JANAS_LLM_OK) {
+            struct janas_llm_chat_stats ss = {.size = sizeof(ss)};
+            janas_llm_chat_stats(c->nuc_chat, &ss);
+            c->stats.output_tokens = ss.output_tokens;
+            c->stats.finish = ss.finish;
+            c->replying = 0;
+            c->ended = 1;
+            c->stats.stage = JANAS_LLM_STAGE_DONE;
+            janas_api_update_stats(c);
+        }
+        return r;
+    }
     /* the prompt, a block at a time: the caller hears between blocks */
     if (c->stats.stage == JANAS_LLM_STAGE_INPUT) {
         int r = read_input(c);
@@ -333,6 +349,7 @@ int32_t janas_llm_chat_next(janas_llm_chat *c, char *buf, int32_t cap,
         janas_api_update_stats(c);
         if (c->stats.input_tokens >= 1024)
             janas_metrics_progress(c, 1); /* the whole prompt, read */
+        janas_api_nuc_arm(c); /* Nucleus mode: the gate on the first pass */
     }
     if (!c->ended && c->npend < 4) {
         int32_t t = -1;
@@ -349,6 +366,17 @@ int32_t janas_llm_chat_next(janas_llm_chat *c, char *buf, int32_t cap,
         } else {
             r = janas_llm_session_next(c->s, &t);
             got = r == 0;
+            if (got && c->nuc_pending) { /* Nucleus mode: the gate decides */
+                const char *say = janas_api_nuc_decide(c);
+                if (say) { /* "I don't know": that sentence, nothing more */
+                    give(c, say, strlen(say));
+                    got = 0;
+                    c->ended = 1;
+                    c->stats.finish = JANAS_LLM_FINISH_STOP;
+                } else if (c->nuc_route == JANAS_LLM_ROUTE_SPECIALIST) {
+                    got = 0; /* the Specialist answers, next call on */
+                }
+            }
         }
         if (got && c->t_first == 0) { /* the first token of the reply */
             c->t_first = janas_api_now() - c->t_send;
@@ -391,7 +419,10 @@ int32_t janas_llm_chat_next(janas_llm_chat *c, char *buf, int32_t cap,
         c->stats.stage = JANAS_LLM_STAGE_DONE;
         janas_api_update_stats(c);
         janas_metrics_reply(c);
-        janas_api_memo_store(c);
+        /* a sentence of the gate is not what the model generated: not
+           remembered as its turn */
+        if (c->nuc_route == JANAS_LLM_ROUTE_SELF)
+            janas_api_memo_store(c);
         return JANAS_LLM_DONE;
     }
     return JANAS_LLM_OK;
@@ -403,7 +434,17 @@ int32_t janas_llm_chat_stats(const janas_llm_chat *c,
     if (!c || !s || s->size < sizeof(uint32_t))
         return janas_api_fail(JANAS_LLM_EINVAL, "invalid argument");
     uint32_t size = s->size < sizeof(c->stats) ? s->size : sizeof(c->stats);
-    memcpy(s, &c->stats, size);
+    struct janas_llm_chat_stats st = c->stats;
+    if (c->nuc_route == JANAS_LLM_ROUTE_SPECIALIST && c->nuc_chat) {
+        /* Nucleus mode: the Specialist's reply, as this chat's, its route
+           kept and the Nucleus's reading of the prompt added */
+        st = c->nuc_chat->stats;
+        st.route = c->stats.route;
+        memcpy(st.route_domain, c->stats.route_domain, sizeof(st.route_domain));
+        st.input_seconds += c->stats.input_seconds;
+        st.total_seconds += c->stats.input_seconds;
+    }
+    memcpy(s, &st, size);
     s->size = size;
     return JANAS_LLM_OK;
 }

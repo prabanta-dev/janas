@@ -378,6 +378,9 @@ int32_t janas_llm_chat_run(janas_llm_chat *c)
         return janas_api_fail(
             JANAS_LLM_EINVAL,
             "the last message must be the user's or a tool's");
+    /* Nucleus mode: the conversation, for the Specialist (api_nucleus.c) */
+    if (janas_api_nuc_keep(c) != 0)
+        return janas_api_fail(JANAS_LLM_ENOMEM, "out of memory");
     janas_api_prep_start(c);
     c->tools_tokens = 0; /* until a system message with tools says */
     janas_api_reply_clear(c);

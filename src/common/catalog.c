@@ -268,6 +268,24 @@ const struct janas_model_entry janas_catalog[] = {
          "5c9bc4cb6f739193fac5e4daa30c922f73255acf41443ecfc0123ef084584559",
      .ram_gb = 32,
      .fast = "--head 4 --bits 4"},
+    /* the model tried in the editor (docs/editor.md, code-completion.md):
+       it fills in the middle and has no recurrent layers, so it completes
+       at the cursor as well as writing code; held whole in memory for
+       that */
+    {.name = "qwen3-coder-30b-a3b",
+     .what = "Qwen3-Coder-30B-A3B-Instruct, mixture of experts, for code "
+             "and completion in the editor",
+     .repo = "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF",
+     .parts = {"Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"},
+     .part_sha =
+         {"fadc3e5f8d42bf7e894a785b05082e47daee4df26680389817e2093056f088ad"},
+     .gguf_gb = 18.6,
+     .out = "qwen3-coder-30b-a3b-q4km.jns",
+     .jns_repo = "prabanta-dev/Qwen3-Coder-30B-A3B-Instruct-JNS",
+     .jns_gb = 18.56,
+     .flat_sha =
+         "bee7d25509e911a195cbf05a157e69bb05a62d2241cca2c4fdcfef269dcb2bdd",
+     .ram_gb = 32},
     {.name = "qwen3-coder-next",
      .what = "Qwen3-Coder-Next, mixture of experts, for code",
      .repo = "Qwen/Qwen3-Coder-Next-GGUF",

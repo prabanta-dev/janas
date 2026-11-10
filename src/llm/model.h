@@ -297,6 +297,26 @@ uint32_t janas_llm_model_hidden_width(const struct janas_llm_model *m);
    for all logits. With logits NULL that call computes these and no logits
    (an embedding). Valid until the next call. */
 const float *janas_llm_model_normed(const struct janas_llm_model *m);
+/*
+ * The entrance gate (src/llm/gate.h): its readers from path, checked
+ * against the model; 0, or -1 with err set. Armed, the next forward calls
+ * keep the residual of their last token at the gate's layer (the CPU's
+ * layer loop: a forward done whole on a GPU keeps none); the result is the
+ * outcome (enum janas_gate_outcome) of the last kept residual, its domain
+ * and scores, or -1 when none was kept since arming.
+ */
+int janas_llm_model_gate_open(struct janas_llm_model *m, const char *path,
+                              char *err, size_t err_len);
+void janas_llm_model_gate_arm(struct janas_llm_model *m, int on);
+/* Armed, the residual kept is the one of position pos, when a forward
+   call computes it (a first pass of a reply that also checks drafts holds
+   more rows than the prompt's last); UINT32_MAX: the last row of each call
+   (the default, set again by janas_llm_model_gate_arm). */
+void janas_llm_model_gate_at(struct janas_llm_model *m, uint32_t pos);
+int janas_llm_model_gate_result(const struct janas_llm_model *m,
+                                uint32_t *domain, double *scores);
+const char *janas_llm_model_gate_domain(const struct janas_llm_model *m,
+                                        uint32_t domain);
 int janas_llm_mtp_forward(struct janas_llm_model *m, const int32_t *tokens,
                           const float *hidden, uint32_t n, uint32_t pos0,
                           float *logits, int all_logits);
@@ -373,6 +393,11 @@ int janas_llm_model_gpu_whole(const struct janas_llm_model *m);
    phases' times with JANAS_GPU_TOKEN_PROFILE=1. Empty without a GPU. */
 void janas_llm_model_gpu_report(const struct janas_llm_model *m, char *buf,
                                 size_t len);
+/* The card's tier of experts, as janas_llm_monitor gives it: found there,
+   read into it, computed by the CPU, its slots and their size; all 0
+   without one. On the thread that runs the model. */
+void janas_llm_model_tier_counts(const struct janas_llm_model *m,
+                                 uint64_t out[5]);
 /* Whether the engine gives the NPU a prompt's blocks by itself, where it
    measures faster: on the models whose answers on the NPU measured at par
    with the CPU's against llama.cpp; on the others only when asked

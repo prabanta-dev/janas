@@ -312,4 +312,28 @@ size_t janas_l2_bytes(void)
     return 0;
 }
 
+double janas_cpu_seconds(void)
+{
+    FILETIME c, e, k, u;
+    if (!GetProcessTimes(GetCurrentProcess(), &c, &e, &k, &u))
+        return -1;
+    ULARGE_INTEGER kk = {.LowPart = k.dwLowDateTime,
+                         .HighPart = k.dwHighDateTime};
+    ULARGE_INTEGER uu = {.LowPart = u.dwLowDateTime,
+                         .HighPart = u.dwHighDateTime};
+    return (double)(kk.QuadPart + uu.QuadPart) * 1e-7; /* 100 ns units */
+}
+
+int janas_cpu_count(void)
+{
+    SYSTEM_INFO si;
+    GetSystemInfo(&si);
+    return si.dwNumberOfProcessors ? (int)si.dwNumberOfProcessors : 1;
+}
+
+double janas_package_joules(void)
+{
+    return -1; /* not readable without a driver */
+}
+
 #endif /* _WIN32 */

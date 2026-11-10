@@ -203,6 +203,12 @@ void janas_llm_model_gpu_report(const struct janas_llm_model *m, char *buf,
     janas_gpu_tok_report(m->gtok, buf + n, len - n);
 }
 
+void janas_llm_model_tier_counts(const struct janas_llm_model *m,
+                                 uint64_t out[5])
+{
+    janas_gpu_tok_counts(m ? m->gtok : NULL, out);
+}
+
 static struct janas_matvec_task task_of(const struct janas_llm_model *m,
                                         const struct janas_jns_tensor *t,
                                         uint32_t rows, uint32_t cols)

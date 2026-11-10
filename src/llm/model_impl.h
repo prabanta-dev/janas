@@ -9,6 +9,7 @@
 #define JANAS_LLM_MODEL_IMPL_H
 
 #include "model.h"
+#include "observe.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -400,6 +401,30 @@ struct janas_llm_model {
     /* JANAS_ANA_STATS: every pair's record, and the tokens done so far */
     FILE *ana_stats, *ana_xstats; /* ana_xstats: JANAS_ANA_XSTATS */
     uint64_t ana_base;
+    /* the doubt probe (model_doubt.c, JANAS_DOUBT_STATS): its file, each
+       pair row's features, the layers whose inputs it writes; recording
+       while dbt_on, which the caller sets */
+    FILE *dbt_file;
+    float *dbt_feat;
+    uint8_t *dbt_x;
+    int dbt_on, dbt_res;
+    int dbt_cut, dbt_cut_hit;
+    /* the entrance gate (gate.c, model_gate.c): its readers, its layer,
+       the last token's residual there when armed, and whether it came */
+    struct janas_gate *egate;
+    uint32_t gate_layer, gate_pos; /* the position kept (UINT32_MAX: the
+                                      last of each forward call) */
+    uint32_t fwd_pos0; /* the current forward call's first position */
+    float *gate_x;
+    int gate_armed, gate_got;
+    /* the observers of the forward pass (observe.h, model_observe.c) and
+       the pair rows the buffers hold */
+    struct janas_observer obs[JANAS_MAX_OBSERVERS];
+    uint32_t n_obs;
+    size_t pairs_cap; /* the caller's: stop the forward after layer
+                                 dbt_cut - 1 (0: never); set when it did */
+    float *dbt_rbuf;  /* JANAS_DOUBT_RES: the last token's residual after
+                         each layer, n_layer rows of d_model */
     /* JANAS_ANA_COARSE: each pair row's h from gate and up at two bits, the
        choice made on it; the neurons both choices keep, and the true one's */
     float *ana_coarse;
@@ -631,6 +656,21 @@ void janas_m_ana_coln(struct janas_llm_model *m, uint32_t e,
                       const uint8_t *down, const uint8_t *p1, const uint8_t *p0,
                       const struct janas_jns_matrix *mx);
 void janas_m_ana_tok(struct janas_llm_model *m, uint32_t n);
+/* The doubt probe (model_doubt.c): DBT_NF features a pair row. */
+#define DBT_NF 10
+int janas_m_dbt_init(struct janas_llm_model *m, size_t pairs);
+void janas_m_dbt_free(struct janas_llm_model *m);
+/* The entrance gate's model side (model_gate.c). */
+void janas_m_gate_free(struct janas_llm_model *m);
+/* The observers' hook points (observe.h): one test each when none. */
+void janas_m_obs_ffn_input(struct janas_llm_model *m, uint32_t l,
+                           const float *xn, uint32_t n, uint32_t d);
+void janas_m_obs_ffn_pair(struct janas_llm_model *m, size_t g,
+                          const float *gate, const float *up, const float *h,
+                          uint32_t ff);
+void janas_m_obs_ffn_done(struct janas_llm_model *m, uint32_t n_rows);
+int janas_m_obs_layer_out(struct janas_llm_model *m, uint32_t l, const float *x,
+                          uint32_t n, uint32_t d);
 void janas_m_ana_lowmark(struct janas_llm_model *m, uint32_t n);
 void janas_m_ana_grade(struct janas_llm_model *m, const uint8_t *down,
                        const uint8_t *p1, const uint8_t *p0,

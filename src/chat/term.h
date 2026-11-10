@@ -778,21 +778,17 @@ static int term_key(void)
  */
 #define TERM_PAGE_ROWS 4096
 
-static void term_pager(struct janas_term *t, const char *text)
+struct term_row {
+    const char *s;
+    int len;
+};
+
+/* The text cut into the window's rows (pointing into text, which the
+   cutting changes); NULL when out of memory. */
+static struct term_row *term_page_rows(struct janas_term *t, char *copy,
+                                       int *count)
 {
-    if (!t->tty) {
-        fputs(text, stdout);
-        return;
-    }
-    char *copy = strdup(text);
-    if (!copy) {
-        fputs(text, stdout);
-        return;
-    }
-    struct {
-        const char *s;
-        int len;
-    } *row = malloc(sizeof(*row) * 64);
+    struct term_row *row = malloc(sizeof(*row) * 64);
     int n = 0, cap = row ? 64 : 0;
     for (char *line = copy;;) { /* an empty line is a row too */
         char *nl = strchr(line, '\n');
@@ -833,6 +829,21 @@ static void term_pager(struct janas_term *t, const char *text)
             break;
         line = nl + 1;
     }
+    *count = n;
+    return row;
+}
+
+/* The pager itself; with again, the text is made anew every ms
+   milliseconds while no key is pressed (/monitor), the place in it kept. */
+static void term_pager_run(struct janas_term *t, char *text,
+                           char *(*again)(void *), void *arg, int ms)
+{
+    int n = 0;
+    struct term_row *row = term_page_rows(t, text, &n);
+    if (!row) {
+        fputs(text, stdout);
+        return;
+    }
     int page = t->rows - 1; /* the last row says the way out */
     if (page < 1)
         page = 1;
@@ -858,6 +869,26 @@ static void term_pager(struct janas_term *t, const char *text)
         printf("\033[%d;1H%s%.*s%s", t->rows, T_DIM(t),
                (int)term_cut(hint, t->cols), hint, T_RESET(t));
         fflush(stdout);
+        int w = again ? tty_wait(ms) : 1;
+        if (w < 0)
+            continue; /* the window changed: drawn again */
+        if (w == 0) { /* no key for ms: the text anew */
+            char *fresh = again(arg);
+            struct term_row *rows = NULL;
+            int m = 0;
+            if (fresh && (rows = term_page_rows(t, fresh, &m))) {
+                free(row);
+                free(text);
+                row = rows;
+                text = fresh;
+                n = m;
+                most = n > page ? n - page : 0;
+                if (top > most)
+                    top = most;
+            } else
+                free(fresh);
+            continue;
+        }
         int k = term_key();
         if (k == TERM_KEY_ESC || k == 'q' || k == 'Q' || k == 3)
             break;
@@ -891,7 +922,37 @@ static void term_pager(struct janas_term *t, const char *text)
     }
     term_raw(t, 0);
     free(row);
-    free(copy);
+    free(text);
+}
+
+static void term_pager(struct janas_term *t, const char *text)
+{
+    if (!t->tty) {
+        fputs(text, stdout);
+        return;
+    }
+    char *copy = strdup(text);
+    if (!copy) {
+        fputs(text, stdout);
+        return;
+    }
+    term_pager_run(t, copy, NULL, NULL, 0);
+}
+
+/* A page that lives: make writes its text (malloc'd), again every ms
+   milliseconds until ESC. */
+static void term_pager_live(struct janas_term *t, char *(*make)(void *),
+                            void *arg, int ms)
+{
+    char *text = make(arg);
+    if (!text)
+        return;
+    if (!t->tty) {
+        fputs(text, stdout);
+        free(text);
+        return;
+    }
+    term_pager_run(t, text, make, arg, ms);
 }
 
 static void term_page_begin(struct janas_term *t)

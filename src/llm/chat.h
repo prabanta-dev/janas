@@ -12,6 +12,7 @@
 #include <stdint.h>
 
 #include "janas/llm.h"
+#include "llm/nucleus.h"
 #include "llm/expert_cache.h"
 #include "llm/constrain.h"
 #include "llm/generate.h"
@@ -80,6 +81,12 @@ struct janas_llm {
     struct janas_llm_model *draft; /* the drafting model, or NULL */
     uint32_t n_ctx;
     struct janas_llm_chat *chat;
+    /* Nucleus mode (api_nucleus.c): the gate is open on m, and the model
+       the requests go to */
+    int nuc_on;
+    struct janas_llm *nuc_spec;
+    /* what a monitor reads from another thread (api_stats.c), or NULL */
+    struct janas_api_monitor *mon;
     char desc[1024];
     /* what the description is built from, so that it can be built again:
        whether the GPU is given work is a thing that changes */
@@ -181,6 +188,15 @@ struct janas_llm_chat {
                           not a turn (raw text) */
     char *rtext;       /* the answer of the reply being read */
     size_t n_rtext, cap_rtext;
+
+    /* Nucleus mode (api_nucleus.c): the conversation last loaded, for the
+       Specialist; the gate's decision waited for at the reply's first
+       token; who answers; the Specialist's chat */
+    int32_t *nuc_roles;
+    char **nuc_texts;
+    size_t n_nuc;
+    int nuc_pending, nuc_route;
+    struct janas_llm_chat *nuc_chat;
 
     /* the conversation of janas_llm_chat_begin and _add, not yet run */
     struct cmsg {
@@ -341,6 +357,16 @@ void janas_api_close_call(janas_llm_chat *c, struct janas_buf *text);
 
 /* api_load.c: the messages of janas_llm_chat_add, at the chat's end. */
 void janas_api_msgs_free(janas_llm_chat *c);
+/* Nucleus mode (api_nucleus.c) */
+int janas_api_nuc_keep(janas_llm_chat *c);
+void janas_api_nuc_forget(janas_llm_chat *c);
+void janas_api_nuc_free(janas_llm_chat *c);
+/* api_stats.c: the reply's counters copied for a monitor, at every step;
+   the monitor's state freed with the model */
+void janas_api_monitor_note(janas_llm_chat *c);
+void janas_api_monitor_free(janas_llm *llm);
+void janas_api_nuc_arm(janas_llm_chat *c);
+const char *janas_api_nuc_decide(janas_llm_chat *c);
 
 /* api_keep.c: before a conversation (c->ids) is loaded over the current
    one, puts in its place the kept one that shares most of it, keeping the

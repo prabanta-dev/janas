@@ -1192,8 +1192,13 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
     m->gate = out_alloc(m, P * ff * sizeof(float));
     m->up = out_alloc(m, P * ff * sizeof(float));
     m->h = malloc(P * ff * sizeof(float));
+    m->pairs_cap = P;
     if (janas_m_ana_init(m, P) != 0) {
         snprintf(err, err_len, "out of memory for the Ana-Net probe");
+        goto fail;
+    }
+    if (janas_m_dbt_init(m, P) != 0) {
+        snprintf(err, err_len, "the doubt probe could not start");
         goto fail;
     }
     if (janas_m_neurons_init(m, P) != 0) {
@@ -1640,6 +1645,8 @@ void janas_llm_model_free(struct janas_llm_model *m)
     free(m->xres);
     free(m->xbr);
     free(m->hlen);
+    janas_m_dbt_free(m);
+    janas_m_gate_free(m);
     janas_m_ana_free(m);
     janas_aligned_free(m->qkvz_split);
     janas_m_neurons_free(m);

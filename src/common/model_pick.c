@@ -14,8 +14,12 @@
 #include <unistd.h>
 
 #include "janas/llm.h"
+#include "common/model_scan.h"
 #include "common/proc.h"
 #include "common/sysinfo.h"
+
+int (*janas_model_menu)(const char *, const struct janas_model_item *, int,
+                        int);
 
 static int is_file(const char *path)
 {
@@ -88,6 +92,81 @@ static const struct janas_model_entry *nth(int k)
     return NULL;
 }
 
+static int listed(const struct janas_model_entry *m)
+{
+    return !m->not_chat && !m->test_only;
+}
+
+static double file_gb(const char *path)
+{
+    struct stat st;
+    return stat(path, &st) == 0 ? (double)st.st_size / 1e9 : 0;
+}
+
+struct janas_model_item *janas_model_items(const char *dir, int *n, int *n_here)
+{
+    *n = *n_here = 0;
+    struct janas_model_file *f = malloc(JANAS_MODELS_MAX * sizeof *f);
+    struct janas_model_item *it =
+        calloc((size_t)janas_catalog_n + JANAS_MODELS_MAX, sizeof *it);
+    if (!f || !it) {
+        free(f);
+        free(it);
+        return NULL;
+    }
+    int k = 0;
+    for (int i = 0; i < janas_catalog_n; i++) {
+        const struct janas_model_entry *m = &janas_catalog[i];
+        char p[4400];
+        snprintf(p, sizeof p, "%s/%s", dir, m->out);
+        if (!listed(m) || !is_file(p))
+            continue;
+        it[k] = (struct janas_model_item){
+            .entry = m, .gb = file_gb(p), .ram_gb = m->ram_gb};
+        snprintf(it[k].name, sizeof it[k].name, "%s", m->name);
+        snprintf(it[k].path, sizeof it[k].path, "%s", p);
+        k++;
+    }
+    /* the chat models here that no entry of the catalog makes */
+    int nf = janas_models_scan(dir, f, JANAS_MODELS_MAX);
+    for (int j = 0; j < nf; j++) {
+        const char *base = strrchr(f[j].path, '/');
+        base = base ? base + 1 : f[j].path;
+        int known = 0;
+        for (int i = 0; i < janas_catalog_n && !known; i++)
+            known = strcmp(janas_catalog[i].out, base) == 0 ||
+                    (janas_catalog[i].extra_out &&
+                     strcmp(janas_catalog[i].extra_out, base) == 0);
+        if (known)
+            continue;
+        it[k] = (struct janas_model_item){.gb = (double)f[j].bytes / 1e9};
+        snprintf(it[k].name, sizeof it[k].name, "%s", f[j].name);
+        snprintf(it[k].path, sizeof it[k].path, "%s", f[j].path);
+        k++;
+    }
+    free(f);
+    *n_here = k;
+    for (int i = 0; i < janas_catalog_n; i++) {
+        const struct janas_model_entry *m = &janas_catalog[i];
+        char p[4400];
+        snprintf(p, sizeof p, "%s/%s", dir, m->out);
+        if (!listed(m) || is_file(p))
+            continue;
+        it[k] = (struct janas_model_item){.entry = m,
+                                          .gb = m->jns_repo ? m->jns_gb
+                                                            : m->gguf_gb,
+                                          .ram_gb = m->ram_gb};
+        snprintf(it[k].name, sizeof it[k].name, "%s", m->name);
+        k++;
+    }
+    *n = k;
+    if (k == 0) {
+        free(it);
+        return NULL;
+    }
+    return it;
+}
+
 /* janas-get, beside this program, for the model into dir; 0 if it made it */
 static int fetch(const char *prog, const struct janas_model_entry *m,
                  const char *dir)
@@ -138,25 +217,32 @@ static int choose_dir(const char *prog, char *dir, size_t len)
     return 0;
 }
 
+/* A model's file, given or chosen: its folder, and its entry of the
+   catalog when it is one's. */
+static int take_file(const char *path, struct janas_model_pick *cm)
+{
+    snprintf(cm->path, sizeof(cm->path), "%s", path);
+    snprintf(cm->dir, sizeof(cm->dir), "%s", path);
+    char *slash = strrchr(cm->dir, '/');
+    const char *base = slash ? slash + 1 : path;
+    if (slash)
+        *slash = 0;
+    else
+        snprintf(cm->dir, sizeof(cm->dir), ".");
+    cm->entry = NULL;
+    for (int i = 0; i < janas_catalog_n; i++)
+        if (strcmp(janas_catalog[i].out, base) == 0)
+            cm->entry = &janas_catalog[i];
+    set_key(cm, cm->entry ? cm->entry->name : base);
+    return 0;
+}
+
 int janas_model_pick(const char *prog, const char *arg,
                      struct janas_model_pick *cm)
 {
     memset(cm, 0, sizeof(*cm));
-    if (arg && is_file(arg)) {
-        snprintf(cm->path, sizeof(cm->path), "%s", arg);
-        snprintf(cm->dir, sizeof(cm->dir), "%s", arg);
-        char *slash = strrchr(cm->dir, '/');
-        const char *base = slash ? slash + 1 : arg;
-        if (slash)
-            *slash = 0;
-        else
-            snprintf(cm->dir, sizeof(cm->dir), ".");
-        for (int i = 0; i < janas_catalog_n; i++)
-            if (strcmp(janas_catalog[i].out, base) == 0)
-                cm->entry = &janas_catalog[i];
-        set_key(cm, cm->entry ? cm->entry->name : base);
-        return 0;
-    }
+    if (arg && is_file(arg))
+        return take_file(arg, cm);
     if (arg && (strchr(arg, '/') || strstr(arg, ".jns"))) {
         fprintf(stderr, "%s: there is no file %s\n", prog, arg);
         return -1;
@@ -181,13 +267,29 @@ int janas_model_pick(const char *prog, const char *arg,
             fprintf(stderr, "%s: no model given\n", prog);
             return -1;
         }
-        list(cm->dir);
+        if (janas_model_menu && isatty(STDOUT_FILENO)) {
+            int n, n_here;
+            struct janas_model_item *it =
+                janas_model_items(cm->dir, &n, &n_here);
+            int k = it ? janas_model_menu(cm->dir, it, n, n_here) : -1;
+            if (k >= 0 && !it[k].entry) {
+                char p[4400];
+                snprintf(p, sizeof p, "%s", it[k].path);
+                free(it);
+                return take_file(p, cm);
+            }
+            m = k >= 0 ? it[k].entry : NULL;
+            free(it);
+            if (!m)
+                return -2;
+        } else
+            list(cm->dir);
         char b[128];
         while (!m) {
             if (!ask_line("Which one (number or name, Enter to leave)? ", b,
                           sizeof(b)) ||
                 !b[0])
-                return -1;
+                return -2;
             int k = atoi(b);
             m = k > 0 ? nth(k) : janas_catalog_find(b);
             if (m && (m->not_chat || m->test_only))

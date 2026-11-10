@@ -41,11 +41,15 @@ struct srv_config {
     int max_connections;
     int verbose;
     int test;             /* serve the test chat page at /test */
+    int monitor;          /* serve the engine's monitor at /monitor */
     int thinking;         /* reasoning when a request does not say: 1, 0, or -1
                              for the model's own default */
     int reasoning_budget; /* the longest reasoning when a request does not
                              say, in tokens: -1 no limit (default), 0 none */
-    const char *embed_path;   /* the embedding model, or NULL */
+    const char *embed_path; /* the embedding model, or NULL */
+    /* Nucleus mode (janas_llm_nucleus): the entrance gate's file for the
+       model, and the Specialist it hands requests to; NULL: off */
+    const char *nucleus_gate, *specialist_path;
     const char *embed_id;     /* its name for clients */
     const char *speech_path;  /* the speech-to-text model, or NULL */
     const char *vad_path;     /* its voice activity detector, or NULL */
@@ -255,6 +259,10 @@ struct srv_model_info {
     int tools, sees, reasons;
 };
 const struct srv_model_info *srv_engine_info(const struct srv_engine *e);
+/* The model, for the monitor's counters (janas_llm_monitor, safe from any
+   thread), and how many requests wait for it. */
+janas_llm *srv_engine_llm(const struct srv_engine *e);
+int srv_engine_queued(struct srv_engine *e);
 /* The system message janas-chat gives the model (janas_llm_default_system),
    offered to the test page. */
 const char *srv_engine_system(const struct srv_engine *e);
@@ -369,6 +377,10 @@ int srv_moderations_create(struct srv_req *r);
 int srv_chat_create(struct srv_req *r);
 int srv_completion_create(struct srv_req *r);
 int srv_infill(struct srv_req *r); /* POST /infill, llama.cpp's */
+/* GET /monitor/events, the monitor's live data (monitor.c), and its end
+   when the server stops */
+int srv_monitor_events(struct srv_req *r);
+void srv_monitor_stop(void);
 /* ollama.c: the handler of one of Ollama's routes (/api/...), or NULL */
 srv_handler srv_ollama_route(const char *method, const char *path);
 /* anthropic.c: Anthropic's Messages API, POST /v1/messages and

@@ -8,7 +8,8 @@
  */
 #include "origin.h"
 #include "server.h"
-#include "server_test_html.h" /* made by build.sh from test.html */
+#include "server_monitor_html.h" /* made by build.sh from monitor.html */
+#include "server_test_html.h"    /* and test.html */
 
 #include <microhttpd.h>
 #include <stdarg.h>
@@ -442,6 +443,24 @@ static enum MHD_Result dispatch(struct srv_req *r)
         MHD_add_response_header(resp, "Cache-Control", "no-store");
         return queue(r->conn, 200, resp, "text/html; charset=utf-8");
     }
+    if (r->srv->cfg.monitor && strcmp(r->method, "GET") == 0 &&
+        (strcmp(r->path, "/monitor") == 0 ||
+         strcmp(r->path, "/monitor/") == 0)) {
+        /* as /test: the page asks for the key; its data is behind it */
+        struct MHD_Response *resp = MHD_create_response_from_buffer_static(
+            sizeof(janas_server_monitor_html) - 1, janas_server_monitor_html);
+        if (!resp)
+            return MHD_NO;
+        MHD_add_response_header(resp, "Content-Security-Policy",
+                                "default-src 'none'; script-src "
+                                "'unsafe-inline'; style-src 'unsafe-inline'; "
+                                "connect-src 'self'; base-uri 'none'; "
+                                "form-action 'none'; frame-ancestors 'none'");
+        MHD_add_response_header(resp, "X-Content-Type-Options", "nosniff");
+        MHD_add_response_header(resp, "Referrer-Policy", "no-referrer");
+        MHD_add_response_header(resp, "Cache-Control", "no-store");
+        return queue(r->conn, 200, resp, "text/html; charset=utf-8");
+    }
     if (!key_ok(r))
         return (enum MHD_Result)srv_reply_error(
             r, 401, "invalid_request_error", "invalid_api_key",
@@ -451,6 +470,9 @@ static enum MHD_Result dispatch(struct srv_req *r)
        made for it ask: not OpenAI's, so not in routes.inc */
     if (strcmp(r->path, "/infill") == 0 && strcmp(r->method, "POST") == 0)
         return (enum MHD_Result)srv_infill(r);
+    if (r->srv->cfg.monitor && strcmp(r->method, "GET") == 0 &&
+        strcmp(r->path, "/monitor/events") == 0)
+        return (enum MHD_Result)srv_monitor_events(r);
     /* Ollama's API, for the programs that know a local model only as
        Ollama's (ollama.c) */
     srv_handler ol = srv_ollama_route(r->method, r->path);

@@ -1,0 +1,111 @@
+{
+  "name": "janas",
+  "displayName": "Janas",
+  "description": "Code with a model of your own machine: Janas-LLM installed, its models chosen for your memory, and Continue, llama.vscode or Cline set up to use them. Nothing leaves the machine.",
+  "version": "0.1.0",
+  "publisher": "prabanta-dev",
+  "license": "GPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/prabanta-dev/janas"
+  },
+  "homepage": "https://github.com/prabanta-dev/janas/tree/main/editors/vscode#readme",
+  "bugs": "https://github.com/prabanta-dev/janas/issues",
+  "categories": [
+    "AI",
+    "Machine Learning"
+  ],
+  "keywords": [
+    "local",
+    "llm",
+    "offline",
+    "continue",
+    "completion"
+  ],
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "main": "./dist/src/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "janas.setUp",
+        "title": "Set up Janas in this editor",
+        "category": "Janas"
+      },
+      {
+        "command": "janas.getModel",
+        "title": "Download a model",
+        "category": "Janas"
+      },
+      {
+        "command": "janas.chooseModels",
+        "title": "Choose the models for code and completion",
+        "category": "Janas"
+      },
+      {
+        "command": "janas.start",
+        "title": "Start the servers",
+        "category": "Janas"
+      },
+      {
+        "command": "janas.stop",
+        "title": "Stop the servers",
+        "category": "Janas"
+      },
+      {
+        "command": "janas.update",
+        "title": "Look for a new version",
+        "category": "Janas"
+      },
+      {
+        "command": "janas.rollback",
+        "title": "Go back to the previous version",
+        "category": "Janas"
+      },
+      {
+        "command": "janas.remove",
+        "title": "Take Janas away from the extensions' settings",
+        "category": "Janas"
+      },
+      {
+        "command": "janas.showLog",
+        "title": "Show the log",
+        "category": "Janas"
+      }
+    ],
+    "configuration": {
+      "title": "Janas",
+      "properties": {
+        "janas.path": {
+          "type": "string",
+          "default": "",
+          "description": "The folder of a Janas you installed yourself (where janas-setup is). Empty: the one this extension installs and updates."
+        },
+        "janas.startServers": {
+          "type": "boolean",
+          "default": true,
+          "description": "Start the servers when the editor starts, once Janas is set up."
+        },
+        "janas.checkForUpdates": {
+          "type": "boolean",
+          "default": true,
+          "description": "Once a day, say when a new version of Janas is out (it is installed only if you say so)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "check": "tsc -p . --noEmit",
+    "test": "tsc -p . && node --test dist/test/"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "@types/vscode": "1.90.0",
+    "typescript": "^7.0.2"
+  }
+}

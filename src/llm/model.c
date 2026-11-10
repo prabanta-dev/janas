@@ -502,6 +502,7 @@ int janas_llm_model_forward(struct janas_llm_model *m, const int32_t *tokens,
                             uint32_t n, uint32_t pos0, float *logits,
                             int all_logits)
 {
+    m->fwd_pos0 = pos0; /* for the observers (observe.h) */
     int lp = long_prompt_on(m, n, pos0);
     uint64_t runs0 = m->gtok_runs[2];
     if (lp)
@@ -684,6 +685,8 @@ static int forward(struct janas_llm_model *m, const int32_t *tokens, uint32_t n,
             memcpy(m->xres, m->x, (size_t)n * dm * sizeof(float));
             memset(m->x, 0, (size_t)n * dm * sizeof(float));
         }
+        if (m->n_obs) /* the observers (observe.h) */
+            janas_m_obs_ffn_input(m, l, m->xn, n, dm);
         if (ly->pre_norm2) {
             /* Gemma 4's mixture: the dense branch on xn / xq as normed
                above, then the experts' branch */
@@ -727,6 +730,8 @@ static int forward(struct janas_llm_model *m, const int32_t *tokens, uint32_t n,
             fprintf(stderr, "l_out-%-3u norm %10.4f  %9.4f %9.4f %9.4f %9.4f\n",
                     l, sqrt(nn), v[0], v[1], v[2], v[3]);
         }
+        if (m->n_obs && janas_m_obs_layer_out(m, l, m->x, n, dm))
+            break; /* an observer stops the forward here */
     }
     janas_m_ana_frame(m, n); /* the Ana-Net probe's picture */
 output:

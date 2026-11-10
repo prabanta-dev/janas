@@ -144,7 +144,11 @@ type janas_llm_chat_stats
     '' of output_tokens, the reasoning's; 1 when max_reasoning closed it
     reasoning_tokens as ulong
     reasoning_cut    as long
+    '' reserved: 0 and empty
+    route            as long
+    route_domain     as zstring * 32
 end type
+
 
 const JANAS_LLM_STAGE_IDLE = 0
 const JANAS_LLM_STAGE_INPUT = 1
@@ -435,6 +439,43 @@ declare function janas_llm_sees(byval llm as const janas_llm ptr) as long
 declare function janas_llm_chat_reset(byval c as janas_llm_chat ptr) as long
 declare function janas_llm_chat_stats(byval c as const janas_llm_chat ptr, _
                                       byval s as janas_llm_chat_stats ptr) as long
+
+'' The engine at work, for a monitor (janas_llm_monitor in llm.h)
+type janas_llm_monitor
+    size             as ulong
+    replies          as ulongint
+    input_tokens     as ulongint
+    output_tokens    as ulongint
+    stage            as long
+    context_size     as ulong
+    experts_used     as ulongint
+    experts_hit      as ulongint
+    experts_read     as ulongint
+    bytes_read       as ulongint
+    warm_bytes       as ulongint
+    io_wait_seconds  as double
+    cache_slots      as ulongint
+    slot_bytes       as ulongint
+    experts_missed   as ulongint
+    prefetch_reads   as ulongint
+    prefetch_used    as ulongint
+    prefetch_bytes   as ulongint
+    io_seconds       as double
+    tier_hits        as ulongint
+    tier_loads       as ulongint
+    tier_cpu         as ulongint
+    tier_slots       as ulongint
+    tier_slot_bytes  as ulongint
+    rss_bytes        as ulongint
+    memory_bytes     as ulongint
+    memory_available as ulongint
+end type
+
+declare function janas_llm_monitor(byval llm as janas_llm ptr, _
+                                   byval m as janas_llm_monitor ptr) as long
+declare function janas_llm_monitor_reply(byval llm as janas_llm ptr, _
+                                         byval k as long, _
+                                         byval s as janas_llm_chat_stats ptr) as long
 
 
 '' Speech to text: a Whisper model (a .jns made by tools/hf2jns_whisper),

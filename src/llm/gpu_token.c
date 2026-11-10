@@ -749,6 +749,18 @@ static void add(char *buf, size_t len, const char *fmt, ...)
     va_end(ap);
 }
 
+void janas_gpu_tok_counts(const struct janas_gpu_tok *t, uint64_t out[5])
+{
+    memset(out, 0, 5 * sizeof *out);
+    if (!t)
+        return;
+    out[0] = t->tier_hits;
+    out[1] = t->tier_loads;
+    out[2] = t->cpu_experts;
+    out[3] = t->n_slot;
+    out[4] = t->slot_bytes;
+}
+
 void janas_gpu_tok_report(const struct janas_gpu_tok *t, char *buf, size_t len)
 {
     if (!len)
@@ -1500,6 +1512,12 @@ void janas_gpu_tok_report(const struct janas_gpu_tok *t, char *buf, size_t len)
     (void)t;
     if (len)
         buf[0] = 0;
+}
+
+void janas_gpu_tok_counts(const struct janas_gpu_tok *t, uint64_t out[5])
+{
+    (void)t;
+    memset(out, 0, 5 * sizeof *out);
 }
 
 uint32_t janas_gpu_tok_max_block(const struct janas_gpu_tok *t)

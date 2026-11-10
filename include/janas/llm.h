@@ -479,11 +479,11 @@ JANAS_LLM_API int32_t janas_llm_chat_load(janas_llm_chat *c, int32_t n,
 /*
  * The same, message by message, with what janas_llm_chat_load cannot say:
  * the tool calls of an assistant's message. janas_llm_chat_begin starts an
- * empty conversation, leaving a reply still being read where it is; janas_llm_chat_add appends a message;
- * janas_llm_chat_add_call appends a call to the last message, which must be
- * the assistant's (name, and the arguments as a JSON object); and
- * janas_llm_chat_run loads it all as janas_llm_chat_load does, the reply
- * following through janas_llm_chat_next.
+ * empty conversation, leaving a reply still being read where it is;
+ * janas_llm_chat_add appends a message; janas_llm_chat_add_call appends a call
+ * to the last message, which must be the assistant's (name, and the arguments
+ * as a JSON object); and janas_llm_chat_run loads it all as janas_llm_chat_load
+ * does, the reply following through janas_llm_chat_next.
  */
 JANAS_LLM_API int32_t janas_llm_chat_begin(janas_llm_chat *c);
 JANAS_LLM_API int32_t janas_llm_chat_add(janas_llm_chat *c, int32_t role,
@@ -773,6 +773,9 @@ struct janas_llm_chat_stats {
        closed it rather than the model */
     uint32_t reasoning_tokens;
     int32_t reasoning_cut;
+    /* reserved: 0 and empty */
+    int32_t route;
+    char route_domain[32];
 };
 
 /* janas_llm_chat_stats.stage */
@@ -808,6 +811,51 @@ struct janas_llm_chat_stats {
 /* Counters of the last message and reply. s->size must be set. */
 JANAS_LLM_API int32_t janas_llm_chat_stats(const janas_llm_chat *c,
                                            struct janas_llm_chat_stats *s);
+
+/*
+ * The engine at work, for a monitor (janas-server's /monitor): safe to
+ * call from another thread than the one replying, at any time, and cheap:
+ * a copy of counters the replies keep anyway.
+ */
+struct janas_llm_monitor {
+    uint32_t size; /* sizeof(struct janas_llm_monitor) */
+    /* replies since the model was opened (the one being written
+       included), and the tokens they read and wrote */
+    uint64_t replies, input_tokens, output_tokens;
+    int32_t stage; /* the latest reply's: JANAS_LLM_STAGE_... */
+    uint32_t context_size;
+    /* the expert cache since the model was opened: experts asked for,
+       found in memory, read from the file (missed, or read ahead and then
+       used), bytes read for them and in the background, seconds the
+       replies waited for them; its slots and their size (all 0 without
+       one: a dense model) */
+    uint64_t experts_used, experts_hit, experts_read, bytes_read, warm_bytes;
+    double io_wait_seconds;
+    uint64_t cache_slots, slot_bytes;
+    /* of experts_used, those missed and read for the reply; the experts
+       read ahead (their bytes not in bytes_read) and those of them a layer
+       then asked for; the time the reads took, in the background */
+    uint64_t experts_missed, prefetch_reads, prefetch_used, prefetch_bytes;
+    double io_seconds;
+    /* a card with memory of its own holding experts (its tier): of the
+       experts the card's passes asked for, those found there, those read
+       into it and those the CPU computed; its slots and their size (all 0
+       without one) */
+    uint64_t tier_hits, tier_loads, tier_cpu, tier_slots, tier_slot_bytes;
+    /* the process's resident memory now; the machine's, and how much of
+       it is available */
+    uint64_t rss_bytes, memory_bytes, memory_available;
+};
+
+/* The totals and the cache now. m->size must be set. */
+JANAS_LLM_API int32_t janas_llm_monitor(janas_llm *llm,
+                                        struct janas_llm_monitor *m);
+
+/* The counters of a recent reply, as janas_llm_chat_stats gives them: k 0
+   the latest (perhaps still being written), 1 the one before, up to 15.
+   JANAS_LLM_DONE when there is no such reply. s->size must be set. */
+JANAS_LLM_API int32_t janas_llm_monitor_reply(janas_llm *llm, int32_t k,
+                                              struct janas_llm_chat_stats *s);
 
 /*
  * Speech to text: a Whisper model (a .jns made by tools/hf2jns_whisper from

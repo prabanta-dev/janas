@@ -130,6 +130,7 @@ void janas_llm_chat_destroy(janas_llm_chat *c)
     if (!c)
         return;
     c->llm->chat = NULL;
+    janas_api_nuc_free(c); /* the Specialist's chat, before its model */
     /* the tools first: the session holds a filter bound to them */
     janas_api_tools_free(c);
     janas_api_msgs_free(c);
@@ -487,6 +488,8 @@ int janas_api_add_system(janas_llm_chat *c, const char *sys, size_t n)
 
 int32_t janas_llm_chat_thinking(const janas_llm_chat *c)
 {
+    if (c && c->nuc_route == JANAS_LLM_ROUTE_SPECIALIST && c->nuc_chat)
+        c = c->nuc_chat; /* Nucleus mode: the Specialist's reply */
     return c && c->in_think;
 }
 

@@ -26,11 +26,17 @@ end sub
 #ifdef __FB_64BIT__
 #assert sizeof(janas_llm_params) = 64
 #assert sizeof(janas_llm_chat_params) = 80
-#assert sizeof(janas_llm_chat_stats) = 192
+#assert sizeof(janas_llm_chat_stats) = 232
 #assert offsetof(janas_llm_params, reserve_bytes) = 48
 #assert offsetof(janas_llm_params, min_quality) = 60
 #assert offsetof(janas_llm_chat_params, max_reasoning) = 72
 #assert offsetof(janas_llm_chat_stats, reasoning_cut) = 188
+#assert offsetof(janas_llm_chat_stats, route) = 192
+#assert offsetof(janas_llm_chat_stats, route_domain) = 196
+#assert sizeof(janas_llm_monitor) = 208
+#assert offsetof(janas_llm_monitor, replies) = 8
+#assert offsetof(janas_llm_monitor, stage) = 32
+#assert offsetof(janas_llm_monitor, memory_available) = 200
 #assert sizeof(janas_llm_speech_params) = 24
 #assert sizeof(janas_llm_transcribe_params) = 112
 #assert offsetof(janas_llm_transcribe_params, speaker_names) = 88

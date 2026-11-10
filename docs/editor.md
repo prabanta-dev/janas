@@ -4,6 +4,28 @@
 
 The task given to each was the same, from [issue #52](https://github.com/prabanta-dev/janas/issues/52): a folder holds a small Gambas3 project (`ref/Notes`: `.project`, `.src/FMain.class`, `.src/FMain.form`, a list of notes saved in `~/.notes.txt`); read it, and write in `new/Todo` a to-do list in the same structure and style, with a Done button that removes the selected item, saved in `~/.todo.txt`. The model was Qwen3-Coder-30B-A3B-Instruct (Q4_K_M), on an Intel Core Ultra 9 185H with 30 GB of memory, 2-3 November 2026.
 
+## Setting it up in one command: janas-setup
+
+`janas-setup editor` does what the rest of this page does by hand. It finds VS Code and VSCodium (in PATH, where their installers put them on Windows, or as a Flatpak), the extensions they have, and the models installed (`janas-get`'s folder); it proposes a model for code (chat, edits, the agent) and one for completion at the cursor, from the machine's memory and what each model can do - a model made for code that fills in the middle and has no recurrent layers completes, and when memory holds only one model the same one does both - and says why; then it sets up the extensions it finds:
+
+- **Continue**: a file of Janas's own, `~/.continue/models/janas.yaml`, which Continue reads beside the user's `config.yaml` (not when it still reads the old `config.json`: janas-setup says so).
+- **llama.vscode**: its endpoints in the editor's `settings.json`.
+- **Cline**: its Ollama provider in `~/.cline/data/settings/providers.json`, where its version keeps the providers there and none of the user's is set; otherwise the values to fill in.
+- **VS Code's own chat** (VS Code, not VSCodium): a provider of the Custom Endpoint kind in `chatLanguageModels.json`.
+- **Roo Code**: a file to import from its settings (an import at every start would make Janas its profile in use every time); Roo Code's repository was archived in May 2026, so it is set up where it is installed, never offered.
+
+Where no extension it knows is installed it asks what to do - completion, chat and an agent (Continue), completion alone (llama.vscode), an agent step by step (Cline) - and installs it from the editor's own gallery, Open VSX for VSCodium. Janas is added beside what is there: a value it replaces is said and written down, and `janas-setup editor --undo` puts every file back as it was, byte for byte, comments and commas included. `--list` only says what is there; `--code` and `--complete` name the models instead of the ones proposed. `janas-setup serve` then starts one `janas-server` for each model, from port 11435 (Ollama's 11434 is left to it), until Ctrl+C.
+
+```sh
+janas-setup editor --list
+janas-setup editor
+janas-setup serve
+```
+
+What has been run: on Linux and under Wine, with VSCodium, Continue, llama.vscode and Cline installed from Open VSX into folders of their own, the settings written, written again, and put back to the same bytes; `serve` with Qwen3-0.6B answering Ollama's `/api/tags` and `/api/chat`, and stopping its server when stopped. VS Code's chat and Roo Code were tried with a script standing for VS Code. In VSCodium 1.135 with Continue 2.0.0, its `config.yaml` naming no model, Continue took Qwen3-0.6B from Janas's file and sent its request to Janas's server (7 November 2026). Not yet run: a model for code behind it.
+
+`--editor vscode` or `--editor vscodium` sets up that editor only, where both are installed. The extension for VS Code and VSCodium in [`editors/vscode/`](../editors/vscode/README.md) does all this from the editor: it installs Janas, helps choose a model for the machine's memory, runs `janas-setup`, keeps the servers running while the editor is open, says when a new version is out and goes back to the one before if asked.
+
 ## The server
 
 ```sh

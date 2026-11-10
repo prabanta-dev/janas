@@ -56,6 +56,8 @@ The longer the context, the wider the gap: 2.3 times as fast writing at 1,024 to
 
 **New: Gemma 4 whole on the GPU, Llama 3, and `janas-nsm`.** Gemma 4's four models - 12B, the 26B mixture, E2B and E4B - now run every layer of a token on the GPU, with the GPU's norms and quantizations giving the CPU's bits: Gemma-4-12B agrees with llama.cpp at 367 of 400 most likely tokens on the GPU, at 362 on the CPU. Llama 3 models run too, a LoRA adapter merged into one by `tools/hf2gguf`: DeepNSM-1B (Llama-3.2-1B with the adapter of [arXiv 2505.11764](https://arxiv.org/abs/2505.11764)) writes its answers at 57.8 tok/s on the laptop's CPU, where llama.cpp writes 37.9 to 39.8 on the same file. `janas-nsm` asks it for a word's explication in the Natural Semantic Metalanguage - Goddard and Wierzbicka's sixty-odd semantic primes, the words every language has - and counts it as the paper does; it can also restrict the model's output to those words alone. A research tool, and a sign of how far this project means to go: [docs/tools.md](docs/tools.md#janas-nsm).
 
+**New: the engine at work, in a page.** `janas-server --monitor` shows at `/monitor` what the engine is doing, a sample a second: how fast the latest replies read their prompt and wrote, the share of a mixture's experts found in memory and what came from the disk, memory, threads busy and, on Linux, the processor's watts, with charts of the last five minutes and the last 16 replies; `/monitor` in `janas-chat` shows the same in the terminal. On the laptop, Qwen3-0.6B answering short questions for ten minutes showed replies written at 100-140 tok/s, the first token after 0.02-0.05 s and 18-32 W for the whole processor. Counters and times only, never the text: [docs/monitor.md](docs/monitor.md).
+
 **Try it** on Linux x86-64 (Ubuntu 22.04, Debian 12 and later):
 
 ```sh
@@ -214,6 +216,7 @@ sudo pacman -S vulkan-headers glslang vulkan-tools           # the same, Arch
 - [examples/node-chat](examples/node-chat/README.md) — a chat in TypeScript on the module for Node.js: the model inside the server's process, its replies streamed to the browser
 - [examples/fb-chat](examples/fb-chat/README.md) — a chat in FreeBASIC, procedure by procedure and with Janas's classes
 - [docs/serving.md](docs/serving.md) — the model as tools for Claude Code, editors and other MCP clients (`janas-mcp`), and over HTTP, an API that follows OpenAI's, Ollama's and Anthropic's (Claude Code), with a chat page to try it from a browser (`janas-server`)
+- [docs/monitor.md](docs/monitor.md) — the engine at work: a page in the browser (`janas-server --monitor`) and in the terminal (`/monitor` in `janas-chat`), and the counters for a program
 - [docs/editor.md](docs/editor.md) — Continue, Cline, Roo Code, Claude Code, aider and Open WebUI with a model of this machine, each set up and tried on the same task; your files outside the editor (`janas-files`)
 - [docs/code-completion.md](docs/code-completion.md) — code filled in at an editor's cursor, in VSCodium and VS Code through `janas-server`: 1.5-2.2 s a proposal on a laptop, where a window slid a line was read again in 17 s
 - [docs/tools.md](docs/tools.md) — the converters, checkers and benchmarks built beside the programs

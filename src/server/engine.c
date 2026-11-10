@@ -13,6 +13,7 @@
  * prompt, which is then read once where the model can go back over it.
  */
 #include "server.h"
+#include "llm/nucleus.h"
 #include "fim.h"
 
 #include <stdio.h>
@@ -22,7 +23,9 @@
 
 struct srv_engine {
     janas_llm *llm;
-    janas_llm *emb; /* the embedding model, or NULL */
+    janas_llm *emb;  /* the embedding model, or NULL */
+    janas_llm *spec; /* Nucleus mode: the Specialist, or NULL */
+    int nucleus;
     janas_llm_chat *chat;
     pthread_t th;
     pthread_mutex_t mu;
@@ -487,6 +490,15 @@ static int32_t run_one(struct srv_engine *e, struct srv_job *j, int k)
     }
     struct janas_llm_chat_stats st = {.size = sizeof(st)};
     janas_llm_chat_stats(c, &st);
+    if (e->nucleus) /* Nucleus mode: who answered, for the logs */
+        fprintf(stderr,
+                "janas-server: nucleus route %s%s%s, prompt %u, output %u "
+                "tokens, %.2f s\n",
+                st.route == JANAS_LLM_ROUTE_SPECIALIST ? "specialist"
+                : st.route == JANAS_LLM_ROUTE_UNKNOWN  ? "unknown"
+                                                       : "self",
+                st.route_domain[0] ? " " : "", st.route_domain,
+                st.prompt_tokens, st.output_tokens, st.total_seconds);
     if (k == 0 && e->warn_input && st.prompt_tokens > e->warn_input &&
         rc != JANAS_LLM_ELIMIT)
         fprintf(stderr,
@@ -792,6 +804,29 @@ struct srv_engine *srv_engine_start(const struct srv_config *cfg, char *err,
     }
     if (cfg->no_gpu)
         janas_llm_set_gpu(e->llm, 0);
+    if (cfg->nucleus_gate) { /* Nucleus mode: the Specialist, the gate */
+        struct janas_llm_params sp;
+        janas_llm_params_default(&sp);
+        sp.n_ctx = cfg->llm.n_ctx;
+        if ((cfg->specialist_path &&
+             janas_llm_open(cfg->specialist_path, &sp, &e->spec) !=
+                 JANAS_LLM_OK) ||
+            janas_llm_nucleus(e->llm, cfg->nucleus_gate, e->spec) !=
+                JANAS_LLM_OK) {
+            snprintf(err, err_len, "Nucleus mode: %s", janas_llm_last_error());
+            janas_llm_chat_destroy(e->chat);
+            janas_llm_close(e->llm);
+            janas_llm_close(e->spec);
+            free(e);
+            return NULL;
+        }
+        if (cfg->no_gpu && e->spec)
+            janas_llm_set_gpu(e->spec, 0);
+        e->nucleus = 1;
+        fprintf(stderr, "janas-server: Nucleus mode, gate %s, specialist %s\n",
+                cfg->nucleus_gate,
+                cfg->specialist_path ? cfg->specialist_path : "none");
+    }
     if (cfg->embed_path) {
         struct janas_llm_params ep;
         janas_llm_params_default(&ep);
@@ -878,6 +913,7 @@ void srv_engine_stop(struct srv_engine *e)
     }
     janas_llm_chat_destroy(e->chat);
     janas_llm_close(e->llm);
+    janas_llm_close(e->spec); /* after the model: its chat holds one here */
     janas_llm_close(e->emb);
     srv_fim_free(e->fim);
     pthread_mutex_destroy(&e->mu);
@@ -908,4 +944,17 @@ int64_t srv_engine_created(const struct srv_engine *e)
 const struct srv_model_info *srv_engine_info(const struct srv_engine *e)
 {
     return &e->info;
+}
+
+janas_llm *srv_engine_llm(const struct srv_engine *e)
+{
+    return e->llm;
+}
+
+int srv_engine_queued(struct srv_engine *e)
+{
+    pthread_mutex_lock(&e->mu);
+    int n = (int)e->queued + (e->running ? 1 : 0);
+    pthread_mutex_unlock(&e->mu);
+    return n;
 }

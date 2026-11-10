@@ -21,8 +21,32 @@ struct janas_model_pick {
     const struct janas_model_entry *entry; /* NULL: not in the catalog */
 };
 
+/* A model for a menu: one of the catalog, or a file of no model of the
+   catalog. */
+struct janas_model_item {
+    const struct janas_model_entry *entry; /* NULL: a file of none */
+    char name[128];
+    char path[4400]; /* the file, when it is here; empty: to download */
+    double gb;       /* its size here, or the download */
+    int ram_gb;      /* the memory it is meant for, 0: not known */
+};
+
+/* The chat models for a menu, malloc'd, *n of them: first the *n_here
+   that are here (the catalog's, then the other chat models in dir, by
+   name), then the catalog's that are not. NULL when there are none. */
+struct janas_model_item *janas_model_items(const char *dir, int *n,
+                                           int *n_here);
+
+/* A menu of the program's own in place of the numbered list, when both
+   ends are a terminal (janas-chat's, src/chat/model_menu.c): the index of
+   the item chosen, or -1 when the user left. NULL: the numbered list. */
+extern int (*janas_model_menu)(const char *dir,
+                               const struct janas_model_item *items, int n,
+                               int n_here);
+
 /* arg: a path, a catalog name, or NULL for the list; prog names the
-   program in what is printed. 0, or -1 with the reason printed. */
+   program in what is printed. 0, -1 with the reason printed, or -2 when
+   the user left the list without choosing. */
 int janas_model_pick(const char *prog, const char *arg,
                      struct janas_model_pick *mp);
 

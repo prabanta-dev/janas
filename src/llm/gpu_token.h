@@ -229,6 +229,11 @@ void janas_gpu_tok_destroy(struct janas_gpu *g, struct janas_gpu_tok *t);
    say. */
 void janas_gpu_tok_report(const struct janas_gpu_tok *t, char *buf, size_t len);
 
+/* The tier's counts, for a monitor: the experts the card's passes found
+   there, read into it and left to the CPU, its slots and their size; all
+   0 without t. */
+void janas_gpu_tok_counts(const struct janas_gpu_tok *t, uint64_t out[5]);
+
 /* The most tokens janas_gpu_tok_run takes at once (0 without t). */
 uint32_t janas_gpu_tok_max_block(const struct janas_gpu_tok *t);
 /* ... starting at position pos: fewer as the context grows (the

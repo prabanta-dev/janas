@@ -40,6 +40,8 @@
 #include "janas/llm.h"
 #include "markdown.h"
 #include "mcp_chat.h"
+#include "model_menu.h"
+#include "monitor_page.h"
 #include "options.h"
 #include "tune.h"
 #include "scroll.h"
@@ -60,9 +62,10 @@ static double sess_tokens, sess_seconds;
 
 /* The commands, for Tab and for the help. */
 static const char *const commands[] = {
-    "/help",    "/about", "/stats", "/reset",   "/system",   "/temp",
-    "/spec",    "/think", "/mode",  "/experts", "/markdown", "/mcp",
-    "/context", "/image", "/audio", "/quit",    "/exit",     NULL};
+    "/help",    "/about",    "/stats", "/monitor", "/reset",
+    "/system",  "/temp",     "/spec",  "/think",   "/mode",
+    "/experts", "/markdown", "/mcp",   "/context", "/image",
+    "/audio",   "/quit",     "/exit",  NULL};
 
 /* a line /audio says, on the terminal */
 static void say_line(void *user, const char *line)
@@ -428,6 +431,9 @@ static const struct {
     {"/about", "what this is, who wrote it, and what it is running on"},
     {"/stats [on|off]", "speed report after every reply (toggles)"},
     {"/context", "how full the context is, and with what"},
+    {"/monitor",
+     "the engine at work, a page made anew every second: the latest "
+     "replies, the expert cache, memory and processor (ESC closes it)"},
     {"/reset", "new conversation"},
     {"/system", "show the system message"},
     {"/system <text>", "new conversation with this system message"},
@@ -1871,8 +1877,11 @@ int main(int argc, char **argv)
     if (where)
         setenv("JANAS_MODELS", where, 1);
     struct janas_model_pick cm;
-    if (janas_model_pick("janas-chat", marg, &cm) != 0)
-        return 1;
+    if (tty_both())
+        janas_model_menu = chat_model_menu; /* the arrows, not numbers */
+    int picked = janas_model_pick("janas-chat", marg, &cm);
+    if (picked != 0)
+        return picked == -2 ? 0 : 1; /* left without one: nothing wrong */
     if (cm.entry && cm.entry->test_only)
         fprintf(stderr,
                 "note: %s is a test model of the engine, not for chatting: "
@@ -2143,7 +2152,8 @@ int main(int argc, char **argv)
             continue;
         /* the chat is the reading thread's until it ends: but for the
            pages, which do not touch it, everything waits for it */
-        if (strcmp(msg, "/help") != 0 && strcmp(msg, "/about") != 0)
+        if (strcmp(msg, "/help") != 0 && strcmp(msg, "/about") != 0 &&
+            strcmp(msg, "/monitor") != 0)
             prep_wait(llm,
                       strcmp(msg, "/quit") == 0 || strcmp(msg, "/exit") == 0);
         if (msg[0] == '/') {
@@ -2167,6 +2177,16 @@ int main(int argc, char **argv)
                 } else
                     fputs(page, stdout);
                 free(page);
+            } else if (strcmp(msg, "/monitor") == 0) {
+                /* the counters are safe from any thread: the reading ahead
+                   goes on, and the page shows it */
+                struct chat_monitor mon = {.llm = llm};
+                if (term.tty) {
+                    term_page_begin(&term);
+                    term_pager_live(&term, chat_monitor_text, &mon, 1000);
+                    term_page_end(&term);
+                } else
+                    term_pager_live(&term, chat_monitor_text, &mon, 1000);
             } else if (strcmp(msg, "/save-config") == 0) {
                 const char *key = strcmp(arg, "global") == 0 ? NULL : cm.key;
                 if (conf_path(cpath, sizeof(cpath), 1, key) != 0)

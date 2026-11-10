@@ -145,6 +145,8 @@ static void act_worker(void *arg, int tid, int n_threads)
             for (; r < ff; r++)
                 h[r] = janas_silu_mul_det(gt[r], u[r]);
         }
+        if (m->n_obs) /* the observers, before any change */
+            janas_m_obs_ffn_pair(m, g, m->a->nh ? NULL : gt, u, h, ff);
         if (m->ana_tok) /* the Ana-Net probe: by token, after every pair */
             continue;
         if (m->ana_mode || m->ana_frame) /* the Ana-Net probe */
@@ -350,6 +352,8 @@ static void run_experts(struct janas_llm_model *m,
             runs[r].plane[1], &runs[r].mx[2]);
     struct act_job aj = {m, ng};
     EX_T(ex_act, janas_pool_run(m->compute, act_worker, &aj));
+    if (m->n_obs) /* the observers: the pass's pairs done */
+        janas_m_obs_ffn_done(m, ng);
     /* the NPU's calibration (JANAS_NPU_A8=1): a dense model's intermediate */
     for (uint32_t i = 0; m->npu && m->n_expert <= 1 && i < ng; i++)
         janas_m_npu_calib(m, 2, m->ana_layer, m->h + (size_t)m->glist[i] * ff,

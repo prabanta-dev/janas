@@ -850,6 +850,7 @@ void janas_llm_close(janas_llm *llm)
     janas_llm_model_free(llm->m);
     janas_tokenizer_destroy(llm->tok);
     janas_vision_close(llm->vis);
+    janas_api_monitor_free(llm);
     free(llm->path);
     free(llm);
 }

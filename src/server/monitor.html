@@ -1,0 +1,490 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later
+     Copyright (C) 2026 Maurizio Cammalleri
+     janas-server --monitor: the engine at work. It reads /monitor/events,
+     one event a second (monitor.c): the reply being written, the last
+     replies, the totals, the expert cache, the memory. Counters and times
+     only. Nothing is loaded from elsewhere. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Janas-LLM Monitor</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e;
+  --muted: #898781; --grid: #e1e0d9; --axis: #c3c2b7;
+  --ring: rgba(11,11,11,0.10); --series: #2a78d6; --brand: #9a6b12;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
+  --good: #0ca30c; --warn: #fab219; --crit: #d03b3b;
+  --mono: ui-monospace, "DejaVu Sans Mono", "Cascadia Mono", Menlo, Consolas,
+          monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7;
+    --muted: #898781; --grid: #2c2c2a; --axis: #383835;
+    --ring: rgba(255,255,255,0.10); --series: #3987e5; --brand: #d7af5f;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7;
+  --muted: #898781; --grid: #2c2c2a; --axis: #383835;
+  --ring: rgba(255,255,255,0.10); --series: #3987e5; --brand: #d7af5f;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--page); color: var(--ink); }
+body { font: 14px/1.45 var(--sans); padding: 16px; max-width: 1200px;
+       margin: 0 auto; }
+header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline;
+         margin-bottom: 12px; }
+h1 { margin: 0; font-size: 18px; color: var(--brand); }
+.model { font: 13px var(--mono); color: var(--ink-2); overflow-wrap: anywhere; }
+.desc { width: 100%; margin: 0; color: var(--muted); font-size: 12px;
+        overflow-wrap: anywhere; }
+.state { display: inline-flex; align-items: center; gap: 6px; font-size: 13px;
+         color: var(--ink-2); }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+.dot.input { background: var(--warn); }
+.dot.output { background: var(--good); }
+.dot.lost { background: var(--crit); }
+.key { display: none; gap: 8px; align-items: center; flex-wrap: wrap;
+       margin: 8px 0 16px; }
+.key.on { display: flex; }
+.key input { font: inherit; padding: 4px 8px; color: var(--ink);
+             background: var(--surface); border: 1px solid var(--axis);
+             border-radius: 4px; min-width: 0; flex: 1 1 200px; }
+.key button { font: inherit; padding: 4px 12px; color: var(--ink);
+              background: var(--surface); border: 1px solid var(--axis);
+              border-radius: 4px; cursor: pointer; }
+.tiles { display: grid; gap: 8px;
+         grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.tile { background: var(--surface); border: 1px solid var(--ring);
+        border-radius: 8px; padding: 10px 12px; min-width: 0; }
+.tile .label { color: var(--ink-2); font-size: 12px; }
+.tile .value { font-size: 22px; font-weight: 600; margin-top: 2px; }
+.tile .unit { font-size: 13px; font-weight: 400; color: var(--ink-2); }
+.tile .note { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.charts { display: grid; gap: 8px; margin-top: 12px;
+          grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+.chart { background: var(--surface); border: 1px solid var(--ring);
+         border-radius: 8px; padding: 10px 12px 6px; position: relative;
+         min-width: 0; }
+.chart h2 { margin: 0 0 4px; font-size: 13px; font-weight: 600; }
+.chart canvas { display: block; width: 100%; height: 120px; }
+.tip { position: absolute; pointer-events: none; display: none;
+       background: var(--surface); color: var(--ink); border: 1px solid var(--axis);
+       border-radius: 4px; padding: 2px 6px; font-size: 12px; white-space: nowrap; }
+h2.section { font-size: 14px; margin: 20px 0 6px; }
+.bar { display: flex; gap: 2px; height: 22px; margin: 4px 0 6px;
+       background: var(--surface); border-radius: 4px; overflow: hidden; }
+.bar span { display: block; min-width: 2px; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px;
+          color: var(--ink-2); }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+            margin-right: 5px; vertical-align: -1px; }
+.detail { color: var(--muted); font-size: 12px; margin: 6px 0 0; }
+.tablewrap { overflow-x: auto; background: var(--surface);
+             border: 1px solid var(--ring); border-radius: 8px; }
+table { border-collapse: collapse; width: 100%; font-size: 12px;
+        font-variant-numeric: tabular-nums; }
+th, td { padding: 5px 10px; text-align: right; white-space: nowrap; }
+th { color: var(--ink-2); font-weight: 600; border-bottom: 1px solid var(--axis); }
+td { border-bottom: 1px solid var(--grid); }
+th:first-child, td:first-child { text-align: left; }
+.empty { color: var(--muted); padding: 10px; }
+footer { margin-top: 16px; color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Janas-LLM Monitor</h1>
+  <span class="model" id="model">connecting…</span>
+  <span class="state"><span class="dot" id="dot"></span><span id="stage">—</span></span>
+  <p class="desc" id="desc"></p>
+</header>
+<div class="key" id="keybox">
+  <span>This server asks for its key:</span>
+  <input id="key" type="password" autocomplete="off" placeholder="API key">
+  <button id="keygo">Connect</button>
+</div>
+
+<section class="tiles" aria-label="Now">
+  <div class="tile"><div class="label">Prompt read</div>
+    <div class="value" id="v-in">—</div><div class="note" id="n-in"></div></div>
+  <div class="tile"><div class="label">Reply written</div>
+    <div class="value" id="v-out">—</div><div class="note" id="n-out"></div></div>
+  <div class="tile"><div class="label">First token after</div>
+    <div class="value" id="v-first">—</div><div class="note" id="n-first"></div></div>
+  <div class="tile"><div class="label">Experts found in memory</div>
+    <div class="value" id="v-hit">—</div><div class="note" id="n-hit"></div></div>
+  <div class="tile"><div class="label">Read from the disk</div>
+    <div class="value" id="v-disk">—</div><div class="note" id="n-disk"></div></div>
+  <div class="tile"><div class="label">Memory of the process</div>
+    <div class="value" id="v-mem">—</div><div class="note" id="n-mem"></div></div>
+  <div class="tile"><div class="label">Context</div>
+    <div class="value" id="v-ctx">—</div><div class="note" id="n-ctx"></div></div>
+  <div class="tile"><div class="label">Processor threads busy</div>
+    <div class="value" id="v-cpu">—</div><div class="note" id="n-cpu"></div></div>
+  <div class="tile"><div class="label">Experts read ahead</div>
+    <div class="value" id="v-pre">—</div><div class="note" id="n-pre"></div></div>
+  <div class="tile" id="t-tier" hidden><div class="label">Experts on the card</div>
+    <div class="value" id="v-tier">—</div><div class="note" id="n-tier"></div></div>
+  <div class="tile"><div class="label">Since the start</div>
+    <div class="value" id="v-tot">—</div><div class="note" id="n-tot"></div></div>
+</section>
+
+<section class="parts" aria-label="The latest prompt">
+  <h2 class="section">The latest prompt, by where its tokens come from</h2>
+  <div class="bar" id="bar" role="img"></div>
+  <div class="legend" id="legend"></div>
+  <p class="detail" id="detail"></p>
+</section>
+
+<section class="charts" aria-label="The last five minutes">
+  <div class="chart"><h2>Tokens written a second</h2>
+    <canvas id="c-out" aria-label="Tokens written a second, last five minutes"></canvas>
+    <div class="tip"></div></div>
+  <div class="chart"><h2>Prompt tokens read a second</h2>
+    <canvas id="c-in" aria-label="Prompt tokens read a second, last five minutes"></canvas>
+    <div class="tip"></div></div>
+  <div class="chart"><h2>Read from the disk, MB a second</h2>
+    <canvas id="c-disk" aria-label="Megabytes read from the disk a second, last five minutes"></canvas>
+    <div class="tip"></div></div>
+  <div class="chart"><h2>Experts found in memory, %</h2>
+    <canvas id="c-hit" aria-label="Share of the experts found in memory, last five minutes"></canvas>
+    <div class="tip"></div></div>
+  <div class="chart"><h2>Threads busy</h2>
+    <canvas id="c-cpu" aria-label="Threads of the processor busy with this server, last five minutes"></canvas>
+    <div class="tip"></div></div>
+  <div class="chart" id="w-chart" hidden><h2>Processor power, W</h2>
+    <canvas id="c-w" aria-label="Power of the whole processor package, last five minutes"></canvas>
+    <div class="tip"></div></div>
+</section>
+
+<h2 class="section">The last replies</h2>
+<div class="tablewrap">
+  <table>
+    <thead><tr><th>Reply</th><th>Prompt</th><th>Of it kept</th><th>Read at</th>
+      <th>First token</th><th>Reply</th><th>Written at</th><th>Drafts taken</th>
+      <th>Experts in memory</th><th>Read from disk</th><th>Stopped by</th></tr></thead>
+    <tbody id="rows"><tr><td class="empty" colspan="11">No reply yet.</td></tr></tbody>
+  </table>
+</div>
+<footer>One sample a second, the last five minutes kept in this page. Counters and times only: the text of prompts and replies never reaches this page.</footer>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const WINDOW = 300; /* seconds kept */
+const series = { out: [], in: [], disk: [], hit: [], cpu: [], w: [] };
+let prev = null, latest = null, recent = [];
+
+function fmt(x, d) {
+  if (x === null || x === undefined || !isFinite(x)) return "—";
+  return x.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+}
+function gb(b) { return fmt(b / 1e9, 1); }
+/* bytes with the unit that reads best */
+function size(b) {
+  return b >= 1e9 ? fmt(b / 1e9, 1) + " GB" : b >= 1e6 ? fmt(b / 1e6, 0) + " MB" : fmt(b / 1e3, 0) + " kB";
+}
+function tokens(n) { return fmt(n, 0) + (n === 1 ? " token" : " tokens"); }
+function rate(n, s) { return s > 0 ? n / s : null; }
+function setTile(id, value, unit, note) {
+  $("v-" + id).innerHTML = "";
+  $("v-" + id).append(document.createTextNode(value));
+  if (unit) {
+    const u = document.createElement("span");
+    u.className = "unit"; u.textContent = " " + unit;
+    $("v-" + id).append(u);
+  }
+  $("n-" + id).textContent = note || "";
+}
+const FINISH = ["", "the model", "the length asked", "a full context", "an error", "tool calls"];
+
+/* --- the charts: one series each, one axis, a crosshair on hover --- */
+function css(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+function draw(id, data, digits) {
+  const cv = $(id), dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth, h = cv.clientHeight;
+  if (cv.width !== Math.round(w * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+  const g = cv.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, w, h);
+  const left = 40, right = 6, top = 6, bottom = 18;
+  const pw = w - left - right, ph = h - top - bottom;
+  let max = 0;
+  for (const p of data) if (p.v !== null && p.v > max) max = p.v;
+  max = niceMax(max);
+  g.font = "11px " + css("--sans");
+  g.fillStyle = css("--muted"); g.strokeStyle = css("--grid"); g.lineWidth = 1;
+  for (let i = 0; i <= 2; i++) {
+    const y = top + ph - ph * i / 2;
+    g.beginPath(); g.moveTo(left, Math.round(y) + 0.5); g.lineTo(left + pw, Math.round(y) + 0.5); g.stroke();
+    g.textAlign = "right"; g.textBaseline = "middle";
+    const v = max * i / 2;
+    g.fillText(fmt(v, Number.isInteger(v) ? 0 : 1), left - 6, y);
+  }
+  g.textAlign = "left"; g.textBaseline = "top";
+  g.fillText("−5 min", left, top + ph + 4);
+  g.textAlign = "right"; g.fillText("now", left + pw, top + ph + 4);
+  const now = data.length ? data[data.length - 1].t : 0;
+  const xOf = (t) => left + pw - (now - t) / WINDOW * pw;
+  const yOf = (v) => top + ph - (max > 0 ? v / max : 0) * ph;
+  g.strokeStyle = css("--series"); g.lineWidth = 2; g.lineJoin = "round";
+  g.beginPath();
+  let pen = false;
+  for (const p of data) {
+    if (p.v === null) { pen = false; continue; }
+    const x = xOf(p.t), y = yOf(p.v);
+    if (pen) g.lineTo(x, y); else g.moveTo(x, y);
+    pen = true;
+  }
+  g.stroke();
+  cv._geo = { xOf, yOf, data, left, pw, top, ph, digits };
+  if (cv._hover !== undefined) crosshair(cv);
+}
+function niceMax(m) {
+  if (m <= 0) return 1;
+  const e = Math.pow(10, Math.floor(Math.log10(m)));
+  for (const k of [1, 2, 2.5, 5, 10]) if (k * e >= m) return k * e;
+  return 10 * e;
+}
+function crosshair(cv) {
+  const geo = cv._geo, tip = cv.parentNode.querySelector(".tip");
+  if (!geo || !geo.data.length) return;
+  let best = null, bd = Infinity;
+  for (const p of geo.data) {
+    const d = Math.abs(geo.xOf(p.t) - cv._hover);
+    if (d < bd) { bd = d; best = p; }
+  }
+  if (!best || best.v === null) { tip.style.display = "none"; return; }
+  const g = cv.getContext("2d"), x = geo.xOf(best.t), y = geo.yOf(best.v);
+  g.strokeStyle = css("--axis"); g.lineWidth = 1;
+  g.beginPath(); g.moveTo(Math.round(x) + 0.5, geo.top); g.lineTo(Math.round(x) + 0.5, geo.top + geo.ph); g.stroke();
+  g.fillStyle = css("--series"); g.strokeStyle = css("--surface"); g.lineWidth = 2;
+  g.beginPath(); g.arc(x, y, 4, 0, 2 * Math.PI); g.fill(); g.stroke();
+  const ago = Math.round(geo.data[geo.data.length - 1].t - best.t);
+  tip.textContent = fmt(best.v, geo.digits) + (ago ? " · " + ago + " s ago" : " · now");
+  tip.style.display = "block";
+  const box = cv.parentNode.clientWidth;
+  tip.style.left = Math.min(Math.max(x + 8, 0), box - tip.offsetWidth - 4) + "px";
+  tip.style.top = (cv.offsetTop + 4) + "px";
+}
+for (const id of ["c-out", "c-in", "c-disk", "c-hit", "c-cpu", "c-w"]) {
+  const cv = $(id);
+  cv.addEventListener("pointermove", (e) => { cv._hover = e.offsetX; redraw(); });
+  cv.addEventListener("pointerleave", () => { cv._hover = undefined; cv.parentNode.querySelector(".tip").style.display = "none"; redraw(); });
+}
+function redraw() {
+  draw("c-out", series.out, 1); draw("c-in", series.in, 0);
+  draw("c-disk", series.disk, 0); draw("c-hit", series.hit, 1);
+  draw("c-cpu", series.cpu, 1);
+  if (!$("w-chart").hidden) draw("c-w", series.w, 1);
+}
+window.addEventListener("resize", redraw);
+
+/* --- an event --- */
+function take(ev) {
+  $("model").textContent = ev.model + (ev.arch ? " (" + ev.arch + ")" : "");
+  $("desc").textContent = ev.description || "";
+  const r = ev.latest || null;
+  if (r) latest = r;
+  if (ev.recent) recent = ev.recent;
+  const stage = ev.stage;
+  $("dot").className = "dot " + stage;
+  $("stage").textContent =
+    stage === "input" && r ? "reading the prompt, " + fmt(r.input_done, 0) + " of " + fmt(r.input_tokens, 0) +
+      (r.input_eta_seconds > 0 ? ", about " + fmt(r.input_eta_seconds, 0) + " s left" : "")
+    : stage === "output" ? "writing a reply"
+    : ev.queued > 0 ? ev.queued + " waiting"
+    : "idle";
+  /* the latest reply */
+  if (latest) {
+    const L = latest;
+    setTile("in", fmt(rate(L.input_done || L.input_tokens, L.input_seconds), 1), "tok/s",
+      tokens(L.input_tokens) + " read" + (L.cached_tokens ? ", " + fmt(L.cached_tokens, 0) + " kept from before" : "") +
+      (L.input_threads ? " · " + L.input_threads + " threads" : ""));
+    setTile("out", fmt(rate(L.output_tokens, L.output_seconds), 1), "tok/s",
+      tokens(L.output_tokens) + (L.drafted ? " · drafts " + fmt(100 * L.accepted / L.drafted, 0) + "% taken" : "") +
+      (L.output_threads ? " · " + L.output_threads + " threads" : ""));
+    setTile("first", L.first_token_seconds > 0 ? fmt(L.first_token_seconds, 2) : "—", "s", "the latest reply");
+    setTile("ctx", fmt(L.context_used, 0), "of " + fmt(L.context_size || ev.context_size, 0),
+      L.context_bytes ? size(L.context_bytes) + " of keys and values" : "");
+  }
+  if (latest) parts(latest);
+  /* the cache and the disk, since the start and in the last second */
+  const C = ev.cache;
+  if (C.slots > 0) {
+    setTile("hit", fmt(C.used ? 100 * C.hit / C.used : null, 1), "%",
+      "since the start · " + fmt(C.slots, 0) + " slots, " + size(C.slots * C.slot_bytes));
+  } else {
+    setTile("hit", "—", "", "no expert cache: a dense model, or all in memory");
+  }
+  if (C.prefetch_reads > 0)
+    setTile("pre", fmt(100 * C.prefetch_used / C.prefetch_reads, 1), "% used",
+      fmt(C.prefetch_reads, 0) + " read ahead, " + size(C.prefetch_bytes) + " · reads took " +
+      fmt(C.io_seconds, 1) + " s in the background, the replies waited " + fmt(C.io_wait_seconds, 1) + " s");
+  else
+    setTile("pre", "—", "", C.slots > 0 ? "none read ahead yet" : "no expert cache");
+  const T = ev.tier, tAll = T.hits + T.loads + T.cpu;
+  $("t-tier").hidden = !(T.slots > 0);
+  if (T.slots > 0)
+    setTile("tier", fmt(tAll ? 100 * T.hits / tAll : null, 1), "% found there",
+      (tAll ? fmt(100 * T.loads / tAll, 1) + "% read into it, " + fmt(100 * T.cpu / tAll, 1) + "% computed by the CPU · " : "") +
+      fmt(T.slots, 0) + " slots, " + size(T.slots * T.slot_bytes) + " of the card's memory");
+  const M = ev.memory;
+  setTile("mem", gb(M.rss), "GB", "of " + gb(M.total) + " GB; " + gb(M.available) + " GB available");
+  setTile("tot", fmt(ev.replies, 0), ev.replies === 1 ? "reply" : "replies",
+    fmt(ev.input_tokens, 0) + " tokens read, " + fmt(ev.output_tokens, 0) + " written");
+  if (prev) {
+    const dt = ev.t - prev.t;
+    if (dt > 0) {
+      const dOut = ev.output_tokens - prev.output_tokens, dIn = ev.input_tokens - prev.input_tokens;
+      /* the latest reply's own counters move within it */
+      let outNow = dOut, inNow = dIn;
+      if (latest && prev.latest && ev.replies === prev.replies) {
+        outNow = latest.output_tokens - prev.latest.output_tokens;
+        inNow = (latest.input_done || 0) - (prev.latest.input_done || 0);
+      }
+      const dBytes = (C.bytes_read + C.warm_bytes) - (prev.cache.bytes_read + prev.cache.warm_bytes);
+      const dUsed = C.used - prev.cache.used, dHit = C.hit - prev.cache.hit;
+      push(series.out, ev.t, Math.max(0, outNow) / dt);
+      push(series.in, ev.t, Math.max(0, inNow) / dt);
+      push(series.disk, ev.t, Math.max(0, dBytes) / 1e6 / dt);
+      push(series.hit, ev.t, dUsed > 0 ? 100 * dHit / dUsed : null);
+      const busy = ev.cpu_seconds >= 0 && prev.cpu_seconds >= 0 ? (ev.cpu_seconds - prev.cpu_seconds) / dt : null;
+      const watts = ev.energy_j >= 0 && prev.energy_j >= 0 ? (ev.energy_j - prev.energy_j) / dt : null;
+      push(series.cpu, ev.t, busy);
+      push(series.w, ev.t, watts);
+      $("w-chart").hidden = watts === null;
+      setTile("cpu", fmt(busy, 1), "of " + ev.cpus,
+        (watts !== null ? fmt(watts, 1) + " W, the whole processor · " : "") +
+        (ev.on_mains === 1 ? "on mains · " : ev.on_mains === 0 ? "on battery · " : "") + ev.cpu);
+      setTile("disk", fmt(Math.max(0, dBytes) / 1e6 / dt, 0), "MB/s",
+        size(C.bytes_read) + " for the replies, " + size(C.warm_bytes) + " filling the cache, since the start");
+    }
+  } else if (C.slots === 0) {
+    setTile("disk", "—", "", "nothing read while replying");
+  }
+  prev = ev;
+  redraw();
+  table(); /* the latest row moves with the reply */
+}
+function parts(L) {
+  const sys = Math.max(0, L.prompt_system - L.prompt_tools);
+  const segs = [
+    ["System message", sys, "--s1"], ["Tools' descriptions", L.prompt_tools, "--s2"],
+    ["Conversation before", L.prompt_history, "--s3"], ["Last message", L.prompt_last, "--s4"]];
+  const all = segs.reduce((a, x) => a + x[1], 0);
+  const bar = $("bar"), leg = $("legend");
+  bar.textContent = ""; leg.textContent = "";
+  if (!all) { leg.textContent = "No prompt yet."; $("detail").textContent = ""; return; }
+  bar.setAttribute("aria-label", segs.map((x) => x[0] + " " + x[1] + " tokens").join(", "));
+  for (const [name, n, v] of segs) {
+    if (n > 0) {
+      const sp = document.createElement("span");
+      sp.style.flex = String(n); sp.style.background = "var(" + v + ")";
+      sp.title = name + ": " + fmt(n, 0) + " tokens (" + fmt(100 * n / all, 0) + "%)";
+      bar.append(sp);
+    }
+    const it = document.createElement("span"), sw = document.createElement("i");
+    sw.style.background = "var(" + v + ")";
+    it.append(sw, document.createTextNode(name + " " + fmt(n, 0)));
+    leg.append(it);
+  }
+  const bits = [];
+  bits.push(fmt(L.cached_tokens, 0) + " of " + fmt(L.prompt_tokens, 0) + " kept from before, " + fmt(L.input_tokens, 0) + " read");
+  if (L.prepare_seconds > 0) bits.push("built in " + fmt(L.prepare_seconds, 2) + " s");
+  if (L.input_cpu_seconds > 0 && L.input_seconds > 0)
+    bits.push("reading it kept " + fmt(L.input_cpu_seconds / L.input_seconds, 1) + " threads busy");
+  if (L.reasoning_tokens) bits.push(fmt(L.reasoning_tokens, 0) + " of the reply's tokens reasoning" + (L.reasoning_cut ? ", cut at the limit" : ""));
+  if (L.auto_off_passes) bits.push(fmt(L.auto_off_passes, 0) + " passes without drafts, which were not paying");
+  if (L.peak_rss) bits.push("peak memory " + size(L.peak_rss));
+  $("detail").textContent = bits.join(" · ");
+}
+function push(s, t, v) {
+  s.push({ t, v });
+  while (s.length && s[0].t < t - WINDOW) s.shift();
+}
+function table() {
+  const all = (latest ? [latest] : []).concat(recent);
+  const tb = $("rows");
+  tb.textContent = "";
+  if (!all.length) {
+    const tr = tb.insertRow(), td = tr.insertCell();
+    td.colSpan = 11; td.className = "empty"; td.textContent = "No reply yet.";
+    return;
+  }
+  all.forEach((r, i) => {
+    const tr = tb.insertRow();
+    const cells = [
+      i === 0 ? (r.stage === "done" ? "latest" : "now") : "−" + i,
+      fmt(r.prompt_tokens, 0), fmt(r.cached_tokens, 0),
+      r.input_seconds > 0 ? fmt(r.input_tokens / r.input_seconds, 1) + " tok/s" : "—",
+      r.first_token_seconds > 0 ? fmt(r.first_token_seconds, 2) + " s" : "—",
+      fmt(r.output_tokens, 0),
+      r.output_seconds > 0 ? fmt(r.output_tokens / r.output_seconds, 1) + " tok/s" : "—",
+      r.drafted ? fmt(100 * r.accepted / r.drafted, 0) + "%" : "—",
+      r.experts_used ? fmt(100 - 100 * r.experts_read / r.experts_used, 1) + "%" : "—",
+      r.bytes_read ? size(r.bytes_read) : "—",
+      r.stage === "done" ? (FINISH[r.finish] || "—") : "running"];
+    for (const c of cells) tr.insertCell().textContent = c;
+  });
+}
+
+/* --- the stream, with the key when the server asks for one --- */
+let key = "";
+try { key = sessionStorage.getItem("janas-monitor-key") || ""; } catch (e) {}
+async function connect() {
+  const headers = key ? { Authorization: "Bearer " + key } : {};
+  let res;
+  try { res = await fetch("/monitor/events", { headers, cache: "no-store" }); }
+  catch (e) { return lost(); }
+  if (res.status === 401) {
+    $("keybox").classList.add("on");
+    $("model").textContent = "the server asks for its key";
+    return;
+  }
+  if (!res.ok || !res.body) return lost();
+  $("keybox").classList.remove("on");
+  const rd = res.body.getReader(), dec = new TextDecoder();
+  let buf = "";
+  for (;;) {
+    let r;
+    try { r = await rd.read(); } catch (e) { break; }
+    if (r.done) break;
+    buf += dec.decode(r.value, { stream: true });
+    let i;
+    while ((i = buf.indexOf("\n\n")) >= 0) {
+      const chunk = buf.slice(0, i); buf = buf.slice(i + 2);
+      if (chunk.startsWith("data: ")) {
+        try { take(JSON.parse(chunk.slice(6))); } catch (e) {}
+      }
+    }
+  }
+  lost();
+}
+function lost() {
+  $("dot").className = "dot lost";
+  $("stage").textContent = "not connected: trying again";
+  prev = null;
+  setTimeout(connect, 3000);
+}
+$("keygo").addEventListener("click", () => {
+  key = $("key").value.trim();
+  try { sessionStorage.setItem("janas-monitor-key", key); } catch (e) {}
+  connect();
+});
+$("key").addEventListener("keydown", (e) => { if (e.key === "Enter") $("keygo").click(); });
+connect();
+</script>
+</body>
+</html>

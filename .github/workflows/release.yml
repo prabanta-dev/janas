@@ -70,7 +70,7 @@ jobs:
           B=bin/x86_64-linux
           P="$PACKAGE/janas"
           mkdir -p "$P/services" "$P/lib" "$P/include/janas" "$P/docs" "$P/node"
-          for f in janas-chat janas-server janas-get janas-bench janas-mcp \
+          for f in janas-chat janas-server janas-get janas-setup janas-bench janas-mcp \
                    gguf2jns jns_planes hf2jns_mtp jns_check vkcheck gpu_check; do
             install -m 755 "$B/$f" "$P/"
           done
@@ -244,7 +244,7 @@ jobs:
           B=bin/x86_64-windows
           P="$WPACKAGE/janas"
           mkdir -p "$P/services" "$P/lib" "$P/include/janas" "$P/docs"
-          for f in janas-chat janas-server janas-get janas-bench janas-mcp \
+          for f in janas-chat janas-server janas-get janas-setup janas-bench janas-mcp \
                    gguf2jns jns_planes hf2jns_mtp jns_check vkcheck gpu_check; do
             install -m 755 "$B/$f.exe" "$P/"
           done

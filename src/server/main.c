@@ -152,6 +152,11 @@ static void usage(FILE *f)
         "                    for more; * for any): others are refused\n"
         "  --test            serve a chat page for trying the server out, at\n"
         "                    http://<host>:<port>/test\n"
+        "  --monitor         serve a page that shows the engine at work, at\n"
+        "                    http://<host>:<port>/monitor: the reply being\n"
+        "                    written, the last ones, the expert cache, the\n"
+        "                    memory and the processor (counters and times,\n"
+        "                    never the text)\n"
         "  --verbose         one line per request on stderr\n"
         "  --version, --help\n");
 }
@@ -177,6 +182,8 @@ static const char *const OPTIONS[] = {"--help",
                                       "--cache",
                                       "--mtp",
                                       "--draft",
+                                      "--nucleus",
+                                      "--specialist",
                                       "--mode",
                                       "--quality",
                                       "--think",
@@ -211,6 +218,7 @@ static const char *const OPTIONS[] = {"--help",
                                       "--tls-key",
                                       "--allow-origin",
                                       "--test",
+                                      "--monitor",
                                       "--verbose",
                                       "--prompt-on",
                                       "--drafts-on",
@@ -331,6 +339,10 @@ int main(int argc, char **argv)
             c->llm.mtp_path = arg(argc, argv, &i);
         } else if (!strcmp(a, "--draft")) {
             c->llm.draft_path = arg(argc, argv, &i);
+        } else if (!strcmp(a, "--nucleus")) {
+            c->nucleus_gate = arg(argc, argv, &i);
+        } else if (!strcmp(a, "--specialist")) {
+            c->specialist_path = arg(argc, argv, &i);
         } else if (!strcmp(a, "--quality")) {
             static const char *const levels[] = {"low", "medium", "high"};
             c->llm.min_quality = choice(argc, argv, &i, levels, 3);
@@ -427,6 +439,8 @@ int main(int argc, char **argv)
             }
         } else if (!strcmp(a, "--test")) {
             c->test = 1;
+        } else if (!strcmp(a, "--monitor")) {
+            c->monitor = 1;
         } else if (!strcmp(a, "--verbose")) {
             c->verbose = 1;
             setenv("JANAS_PROGRESS", "30", 0); /* unless one is asked */
@@ -606,8 +620,14 @@ int main(int argc, char **argv)
                 strchr(c->host, ':') ? "[" : "",
                 strcmp(c->host, "0.0.0.0") ? c->host : "127.0.0.1",
                 strchr(c->host, ':') ? "]" : "", (unsigned)c->port);
+    if (c->monitor)
+        fprintf(stderr, "janas-server: monitor on http://%s%s%s:%u/monitor\n",
+                strchr(c->host, ':') ? "[" : "",
+                strcmp(c->host, "0.0.0.0") ? c->host : "127.0.0.1",
+                strchr(c->host, ':') ? "]" : "", (unsigned)c->port);
     janas_stop_wait();
     fprintf(stderr, "janas-server: stopping\n");
+    srv_monitor_stop(); /* its streams end, or the server waits for them */
     srv_engine_cancel_clients(s.engine);
     srv_http_stop(&s);
     srv_runs_stop();       /* their passes cut short: again at next start */
