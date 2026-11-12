@@ -7,9 +7,12 @@
  * written, the last replies, the totals since the start, the expert cache
  * and the memory. Counters and times only, never the text of a prompt or a
  * reply. The data is behind the server's key, where one is set; the page
- * asks for it, as /test does.
+ * asks for it, as /test does. With ?layers=1 the events also carry a look
+ * inside the layers (janas_llm_monitor_layers), which the engine gathers,
+ * and pays for, only while a stream asks for it.
  */
 #include <pthread.h>
+#include <stdarg.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,9 +36,76 @@ struct mon_stream {
     uint64_t replies; /* the totals' count when the last list was sent */
     double t0;
     /* the event being handed out, a piece a call */
-    char out[65536];
-    size_t len, pos;
+    char *out;
+    size_t len, pos, cap;
+    int bad;
+    /* the look inside the layers, when the page asked for it
+       (?layers=1): its shape and what each event takes */
+    int layers;
+    uint32_t shape[3];
+    float *ffn, *res, *strength;
+    uint32_t *chosen, *read;
 };
+
+/* appended to the event, the buffer grown as needed */
+static void put(struct mon_stream *ms, const char *fmt, ...)
+    __attribute__((format(printf, 2, 3)));
+static void put(struct mon_stream *ms, const char *fmt, ...)
+{
+    while (!ms->bad) {
+        va_list ap;
+        va_start(ap, fmt);
+        int k = vsnprintf(ms->out + ms->len, ms->cap - ms->len, fmt, ap);
+        va_end(ap);
+        if (k < 0) {
+            ms->bad = 1;
+            return;
+        }
+        if ((size_t)k < ms->cap - ms->len) {
+            ms->len += (size_t)k;
+            return;
+        }
+        size_t want = (ms->len + (size_t)k + 1) * 2;
+        char *bigger = realloc(ms->out, want);
+        if (!bigger) {
+            ms->bad = 1;
+            return;
+        }
+        ms->out = bigger;
+        ms->cap = want;
+    }
+}
+
+/* a string, as JSON wants it */
+static void put_str(struct mon_stream *ms, const char *s)
+{
+    put(ms, "\"");
+    for (const char *c = s; c && *c; c++) {
+        if (*c == '"' || *c == '\\')
+            put(ms, "\\%c", *c);
+        else if ((unsigned char)*c >= 0x20)
+            put(ms, "%c", *c);
+    }
+    put(ms, "\"");
+}
+
+static void put_floats(struct mon_stream *ms, const char *name, const float *v,
+                       size_t n)
+{
+    put(ms, ",\"%s\":[", name);
+    for (size_t i = 0; i < n; i++)
+        put(ms, i ? ",%.4g" : "%.4g", (double)v[i]);
+    put(ms, "]");
+}
+
+static void put_counts(struct mon_stream *ms, const char *name,
+                       const uint32_t *v, size_t n)
+{
+    put(ms, ",\"%s\":[", name);
+    for (size_t i = 0; i < n; i++)
+        put(ms, i ? ",%u" : "%u", v[i]);
+    put(ms, "]");
+}
 
 static double now(void)
 {
@@ -84,44 +154,31 @@ static int reply_json(char *p, size_t n, const struct janas_llm_chat_stats *s)
         (unsigned long long)s->peak_rss_bytes);
 }
 
-/* One event: "data: {...}\n\n" in buf, its length; 0 when it did not fit */
-static long event(struct mon_stream *ms, char *buf, size_t cap)
+/* One event, "data: {...}\n\n", made in ms->out; 0, or -1 when it could
+   not be */
+static int event(struct mon_stream *ms)
 {
     janas_llm *llm = srv_engine_llm(ms->srv->engine);
     struct janas_llm_monitor m = {.size = sizeof m};
     if (janas_llm_monitor(llm, &m) != JANAS_LLM_OK)
-        return 0;
+        return -1;
     const struct srv_model_info *mi = srv_engine_info(ms->srv->engine);
-    size_t at = 0;
-#define PUT(...)                                                               \
-    do {                                                                       \
-        int k_ = snprintf(buf + at, cap - at, __VA_ARGS__);                    \
-        if (k_ < 0 || (size_t)k_ >= cap - at)                                  \
-            return 0;                                                          \
-        at += (size_t)k_;                                                      \
-    } while (0)
-    PUT("data: {\"t\":%.3f,\"model\":\"", now() - ms->t0);
-    /* the model's name, as JSON wants it */
-    for (const char *c = ms->srv->cfg.model_id; c && *c; c++) {
-        if (*c == '"' || *c == '\\')
-            PUT("\\%c", *c);
-        else if ((unsigned char)*c >= 0x20)
-            PUT("%c", *c);
-    }
-    PUT("\",\"arch\":\"%s\",\"description\":\"", mi ? mi->arch : "");
-    for (const char *c = srv_engine_describe(ms->srv->engine); c && *c; c++) {
-        if (*c == '"' || *c == '\\')
-            PUT("\\%c", *c);
-        else if ((unsigned char)*c >= 0x20)
-            PUT("%c", *c);
-    }
+    ms->len = ms->pos = 0;
+    ms->bad = 0;
+    put(ms, "data: {\"t\":%.3f,\"model\":", now() - ms->t0);
+    put_str(ms, ms->srv->cfg.model_id);
+    put(ms, ",\"arch\":");
+    put_str(ms, mi ? mi->arch : "");
+    put(ms, ",\"description\":");
+    put_str(ms, srv_engine_describe(ms->srv->engine));
     char cpu[128];
     janas_cpu_name(cpu, sizeof cpu);
-    PUT("\",\"cpu\":\"");
-    for (const char *c = cpu; *c; c++)
-        if (*c != '"' && *c != '\\' && (unsigned char)*c >= 0x20)
-            PUT("%c", *c);
-    PUT("\",\"on_mains\":%d,\"queued\":%d,\"replies\":%llu,\"input_tokens\":%llu,"
+    put(ms, ",\"cpu\":");
+    put_str(ms, cpu);
+    put(ms, ",\"choices\":");
+    put_str(ms, m.choices);
+    put(ms,
+        ",\"on_mains\":%d,\"queued\":%d,\"replies\":%llu,\"input_tokens\":%llu,"
         "\"output_tokens\":%llu,\"stage\":\"%s\",\"context_size\":%u,"
         "\"cache\":{\"slots\":%llu,\"slot_bytes\":%llu,\"used\":%llu,"
         "\"hit\":%llu,\"read\":%llu,\"bytes_read\":%llu,\"warm_bytes\":%llu,"
@@ -148,9 +205,14 @@ static long event(struct mon_stream *ms, char *buf, size_t cap)
         (unsigned long long)m.memory_bytes,
         (unsigned long long)m.memory_available, janas_cpu_seconds(),
         janas_cpu_count(), janas_package_joules());
+    /* level 1: the phases' seconds since the start, in the order of
+       janas_llm_monitor.phase_seconds */
+    put(ms, ",\"phases\":[");
+    for (int i = 0; i < 8; i++)
+        put(ms, i ? ",%.4f" : "%.4f", m.phase_seconds[i]);
+    put(ms, "]");
     /* the latest reply every time; the ones before it when they changed */
     int all = ms->sent == 0 || m.replies != ms->replies;
-    ms->replies = m.replies;
     struct janas_llm_chat_stats s[16];
     int ns = 0;
     for (; ns < (all ? 16 : 1); ns++) {
@@ -159,18 +221,42 @@ static long event(struct mon_stream *ms, char *buf, size_t cap)
             break;
     }
     for (int k = 0; k < ns; k++) {
-        PUT(k == 0 ? ",\"latest\":" : k == 1 ? ",\"recent\":[" : ",");
-        int w = reply_json(buf + at, cap - at, &s[k]);
-        if (w < 0 || (size_t)w >= cap - at)
-            return 0;
-        at += (size_t)w;
+        char one[2048];
+        reply_json(one, sizeof one, &s[k]);
+        put(ms, "%s%s",
+            k == 0   ? ",\"latest\":"
+            : k == 1 ? ",\"recent\":["
+                     : ",",
+            one);
     }
     if (ns > 1)
-        PUT("]");
-    PUT("}\n\n");
-#undef PUT
+        put(ms, "]");
+    /* level 2: the layers, when asked and gathered */
+    uint64_t passes = 0;
+    if (ms->layers &&
+        janas_llm_monitor_layers(llm, ms->ffn, ms->res, ms->chosen, ms->read,
+                                 ms->strength, &passes) == JANAS_LLM_OK) {
+        size_t L = ms->shape[0], B = ms->shape[1], E = ms->shape[2];
+        put(ms,
+            ",\"layers\":{\"n\":%u,\"bins\":%u,\"experts\":%u,"
+            "\"passes\":%llu",
+            (unsigned)L, (unsigned)B, (unsigned)E, (unsigned long long)passes);
+        put_floats(ms, "ffn", ms->ffn, L * B);
+        put_floats(ms, "resid", ms->res, L * B);
+        if (E) {
+            put_counts(ms, "chosen", ms->chosen, L * E);
+            put_counts(ms, "read", ms->read, L * E);
+            put_floats(ms, "strength", ms->strength, L * E);
+        }
+        put(ms, "}");
+    } else if (ms->layers)
+        put(ms, ",\"layers\":null");
+    put(ms, "}\n\n");
+    if (ms->bad)
+        return -1;
+    ms->replies = m.replies;
     ms->sent++;
-    return (long)at;
+    return 0;
 }
 
 static long mon_next(void *ctx, char *buf, size_t cap)
@@ -183,22 +269,32 @@ static long mon_next(void *ctx, char *buf, size_t cap)
             usleep(100000);
     if (atomic_load(&stopping))
         return -1;
-    if (ms->pos == ms->len) {
-        long n = event(ms, ms->out, sizeof ms->out);
-        if (n <= 0)
-            return -1;
-        ms->len = (size_t)n;
-        ms->pos = 0;
-    }
+    if (ms->pos == ms->len && event(ms) != 0)
+        return -1;
     size_t k = ms->len - ms->pos < cap ? ms->len - ms->pos : cap;
     memcpy(buf, ms->out + ms->pos, k);
     ms->pos += k;
     return (long)k;
 }
 
+static void mon_free(struct mon_stream *ms)
+{
+    free(ms->out);
+    free(ms->ffn);
+    free(ms->res);
+    free(ms->strength);
+    free(ms->chosen);
+    free(ms->read);
+    free(ms);
+}
+
 static void mon_done(void *ctx)
 {
-    free(ctx);
+    struct mon_stream *ms = ctx;
+    if (ms->layers) /* one fewer wants it: the engine stops paying for it
+                       when nobody does */
+        janas_llm_monitor_layers_on(srv_engine_llm(ms->srv->engine), 0);
+    mon_free(ms);
 }
 
 int srv_monitor_events(struct srv_req *r)
@@ -208,5 +304,24 @@ int srv_monitor_events(struct srv_req *r)
         return srv_reply_error(r, 500, "server_error", NULL, "Out of memory.");
     ms->srv = r->srv;
     ms->t0 = now();
+    const char *lv = srv_query(r, "layers");
+    if (lv && strcmp(lv, "1") == 0) {
+        janas_llm *llm = srv_engine_llm(r->srv->engine);
+        janas_llm_monitor_layers_shape(llm, ms->shape);
+        size_t L = ms->shape[0], B = ms->shape[1], E = ms->shape[2];
+        size_t LE = L * (E ? E : 1);
+        ms->ffn = malloc(L * B * sizeof(float));
+        ms->res = malloc(L * B * sizeof(float));
+        ms->strength = malloc(LE * sizeof(float));
+        ms->chosen = malloc(LE * sizeof(uint32_t));
+        ms->read = malloc(LE * sizeof(uint32_t));
+        if (!ms->ffn || !ms->res || !ms->strength || !ms->chosen || !ms->read) {
+            mon_free(ms);
+            return srv_reply_error(r, 500, "server_error", NULL,
+                                   "Out of memory.");
+        }
+        ms->layers = 1;
+        janas_llm_monitor_layers_on(llm, 1);
+    }
     return srv_reply_stream(r, mon_next, mon_done, ms);
 }

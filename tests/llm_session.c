@@ -7,7 +7,11 @@
  *   2. the same with speculation on, which leaves generated tokens unread
  *      when B is appended (they must be dropped);
  *   3. sampling (temperature, top-p, seed): the same tokens with and
- *      without speculation.
+ *      without speculation;
+ *   4. a rewind: A, LONG generated, the session cut back to A, then B and
+ *      24 generated, gives the same 24 as a fresh session given A + B (a
+ *      sliding-window layer's ring overwritten by the long reply must not
+ *      be read again: Gemma 4, 10 Nov 2026).
  *
  * Usage: llm_session <model.jns> <tokens.int32> [mtp=<mtp.jns>]
  */
@@ -22,6 +26,7 @@
 #define NB 40
 #define G1 12
 #define G2 24
+#define LONG 1400
 
 static int run_turns(struct janas_llm_model *m,
                      const struct janas_gen_options *o, const int32_t *text,
@@ -57,6 +62,27 @@ static int run_once(struct janas_llm_model *m,
     return 0;
 }
 
+static int run_rewind(struct janas_llm_model *m,
+                      const struct janas_gen_options *o, const int32_t *text,
+                      int32_t *g)
+{
+    struct janas_llm_session *s = janas_llm_session_create(m, o);
+    if (!s || janas_llm_session_append(s, text, NA) != 0)
+        return -1;
+    int32_t t;
+    for (int i = 0; i < LONG; i++)
+        if (janas_llm_session_next(s, &t) != 0)
+            return -1;
+    if (janas_llm_session_truncate(s, NA) != 0 ||
+        janas_llm_session_append(s, text + NA, NB) != 0)
+        return -1;
+    for (int i = 0; i < G2; i++)
+        if (janas_llm_session_next(s, &g[i]) != 0)
+            return -1;
+    janas_llm_session_destroy(s);
+    return 0;
+}
+
 static int same(const char *what, const int32_t *a, const int32_t *b, int n)
 {
     int ok = memcmp(a, b, (size_t)n * sizeof(int32_t)) == 0;
@@ -82,7 +108,7 @@ int main(int argc, char **argv)
     int ccpus[12] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
     int icpus[8] = {12, 13, 14, 15, 16, 17, 18, 19};
     struct janas_llm_options mo = {.cache_bytes = (uint64_t)20480 << 20,
-                                   .n_ctx = 1024,
+                                   .n_ctx = 4096,
                                    .compute_cpus = ccpus,
                                    .n_compute = 12,
                                    .io_cpus = icpus,
@@ -130,6 +156,12 @@ int main(int argc, char **argv)
     int differs = memcmp(g2, once, sizeof(once)) != 0;
     printf("%-44s %s\n", "sampling differs from greedy",
            differs ? "yes" : "no (suspicious)");
+
+    int32_t r[G2], fresh[G2];
+    if (run_once(m, &greedy, text, NA + NB, fresh, G2) != 0 ||
+        run_rewind(m, &greedy, text, r) != 0)
+        return 1;
+    ok &= same("greedy: rewound past a long reply vs fresh", fresh, r, G2);
 
     janas_llm_model_free(m);
     printf("llm_session: %s\n", ok ? "ok" : "FAILED");

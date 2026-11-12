@@ -69,6 +69,12 @@ void janas_llm_model_phases(const struct janas_llm_model *m,
         janas_m_exp_report();
 }
 
+void janas_llm_model_phase_times(const struct janas_llm_model *m,
+                                 double out[JANAS_PH_COUNT])
+{
+    memcpy(out, m->phase, sizeof(m->phase));
+}
+
 static void embed(struct janas_llm_model *m, int32_t token, float *x)
 {
     uint32_t dm = m->d_model;
@@ -498,6 +504,19 @@ static void long_prompt_end(struct janas_llm_model *m, double sec_per_token,
                 m->lp.cpu * 1e3, m->lp.cpu < m->lp.gpu ? "without" : "with it");
 }
 
+/* A pass wrote the rings' rows of pos0 .. pos0 + n: ring_hi is the highest
+   position written over them since a pass from 0, the rows a rewind may
+   find taken (janas_llm_model_rewind_ok). Set to the pass's end alone, a
+   reply of 1024 tokens followed by a conversation rewound to the 674 they
+   shared left Gemma 4 E2B reading its sliding layers' rows of other
+   positions: empty replies and <pad>s, MATH 1.4% where it makes 44.3%
+   (10 Nov 2026) */
+static void ring_written(struct janas_llm_model *m, uint32_t pos0, uint32_t n)
+{
+    if (pos0 == 0 || pos0 + n > m->ring_hi)
+        m->ring_hi = pos0 + n;
+}
+
 int janas_llm_model_forward(struct janas_llm_model *m, const int32_t *tokens,
                             uint32_t n, uint32_t pos0, float *logits,
                             int all_logits)
@@ -623,7 +642,7 @@ static int forward(struct janas_llm_model *m, const int32_t *tokens, uint32_t n,
         /* its head the whole vocabulary's: the others -inf here */
         if (m->vs_n && mask_to_vocab(m, logits, all_logits ? n : 1) != 0)
             return -1;
-        m->ring_hi = pos0 + n;
+        ring_written(m, pos0, n);
         if (m->a->rec && n <= JANAS_LLM_MAX_BLOCK) {
             /* replayed and logged by the GPU: as at the end */
             m->base = m->src;
@@ -735,7 +754,7 @@ static int forward(struct janas_llm_model *m, const int32_t *tokens, uint32_t n,
     }
     janas_m_ana_frame(m, n); /* the Ana-Net probe's picture */
 output:
-    m->ring_hi = pos0 + n; /* the rings hold up to here */
+    ring_written(m, pos0, n); /* the rings hold up to here */
     double td = now();
     uint32_t first = all_logits ? 0 : n - 1;
     /* with an MTP block, every token's final hidden state is kept for it:
@@ -801,6 +820,16 @@ int janas_llm_mtp_chain_fixed(const struct janas_llm_model *m)
 int janas_llm_model_recurrent(const struct janas_llm_model *m)
 {
     return m->a->rec != JANAS_REC_NONE;
+}
+
+int janas_llm_model_rewind_ok(const struct janas_llm_model *m, uint32_t n)
+{
+    /* a ring keeps the window before n only while nothing past n + (its
+       capacity - the window) has been written over it */
+    for (uint32_t sl = 0; sl < m->n_attn; sl++)
+        if (m->kv_ring[sl] && m->ring_hi > n + m->kv_cap[sl] - m->window)
+            return 0;
+    return 1;
 }
 
 const float *janas_llm_model_hidden(const struct janas_llm_model *m)

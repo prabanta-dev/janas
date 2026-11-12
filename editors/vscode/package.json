@@ -2,8 +2,9 @@
   "name": "janas",
   "displayName": "Janas",
   "description": "Code with a model of your own machine: Janas-LLM installed, its models chosen for your memory, and Continue, llama.vscode or Cline set up to use them. Nothing leaves the machine.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "prabanta-dev",
+  "icon": "media/icon.png",
   "license": "GPL-3.0-or-later",
   "repository": {
     "type": "git",
@@ -34,6 +35,16 @@
       {
         "command": "janas.setUp",
         "title": "Set up Janas in this editor",
+        "category": "Janas"
+      },
+      {
+        "command": "janas.chooseExtension",
+        "title": "Install an extension to chat and complete code with",
+        "category": "Janas"
+      },
+      {
+        "command": "janas.walkthrough",
+        "title": "Show the steps to set it up",
         "category": "Janas"
       },
       {
@@ -96,7 +107,61 @@
           "description": "Once a day, say when a new version of Janas is out (it is installed only if you say so)."
         }
       }
-    }
+    },
+    "walkthroughs": [
+      {
+        "id": "start",
+        "title": "Janas: code with a model of your own machine",
+        "description": "Four steps, and nothing leaves the machine.",
+        "steps": [
+          {
+            "id": "setup",
+            "title": "Set up Janas",
+            "description": "Janas is downloaded from its GitHub releases, checked, and installed in a folder of its own; then the rest of these steps follow by themselves.\n[Set up Janas](command:janas.setUp)",
+            "media": {
+              "markdown": "media/setup.md"
+            },
+            "completionEvents": [
+              "onContext:janas.ready"
+            ]
+          },
+          {
+            "id": "model",
+            "title": "A model for this machine",
+            "description": "The models are listed with the memory each wants; the ones made for code come first, and the one starred fits your memory best. The download runs in a terminal.\n[Download a model](command:janas.getModel)",
+            "media": {
+              "markdown": "media/model.md"
+            },
+            "completionEvents": [
+              "onCommand:janas.getModel",
+              "onContext:janas.ready"
+            ]
+          },
+          {
+            "id": "client",
+            "title": "Something to chat and complete code with",
+            "description": "Janas gives the model; the chat, the edits and the completion as you type come from another extension that talks to it: Continue (all of them), llama.vscode (completion alone) or Cline (an agent).\n[Install one](command:janas.chooseExtension)",
+            "media": {
+              "markdown": "media/client.md"
+            },
+            "completionEvents": [
+              "onContext:janas.hasClient"
+            ]
+          },
+          {
+            "id": "try",
+            "title": "Ask it something",
+            "description": "Open the chat of the extension you chose (Continue: its icon in the side bar), pick the model whose name begins with the one Janas downloaded, and ask. The status bar's Janas says whether the servers are up; click it for Janas's commands.\n[Janas's commands](command:janas.menu)",
+            "media": {
+              "markdown": "media/try.md"
+            },
+            "completionEvents": [
+              "onCommand:janas.menu"
+            ]
+          }
+        ]
+      }
+    ]
   },
   "scripts": {
     "build": "tsc -p .",

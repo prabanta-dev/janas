@@ -63,6 +63,14 @@ void janas_m_obs_ffn_done(struct janas_llm_model *m, uint32_t n_rows)
                                n_rows);
 }
 
+void janas_m_obs_route(struct janas_llm_model *m, uint32_t l, uint32_t e,
+                       int in_memory)
+{
+    for (uint32_t i = 0; i < m->n_obs; i++)
+        if (m->obs[i].route)
+            m->obs[i].route(m->obs[i].ctx, m, l, e, in_memory);
+}
+
 int janas_m_obs_layer_out(struct janas_llm_model *m, uint32_t l, const float *x,
                           uint32_t n, uint32_t d)
 {

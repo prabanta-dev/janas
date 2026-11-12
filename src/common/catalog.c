@@ -432,18 +432,37 @@ int janas_models_dir(char *buf, size_t len)
     return n > 0 && (size_t)n < len ? 0 : -1;
 }
 
+/* a separator of a path: on Windows the backslash too, which its own
+   paths use (C:\Users\...\janas); only the slash was taken, and a
+   folder whose parent was missing could not be made there */
+static int is_sep(char c)
+{
+#ifdef _WIN32
+    return c == '/' || c == '\\';
+#else
+    return c == '/';
+#endif
+}
+
 int janas_mkdirs(const char *dir)
 {
     char p[4096];
     int n = snprintf(p, sizeof(p), "%s", dir);
     if (n <= 0 || (size_t)n >= sizeof(p))
         return -1;
-    for (char *c = p + 1; *c; c++)
-        if (*c == '/') {
+    char *c = p + 1;
+#ifdef _WIN32
+    if (p[0] && p[1] == ':') /* a drive's root is there already */
+        c = p + 2;
+#endif
+    for (; *c; c++)
+        if (is_sep(*c) && !is_sep(c[-1])) {
+            char sep = *c;
             *c = 0;
-            if (mkdir(p, 0755) != 0 && errno != EEXIST)
-                return -1;
-            *c = '/';
+            /* a part that cannot be made may be one that is there and
+               cannot be made again (a share's root): the end decides */
+            mkdir(p, 0755);
+            *c = sep;
         }
     if (mkdir(p, 0755) != 0 && errno != EEXIST)
         return -1;

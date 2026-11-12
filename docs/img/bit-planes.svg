@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 300" width="760" height="300" role="img" aria-labelledby="t d" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif">
+<title id="t">An expert's down matrix in three bit planes</title>
+<desc id="d">Each six-bit weight of an expert's down matrix is stored as three planes of two bits each, the first a two-bit weight on its own. Level 1 reads the first plane alone, two bits a weight; level 2 the first two, four bits; level 3 all three, the six-bit weights themselves. A smaller level means a smaller slot, so the same cache holds more experts.</desc>
+<style>
+  .bg{fill:#fcfcfb}.ink{fill:#0b0b0b}.ink2{fill:#52514e}.mut{fill:#898781}
+  .p0{fill:#1c5cab}.p1{fill:#3987e5}.p2{fill:#86b6ef}.off{fill:none;stroke:#c3c2b7;stroke-dasharray:4 3}.on{fill:#ffffff}.on2{fill:#0b0b0b}
+  @media (prefers-color-scheme: dark){
+    .bg{fill:#1a1a19}.ink{fill:#f0efec}.ink2{fill:#c3c2b7}
+    .p0{fill:#86b6ef}.p1{fill:#3987e5}.p2{fill:#1c5cab}.off{stroke:#52514e}.on{fill:#0b0b0b}.on2{fill:#f0efec}
+  }
+</style>
+<rect class="bg" width="760" height="300" rx="10"/>
+<text class="ink" x="24" y="34" font-size="17" font-weight="600">Bit planes: fewer bits read when memory is short</text>
+<text class="ink2" x="24" y="56" font-size="13">An expert's down matrix: each six-bit weight kept as three planes of two bits, the first a two-bit weight on its own.</text>
+<!-- the weight -->
+<text class="ink" x="24" y="96" font-size="14" font-weight="600">One weight</text>
+<rect class="p0" x="160" y="78" width="120" height="30" rx="3"/><text class="on" x="220" y="98" font-size="13" text-anchor="middle">plane 1</text>
+<rect class="p1" x="284" y="78" width="120" height="30" rx="3"/><text class="on" x="344" y="98" font-size="13" text-anchor="middle">plane 2</text>
+<rect class="p2" x="408" y="78" width="120" height="30" rx="3"/><text class="on2" x="468" y="98" font-size="13" text-anchor="middle">plane 3</text>
+<text class="ink2" x="544" y="98" font-size="12">plane 1 alone is a two-bit weight</text>
+<!-- levels -->
+<text class="ink" x="24" y="150" font-size="14" font-weight="600">Level 1</text>
+<text class="ink2" x="24" y="166" font-size="12">2 bits a weight</text>
+<rect class="p0" x="160" y="138" width="120" height="26" rx="3"/>
+<rect class="off" x="284" y="138" width="120" height="26" rx="3"/>
+<rect class="off" x="408" y="138" width="120" height="26" rx="3"/>
+<text class="ink2" x="544" y="156" font-size="12">the smallest slot, the most experts</text>
+<text class="ink" x="24" y="202" font-size="14" font-weight="600">Level 2</text>
+<text class="ink2" x="24" y="218" font-size="12">4 bits a weight</text>
+<rect class="p0" x="160" y="190" width="120" height="26" rx="3"/>
+<rect class="p1" x="284" y="190" width="120" height="26" rx="3"/>
+<rect class="off" x="408" y="190" width="120" height="26" rx="3"/>
+<text class="ink2" x="544" y="208" font-size="12">"down matrix at 4 bits"</text>
+<text class="ink" x="24" y="254" font-size="14" font-weight="600">Level 3</text>
+<text class="ink2" x="24" y="270" font-size="12">6 bits, the original</text>
+<rect class="p0" x="160" y="242" width="120" height="26" rx="3"/>
+<rect class="p1" x="284" y="242" width="120" height="26" rx="3"/>
+<rect class="p2" x="408" y="242" width="120" height="26" rx="3"/>
+<text class="ink2" x="544" y="260" font-size="12">the whole slot</text>
+</svg>

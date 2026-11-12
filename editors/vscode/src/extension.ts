@@ -149,8 +149,16 @@ async function getModel(dir: string): Promise<boolean> {
     title: `A model for this machine (${mem} GB of memory)`,
     placeHolder: "The one marked with a star is advised; any can be chosen",
     matchOnDetail: true,
+    ignoreFocusOut: true,
   });
-  if (!pick) return false;
+  if (!pick) {
+    log.appendLine("no model chosen: the setting up stops here");
+    vscode.window
+      .showWarningMessage("Janas is not set up yet: no model was chosen.", "Choose one")
+      .then((a) => a && void setUp());
+    return false;
+  }
+  log.appendLine(`downloading ${pick.name} in a terminal (close it when it is done)`);
   const term = vscode.window.createTerminal({
     name: `Janas: ${pick.name}`,
     shellPath: exe(dir, "janas-get"),
@@ -161,31 +169,122 @@ async function getModel(dir: string): Promise<boolean> {
     const sub = vscode.window.onDidCloseTerminal((t) => {
       if (t !== term) return;
       sub.dispose();
-      ok(t.exitStatus?.code === 0);
+      const code = t.exitStatus?.code;
+      log.appendLine(`janas-get ${pick.name} ended (${code ?? "closed"})`);
+      ok(code === 0);
     });
   });
 }
 
 /** One of the extensions Janas sets up, installed when none is. */
+function hasClient(): boolean {
+  return KNOWN.some((k) => vscode.extensions.getExtension(k.id));
+}
+
+/* Janas gives the model; the chat, the edits and the completion as you type
+   are an extension's that talks to it. One is installed when none is. */
 async function ensureExtension(): Promise<boolean> {
-  if (KNOWN.some((k) => vscode.extensions.getExtension(k.id))) return true;
+  if (hasClient()) return true;
+  log.appendLine("no extension to chat or complete with: asking which one");
   const pick = await vscode.window.showQuickPick(
     KNOWN.map((k) => ({ label: k.label, detail: k.does, id: k.id })),
-    { title: "What would you like Janas to do in this editor?" },
+    {
+      title: "Janas gives the model; the chat and the completion come from one of these. Which one?",
+      ignoreFocusOut: true,
+    },
   );
-  if (!pick) return false;
-  await vscode.commands.executeCommand("workbench.extensions.installExtension", pick.id);
+  if (!pick) {
+    log.appendLine("none chosen: the setting up stops here");
+    vscode.window
+      .showWarningMessage(
+        "Janas is not set up yet: the chat and the completion need an extension (Continue, llama.vscode or Cline), " +
+          "and none was chosen.",
+        "Choose one",
+      )
+      .then((a) => a && void setUp());
+    return false;
+  }
+  log.appendLine(`installing ${pick.label} (${pick.id})`);
+  try {
+    await vscode.commands.executeCommand("workbench.extensions.installExtension", pick.id);
+  } catch (e) {
+    const why = e instanceof Error ? e.message : String(e);
+    log.appendLine(`${pick.label} could not be installed: ${why}`);
+    log.show();
+    vscode.window.showErrorMessage(`${pick.label} could not be installed: ${why}`);
+    return false;
+  }
+  log.appendLine(`${pick.label} installed`);
+  await refreshContext();
   return true;
 }
 
+/* The walkthrough's steps tick by these, and the status bar follows them. */
+async function refreshContext(): Promise<void> {
+  const ready = !!janasDir() && !!readPlan();
+  await vscode.commands.executeCommand("setContext", "janas.ready", ready);
+  await vscode.commands.executeCommand("setContext", "janas.hasClient", hasClient());
+  if (!ready) {
+    show("$(circle-slash) Janas: set up", "Janas is not set up: click to set it up");
+    status.command = "janas.setUp";
+  }
+}
+
+const WALKTHROUGH = "prabanta-dev.janas#start";
+
+function openWalkthrough(): void {
+  void vscode.commands.executeCommand("workbench.action.openWalkthrough", WALKTHROUGH, false);
+}
+
+/* Until Janas is set up, every start says so, in a notice that waits for an
+   answer: missed once, it comes back next time, unless told not to. */
+async function offerSetUp(context: vscode.ExtensionContext): Promise<void> {
+  if (context.globalState.get("janas.dontAsk")) return;
+  const a = await vscode.window.showInformationMessage(
+    "Janas is installed but not set up yet. Setting it up installs Janas, a model for this machine's memory, " +
+      "and an extension to chat and complete code with (Continue, llama.vscode or Cline) if there is none.",
+    "Set up Janas",
+    "Show me the steps",
+    "Not now",
+    "Don't ask again",
+  );
+  if (a === "Set up Janas") void setUp();
+  else if (a === "Show me the steps") openWalkthrough();
+  else if (a === "Don't ask again") await context.globalState.update("janas.dontAsk", true);
+}
+
+/* Set up, but nothing to chat or complete with (uninstalled since, or
+   never chosen): the model would run for nobody. */
+async function offerClient(): Promise<void> {
+  if (hasClient() || ctx.globalState.get("janas.dontAskClient")) return;
+  const a = await vscode.window.showWarningMessage(
+    "Janas's model is ready, but no extension to chat or complete code with is installed: " +
+      "Continue, llama.vscode or Cline talks to it.",
+    "Install one",
+    "Not now",
+    "Don't ask again",
+  );
+  if (a === "Install one" && (await ensureExtension())) await setUp();
+  else if (a === "Don't ask again") await ctx.globalState.update("janas.dontAskClient", true);
+}
+
 async function setUp(models?: { code: string; complete: string | null }): Promise<void> {
+  await setUpSteps(models);
+  await refreshContext();
+}
+
+async function setUpSteps(models?: { code: string; complete: string | null }): Promise<void> {
   const dir = janasDir() ?? (await installJanas());
   if (!dir) return;
-  let installed = parseInstalled((await run(dir, "janas-setup", ["editor", "--list"])).out);
+  let installed = parseInstalled((await run(dir, "janas-setup", ["editor", "--list", ...editorArgs()])).out);
   if (!installed.length) {
     if (!(await getModel(dir))) return;
-    installed = parseInstalled((await run(dir, "janas-setup", ["editor", "--list"])).out);
-    if (!installed.length) return;
+    installed = parseInstalled((await run(dir, "janas-setup", ["editor", "--list", ...editorArgs()])).out);
+    if (!installed.length) {
+      log.show();
+      vscode.window.showErrorMessage("The model is not there after its download: the log says what janas-get wrote.");
+      return;
+    }
   }
   if (!(await ensureExtension())) return;
   const args = ["editor", "--yes", ...editorArgs()];
@@ -208,7 +307,7 @@ async function setUp(models?: { code: string; complete: string | null }): Promis
 async function chooseModels(): Promise<void> {
   const dir = janasDir();
   if (!dir) return setUp();
-  const installed = parseInstalled((await run(dir, "janas-setup", ["editor", "--list"])).out);
+  const installed = parseInstalled((await run(dir, "janas-setup", ["editor", "--list", ...editorArgs()])).out);
   const mem = os.totalmem() / 1e9;
   const label = (m: { name: string; gb: number; coder: boolean; completes: boolean }) => ({
     label: m.name,
@@ -253,7 +352,7 @@ function show(text: string, tip: string): void {
 async function start(): Promise<void> {
   const dir = janasDir(), plan = readPlan();
   if (!dir || !plan) {
-    show("$(circle-slash) Janas", "Janas is not set up: click to set it up");
+    show("$(circle-slash) Janas: set up", "Janas is not set up: click to set it up");
     status.command = "janas.setUp";
     return;
   }
@@ -373,9 +472,8 @@ async function remove(): Promise<void> {
   const dir = janasDir();
   if (!dir) return;
   await stop();
-  await run(dir, "janas-setup", ["editor", "--undo"]);
-  show("$(circle-slash) Janas", "Janas is not set up: click to set it up");
-  status.command = "janas.setUp";
+  await run(dir, "janas-setup", ["editor", "--undo", ...editorArgs()]);
+  await refreshContext();
   vscode.window.showInformationMessage("Janas is out of the extensions' settings, every file as it was. Janas itself and its models stay.");
 }
 
@@ -383,6 +481,8 @@ async function menu(): Promise<void> {
   const items: { label: string; command: string }[] = [
     { label: servers ? "$(debug-stop) Stop the servers" : "$(play) Start the servers", command: servers ? "janas.stop" : "janas.start" },
     { label: "$(settings) Choose the models", command: "janas.chooseModels" },
+    { label: "$(extensions) An extension to chat and complete with", command: "janas.chooseExtension" },
+    { label: "$(book) The steps to set it up", command: "janas.walkthrough" },
     { label: "$(cloud-download) Download a model", command: "janas.getModel" },
     { label: "$(sync) Look for a new version", command: "janas.update" },
     { label: "$(history) Go back to the previous version", command: "janas.rollback" },
@@ -414,20 +514,37 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   cmd("janas.rollback", back);
   cmd("janas.remove", remove);
   cmd("janas.showLog", () => log.show());
+  cmd("janas.chooseExtension", async () => {
+    if (hasClient()) {
+      vscode.window.showInformationMessage("An extension to chat and complete with is installed already.");
+      return;
+    }
+    if ((await ensureExtension()) && janasDir() && readPlan()) await setUp();
+  });
+  cmd("janas.walkthrough", openWalkthrough);
+  context.subscriptions.push(vscode.extensions.onDidChange(() => void refreshContext()));
   cmd("janas.menu", menu);
   context.subscriptions.push(log, status, { dispose: () => void stop() });
 
   const conf = vscode.workspace.getConfiguration("janas");
+  // Janas's folder gone (taken away by hand, or never there): a first
+  // start again, whatever the editor remembers of an earlier one
+  if (!vscode.workspace.getConfiguration("janas").get<string>("path") && !fs.existsSync(janasRoot())) {
+    for (const k of ["janas.offered", "janas.dontAsk", "janas.dontAskClient"])
+      await context.globalState.update(k, undefined);
+  }
+  await refreshContext();
   if (!janasDir() || !readPlan()) {
-    show("$(circle-slash) Janas", "Janas is not set up: click to set it up");
-    status.command = "janas.setUp";
+    // the first time, the steps in a page of their own; every time, a word
     if (!context.globalState.get("janas.offered")) {
       await context.globalState.update("janas.offered", true);
-      vscode.window
-        .showInformationMessage("Code with a model of this machine, nothing leaving it? Janas can set it up.", "Set up Janas")
-        .then((a) => a && setUp());
+      openWalkthrough();
     }
-  } else if (conf.get<boolean>("startServers")) await start();
+    void offerSetUp(context);
+  } else {
+    if (conf.get<boolean>("startServers")) await start();
+    void offerClient();
+  }
   const last = context.globalState.get<number>("janas.lastCheck") ?? 0;
   if (conf.get<boolean>("checkForUpdates") && Date.now() - last > 24 * 3600e3) void update(false);
 }

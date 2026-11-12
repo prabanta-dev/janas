@@ -196,6 +196,7 @@ struct janas_llm_chat {
     char **nuc_texts;
     size_t n_nuc;
     int nuc_pending, nuc_route;
+    double nuc_handoff; /* seconds from the send to the Specialist's turn */
     struct janas_llm_chat *nuc_chat;
 
     /* the conversation of janas_llm_chat_begin and _add, not yet run */

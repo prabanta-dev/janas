@@ -40,6 +40,10 @@ struct janas_observer {
        stops after this layer (no logits then) */
     int (*layer_out)(void *ctx, struct janas_llm_model *m, uint32_t l,
                      const float *x, uint32_t n, uint32_t d);
+    /* a routed expert of layer l as the expert cache gave it: found in
+       memory (1), or read from the file for this pass (0) */
+    void (*route)(void *ctx, struct janas_llm_model *m, uint32_t l,
+                  uint32_t expert, int in_memory);
 };
 
 enum { JANAS_MAX_OBSERVERS = 4 };

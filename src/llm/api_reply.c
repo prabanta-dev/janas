@@ -437,12 +437,16 @@ int32_t janas_llm_chat_stats(const janas_llm_chat *c,
     struct janas_llm_chat_stats st = c->stats;
     if (c->nuc_route == JANAS_LLM_ROUTE_SPECIALIST && c->nuc_chat) {
         /* Nucleus mode: the Specialist's reply, as this chat's, its route
-           kept and the Nucleus's reading of the prompt added */
+           kept (or its own gate's "I don't know") and the Nucleus's time
+           before the handover added */
         st = c->nuc_chat->stats;
-        st.route = c->stats.route;
+        st.route = st.route == JANAS_LLM_ROUTE_UNKNOWN ? JANAS_LLM_ROUTE_UNKNOWN
+                                                       : c->stats.route;
         memcpy(st.route_domain, c->stats.route_domain, sizeof(st.route_domain));
         st.input_seconds += c->stats.input_seconds;
-        st.total_seconds += c->stats.input_seconds;
+        st.total_seconds += c->nuc_handoff;
+        if (st.first_token_seconds > 0)
+            st.first_token_seconds += c->nuc_handoff;
     }
     memcpy(s, &st, size);
     s->size = size;

@@ -1645,6 +1645,7 @@ void janas_llm_model_free(struct janas_llm_model *m)
     free(m->xres);
     free(m->xbr);
     free(m->hlen);
+    janas_llm_model_watch(m, 0);
     janas_m_dbt_free(m);
     janas_m_gate_free(m);
     janas_m_ana_free(m);

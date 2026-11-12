@@ -135,11 +135,21 @@ static int in_list(const int *list, int n, int cpu)
     return 0;
 }
 
+/* The thread's CPUs before Janas first pinned it (janas_pin_current_thread),
+   while it stays pinned: a model opened after another in the same thread
+   sees every CPU the thread had, not the one the first model pinned it to.
+   The Nucleus's Specialist, opened after the Nucleus, ran on one thread at
+   5.4 tokens/s (10 Nov 2026) */
+static _Thread_local cpu_set_t before_pin;
+static _Thread_local int pinned, known;
+
 int janas_os_allowed_cpus(int *out, int max)
 {
     cpu_set_t set;
     CPU_ZERO(&set);
-    if (sched_getaffinity(0, sizeof(set), &set) != 0)
+    if (pinned)
+        set = before_pin;
+    else if (sched_getaffinity(0, sizeof(set), &set) != 0)
         return -1;
     int n = 0;
     for (int c = 0; c < CPU_SETSIZE && n < max; c++)
@@ -189,11 +199,18 @@ int janas_cpus_save(unsigned char save[JANAS_CPU_SAVE_BYTES])
 
 void janas_cpus_restore(const unsigned char save[JANAS_CPU_SAVE_BYTES])
 {
-    sched_setaffinity(0, sizeof(cpu_set_t), (const cpu_set_t *)save);
+    const cpu_set_t *set = (const cpu_set_t *)save;
+    sched_setaffinity(0, sizeof(cpu_set_t), set);
+    /* pinned unless back to the CPUs it had before any pin (models freed
+       in any order) */
+    if (known)
+        pinned = !CPU_EQUAL(set, &before_pin);
 }
 
 int janas_pin_current_thread(int cpu)
 {
+    if (!pinned && sched_getaffinity(0, sizeof(before_pin), &before_pin) == 0)
+        pinned = known = 1;
     cpu_set_t set;
     CPU_ZERO(&set);
     CPU_SET(cpu, &set);

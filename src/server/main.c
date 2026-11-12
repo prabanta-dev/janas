@@ -184,6 +184,7 @@ static const char *const OPTIONS[] = {"--help",
                                       "--draft",
                                       "--nucleus",
                                       "--specialist",
+                                      "--specialist-gate",
                                       "--mode",
                                       "--quality",
                                       "--think",
@@ -343,6 +344,8 @@ int main(int argc, char **argv)
             c->nucleus_gate = arg(argc, argv, &i);
         } else if (!strcmp(a, "--specialist")) {
             c->specialist_path = arg(argc, argv, &i);
+        } else if (!strcmp(a, "--specialist-gate")) {
+            c->specialist_gate = arg(argc, argv, &i);
         } else if (!strcmp(a, "--quality")) {
             static const char *const levels[] = {"low", "medium", "high"};
             c->llm.min_quality = choice(argc, argv, &i, levels, 3);

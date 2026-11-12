@@ -490,15 +490,21 @@ static int32_t run_one(struct srv_engine *e, struct srv_job *j, int k)
     }
     struct janas_llm_chat_stats st = {.size = sizeof(st)};
     janas_llm_chat_stats(c, &st);
-    if (e->nucleus) /* Nucleus mode: who answered, for the logs */
+    if (e->nucleus || e->verbose) /* the reply's times; in Nucleus mode who
+                                     answered */
         fprintf(stderr,
-                "janas-server: nucleus route %s%s%s, prompt %u, output %u "
-                "tokens, %.2f s\n",
-                st.route == JANAS_LLM_ROUTE_SPECIALIST ? "specialist"
-                : st.route == JANAS_LLM_ROUTE_UNKNOWN  ? "unknown"
-                                                       : "self",
+                "janas-server: reply%s%s%s, prompt %u (%u computed before), "
+                "output %u tokens, first token %.2f s, total %.2f s, threads "
+                "%d/%d, drafts %u/%u, peak memory %.2f GiB\n",
+                !e->nucleus                              ? ""
+                : st.route == JANAS_LLM_ROUTE_SPECIALIST ? " route specialist"
+                : st.route == JANAS_LLM_ROUTE_UNKNOWN    ? " route unknown"
+                                                         : " route self",
                 st.route_domain[0] ? " " : "", st.route_domain,
-                st.prompt_tokens, st.output_tokens, st.total_seconds);
+                st.prompt_tokens, st.cached_tokens, st.output_tokens,
+                st.first_token_seconds, st.total_seconds, st.input_threads,
+                st.output_threads, st.accepted, st.drafted,
+                (double)st.peak_rss_bytes / (1 << 30));
     if (k == 0 && e->warn_input && st.prompt_tokens > e->warn_input &&
         rc != JANAS_LLM_ELIMIT)
         fprintf(stderr,
@@ -812,7 +818,11 @@ struct srv_engine *srv_engine_start(const struct srv_config *cfg, char *err,
              janas_llm_open(cfg->specialist_path, &sp, &e->spec) !=
                  JANAS_LLM_OK) ||
             janas_llm_nucleus(e->llm, cfg->nucleus_gate, e->spec) !=
-                JANAS_LLM_OK) {
+                JANAS_LLM_OK ||
+            /* the Specialist's own gate: its "I don't know" is the last */
+            (e->spec && cfg->specialist_gate &&
+             janas_llm_nucleus(e->spec, cfg->specialist_gate, NULL) !=
+                 JANAS_LLM_OK)) {
             snprintf(err, err_len, "Nucleus mode: %s", janas_llm_last_error());
             janas_llm_chat_destroy(e->chat);
             janas_llm_close(e->llm);
@@ -823,9 +833,12 @@ struct srv_engine *srv_engine_start(const struct srv_config *cfg, char *err,
         if (cfg->no_gpu && e->spec)
             janas_llm_set_gpu(e->spec, 0);
         e->nucleus = 1;
-        fprintf(stderr, "janas-server: Nucleus mode, gate %s, specialist %s\n",
+        fprintf(stderr,
+                "janas-server: Nucleus mode, gate %s, specialist %s, its gate "
+                "%s\n",
                 cfg->nucleus_gate,
-                cfg->specialist_path ? cfg->specialist_path : "none");
+                cfg->specialist_path ? cfg->specialist_path : "none",
+                cfg->specialist_gate ? cfg->specialist_gate : "none");
     }
     if (cfg->embed_path) {
         struct janas_llm_params ep;

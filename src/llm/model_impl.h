@@ -412,6 +412,8 @@ struct janas_llm_model {
     /* the entrance gate (gate.c, model_gate.c): its readers, its layer,
        the last token's residual there when armed, and whether it came */
     struct janas_gate *egate;
+    /* the monitor's look inside the layers (model_monitor.c), or NULL */
+    struct janas_mwatch *watch;
     uint32_t gate_layer, gate_pos; /* the position kept (UINT32_MAX: the
                                       last of each forward call) */
     uint32_t fwd_pos0; /* the current forward call's first position */
@@ -669,6 +671,8 @@ void janas_m_obs_ffn_pair(struct janas_llm_model *m, size_t g,
                           const float *gate, const float *up, const float *h,
                           uint32_t ff);
 void janas_m_obs_ffn_done(struct janas_llm_model *m, uint32_t n_rows);
+void janas_m_obs_route(struct janas_llm_model *m, uint32_t l, uint32_t e,
+                       int in_memory);
 int janas_m_obs_layer_out(struct janas_llm_model *m, uint32_t l, const float *x,
                           uint32_t n, uint32_t d);
 void janas_m_ana_lowmark(struct janas_llm_model *m, uint32_t n);

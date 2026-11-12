@@ -469,6 +469,9 @@ type janas_llm_monitor
     rss_bytes        as ulongint
     memory_bytes     as ulongint
     memory_available as ulongint
+    phase_seconds(0 to 7) as double
+    choices          as zstring * 256
+    layers_on        as long
 end type
 
 declare function janas_llm_monitor(byval llm as janas_llm ptr, _
@@ -476,6 +479,17 @@ declare function janas_llm_monitor(byval llm as janas_llm ptr, _
 declare function janas_llm_monitor_reply(byval llm as janas_llm ptr, _
                                          byval k as long, _
                                          byval s as janas_llm_chat_stats ptr) as long
+declare function janas_llm_monitor_layers_on(byval llm as janas_llm ptr, _
+                                             byval on_ as long) as long
+declare function janas_llm_monitor_layers_shape(byval llm as janas_llm ptr, _
+                                                byval shape as ulong ptr) as long
+declare function janas_llm_monitor_layers(byval llm as janas_llm ptr, _
+                                          byval ffn as single ptr, _
+                                          byval resid as single ptr, _
+                                          byval chosen as ulong ptr, _
+                                          byval read_ as ulong ptr, _
+                                          byval strength as single ptr, _
+                                          byval passes as ulongint ptr) as long
 
 
 '' Speech to text: a Whisper model (a .jns made by tools/hf2jns_whisper),

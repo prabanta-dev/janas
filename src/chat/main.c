@@ -59,6 +59,8 @@ static struct janas_hist history;
 /* what the whole conversation has cost, so the bar can say the average and
    not only how the last reply went */
 static double sess_tokens, sess_seconds;
+/* /monitor's state, kept from one page to the next (the layers' sums) */
+static struct chat_monitor mon;
 
 /* The commands, for Tab and for the help. */
 static const char *const commands[] = {
@@ -433,7 +435,12 @@ static const struct {
     {"/context", "how full the context is, and with what"},
     {"/monitor",
      "the engine at work, a page made anew every second: the latest "
-     "replies, the expert cache, memory and processor (ESC closes it)"},
+     "replies, where the time goes, the expert cache, memory and processor "
+     "(ESC closes it)"},
+    {"/monitor layers",
+     "look inside the layers too, from the next reply: the neurons, the "
+     "residual and the experts chosen, layer by layer (it costs the replies "
+     "some speed; again: off)"},
     {"/reset", "new conversation"},
     {"/system", "show the system message"},
     {"/system <text>", "new conversation with this system message"},
@@ -2177,10 +2184,25 @@ int main(int argc, char **argv)
                 } else
                     fputs(page, stdout);
                 free(page);
+            } else if (strcmp(msg, "/monitor") == 0 &&
+                       strcmp(arg, "layers") == 0) {
+                /* the look inside the layers, on or off: it is gathered
+                   while replies are written, and costs them */
+                mon.llm = llm;
+                if (chat_monitor_layers(&mon, !mon.layers) != 0)
+                    term_printf(&term, "not enough memory for it\n");
+                else
+                    term_printf(&term,
+                                mon.layers
+                                    ? "inside the layers: gathered from the "
+                                      "next reply, shown by /monitor; "
+                                      "/monitor layers again turns it off\n"
+                                    : "inside the layers: off\n");
             } else if (strcmp(msg, "/monitor") == 0) {
                 /* the counters are safe from any thread: the reading ahead
                    goes on, and the page shows it */
-                struct chat_monitor mon = {.llm = llm};
+                mon.llm = llm;
+                mon.have = 0;
                 if (term.tty) {
                     term_page_begin(&term);
                     term_pager_live(&term, chat_monitor_text, &mon, 1000);

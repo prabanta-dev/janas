@@ -33,7 +33,9 @@ end sub
 #assert offsetof(janas_llm_chat_stats, reasoning_cut) = 188
 #assert offsetof(janas_llm_chat_stats, route) = 192
 #assert offsetof(janas_llm_chat_stats, route_domain) = 196
-#assert sizeof(janas_llm_monitor) = 208
+#assert sizeof(janas_llm_monitor) = 536
+#assert offsetof(janas_llm_monitor, choices) = 272
+#assert offsetof(janas_llm_monitor, layers_on) = 528
 #assert offsetof(janas_llm_monitor, replies) = 8
 #assert offsetof(janas_llm_monitor, stage) = 32
 #assert offsetof(janas_llm_monitor, memory_available) = 200

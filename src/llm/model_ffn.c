@@ -835,6 +835,8 @@ int janas_m_moe_block(struct janas_llm_model *m, const struct layer *ly,
             for (uint32_t i = 0; i < cn; i++)
                 if ((pass == 0) == (ready[i] != 0)) {
                     uint32_t e = distinct[c0 + i];
+                    if (m->n_obs) /* where it came from, for a monitor */
+                        janas_m_obs_route(m, l, e, ready[i] != 0);
                     if (m->use_count && cache == m->cache)
                         m->use_count[(size_t)l * ne + e]++; /* the profile */
                     /* the planes of the down matrix the cache holds */

@@ -16,7 +16,8 @@
   --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e;
   --muted: #898781; --grid: #e1e0d9; --axis: #c3c2b7;
   --ring: rgba(11,11,11,0.10); --series: #2a78d6; --brand: #9a6b12;
-  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s5: #e87ba4;
+  --ramp-lo: #cde2fb; --ramp-hi: #0d366b;
   --good: #0ca30c; --warn: #fab219; --crit: #d03b3b;
   --mono: ui-monospace, "DejaVu Sans Mono", "Cascadia Mono", Menlo, Consolas,
           monospace;
@@ -28,7 +29,8 @@
     --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7;
     --muted: #898781; --grid: #2c2c2a; --axis: #383835;
     --ring: rgba(255,255,255,0.10); --series: #3987e5; --brand: #d7af5f;
-    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181;
+    --ramp-lo: #0d366b; --ramp-hi: #cde2fb;
   }
 }
 :root[data-theme="dark"] {
@@ -36,7 +38,8 @@
   --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7;
   --muted: #898781; --grid: #2c2c2a; --axis: #383835;
   --ring: rgba(255,255,255,0.10); --series: #3987e5; --brand: #d7af5f;
-    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181;
+    --ramp-lo: #0d366b; --ramp-hi: #cde2fb;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--page); color: var(--ink); }
@@ -90,6 +93,21 @@ h2.section { font-size: 14px; margin: 20px 0 6px; }
 .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px;
             margin-right: 5px; vertical-align: -1px; }
 .detail { color: var(--muted); font-size: 12px; margin: 6px 0 0; }
+.layersbar { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center;
+             margin: 4px 0 8px; color: var(--ink-2); font-size: 12px; }
+.layersbar button { font: inherit; padding: 4px 12px; color: var(--ink);
+                    background: var(--surface); border: 1px solid var(--axis);
+                    border-radius: 4px; cursor: pointer; }
+.maps { display: grid; gap: 8px;
+        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+.map { background: var(--surface); border: 1px solid var(--ring);
+       border-radius: 8px; padding: 10px 12px; position: relative; min-width: 0; }
+.map h3 { margin: 0 0 2px; font-size: 13px; }
+.map p { margin: 0 0 6px; color: var(--muted); font-size: 12px; }
+.map canvas { display: block; width: 100%; }
+.scale { display: flex; align-items: center; gap: 6px; font-size: 11px;
+         color: var(--muted); margin-top: 4px; }
+.scale i { display: inline-block; width: 120px; height: 8px; border-radius: 2px; }
 .tablewrap { overflow-x: auto; background: var(--surface);
              border: 1px solid var(--ring); border-radius: 8px; }
 table { border-collapse: collapse; width: 100%; font-size: 12px;
@@ -147,6 +165,13 @@ footer { margin-top: 16px; color: var(--muted); font-size: 12px; }
   <p class="detail" id="detail"></p>
 </section>
 
+<section aria-label="Where the time goes">
+  <h2 class="section" id="ptitle">Where the engine's time goes, the last ten seconds</h2>
+  <div class="bar" id="pbar" role="img"></div>
+  <div class="legend" id="plegend"></div>
+  <p class="detail" id="choices"></p>
+</section>
+
 <section class="charts" aria-label="The last five minutes">
   <div class="chart"><h2>Tokens written a second</h2>
     <canvas id="c-out" aria-label="Tokens written a second, last five minutes"></canvas>
@@ -167,6 +192,27 @@ footer { margin-top: 16px; color: var(--muted); font-size: 12px; }
     <canvas id="c-w" aria-label="Power of the whole processor package, last five minutes"></canvas>
     <div class="tip"></div></div>
 </section>
+
+<h2 class="section">Inside the layers</h2>
+<div class="layersbar">
+  <button id="lbtn" type="button">Look inside the layers</button>
+  <span id="lnote">Off: looking costs the engine some speed, so it is gathered only while this is on.</span>
+</div>
+<section class="maps" id="maps" hidden aria-label="Inside the layers">
+  <div class="map" id="m-ffn"><h3>Neurons of the feed-forward</h3>
+    <p>Mean |activation|, a row a layer (the first at the top), neurons in 32 groups; each layer scaled to its own largest.</p>
+    <canvas id="h-ffn"></canvas><div class="tip"></div></div>
+  <div class="map"><h3>The residual after each layer</h3>
+    <p>Mean |value| at the last token of a pass, a row a layer, 32 groups; each layer scaled to its own largest.</p>
+    <canvas id="h-res"></canvas><div class="tip"></div></div>
+  <div class="map" id="m-chosen"><h3>Experts chosen</h3>
+    <p>How many times each expert was chosen, a row a layer, a column an expert.</p>
+    <canvas id="h-chosen"></canvas><div class="tip"></div></div>
+  <div class="map" id="m-read"><h3>Experts read from the disk</h3>
+    <p>How many times each expert was not in memory and was read from the disk.</p>
+    <canvas id="h-read"></canvas><div class="tip"></div></div>
+</section>
+<div class="scale" id="lscale" hidden><span>low</span><i id="ramp"></i><span>high</span><span id="lsince"></span></div>
 
 <h2 class="section">The last replies</h2>
 <div class="tablewrap">
@@ -291,8 +337,144 @@ function redraw() {
 }
 window.addEventListener("resize", redraw);
 
+/* --- level 1: where the time goes --- */
+const PHASES = [["Attention", [0, 1, 2], "--s1"], ["Feed-forward and experts", [3, 4], "--s2"],
+  ["Output head", [5], "--s3"], ["Recurrent layers", [6], "--s4"], ["Mixes of the streams", [7], "--s5"]];
+const phaseWin = []; /* [t, seconds of each phase in that second] */
+function phases(ev) {
+  if (!ev.phases) return;
+  if (prev && prev.phases) {
+    const d = ev.phases.map((v, i) => Math.max(0, v - prev.phases[i]));
+    phaseWin.push([ev.t, d]);
+    while (phaseWin.length && phaseWin[0][0] < ev.t - 10) phaseWin.shift();
+  }
+  let sum = [0, 0, 0, 0, 0, 0, 0, 0];
+  for (const [, d] of phaseWin) d.forEach((v, i) => (sum[i] += v));
+  /* nothing in the last ten seconds: since the start, said so */
+  const recent = sum.some((v) => v > 0);
+  if (!recent) sum = ev.phases.slice();
+  $("ptitle").textContent = recent ? "Where the engine's time goes, the last ten seconds"
+    : "Where the engine's time went since the start";
+  const segs = PHASES.map(([name, idx, v]) => [name, idx.reduce((a, i) => a + sum[i], 0), v]);
+  const all = segs.reduce((a, x) => a + x[1], 0);
+  const bar = $("pbar"), leg = $("plegend");
+  bar.textContent = ""; leg.textContent = "";
+  if (!all) { leg.textContent = "Nothing computed yet."; }
+  else {
+    for (const [name, n, v] of segs) {
+      if (n <= 0) continue;
+      const sp = document.createElement("span");
+      sp.style.flex = String(n); sp.style.background = "var(" + v + ")";
+      sp.title = name + ": " + fmt(n, 2) + " s (" + fmt(100 * n / all, 0) + "%)";
+      bar.append(sp);
+      const it = document.createElement("span"), sw = document.createElement("i");
+      sw.style.background = "var(" + v + ")";
+      it.append(sw, document.createTextNode(name + " " + fmt(100 * n / all, 0) + "%"));
+      leg.append(it);
+    }
+    bar.setAttribute("aria-label", segs.filter((x) => x[1] > 0).map((x) => x[0] + " " + fmt(100 * x[1] / all, 0) + "%").join(", "));
+  }
+  $("choices").textContent = ev.choices ? "What the engine chose for each kind of pass: " + ev.choices : "";
+}
+
+/* --- level 2: inside the layers --- */
+let layersOn = false, lacc = null, lsince = 0;
+function lerp(a, b, t) {
+  const pa = parseInt(a.slice(1), 16), pb = parseInt(b.slice(1), 16);
+  const c = [16, 8, 0].map((s) => Math.round(((pa >> s) & 255) * (1 - t) + ((pb >> s) & 255) * t));
+  return "rgb(" + c.join(",") + ")";
+}
+function layersTake(L) {
+  if (!L) return;
+  if (!lacc || lacc.n !== L.n || lacc.bins !== L.bins || lacc.experts !== L.experts) {
+    lacc = { n: L.n, bins: L.bins, experts: L.experts, passes: 0,
+      ffn: new Float64Array(L.n * L.bins), res: new Float64Array(L.n * L.bins),
+      ffnW: 0, chosen: new Float64Array(L.n * L.experts), read: new Float64Array(L.n * L.experts) };
+    lsince = Date.now();
+  }
+  const w = L.passes;
+  if (w > 0) {
+    /* means weighted by the passes each second saw */
+    for (let i = 0; i < L.ffn.length; i++) { lacc.ffn[i] += L.ffn[i] * w; lacc.res[i] += L.resid[i] * w; }
+    lacc.ffnW += w;
+  }
+  if (L.experts) for (let i = 0; i < L.chosen.length; i++) { lacc.chosen[i] += L.chosen[i]; lacc.read[i] += L.read[i]; }
+  lacc.passes += w;
+  drawMaps();
+}
+function heat(id, rows, cols, val, rowScale, tipText) {
+  const cv = $(id), dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth, cellH = Math.max(2, Math.min(8, Math.floor(240 / rows)));
+  const h = rows * cellH;
+  cv.style.height = h + "px";
+  cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+  const g = cv.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const lo = css("--ramp-lo"), hi = css("--ramp-hi");
+  let max = 0;
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) max = Math.max(max, val(r, c));
+  for (let r = 0; r < rows; r++) {
+    let rmax = 0;
+    if (rowScale) for (let c = 0; c < cols; c++) rmax = Math.max(rmax, val(r, c));
+    const top = rowScale ? rmax : max;
+    for (let c = 0; c < cols; c++) {
+      const v = val(r, c);
+      g.fillStyle = lerp(lo, hi, top > 0 ? Math.min(1, v / top) : 0);
+      const x0 = Math.floor(c * w / cols), x1 = Math.floor((c + 1) * w / cols);
+      g.fillRect(x0, r * cellH, Math.max(1, x1 - x0), cellH);
+    }
+  }
+  cv._tip = (x, y) => {
+    const r = Math.floor(y / cellH), c = Math.floor(x * cols / w);
+    return r >= 0 && r < rows && c >= 0 && c < cols ? tipText(r, c) : null;
+  };
+}
+function drawMaps() {
+  if (!lacc || !layersOn) return;
+  const A = lacc, B = A.bins, E = A.experts, W = A.ffnW || 1;
+  const hasFfn = A.ffn.some((v) => v > 0);
+  $("m-ffn").hidden = !hasFfn;
+  if (hasFfn)
+    heat("h-ffn", A.n, B, (r, c) => A.ffn[r * B + c] / W, true,
+      (r, c) => "layer " + r + ", neurons group " + (c + 1) + " of " + B + ": " + fmt(A.ffn[r * B + c] / W, 4));
+  heat("h-res", A.n, B, (r, c) => A.res[r * B + c] / W, true,
+    (r, c) => "layer " + r + ", group " + (c + 1) + " of " + B + ": " + fmt(A.res[r * B + c] / W, 4));
+  $("m-chosen").hidden = $("m-read").hidden = !E;
+  if (E) {
+    heat("h-chosen", A.n, E, (r, c) => A.chosen[r * E + c], false,
+      (r, c) => "layer " + r + ", expert " + c + ": chosen " + fmt(A.chosen[r * E + c], 0) + " times");
+    heat("h-read", A.n, E, (r, c) => A.read[r * E + c], false,
+      (r, c) => "layer " + r + ", expert " + c + ": read from the disk " + fmt(A.read[r * E + c], 0) + " of " + fmt(A.chosen[r * E + c], 0) + " times");
+  }
+  $("lsince").textContent = fmt(A.passes, 0) + " passes since " + new Date(lsince).toLocaleTimeString();
+}
+for (const id of ["h-ffn", "h-res", "h-chosen", "h-read"]) {
+  const cv = $(id), tip = cv.parentNode.querySelector(".tip");
+  cv.addEventListener("pointermove", (e) => {
+    const t = cv._tip && cv._tip(e.offsetX, e.offsetY);
+    if (!t) { tip.style.display = "none"; return; }
+    tip.textContent = t; tip.style.display = "block";
+    tip.style.left = Math.min(e.offsetX + 14, cv.parentNode.clientWidth - tip.offsetWidth - 4) + "px";
+    tip.style.top = (cv.offsetTop + e.offsetY + 12) + "px";
+  });
+  cv.addEventListener("pointerleave", () => (tip.style.display = "none"));
+}
+$("lbtn").addEventListener("click", () => {
+  layersOn = !layersOn;
+  lacc = null;
+  $("lbtn").textContent = layersOn ? "Stop looking inside the layers" : "Look inside the layers";
+  $("lnote").textContent = layersOn
+    ? "On: gathered at every pass the CPU's layer loop runs (a pass whole on a GPU is not seen); it costs the engine while this is on."
+    : "Off: looking costs the engine some speed, so it is gathered only while this is on.";
+  $("maps").hidden = $("lscale").hidden = !layersOn;
+  $("ramp").style.background = "linear-gradient(to right, " + css("--ramp-lo") + ", " + css("--ramp-hi") + ")";
+  restart();
+});
+
 /* --- an event --- */
 function take(ev) {
+  phases(ev);
+  if (layersOn) layersTake(ev.layers);
   $("model").textContent = ev.model + (ev.arch ? " (" + ev.arch + ")" : "");
   $("desc").textContent = ev.description || "";
   const r = ev.latest || null;
@@ -443,11 +625,15 @@ function table() {
 /* --- the stream, with the key when the server asks for one --- */
 let key = "";
 try { key = sessionStorage.getItem("janas-monitor-key") || ""; } catch (e) {}
+let ctrl = null, gen = 0;
+function restart() { gen++; if (ctrl) ctrl.abort(); prev = null; connect(); }
 async function connect() {
+  const mine = gen;
   const headers = key ? { Authorization: "Bearer " + key } : {};
+  ctrl = new AbortController();
   let res;
-  try { res = await fetch("/monitor/events", { headers, cache: "no-store" }); }
-  catch (e) { return lost(); }
+  try { res = await fetch("/monitor/events" + (layersOn ? "?layers=1" : ""), { headers, cache: "no-store", signal: ctrl.signal }); }
+  catch (e) { return mine === gen ? lost() : undefined; }
   if (res.status === 401) {
     $("keybox").classList.add("on");
     $("model").textContent = "the server asks for its key";
@@ -460,6 +646,7 @@ async function connect() {
   for (;;) {
     let r;
     try { r = await rd.read(); } catch (e) { break; }
+    if (mine !== gen) return; /* replaced by another stream */
     if (r.done) break;
     buf += dec.decode(r.value, { stream: true });
     let i;
@@ -470,7 +657,7 @@ async function connect() {
       }
     }
   }
-  lost();
+  if (mine === gen) lost();
 }
 function lost() {
   $("dot").className = "dot lost";

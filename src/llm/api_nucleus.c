@@ -150,7 +150,10 @@ const char *janas_api_nuc_decide(janas_llm_chat *c)
         return NULL;
     snprintf(c->stats.route_domain, sizeof(c->stats.route_domain), "%s",
              janas_llm_model_gate_domain(m, dom));
-    if (o == JANAS_GATE_UNKNOWN) {
+    /* "I don't know" is the last word of the model that knows the most: the
+       Nucleus's goes to the Specialist, which reads it with a gate of its
+       own (janas_llm_nucleus on it, without a Specialist) */
+    if (o == JANAS_GATE_UNKNOWN && !c->llm->nuc_spec) {
         c->nuc_route = c->stats.route = JANAS_LLM_ROUTE_UNKNOWN;
         return italian(c) ? "Non ne ho notizia: non conosco ciò di cui mi "
                             "parli. Forse è un errore, o qualcosa che non so. "
@@ -159,7 +162,8 @@ const char *janas_api_nuc_decide(janas_llm_chat *c)
                             "are referring to. It may be a mistake, or "
                             "something I don't know. Where did you find it?";
     }
-    if (o == JANAS_GATE_SPECIALIST && c->llm->nuc_spec && c->n_nuc) {
+    if ((o == JANAS_GATE_SPECIALIST || o == JANAS_GATE_UNKNOWN) &&
+        c->llm->nuc_spec && c->n_nuc) {
         if (!c->nuc_chat && janas_llm_chat_create(c->llm->nuc_spec, &c->p,
                                                   &c->nuc_chat) != JANAS_LLM_OK)
             return NULL; /* the Specialist busy elsewhere: answered here */
@@ -168,9 +172,11 @@ const char *janas_api_nuc_decide(janas_llm_chat *c)
             return NULL;
         if (janas_llm_chat_load(c->nuc_chat, (int32_t)c->n_nuc, c->nuc_roles,
                                 (const char *const *)c->nuc_texts,
-                                NULL) != JANAS_LLM_OK)
+                                NULL) != JANAS_LLM_OK ||
+            janas_api_nuc_keep(c->nuc_chat) != 0) /* its gate's language */
             return NULL;
         c->nuc_route = c->stats.route = JANAS_LLM_ROUTE_SPECIALIST;
+        c->nuc_handoff = janas_api_now() - c->t_send;
     }
     return NULL;
 }

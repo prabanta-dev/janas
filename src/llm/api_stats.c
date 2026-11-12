@@ -33,6 +33,14 @@ struct janas_api_monitor {
     /* the card's tier, copied on the replying thread, which alone
        changes it */
     uint64_t tier[5];
+    /* the phases' times since the model opened, and the tuner's choices,
+       copied there too (the choices once a second: they are words) */
+    double phase[JANAS_PH_COUNT];
+    char choices[256];
+    double t_choices;
+    /* the look inside the layers: how many want it, and whether the
+       replying thread has attached it (it alone attaches and detaches) */
+    int layers_want, layers_on;
 };
 
 static pthread_mutex_t make_mu = PTHREAD_MUTEX_INITIALIZER;
@@ -75,6 +83,19 @@ void janas_api_monitor_note(janas_llm_chat *c)
     }
     mo->ring[mo->head] = c->stats;
     janas_llm_model_tier_counts(c->llm->m, mo->tier);
+    janas_llm_model_phase_times(c->llm->m, mo->phase);
+    double t = janas_api_now();
+    if (t - mo->t_choices >= 1.0) {
+        int32_t len;
+        if (janas_llm_tuning(c->llm, mo->choices, sizeof mo->choices, &len) !=
+            JANAS_LLM_OK)
+            mo->choices[0] = 0;
+        mo->t_choices = t;
+    }
+    /* between two passes: the observer may come or go */
+    int want = mo->layers_want > 0;
+    if (want != mo->layers_on && janas_llm_model_watch(c->llm->m, want) == 0)
+        mo->layers_on = want;
     pthread_mutex_unlock(&mo->mu);
 }
 
@@ -108,6 +129,11 @@ int32_t janas_llm_monitor(janas_llm *llm, struct janas_llm_monitor *m)
         o.tier_cpu = mo->tier[2];
         o.tier_slots = mo->tier[3];
         o.tier_slot_bytes = mo->tier[4];
+        for (int i = 0; i < 8 && i < JANAS_PH_COUNT; i++)
+            o.phase_seconds[i] = mo->phase[i];
+        memcpy(o.choices, mo->choices, sizeof o.choices);
+        o.choices[sizeof o.choices - 1] = 0;
+        o.layers_on = mo->layers_on;
         pthread_mutex_unlock(&mo->mu);
     }
     struct janas_expert_cache *ec = janas_llm_model_cache(llm->m);
@@ -162,4 +188,47 @@ int32_t janas_llm_monitor_reply(janas_llm *llm, int32_t k,
     memcpy(s, &o, n);
     s->size = size;
     return JANAS_LLM_OK;
+}
+
+int32_t janas_llm_monitor_layers_on(janas_llm *llm, int32_t on)
+{
+    if (!llm)
+        return janas_api_fail(JANAS_LLM_EINVAL, "no model");
+    struct janas_api_monitor *mo = monitor_of(llm);
+    if (!mo)
+        return janas_api_fail(JANAS_LLM_ENOMEM, "out of memory");
+    pthread_mutex_lock(&mo->mu);
+    mo->layers_want += on ? 1 : -1;
+    if (mo->layers_want < 0)
+        mo->layers_want = 0;
+    pthread_mutex_unlock(&mo->mu);
+    return JANAS_LLM_OK;
+}
+
+int32_t janas_llm_monitor_layers_shape(janas_llm *llm, uint32_t shape[3])
+{
+    if (!llm || !shape)
+        return janas_api_fail(JANAS_LLM_EINVAL, "no model or no shape");
+    janas_llm_model_watch_shape(llm->m, shape);
+    return JANAS_LLM_OK;
+}
+
+int32_t janas_llm_monitor_layers(janas_llm *llm, float *ffn, float *resid,
+                                 uint32_t *chosen, uint32_t *read,
+                                 float *strength, uint64_t *passes)
+{
+    if (!llm)
+        return janas_api_fail(JANAS_LLM_EINVAL, "no model");
+    struct janas_api_monitor *mo = monitor_of(llm);
+    if (!mo)
+        return janas_api_fail(JANAS_LLM_ENOMEM, "out of memory");
+    /* under the monitor's lock: the replying thread detaches the observer
+       under it too */
+    pthread_mutex_lock(&mo->mu);
+    int rc = mo->layers_on
+                 ? janas_llm_model_watch_take(llm->m, ffn, resid, chosen, read,
+                                              strength, passes)
+                 : -1;
+    pthread_mutex_unlock(&mo->mu);
+    return rc == 0 ? JANAS_LLM_OK : JANAS_LLM_DONE;
 }

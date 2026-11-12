@@ -845,6 +845,17 @@ struct janas_llm_monitor {
     /* the process's resident memory now; the machine's, and how much of
        it is available */
     uint64_t rss_bytes, memory_bytes, memory_available;
+    /* seconds the engine spent in each phase of its passes since the
+       model was opened, the CPU's layer loop: computing queries, keys and
+       values; attention; its output projection; the router; the experts
+       or the dense feed-forward; the output head; the recurrent layers;
+       the mixes of qwen4exp's streams (a pass whole on a GPU is not split
+       here) */
+    double phase_seconds[8];
+    /* what the tuner chose for each kind of pass, its words */
+    char choices[256];
+    /* 1 while the look inside the layers is attached */
+    int32_t layers_on;
 };
 
 /* The totals and the cache now. m->size must be set. */
@@ -856,6 +867,30 @@ JANAS_LLM_API int32_t janas_llm_monitor(janas_llm *llm,
    JANAS_LLM_DONE when there is no such reply. s->size must be set. */
 JANAS_LLM_API int32_t janas_llm_monitor_reply(janas_llm *llm, int32_t k,
                                               struct janas_llm_chat_stats *s);
+
+/*
+ * A look inside the layers, for a monitor, which costs the engine while it
+ * is on: each caller that wants it calls _on with 1, and with 0 when it no
+ * longer does; it is gathered while one wants it, from the next step of a
+ * reply, and only in the CPU's layer loop (a pass whole on a GPU is not
+ * seen). Its shape: shape[0] layers, shape[1] bins of a layer's neurons and
+ * of its residual, shape[2] routed experts a layer (0: a dense model).
+ * janas_llm_monitor_layers gives what was gathered since the last call,
+ * then starts anew: for each layer the bins' mean |activation| of the dense
+ * feed-forward or a mixture's shared expert (ffn, layers * bins) and of the
+ * residual after the layer at the last token of each pass (resid), and for
+ * each routed expert the times it was chosen, read from the file rather
+ * than found in memory, and its mean |activation| (chosen, read, strength:
+ * layers * experts); the passes seen. NULL: not wanted. JANAS_LLM_DONE
+ * while it is not gathering.
+ */
+JANAS_LLM_API int32_t janas_llm_monitor_layers_on(janas_llm *llm, int32_t on);
+JANAS_LLM_API int32_t janas_llm_monitor_layers_shape(janas_llm *llm,
+                                                     uint32_t shape[3]);
+JANAS_LLM_API int32_t janas_llm_monitor_layers(janas_llm *llm, float *ffn,
+                                               float *resid, uint32_t *chosen,
+                                               uint32_t *read, float *strength,
+                                               uint64_t *passes);
 
 /*
  * Speech to text: a Whisper model (a .jns made by tools/hf2jns_whisper from

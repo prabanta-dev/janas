@@ -49,7 +49,7 @@ struct srv_config {
     const char *embed_path; /* the embedding model, or NULL */
     /* Nucleus mode (janas_llm_nucleus): the entrance gate's file for the
        model, and the Specialist it hands requests to; NULL: off */
-    const char *nucleus_gate, *specialist_path;
+    const char *nucleus_gate, *specialist_path, *specialist_gate;
     const char *embed_id;     /* its name for clients */
     const char *speech_path;  /* the speech-to-text model, or NULL */
     const char *vad_path;     /* its voice activity detector, or NULL */

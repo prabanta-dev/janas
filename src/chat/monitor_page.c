@@ -134,6 +134,120 @@ static void reply_line(struct text *t, const struct janas_llm_chat_stats *r)
     put(t, "\n");
 }
 
+int chat_monitor_layers(struct chat_monitor *cm, int on)
+{
+    if (!on == !cm->layers)
+        return 0;
+    if (!on) {
+        janas_llm_monitor_layers_on(cm->llm, 0);
+        cm->layers = 0;
+        return 0;
+    }
+    janas_llm_monitor_layers_shape(cm->llm, cm->shape);
+    size_t lb = (size_t)cm->shape[0] * cm->shape[1];
+    size_t le = (size_t)cm->shape[0] * (cm->shape[2] ? cm->shape[2] : 1);
+    free(cm->ffn), free(cm->res), free(cm->chosen), free(cm->read);
+    free(cm->f_ffn), free(cm->f_res), free(cm->f_str);
+    free(cm->u_chosen), free(cm->u_read);
+    cm->ffn = calloc(lb, sizeof(double));
+    cm->res = calloc(lb, sizeof(double));
+    cm->chosen = calloc(le, sizeof(double));
+    cm->read = calloc(le, sizeof(double));
+    cm->f_ffn = malloc(lb * sizeof(float));
+    cm->f_res = malloc(lb * sizeof(float));
+    cm->f_str = malloc(le * sizeof(float));
+    cm->u_chosen = malloc(le * sizeof(uint32_t));
+    cm->u_read = malloc(le * sizeof(uint32_t));
+    if (!cm->ffn || !cm->res || !cm->chosen || !cm->read || !cm->f_ffn ||
+        !cm->f_res || !cm->f_str || !cm->u_chosen || !cm->u_read)
+        return -1;
+    cm->weight = 0;
+    cm->passes = 0;
+    cm->layers = 1;
+    janas_llm_monitor_layers_on(cm->llm, 1);
+    return 0;
+}
+
+/* a row of bins as eighth blocks, scaled to its own largest */
+static void bars(struct text *t, const double *v, uint32_t n)
+{
+    static const char *const step[9] = {" ",      "\u2581", "\u2582",
+                                        "\u2583", "\u2584", "\u2585",
+                                        "\u2586", "\u2587", "\u2588"};
+    double top = 0;
+    for (uint32_t i = 0; i < n; i++)
+        if (v[i] > top)
+            top = v[i];
+    for (uint32_t i = 0; i < n; i++)
+        put(t, "%s", step[top > 0 ? (int)(v[i] / top * 8 + 0.5) : 0]);
+}
+
+static void layers_text(struct text *t, struct chat_monitor *cm)
+{
+    if (!cm->layers)
+        return;
+    uint64_t passes = 0;
+    size_t L = cm->shape[0], B = cm->shape[1], E = cm->shape[2];
+    if (janas_llm_monitor_layers(cm->llm, cm->f_ffn, cm->f_res, cm->u_chosen,
+                                 cm->u_read, cm->f_str,
+                                 &passes) == JANAS_LLM_OK) {
+        for (size_t i = 0; i < L * B; i++) {
+            cm->ffn[i] += (double)cm->f_ffn[i] * (double)passes;
+            cm->res[i] += (double)cm->f_res[i] * (double)passes;
+        }
+        for (size_t i = 0; E && i < L * E; i++) {
+            cm->chosen[i] += cm->u_chosen[i];
+            cm->read[i] += cm->u_read[i];
+        }
+        cm->weight += (double)passes;
+        cm->passes += passes;
+    }
+    put(t, "Inside the layers, since /monitor layers turned it on\n");
+    if (!cm->passes) {
+        put(t, "  nothing yet: it is gathered while a reply is written\n\n");
+        return;
+    }
+    put(t, "  %llu passes; a line a layer, each scaled to its own largest\n",
+        (unsigned long long)cm->passes);
+    int dense = 0;
+    for (size_t i = 0; i < L * B && !dense; i++)
+        dense = cm->ffn[i] > 0;
+    if (dense) {
+        put(t, "  the feed-forward's neurons, mean |activation| in %u groups\n",
+            (unsigned)B);
+        for (size_t l = 0; l < L; l++) {
+            put(t, "  %3u ", (unsigned)l);
+            bars(t, cm->ffn + l * B, (uint32_t)B);
+            put(t, "\n");
+        }
+    }
+    put(t, "  the residual after each layer, mean |value| in %u groups\n",
+        (unsigned)B);
+    for (size_t l = 0; l < L; l++) {
+        put(t, "  %3u ", (unsigned)l);
+        bars(t, cm->res + l * B, (uint32_t)B);
+        put(t, "\n");
+    }
+    if (E) {
+        put(t,
+            "  the experts: how many of the %u were chosen, and the share "
+            "read from the disk\n",
+            (unsigned)E);
+        for (size_t l = 0; l < L; l++) {
+            double ch = 0, rd = 0;
+            size_t used = 0;
+            for (size_t e = 0; e < E; e++) {
+                ch += cm->chosen[l * E + e];
+                rd += cm->read[l * E + e];
+                used += cm->chosen[l * E + e] > 0;
+            }
+            put(t, "  %3u %u chosen, %.0f%% read from the disk\n", (unsigned)l,
+                (unsigned)used, ch > 0 ? 100.0 * rd / ch : 0.0);
+        }
+    }
+    put(t, "\n");
+}
+
 char *chat_monitor_text(void *arg)
 {
     struct chat_monitor *cm = arg;
@@ -244,6 +358,31 @@ char *chat_monitor_text(void *arg)
             size(m.tier_slots * m.tier_slot_bytes, b1, sizeof b1));
     put(&t, "\n");
 
+    /* where the time went since the start: the phases of the CPU's
+       layer loop, as janas_llm_monitor.phase_seconds orders them */
+    static const char *const phase[8] = {"queries, keys and values",
+                                         "attention",
+                                         "attention's output",
+                                         "the router",
+                                         "the experts or the feed-forward",
+                                         "the output head",
+                                         "the recurrent layers",
+                                         "the mixes of the streams"};
+    double all = 0;
+    for (int i = 0; i < 8; i++)
+        all += m.phase_seconds[i];
+    if (all > 0) {
+        put(&t, "Where the engine's time went since the start\n");
+        for (int i = 0; i < 8; i++)
+            if (m.phase_seconds[i] > 0)
+                put(&t, "  %s %.1f s, %.0f%%\n", phase[i], m.phase_seconds[i],
+                    100.0 * m.phase_seconds[i] / all);
+        put(&t, "\n");
+    }
+    if (m.choices[0])
+        put(&t, "What the engine chose for each kind of pass\n  %s\n\n",
+            m.choices);
+
     put(&t, "Memory and processor\n");
     put(&t, "  the process holds %s of %s; %s available\n",
         size(m.rss_bytes, b1, sizeof b1), size(m.memory_bytes, b2, sizeof b2),
@@ -268,6 +407,7 @@ char *chat_monitor_text(void *arg)
     }
     if (shown)
         put(&t, "\n");
+    layers_text(&t, cm);
     put(&t, "Counters and times only, never the text of a prompt or a "
             "reply.\n");
 

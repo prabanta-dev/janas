@@ -288,6 +288,9 @@ int janas_llm_mtp_chain_fixed(const struct janas_llm_model *m);
 /* 1 when the model carries a recurrent state (qwen3next, qwen35moe): it can
    go back no further than the start of its last forward call. */
 int janas_llm_model_recurrent(const struct janas_llm_model *m);
+/* Whether the state can go back to position n: a sliding-window layer's
+   ring still holds the window before it */
+int janas_llm_model_rewind_ok(const struct janas_llm_model *m, uint32_t n);
 const float *janas_llm_model_hidden(const struct janas_llm_model *m);
 /* The floats of a row of janas_llm_model_hidden and janas_llm_mtp_hidden:
    d_model, or qwen4exp's residual of hc_n streams. */
@@ -352,6 +355,27 @@ struct janas_pool *janas_llm_model_compute(struct janas_llm_model *m);
 
 void janas_llm_model_phases(const struct janas_llm_model *m,
                             double out[JANAS_PH_COUNT]);
+/* The same, and nothing else: no probe's report (a monitor's copy, at
+   every step of a reply). */
+void janas_llm_model_phase_times(const struct janas_llm_model *m,
+                                 double out[JANAS_PH_COUNT]);
+
+/* The monitor's look inside the layers (model_monitor.c), attached and
+   detached on the thread that runs the model (on 1/0; 0, -1 out of
+   memory or no room for an observer). Its shape: layers, bins of a
+   layer's neurons and of its residual, routed experts per layer (0:
+   dense). What it gathered since the last take, then started anew, from
+   any thread: per layer the bins' mean |activation| of the dense or shared
+   feed-forward (layers * bins) and of the residual after it at the last
+   token of a pass, per routed expert the times chosen, read from the file,
+   and its mean |activation| (layers * experts); NULL: not wanted. -1 when
+   it is not attached. */
+int janas_llm_model_watch(struct janas_llm_model *m, int on);
+void janas_llm_model_watch_shape(const struct janas_llm_model *m,
+                                 uint32_t shape[3]);
+int janas_llm_model_watch_take(struct janas_llm_model *m, float *ffn,
+                               float *res, uint32_t *chosen, uint32_t *read,
+                               float *strength, uint64_t *passes);
 
 /*
  * Self-tuning (see tuner.h): with eco, configurations using the GPU are not

@@ -652,6 +652,10 @@ int janas_llm_session_truncate(struct janas_llm_session *s, uint32_t n)
     uint32_t kv = n > 0 ? n - 1 : 0;
     if (kv < s->n_kv && janas_llm_model_recurrent(s->m))
         return -1;
+    /* a sliding layer's ring that no longer holds the window before kv:
+       the whole sequence again (model.c, ring_written) */
+    if (kv < s->n_kv && !janas_llm_model_rewind_ok(s->m, kv))
+        kv = 0;
     janas_sampler_rewind(s->smp, s->n - s->ret); /* drawn, never returned */
     s->n = s->ret = n;
     janas_llm_model_media_drop(s->m, n); /* pictures past the cut */
@@ -700,6 +704,8 @@ int janas_llm_session_append(struct janas_llm_session *s, const int32_t *tokens,
         s->n = s->ret;
         if (s->n > 0 && s->n_kv > s->n - 1)
             s->n_kv = s->n - 1;
+        if (!janas_llm_model_rewind_ok(s->m, s->n_kv))
+            s->n_kv = 0;
     }
     if (n == 0)
         return 0;

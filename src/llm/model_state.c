@@ -233,11 +233,8 @@ struct janas_llm_state *janas_llm_model_state_save(struct janas_llm_model *m,
     if (n > m->n_ctx)
         return NULL;
     janas_m_gtok_host(m, 0); /* what the GPU made newer, read here */
-    /* a ring keeps the window before n only while nothing past n + (its
-       capacity - the window) has been written over it */
-    for (uint32_t sl = 0; sl < m->n_attn; sl++)
-        if (m->kv_ring[sl] && m->ring_hi > n + m->kv_cap[sl] - m->window)
-            return NULL;
+    if (!janas_llm_model_rewind_ok(m, n))
+        return NULL;
     int nbuf = 0;
     if (m->a->rec) {
         /* the state must stand at n, or be able to get there by replay */
