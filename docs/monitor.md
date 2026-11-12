@@ -24,6 +24,8 @@ Then open `http://127.0.0.1:8080/monitor` (the server says where, when it starts
 
 The page keeps the five minutes itself: they start when it is opened.
 
+With `janas-setup serve --monitor`, the servers it starts for an editor serve the same page; the extension for VS Code and VSCodium starts them so (setting `janas.monitor`), and **Janas: Show the engine at work** opens it.
+
 ### Inside the layers
 
 **Look inside the layers** asks the server for more: while the page shows them (`/monitor/events?layers=1`), the engine gathers, at every pass of its layer loop on the CPU,

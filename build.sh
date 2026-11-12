@@ -205,7 +205,7 @@ LDLIBS=(-lm)
 # processes; the C runtime and the threads of MinGW linked in, so that a
 # program needs no DLL beyond Windows's own
 WIN_LIBS=(-lws2_32 -lbcrypt -liphlpapi -lpsapi -lshell32 -lole32 -lwevtapi
-    -lwlanapi -ladvapi32 -lpowrprof -lcrypt32)
+    -lwlanapi -ladvapi32 -lpowrprof -lcrypt32 -lsetupapi)
 [ "$OS" = windows ] && LDLIBS+=("${WIN_LIBS[@]}")
 # Extra flags, for trying a compiler out: JANAS_CFLAGS="-O3 -flto" ./build.sh.
 # Nothing is added when it is unset, which is how the released build is made.

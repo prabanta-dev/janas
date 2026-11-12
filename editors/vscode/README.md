@@ -11,7 +11,7 @@ After the extension is installed, a page of four steps opens: set up Janas, a mo
 ## What it does
 
 - **Janas, installed where it lives on its own.** The package for your system is downloaded from Janas's GitHub releases, checked against the SHA-256 published beside it and against the `SHA256SUMS` inside it, and unpacked in Janas's own folder: `~/.local/share/janas` on Linux, `%LOCALAPPDATA%\janas` on Windows. The extension only points at it, so `janas-chat`, `janas-server` and the rest work from a terminal too. If you installed Janas yourself, give its folder in the setting `janas.path`.
-- **A model for your machine.** The models Janas knows are listed with the memory each wants. The models made for code come first, and the one marked with a star is the largest of them your memory holds. Any model can still be chosen; one that wants more memory than the machine has is marked, because it runs reading from the disk, slowly. The download runs in a terminal, so you can watch its progress.
+- **A model for your machine.** The models Janas knows are listed with the memory each wants. The models made for code come first, and the one marked with a star is the largest of them your memory holds. Any model can still be chosen; one that wants more memory than the machine has is marked, because it runs reading from the disk, slowly. The download shows its progress in a notification, which can cancel it.
 - **Your extension, set up.** If none of the extensions Janas knows is installed, it asks what you want to do and installs one: completion, chat, edits and an agent (Continue); completion alone (llama.vscode); or an agent that works step by step (Cline). Then `janas-setup editor` gives the extension one model for code and one for completion at the cursor, or the same model when memory holds only one, and says why. Janas is added beside your own settings and never replaces them. **Janas: Take Janas away from the extensions' settings** puts every file back as it was.
 - **The servers.** `janas-setup serve` starts one server for each model, from port 11435, while the editor is open. The status bar shows whether they are up; click it for Janas's commands.
 - **New versions, and going back.** Once a day the extension asks GitHub which version is the latest. If a newer one is out, it says so and installs it only if you ask. The version you had is kept beside the new one: if Janas is slower or answers worse after an update, **Janas: Go back to the previous version** puts it back. Only those two versions are kept.
@@ -29,6 +29,7 @@ After the extension is installed, a page of four steps opens: set up Janas, a mo
 | Janas: Look for a new version | |
 | Janas: Go back to the previous version | |
 | Janas: Take Janas away from the extensions' settings | the extensions' files back as they were; Janas and its models stay |
+| Janas: Show the engine at work | Janas's page of the engine at work: speeds, the expert cache, where the time goes, inside the layers |
 | Janas: Show the log | what Janas's programs wrote |
 
 ## Settings
@@ -36,6 +37,7 @@ After the extension is installed, a page of four steps opens: set up Janas, a mo
 - `janas.path`: the folder of a Janas you installed yourself (where `janas-setup` is). This extension does not update it.
 - `janas.startServers` (on): start the servers when the editor starts.
 - `janas.checkForUpdates` (on): ask GitHub once a day for the latest version.
+- `janas.monitor` (on): start the servers with their page of the engine at work, counters and times only (with a Janas newer than v2026.11.12).
 
 ## What leaves the machine
 

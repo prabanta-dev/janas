@@ -16,6 +16,7 @@ import * as vscode from "vscode";
 import { advise, parseCatalog, parseInstalled } from "./models";
 import { answers, readPlan } from "./plan";
 import { compareTags, install, latest, packageName } from "./release";
+import { lastStep, logLines } from "./progress";
 import { binDir, exe, inUse, janasRoot, previous, prune, rollback } from "./versions";
 
 const KNOWN = [
@@ -87,7 +88,13 @@ function editorArgs(): string[] {
     : ctx.extensionMode === vscode.ExtensionMode.Production
       ? path.dirname(ctx.extensionPath)
       : null;
-  return ["--editor", editorName(), "--user-data-dir", udd, ...(xd ? ["--extensions-dir", xd] : [])];
+  return ["--editor", editorName(), "--user-data-dir", drive(udd), ...(xd ? ["--extensions-dir", drive(xd)] : [])];
+}
+
+/** A Windows path's drive in capitals, as Windows writes it: VS Code gives
+    its own folder as c:\..., the extensions' as C:\... */
+function drive(p: string): string {
+  return p.replace(/^([a-z]):/, (_m, d: string) => d.toUpperCase() + ":");
 }
 
 async function installJanas(): Promise<string | null> {
@@ -158,22 +165,50 @@ async function getModel(dir: string): Promise<boolean> {
       .then((a) => a && void setUp());
     return false;
   }
-  log.appendLine(`downloading ${pick.name} in a terminal (close it when it is done)`);
-  const term = vscode.window.createTerminal({
-    name: `Janas: ${pick.name}`,
-    shellPath: exe(dir, "janas-get"),
-    shellArgs: [pick.name],
-  });
-  term.show();
-  return new Promise((ok) => {
-    const sub = vscode.window.onDidCloseTerminal((t) => {
-      if (t !== term) return;
-      sub.dispose();
-      const code = t.exitStatus?.code;
-      log.appendLine(`janas-get ${pick.name} ended (${code ?? "closed"})`);
-      ok(code === 0);
-    });
-  });
+  return download(dir, pick.name);
+}
+
+/* A model downloaded by janas-get, its progress in a notification that can
+   cancel it: "0.27 of 0.40 GB (67%), 25 MB/s" on its error stream. The
+   setting up goes on by itself when it is done. */
+function download(dir: string, name: string): Thenable<boolean> {
+  log.appendLine(`$ janas-get ${name}`);
+  return vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: `Janas: downloading ${name}`, cancellable: true },
+    (progress, cancel) =>
+      new Promise<boolean>((ok) => {
+        const p = spawn(exe(dir, "janas-get"), [name], { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+        let shown = 0;
+        const take = (b: Buffer) => {
+          const text = b.toString();
+          const st = lastStep(text);
+          if (st) {
+            progress.report({ increment: Math.max(0, st.pct - shown), message: `${st.done} of ${st.size} GB, ${st.mbs} MB/s` });
+            shown = Math.max(shown, st.pct);
+          }
+          const lines = logLines(text);
+          if (lines.length) log.appendLine(lines.join("\n"));
+        };
+        p.stdout.on("data", take);
+        p.stderr.on("data", take);
+        cancel.onCancellationRequested(() => {
+          log.appendLine(`janas-get ${name}: stopped by the user`);
+          p.kill();
+        });
+        p.on("error", (e) => {
+          log.appendLine(String(e));
+          ok(false);
+        });
+        p.on("exit", (code) => {
+          log.appendLine(`janas-get ${name} ended (${code ?? "stopped"})`);
+          if (code !== 0 && !cancel.isCancellationRequested) {
+            log.show();
+            vscode.window.showErrorMessage(`${name} could not be downloaded: the log says why.`);
+          }
+          ok(code === 0);
+        });
+      }),
+  );
 }
 
 /** One of the extensions Janas sets up, installed when none is. */
@@ -297,7 +332,12 @@ async function setUpSteps(models?: { code: string; complete: string | null }): P
   }
   // what janas-setup said of the models, to the user
   const why = r.out.split(/\r?\n/).filter((l) => l.startsWith("For ")).join(" ");
-  vscode.window.showInformationMessage(`Janas is set up. ${why}`, "Show the log").then((a) => {
+  // the extension may keep a model of its own selected: say which to pick
+  const plan = readPlan();
+  const pickIt = plan && vscode.extensions.getExtension("continue.continue")
+    ? ` In Continue, choose "Janas ${plan.codeName} (code)" in its list of models.`
+    : "";
+  vscode.window.showInformationMessage(`Janas is set up.${pickIt} ${why}`, "Show the log").then((a) => {
     if (a) log.show();
   });
   await stop();
@@ -346,7 +386,38 @@ async function chooseModels(): Promise<void> {
 function show(text: string, tip: string): void {
   status.text = text;
   status.tooltip = tip;
+  // not set up: as an editor marks what wants doing
+  status.backgroundColor = /: set up$/.test(text)
+    ? new vscode.ThemeColor("statusBarItem.warningBackground")
+    : undefined;
   status.show();
+}
+
+/* janas-setup serve --monitor came after v2026.11.12: an older one is asked
+   once what it takes, and gets plain serve. */
+const monitorKnown = new Map<string, boolean>();
+async function monitorWanted(dir: string): Promise<boolean> {
+  if (!vscode.workspace.getConfiguration("janas").get<boolean>("monitor")) return false;
+  if (!monitorKnown.has(dir)) {
+    const r = await run(dir, "janas-setup", []);
+    monitorKnown.set(dir, /serve \[--monitor\]/.test(r.out));
+  }
+  return monitorKnown.get(dir) === true;
+}
+
+async function showMonitor(): Promise<void> {
+  const dir = janasDir(), plan = readPlan();
+  if (!dir || !plan) return setUp();
+  if (!(await monitorWanted(dir))) {
+    vscode.window.showInformationMessage(
+      vscode.workspace.getConfiguration("janas").get<boolean>("monitor")
+        ? "This Janas cannot show the engine at work yet: Janas: Look for a new version."
+        : "The setting janas.monitor is off.",
+    );
+    return;
+  }
+  if (!(await answers(plan.codePort))) await start();
+  void vscode.env.openExternal(vscode.Uri.parse(`http://127.0.0.1:${plan.codePort}/monitor`));
 }
 
 async function start(): Promise<void> {
@@ -365,14 +436,15 @@ async function start(): Promise<void> {
     return;
   }
   show("$(sync~spin) Janas", `starting ${names}`);
-  log.appendLine(`$ janas-setup serve`);
-  const p = spawn(exe(dir, "janas-setup"), ["serve"], { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+  const args = ["serve", ...(await monitorWanted(dir) ? ["--monitor"] : [])];
+  log.appendLine(`$ janas-setup ${args.join(" ")}`);
+  const p = spawn(exe(dir, "janas-setup"), args, { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
   servers = p;
   p.stdout?.on("data", (b: Buffer) => log.append(b.toString()));
   p.stderr?.on("data", (b: Buffer) => log.append(b.toString()));
   p.on("exit", (code) => {
     if (servers === p) servers = null;
-    log.appendLine(`janas-setup serve ended (${code})`);
+    log.appendLine(code === null ? "the servers stopped" : `janas-setup serve ended (${code})`);
     show("$(circle-slash) Janas", "the servers are stopped: click for Janas's commands");
   });
   // a model takes a few seconds to open, a large one a minute
@@ -483,6 +555,7 @@ async function menu(): Promise<void> {
     { label: "$(settings) Choose the models", command: "janas.chooseModels" },
     { label: "$(extensions) An extension to chat and complete with", command: "janas.chooseExtension" },
     { label: "$(book) The steps to set it up", command: "janas.walkthrough" },
+    { label: "$(pulse) Show the engine at work", command: "janas.showMonitor" },
     { label: "$(cloud-download) Download a model", command: "janas.getModel" },
     { label: "$(sync) Look for a new version", command: "janas.update" },
     { label: "$(history) Go back to the previous version", command: "janas.rollback" },
@@ -522,6 +595,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     if ((await ensureExtension()) && janasDir() && readPlan()) await setUp();
   });
   cmd("janas.walkthrough", openWalkthrough);
+  cmd("janas.showMonitor", showMonitor);
   context.subscriptions.push(vscode.extensions.onDidChange(() => void refreshContext()));
   cmd("janas.menu", menu);
   context.subscriptions.push(log, status, { dispose: () => void stop() });

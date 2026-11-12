@@ -2,6 +2,12 @@
 
 > Curated, user-facing summary of completed work, newest first.
 
+## [Unreleased]
+
+- **AMD's NPUs named** (issue #64): where the machine has an AMD NPU, janas-bench's `NPU:` line and the engine's reason name it, its generation (XDNA: Phoenix, Hawk Point; XDNA 2: Strix, Krackan Point) and its driver (Linux, from sysfs) or its device (Windows, SetupAPI), and say that Janas does not use AMD's NPUs yet, where it said there was none.
+- **`janas-setup serve --monitor`**: each server it starts serves its page of the engine at work too (`/monitor`).
+- **The extension for VS Code and VSCodium, 0.1.2**: a model downloaded with its progress in a notification that can cancel it, the setting up going on by itself (it ran in a terminal that had to be closed by hand); once set up, which model to choose in Continue; the first start's last step says how to have the code written into a file (Apply, Ctrl+I, Agent); "Janas: set up" with the editor's warning background; **Janas: Show the engine at work**, the servers started with `--monitor` where janas-setup knows it (setting `janas.monitor`), plain where it does not; the servers stopped said so in the log; Windows paths with their drive in capitals.
+
 ## [2026-11-12] - The engine at work, further: where the time goes and inside the layers; Gemma 4 after a long reply
 
 - **Gemma 4 after a long reply, fixed**: a sliding-window layer keeps only its last positions, in a ring; when a conversation went back to an earlier point (a server's client sends the whole conversation each time, and Janas keeps what the new one shares with the last), the ring could already hold the positions of the reply that came after, and the model read them as the window. The replies came out wrong, empty or made of `<pad>`: on MATH (lm-evaluation-harness, 70 problems) Gemma 4 E2B answered 36 with nothing and solved 1.4%; with the ring checked, none empty and 44.3%. A session now goes back only as far as the ring still holds, and computes the conversation again otherwise (`janas_llm_model_rewind_ok`); `llm_session` checks a conversation rewound past a long reply against a fresh one.

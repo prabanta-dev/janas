@@ -47,14 +47,18 @@ static void server_path(char *buf, size_t len)
 }
 
 static int start(struct janas_proc *p, const char *server, const char *path,
-                 const char *name, int port, unsigned ctx)
+                 const char *name, int port, unsigned ctx, int monitor)
 {
     char sport[16], sctx[16], err[256];
     snprintf(sport, sizeof sport, "%d", port);
     snprintf(sctx, sizeof sctx, "%u", ctx ? ctx : SETUP_CTX);
-    const char *argv[] = {server, path,    "--port", sport, "--name",
-                          name,   "--ctx", sctx,     NULL};
+    const char *argv[] = {server,  path,     "--port",
+                          sport,   "--name", name,
+                          "--ctx", sctx,     monitor ? "--monitor" : NULL,
+                          NULL};
     printf("== %s on http://127.0.0.1:%d\n", name, port);
+    if (monitor)
+        printf("   the engine at work: http://127.0.0.1:%d/monitor\n", port);
     fflush(stdout);
     if (janas_proc_start(p, argv, NULL, NULL, -1, -1, -1, JANAS_PROC_GROUP, err,
                          sizeof err) != 0) {
@@ -64,7 +68,7 @@ static int start(struct janas_proc *p, const char *server, const char *path,
     return 0;
 }
 
-int setup_serve(void)
+int setup_serve(int monitor)
 {
     struct setup_saved s;
     if (setup_plan_load(&s) != 0) {
@@ -81,11 +85,12 @@ int setup_serve(void)
     pthread_detach(t);
     struct janas_proc p[2] = {{0}};
     int n = 0;
-    if (start(&p[n], server, s.code_path, s.code_name, s.code_port, s.ctx) == 0)
+    if (start(&p[n], server, s.code_path, s.code_name, s.code_port, s.ctx,
+              monitor) == 0)
         n++;
     if (n == 1 && s.complete_path[0] &&
         start(&p[n], server, s.complete_path, s.complete_name, s.complete_port,
-              s.ctx) == 0)
+              s.ctx, monitor) == 0)
         n++;
     int want = s.complete_path[0] ? 2 : 1, rc = n == want ? 0 : 1;
     /* the first one waited for half a second, the other only looked at */

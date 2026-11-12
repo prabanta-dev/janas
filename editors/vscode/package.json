@@ -2,7 +2,7 @@
   "name": "janas",
   "displayName": "Janas",
   "description": "Code with a model of your own machine: Janas-LLM installed, its models chosen for your memory, and Continue, llama.vscode or Cline set up to use them. Nothing leaves the machine.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "prabanta-dev",
   "icon": "media/icon.png",
   "license": "GPL-3.0-or-later",
@@ -86,6 +86,11 @@
         "command": "janas.showLog",
         "title": "Show the log",
         "category": "Janas"
+      },
+      {
+        "command": "janas.showMonitor",
+        "title": "Show the engine at work",
+        "category": "Janas"
       }
     ],
     "configuration": {
@@ -105,6 +110,11 @@
           "type": "boolean",
           "default": true,
           "description": "Once a day, say when a new version of Janas is out (it is installed only if you say so)."
+        },
+        "janas.monitor": {
+          "type": "boolean",
+          "default": true,
+          "description": "Start Janas's servers with their page of the engine at work (/monitor: speeds, the expert cache, where the time goes, inside the layers on request). Counters and times only, never the text."
         }
       }
     },
@@ -128,7 +138,7 @@
           {
             "id": "model",
             "title": "A model for this machine",
-            "description": "The models are listed with the memory each wants; the ones made for code come first, and the one starred fits your memory best. The download runs in a terminal.\n[Download a model](command:janas.getModel)",
+            "description": "The models are listed with the memory each wants; the ones made for code come first, and the one starred fits your memory best. The download shows its progress in a notification.\n[Download a model](command:janas.getModel)",
             "media": {
               "markdown": "media/model.md"
             },
@@ -151,7 +161,7 @@
           {
             "id": "try",
             "title": "Ask it something",
-            "description": "Open the chat of the extension you chose (Continue: its icon in the side bar), pick the model whose name begins with the one Janas downloaded, and ask. The status bar's Janas says whether the servers are up; click it for Janas's commands.\n[Janas's commands](command:janas.menu)",
+            "description": "Open the chat of the extension you chose (Continue: its icon in the side bar), pick the model whose name begins with \"Janas\", and ask. To have the code written into a file: Apply on a block of the answer, or Ctrl+I in the file, or Continue's Agent mode with a model made for code.\n[Janas's commands](command:janas.menu)",
             "media": {
               "markdown": "media/try.md"
             },

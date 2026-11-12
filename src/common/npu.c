@@ -14,12 +14,22 @@
  * system's. ZE_INTEL_NPU_CACHE_SIZE, the driver's, is set to 0 unless set.
  */
 #include "npu.h"
+#include "npu_amd.h"
 
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+
+/* No Intel NPU to use: where the machine has one of AMD's, the reason says
+   so (npu_amd.c), rather than that there is none. */
+static void amd_reason(char *err, size_t err_len)
+{
+    char d[320];
+    if (janas_npu_amd_find(d, sizeof d))
+        snprintf(err, err_len, "%s: Janas does not use AMD's NPUs yet", d);
+}
 
 #if defined(__linux__)
 
@@ -159,6 +169,7 @@ struct janas_npu *janas_npu_create(char *err, size_t err_len)
     u->lib = dlopen(lib, RTLD_NOW | RTLD_LOCAL);
     if (!u->lib) {
         snprintf(err, err_len, "no Level Zero loader (%s)", lib);
+        amd_reason(err, err_len);
         free(u);
         return NULL;
     }
@@ -178,6 +189,7 @@ struct janas_npu *janas_npu_create(char *err, size_t err_len)
         snprintf(err, err_len,
                  "no NPU (driver missing, or no access to "
                  "/dev/accel: group render)");
+        amd_reason(err, err_len);
         goto fail;
     }
     memcpy(u->name, dp.name, sizeof u->name - 1);
@@ -810,6 +822,7 @@ void janas_npu_stats(const struct janas_npu *u, int *products, int *cached,
 struct janas_npu *janas_npu_create(char *err, size_t err_len)
 {
     snprintf(err, err_len, "no NPU support on this system");
+    amd_reason(err, err_len);
     return NULL;
 }
 void janas_npu_destroy(struct janas_npu *u)

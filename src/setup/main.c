@@ -46,7 +46,7 @@ static void usage(void)
             "                          [--user-data-dir DIR] "
             "[--extensions-dir DIR]\n"
             "                          [--editor vscode|vscodium]\n"
-            "       janas-setup serve\n"
+            "       janas-setup serve [--monitor]\n"
             "  editor   give the models installed here to VS Code's and\n"
             "           VSCodium's extensions (Continue, llama.vscode, "
             "Cline...)\n"
@@ -59,7 +59,8 @@ static void usage(void)
             "  --yes    take the proposals without asking\n"
             "  --user-data-dir, --extensions-dir  passed on to the editor\n"
             "  --editor this editor only, where both are installed\n"
-            "  serve    start the servers editor set up, until Ctrl+C\n");
+            "  serve    start the servers editor set up, until Ctrl+C\n"
+            "  --monitor  each server shows the engine at work at /monitor\n");
 }
 
 /* a line from the user; "" at the end of the input */
@@ -351,8 +352,9 @@ int main(int argc, char **argv)
 {
     if (argc >= 2 && !strcmp(argv[1], "editor"))
         return editor(argc - 2, argv + 2);
-    if (argc == 2 && !strcmp(argv[1], "serve"))
-        return setup_serve();
+    if (argc >= 2 && !strcmp(argv[1], "serve") &&
+        (argc == 2 || (argc == 3 && !strcmp(argv[2], "--monitor"))))
+        return setup_serve(argc == 3);
     usage();
     return 2;
 }

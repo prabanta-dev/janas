@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.2 - 12 November 2026
+
+- A model is downloaded with its progress in a notification (GB, MB/s), which can cancel it; the setting up goes on by itself when it is done. It ran in a terminal, and waited until that terminal was closed by hand.
+- Once Janas is set up, it says which model to choose in Continue ("Janas … (code)"), where Continue may keep a model of its own selected.
+- The last step of the first start says how to have the code written into a file: Apply, Ctrl+I, or Continue's Agent mode with a model made for code.
+- "Janas: set up" in the status bar has the editor's warning background.
+- **Show the engine at work**: Janas's page of the engine at work (`/monitor`), the servers started with it (setting `janas.monitor`, on), with a Janas newer than v2026.11.12.
+- The servers stopped are said so in the log ("the servers stopped", not "ended (null)"); Windows paths given to janas-setup with their drive in capitals.
+
 ## 0.1.1 - 10 November 2026
 
 - The first start: a page of four steps opens after the extension is installed (set up Janas, a model, an extension to chat and complete code with, a first question), each step ticking itself when done.

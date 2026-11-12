@@ -13,6 +13,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { advise, parseCatalog, parseInstalled } from "../src/models";
 import { parsePlan } from "../src/plan";
+import { lastStep, logLines } from "../src/progress";
 import { checkSums, compareTags, digestOf, packageName } from "../src/release";
 import { binDir, inUse, janasRoot, previous, prune, rollback, setCurrent } from "../src/versions";
 
@@ -122,4 +123,13 @@ Editors:
     { codeName: "a", codePort: 11435, completeName: "b", completePort: 11436 },
   );
   assert.equal(parsePlan("# nothing\n"), null);
+});
+
+test("janas-get's progress read, as it wrote it downloading Qwen3-0.6B", () => {
+  const err = "\r   0.13 of 0.40 GB (34%), 15 MB/s    \r   0.27 of 0.40 GB (68%), 16 MB/s    \r   0.40 of 0.40 GB (100%), 17 MB/s    \n";
+  assert.deepEqual(lastStep(err), { done: 0.4, size: 0.4, pct: 100, mbs: 17 });
+  assert.deepEqual(lastStep(err.slice(0, 40)), { done: 0.13, size: 0.4, pct: 34, mbs: 15 });
+  assert.deepEqual(logLines(err), []);
+  assert.deepEqual(logLines("== qwen3-0.6b: downloading\r   0.13 of 0.40 GB (34%), 15 MB/s\nReady: x\n"), ["== qwen3-0.6b: downloading", "Ready: x"]);
+  assert.equal(lastStep("nothing yet"), null);
 });
