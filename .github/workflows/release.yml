@@ -191,7 +191,7 @@ jobs:
           # nothing but Windows's own DLLs
           for f in bin/x86_64-windows/*.exe bin/x86_64-windows/*.dll; do
             x86_64-w64-mingw32-objdump -p "$f" | grep "DLL Name" |
-              grep -v -i -E 'kernel32|msvcrt|ws2_32|bcrypt|crypt32|powrprof|advapi32|iphlpapi|ole32|wevtapi|wlanapi|shell32|psapi|user32' &&
+              grep -v -i -E 'kernel32|msvcrt|ws2_32|bcrypt|crypt32|powrprof|advapi32|iphlpapi|ole32|wevtapi|wlanapi|shell32|psapi|user32|setupapi' &&
               { echo "$f needs a DLL Windows does not have"; exit 1; } || true
           done
 
