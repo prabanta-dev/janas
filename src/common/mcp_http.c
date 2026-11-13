@@ -391,6 +391,175 @@ static int connect_to(const struct janas_url *u, double end,
     return fd;
 }
 
+/*
+ * A proxy, as the environment names it, in curl's variables: https_proxy
+ * or HTTPS_PROXY for https, http_proxy for http (not HTTP_PROXY, which a
+ * CGI program's "Proxy:" header can set: curl ignores it too), all_proxy or
+ * ALL_PROXY otherwise; no_proxy or NO_PROXY lists the hosts reached
+ * directly ("*" all; "example.com" that name and the names under it), and
+ * this machine's own names never go through one. The proxy is an
+ * http:// one, [user:password@]host[:port] (port 1080, curl's, when none
+ * is given), the scheme too may be left out. Not with a policy that keeps
+ * the connections to public addresses: through a proxy the address a name
+ * leads to cannot be checked, so those go directly.
+ */
+static int no_proxy_for(const char *host)
+{
+    if (!strcasecmp(host, "localhost") || !strncmp(host, "127.", 4) ||
+        !strcmp(host, "::1"))
+        return 1;
+    const char *np = getenv("no_proxy");
+    if (!np || !*np)
+        np = getenv("NO_PROXY");
+    size_t hn = strlen(host);
+    while (np && *np) {
+        size_t k = strcspn(np, ",");
+        const char *e = np;
+        size_t en = k;
+        while (en && (*e == ' ' || *e == '.')) /* " .example.com" */
+            e++, en--;
+        while (en && e[en - 1] == ' ')
+            en--;
+        const char *colon = memchr(e, ':', en); /* a port: the host alone */
+        if (colon && !memchr(colon + 1, ':', en - (size_t)(colon - e) - 1))
+            en = (size_t)(colon - e);
+        if (en == 1 && *e == '*')
+            return 1;
+        if (en && en <= hn && !strncasecmp(host + hn - en, e, en) &&
+            (en == hn || host[hn - en - 1] == '.'))
+            return 1;
+        np += k + (np[k] == ',');
+    }
+    return 0;
+}
+
+static int hex_digit(char c)
+{
+    return c >= '0' && c <= '9'   ? c - '0'
+           : c >= 'a' && c <= 'f' ? c - 'a' + 10
+           : c >= 'A' && c <= 'F' ? c - 'A' + 10
+                                  : -1;
+}
+
+/* 1 with the proxy in *p and its "Proxy-Authorization: ..." line in auth
+   (empty without a user), 0 for a direct connection, -1 with the reason
+   in err. */
+static int proxy_for(const struct janas_url *u, struct janas_url *p, char *auth,
+                     size_t auth_len, char *err, size_t err_len)
+{
+    *auth = 0;
+    if (u->policy && u->policy->public_only)
+        return 0;
+    static const char *const TLS[] = {"https_proxy", "HTTPS_PROXY", "all_proxy",
+                                      "ALL_PROXY"};
+    static const char *const PLAIN[] = {"http_proxy", "all_proxy", "ALL_PROXY"};
+    const char *const *names = u->tls ? TLS : PLAIN;
+    size_t nn = u->tls ? 4 : 3;
+    const char *v = NULL;
+    for (size_t i = 0; i < nn && !(v && *v); i++)
+        v = getenv(names[i]);
+    if (!v || !*v || no_proxy_for(u->host))
+        return 0;
+    if (strstr(v, "://") && strncasecmp(v, "http://", 7)) {
+        snprintf(err, err_len,
+                 "the proxy %.200s: only http:// proxies are spoken here", v);
+        return -1;
+    }
+    const char *rest = strncasecmp(v, "http://", 7) ? v : v + 7;
+    char url[1024];
+    const char *end = rest + strcspn(rest, "/?#");
+    const char *at = memchr(rest, '@', (size_t)(end - rest));
+    const char *hp = at ? at + 1 : rest;
+    /* a port given, or curl's 1080: after the host, or after "]" */
+    const char *close = memchr(hp, ']', (size_t)(end - hp));
+    int has_port = memchr(close ? close : hp, ':',
+                          (size_t)(end - (close ? close : hp))) != NULL;
+    snprintf(url, sizeof url, "http://%.*s%s/", (int)(end - hp), hp,
+             has_port ? "" : ":1080");
+    if (janas_url_parse(url, p, err, err_len) != 0)
+        return -1;
+    if (at) { /* user:password, %-decoded, as Basic */
+        unsigned char cred[512];
+        size_t cn = 0;
+        for (const char *c = rest; c < at && cn < sizeof cred; c++) {
+            int a, b;
+            if (*c == '%' && c + 2 < at && (a = hex_digit(c[1])) >= 0 &&
+                (b = hex_digit(c[2])) >= 0) {
+                cred[cn++] = (unsigned char)(a * 16 + b);
+                c += 2;
+            } else {
+                cred[cn++] = (unsigned char)*c;
+            }
+        }
+        struct janas_buf b = {0};
+        janas_buf_puts(&b, "Proxy-Authorization: Basic ");
+        janas_base64(&b, cred, cn);
+        if (!b.oom)
+            snprintf(auth, auth_len, "%.*s", (int)b.n, b.p);
+        janas_buf_free(&b);
+    }
+    return 1;
+}
+
+/* Bytes of the head of an answer, up to its blank line, read without
+   taking a byte past it (a tunnel's TLS follows); its status in *status.
+   0, or -1. */
+static int read_head(struct janas_http *h, int *status, double end,
+                     volatile int *cancel)
+{
+    char head[8192];
+    size_t n = 0;
+    while (n < sizeof head - 1) {
+        long got = io_read(h, head + n, 1);
+        if (got == -2 || (got < 0 && errno == EINTR)) {
+            if (wait_fd(h->fd, POLLIN, end, cancel) <= 0)
+                return -1;
+            continue;
+        }
+        if (got <= 0)
+            return -1;
+        n++;
+        if (n >= 4 && !memcmp(head + n - 4, "\r\n\r\n", 4)) {
+            head[n] = 0;
+            return sscanf(head, "HTTP/%*d.%*d %d", status) == 1 ? 0 : -1;
+        }
+    }
+    return -1;
+}
+
+/* Through the proxy to host:port of u: CONNECT, then the bytes are u's. */
+static int tunnel(struct janas_http *h, const struct janas_url *u,
+                  const char *auth, double end, volatile int *cancel, char *err,
+                  size_t err_len)
+{
+    int v6 = strchr(u->host, ':') != NULL;
+    struct janas_buf q = {0};
+    janas_buf_printf(&q, "CONNECT %s%s%s:%s HTTP/1.1\r\nHost: %s%s%s:%s\r\n",
+                     v6 ? "[" : "", u->host, v6 ? "]" : "", u->port,
+                     v6 ? "[" : "", u->host, v6 ? "]" : "", u->port);
+    if (*auth)
+        janas_buf_printf(&q, "%s\r\n", auth);
+    janas_buf_puts(&q, "\r\n");
+    int status = 0;
+    int rc = q.oom || send_all(h, q.p, q.n, end, cancel) != 0 ||
+                     read_head(h, &status, end, cancel) != 0
+                 ? -1
+                 : 0;
+    janas_buf_free(&q);
+    if (rc != 0) {
+        snprintf(err, err_len, "%s: the proxy did not answer the CONNECT",
+                 u->host);
+        return -1;
+    }
+    if (status < 200 || status > 299) {
+        snprintf(err, err_len, "%s: the proxy refused the CONNECT (HTTP %d%s)",
+                 u->host, status,
+                 status == 407 ? ": it wants a user and password" : "");
+        return -1;
+    }
+    return 0;
+}
+
 int janas_http_request(struct janas_http *h, const struct janas_url *u,
                        const char *method, const char *const *headers,
                        size_t n_headers, const char *body, size_t n,
@@ -400,9 +569,18 @@ int janas_http_request(struct janas_http *h, const struct janas_url *u,
     memset(h, 0, sizeof(*h));
     h->fd = -1;
     double end = timeout_ms < 0 ? -1 : now_ms() + timeout_ms;
-    h->fd = connect_to(u, end, cancel, err, err_len);
+    struct janas_url px;
+    char auth[700];
+    int via = proxy_for(u, &px, auth, sizeof auth, err, err_len);
+    if (via < 0)
+        return -1;
+    h->fd = connect_to(via ? &px : u, end, cancel, err, err_len);
     if (h->fd < 0)
         return -1;
+    if (via && u->tls && tunnel(h, u, auth, end, cancel, err, err_len) != 0) {
+        janas_http_close(h);
+        return -1;
+    }
     if (u->tls) {
         h->tls = janas_tls_open(
             h->fd, u->host, end < 0 ? -1 : (int)(end - now_ms()), err, err_len);
@@ -414,9 +592,16 @@ int janas_http_request(struct janas_http *h, const struct janas_url *u,
     struct janas_buf q = {0};
     int dflt = strcmp(u->port, u->tls ? "443" : "80") == 0;
     int v6 = strchr(u->host, ':') != NULL;
-    janas_buf_printf(&q, "%s %s HTTP/1.1\r\nHost: %s%s%s%s%s\r\n", method,
-                     u->path, v6 ? "[" : "", u->host, v6 ? "]" : "",
-                     dflt ? "" : ":", dflt ? "" : u->port);
+    /* through a proxy, plain http names the whole address, and says who
+       asks */
+    if (via && !u->tls)
+        janas_buf_printf(&q, "%s http://%s%s%s:%s%s HTTP/1.1\r\n%s%s", method,
+                         v6 ? "[" : "", u->host, v6 ? "]" : "", u->port,
+                         u->path, auth, *auth ? "\r\n" : "");
+    else
+        janas_buf_printf(&q, "%s %s HTTP/1.1\r\n", method, u->path);
+    janas_buf_printf(&q, "Host: %s%s%s%s%s\r\n", v6 ? "[" : "", u->host,
+                     v6 ? "]" : "", dflt ? "" : ":", dflt ? "" : u->port);
     /* the program's own User-Agent, when it gives one (MET Norway asks
        for one that names the program and how to reach its authors) */
     int agent = 0;

@@ -211,6 +211,7 @@ sudo pacman -S vulkan-headers glslang vulkan-tools           # the same, Arch
 - [MODELS.md](MODELS.md) — what a converted model's licence is, and what may be redistributed
 - [CONTRIBUTING.md](CONTRIBUTING.md) — how to help, and why code from contributors waits for now
 - [src/services](src/services/README.md) — Janas's services, each with its page, in `janas-chat` and in other MCP clients
+- [docs/releases.md](docs/releases.md) — `main` is the last release, `develop` what comes next: getting develop (git or ZIP) and building it on Linux and Windows, to try a fix before its release
 - [docs/how-it-works.md](docs/how-it-works.md) — how a model larger than the memory runs: the bytes a token needs, the expert cache, reading ahead, bit planes, drafts, the three ways for a prompt
 - [docs/features.md](docs/features.md) — what Janas-LLM runs today, model by model and feature by feature
 - [docs/models.md](docs/models.md) — getting a model: `janas-get`, or a GGUF file converted, and which files were checked
