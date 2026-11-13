@@ -369,7 +369,7 @@ static int32_t load_ids(janas_llm_chat *c, uint32_t reply_off)
     return JANAS_LLM_OK;
 }
 
-int32_t janas_llm_chat_run(janas_llm_chat *c)
+int32_t janas_api_run(janas_llm_chat *c)
 {
     if (!c)
         return janas_api_fail(JANAS_LLM_EINVAL, "no chat");
@@ -394,6 +394,21 @@ int32_t janas_llm_chat_run(janas_llm_chat *c)
     if (render(c, &reply_off) != 0)
         return janas_api_fail(JANAS_LLM_ENOMEM, "out of memory");
     return load_ids(c, reply_off);
+}
+
+int32_t janas_llm_chat_run(janas_llm_chat *c)
+{
+    if (!c)
+        return janas_api_fail(JANAS_LLM_EINVAL, "no chat");
+    janas_api_tr_finish(c); /* the reply before, if it was cut short */
+    int32_t rc = janas_api_run(c);
+    if (rc != JANAS_LLM_OK)
+        return rc;
+    /* the caller's conversation is the one said */
+    janas_api_tr_from_msgs(c);
+    c->tr_reply = 1;
+    janas_api_tr_saved(c);
+    return JANAS_LLM_OK;
 }
 
 int32_t janas_llm_chat_count(janas_llm_chat *c, int32_t *n)

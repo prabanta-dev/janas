@@ -58,6 +58,8 @@ The longer the context, the wider the gap: 2.3 times as fast writing at 1,024 to
 
 **New: the engine at work, in a page.** `janas-server --monitor` shows at `/monitor` what the engine is doing, a sample a second: how fast the latest replies read their prompt and wrote, the share of a mixture's experts found in memory and what came from the disk, memory, threads busy and, on Linux, the processor's watts, with charts of the last five minutes and the last 16 replies; `/monitor` in `janas-chat` shows the same in the terminal. On the laptop, Qwen3-0.6B answering short questions for ten minutes showed replies written at 100-140 tok/s, the first token after 0.02-0.05 s and 18-32 W for the whole processor. Counters and times only, never the text: [docs/monitor.md](docs/monitor.md).
 
+**New: conversations saved, taken up and exported.** `janas-chat` saves each conversation as it goes; `janas-chat --continue` takes up the last one, `--resume` chooses one in a menu, `/export` writes it in Markdown or plain text and `/import` reads it back. The work is in the library, so the Node module, FreeBASIC and the web chat of `janas-server --test` have it too: [docs/chat.md](docs/chat.md#saved-conversations).
+
 **Try it** on Linux x86-64 (Ubuntu 22.04, Debian 12 and later):
 
 ```sh
@@ -212,7 +214,7 @@ sudo pacman -S vulkan-headers glslang vulkan-tools           # the same, Arch
 - [docs/how-it-works.md](docs/how-it-works.md) — how a model larger than the memory runs: the bytes a token needs, the expert cache, reading ahead, bit planes, drafts, the three ways for a prompt
 - [docs/features.md](docs/features.md) — what Janas-LLM runs today, model by model and feature by feature
 - [docs/models.md](docs/models.md) — getting a model: `janas-get`, or a GGUF file converted, and which files were checked
-- [docs/chat.md](docs/chat.md) — `janas-chat`: its options and commands, the drafts, Janas's services, tools from MCP servers, a long prompt watched as it is read
+- [docs/chat.md](docs/chat.md) — `janas-chat`: its options and commands, conversations saved and taken up, the drafts, Janas's services, tools from MCP servers, a long prompt watched as it is read
 - [docs/library.md](docs/library.md) — using it from a program, in C, in FreeBASIC and BASIC MODERN, or in Node.js and TypeScript, and MCP servers from a program
 - [examples/node-chat](examples/node-chat/README.md) — a chat in TypeScript on the module for Node.js: the model inside the server's process, its replies streamed to the browser
 - [examples/fb-chat](examples/fb-chat/README.md) — a chat in FreeBASIC, procedure by procedure and with Janas's classes

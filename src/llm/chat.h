@@ -270,6 +270,27 @@ struct janas_llm_chat {
                         reply */
     float *top_lp;
     size_t top_cap; /* tokens they have room for */
+    /* the conversation as it was said (api_transcript.c): its messages, the
+       replies with their reasoning and calls; its title (titled: the
+       caller's, not the first question's) and when it began; the folder it
+       is saved to as it goes and its file there (api_chatfile.c); a reply
+       begun and not yet written down; a conversation taken up, to be loaded
+       whole at its next message */
+    struct tmsg {
+        int32_t role;
+        char *text, *reasoning;
+        struct tcall {
+            char *name, *args;
+        } *calls;
+        size_t n_calls;
+        int64_t at; /* seconds since 1970 */
+    } *tr;
+    size_t n_tr, cap_tr;
+    char *tr_title;
+    int tr_titled;
+    int64_t tr_created;
+    char *tr_dir, *tr_path;
+    int tr_reply, tr_pending;
 };
 
 /* The last error, on this thread; returns code. */
@@ -358,6 +379,43 @@ void janas_api_close_call(janas_llm_chat *c, struct janas_buf *text);
 
 /* api_load.c: the messages of janas_llm_chat_add, at the chat's end. */
 void janas_api_msgs_free(janas_llm_chat *c);
+/* janas_llm_chat_run without writing the conversation down */
+int32_t janas_api_run(janas_llm_chat *c);
+
+/* api_transcript.c: the record of the conversation. tr_push appends a
+   message (NULL on memory), tr_call a call to one; tr_system puts the
+   system message first (NULL or empty: none); tr_turn writes down what was
+   sent (a question, or the tools' answers); tr_finish the reply that began,
+   tr_settle the same once it is over; tr_from_msgs makes it the
+   conversation of janas_llm_chat_add; tr_resume loads a conversation taken
+   up with what follows it; tr_clear empties it for a new one (the folder
+   it is saved to stays), tr_free at the chat's end. */
+struct tmsg *janas_api_tr_push(janas_llm_chat *c, int32_t role,
+                               const char *text, size_t n);
+int janas_api_tr_call(struct tmsg *m, const char *name, size_t nn,
+                      const char *args, size_t an);
+int janas_api_tr_system(janas_llm_chat *c, const char *s);
+void janas_api_tr_turn(janas_llm_chat *c, const char *text, size_t n,
+                       int32_t n_res, const char *const *texts,
+                       const int32_t *lens);
+void janas_api_tr_finish(janas_llm_chat *c);
+void janas_api_tr_settle(janas_llm_chat *c);
+void janas_api_tr_from_msgs(janas_llm_chat *c);
+int32_t janas_api_tr_resume(janas_llm_chat *c, const char *text, size_t n,
+                            int32_t n_res, const char *const *texts,
+                            const int32_t *lens);
+void janas_api_tr_clear(janas_llm_chat *c);
+void janas_api_tr_free(janas_llm_chat *c);
+/* the title from the first question, unless the caller gave one */
+void janas_api_tr_autotitle(janas_llm_chat *c);
+/* api_chatfile.c: the conversation written to its file, when it is saved
+   as it goes (nothing otherwise) */
+void janas_api_tr_saved(janas_llm_chat *c);
+/* the record from a file's bytes, s of n (path: its name, whose ending
+   says Markdown): saved_form says it was the saved form; 0, or -1 with
+   nothing read */
+int janas_api_tr_read(janas_llm_chat *c, const char *s, size_t n,
+                      const char *path, int *saved_form);
 /* Nucleus mode (api_nucleus.c) */
 int janas_api_nuc_keep(janas_llm_chat *c);
 void janas_api_nuc_forget(janas_llm_chat *c);

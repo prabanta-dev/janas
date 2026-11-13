@@ -331,7 +331,27 @@ public:
                              byref args as const string) as boolean
     declare function Submit() as boolean
     declare function Count() as long '' its tokens, nothing computed
+    '' the conversation as it was said: its messages, each with its reasoning
+    '' and its calls (a JSON array); its title
+    declare function Messages() as long
+    declare function Message(byval i as long, byref role as MessageRole, _
+                             byref text as string) as boolean
+    declare function MessageReasoning(byval i as long) as string
+    declare function MessageCalls(byval i as long) as string
+    declare function Title() as string
+    declare function SetTitle(byref text as const string) as boolean
+    '' conversations in files: saved as they go in a folder ("": the
+    '' default), or not; written, taken up, exported for people
+    declare function AutoSave(byref folder as const string = "") as boolean
+    declare function NoAutoSave() as boolean
+    declare function SavedTo() as string
+    declare function SaveTo(byref path as const string) as boolean
+    declare function RestoreFrom(byref path as const string) as boolean
+    declare function ExportTo(byref path as const string, _
+                              byval plainText as boolean = false) as boolean
 private:
+    declare function MessagePart(byval i as long, byval what as long, _
+                          byref role as long) as string
     declare constructor(byref other as const Chat) '' no copies
     declare operator let(byref other as const Chat)
     declare sub Make(byref owner as Model, byref settings as const ChatOptions)
@@ -1381,6 +1401,114 @@ function Chat.Count() as long
     end if
     Done_()
     return n
+end function
+
+function Chat.Messages() as long
+    if Closed() then return 0
+    dim as long n = janas_llm_chat_messages(hs->chat)
+    if n < 0 then
+        Fail(n)
+        return 0
+    end if
+    Done_()
+    return n
+end function
+
+'' a part of message i, its length asked first
+function Chat.MessagePart(byval i as long, byval what as long, _
+                   byref role as long) as string
+    if Closed() then return ""
+    dim as long n = 0
+    janas_llm_chat_message(hs->chat, i, what, @role, 0, 0, @n)
+    dim as string s = space(n)
+    dim as long rc = janas_llm_chat_message(hs->chat, i, what, @role, _
+                                            strptr(s), n + 1, @n)
+    if rc <> JANAS_LLM_OK then
+        Fail(rc)
+        return ""
+    end if
+    Done_()
+    return s
+end function
+
+function Chat.Message(byval i as long, byref role as MessageRole, _
+                      byref text as string) as boolean
+    dim as long r = 0
+    text = MessagePart(i, JANAS_LLM_MESSAGE_TEXT, r)
+    role = cast(MessageRole, r)
+    return lastCode = JANAS_LLM_OK
+end function
+
+function Chat.MessageReasoning(byval i as long) as string
+    dim as long r = 0
+    return MessagePart(i, JANAS_LLM_MESSAGE_REASONING, r)
+end function
+
+function Chat.MessageCalls(byval i as long) as string
+    dim as long r = 0
+    return MessagePart(i, JANAS_LLM_MESSAGE_CALLS, r)
+end function
+
+function Chat.Title() as string
+    if Closed() then return ""
+    dim as zstring * 1024 buf
+    dim as long n = 0
+    if janas_llm_chat_title(hs->chat, @buf, sizeof(buf), @n) <> JANAS_LLM_OK _
+        then return ""
+    return left(buf, n)
+end function
+
+function Chat.SetTitle(byref text as const string) as boolean
+    if Closed() then return false
+    dim as long rc = janas_llm_chat_set_title(hs->chat, strptr(text), len(text))
+    if rc <> JANAS_LLM_OK then return Fail(rc)
+    return Done_()
+end function
+
+function Chat.AutoSave(byref folder as const string = "") as boolean
+    if Closed() then return false
+    dim as long rc = janas_llm_chat_autosave(hs->chat, strptr(folder))
+    if rc <> JANAS_LLM_OK then return Fail(rc)
+    return Done_()
+end function
+
+function Chat.NoAutoSave() as boolean
+    if Closed() then return false
+    dim as long rc = janas_llm_chat_autosave(hs->chat, 0)
+    if rc <> JANAS_LLM_OK then return Fail(rc)
+    return Done_()
+end function
+
+function Chat.SavedTo() as string
+    if Closed() then return ""
+    dim as zstring * 4096 buf
+    dim as long n = 0
+    if janas_llm_chat_file(hs->chat, @buf, sizeof(buf), @n) <> JANAS_LLM_OK _
+        then return ""
+    return left(buf, n)
+end function
+
+function Chat.SaveTo(byref path as const string) as boolean
+    if Closed() then return false
+    dim as long rc = janas_llm_chat_save(hs->chat, strptr(path))
+    if rc <> JANAS_LLM_OK then return Fail(rc)
+    return Done_()
+end function
+
+function Chat.RestoreFrom(byref path as const string) as boolean
+    if Closed() then return false
+    dim as long rc = janas_llm_chat_restore(hs->chat, strptr(path))
+    if rc <> JANAS_LLM_OK then return Fail(rc)
+    return Done_()
+end function
+
+function Chat.ExportTo(byref path as const string, _
+                       byval plainText as boolean = false) as boolean
+    if Closed() then return false
+    dim as long rc = janas_llm_chat_export(hs->chat, strptr(path), _
+        iif(plainText, JANAS_LLM_EXPORT_TEXT, JANAS_LLM_EXPORT_MARKDOWN))
+    if rc <> JANAS_LLM_OK then return Fail(rc)
+    return Done_()
 end function
 
 '' ---- McpServer

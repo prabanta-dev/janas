@@ -326,6 +326,7 @@ int32_t janas_llm_chat_next(janas_llm_chat *c, char *buf, int32_t cap,
             c->ended = 1;
             c->stats.stage = JANAS_LLM_STAGE_DONE;
             janas_api_update_stats(c);
+            janas_api_tr_finish(c);
         }
         return r;
     }
@@ -370,6 +371,7 @@ int32_t janas_llm_chat_next(janas_llm_chat *c, char *buf, int32_t cap,
                 const char *say = janas_api_nuc_decide(c);
                 if (say) { /* "I don't know": that sentence, nothing more */
                     give(c, say, strlen(say));
+                    janas_api_rtext_add(c, say, strlen(say)); /* said */
                     got = 0;
                     c->ended = 1;
                     c->stats.finish = JANAS_LLM_FINISH_STOP;
@@ -423,6 +425,7 @@ int32_t janas_llm_chat_next(janas_llm_chat *c, char *buf, int32_t cap,
            remembered as its turn */
         if (c->nuc_route == JANAS_LLM_ROUTE_SELF)
             janas_api_memo_store(c);
+        janas_api_tr_finish(c);
         return JANAS_LLM_DONE;
     }
     return JANAS_LLM_OK;

@@ -350,6 +350,64 @@ declare function janas_llm_chat_run(byval c as janas_llm_chat ptr) as long
 declare function janas_llm_chat_count(byval c as janas_llm_chat ptr, _
                                       byval n as long ptr) as long
 
+'' The conversation as it was said: how many messages, and message i's role
+'' and part (text, reasoning, or the calls as a JSON array).
+const JANAS_LLM_MESSAGE_TEXT = 0
+const JANAS_LLM_MESSAGE_REASONING = 1
+const JANAS_LLM_MESSAGE_CALLS = 2
+declare function janas_llm_chat_messages(byval c as janas_llm_chat ptr) as long
+declare function janas_llm_chat_message(byval c as janas_llm_chat ptr, _
+                                        byval i as long, byval what as long, _
+                                        byval role as long ptr, _
+                                        byval buf as zstring ptr, _
+                                        byval cap as long, _
+                                        byval length as long ptr) as long
+'' Its title: from the first question until one is given.
+declare function janas_llm_chat_title(byval c as janas_llm_chat ptr, _
+                                      byval buf as zstring ptr, _
+                                      byval cap as long, _
+                                      byval length as long ptr) as long
+declare function janas_llm_chat_set_title(byval c as janas_llm_chat ptr, _
+                                          byval text as const zstring ptr, _
+                                          byval length as long) as long
+
+'' Conversations in files: saved as they go in a folder ("": the default,
+'' NULL: no longer), saved to a file, taken up from one (saved, Markdown
+'' or plain text), exported for people.
+declare function janas_llm_chat_autosave(byval c as janas_llm_chat ptr, _
+                                         byval dir_ as const zstring ptr) as long
+declare function janas_llm_chat_file(byval c as janas_llm_chat ptr, _
+                                     byval buf as zstring ptr, _
+                                     byval cap as long, _
+                                     byval length as long ptr) as long
+declare function janas_llm_chat_save(byval c as janas_llm_chat ptr, _
+                                     byval path as const zstring ptr) as long
+declare function janas_llm_chat_restore(byval c as janas_llm_chat ptr, _
+                                        byval path as const zstring ptr) as long
+const JANAS_LLM_EXPORT_MARKDOWN = 0
+const JANAS_LLM_EXPORT_TEXT = 1
+declare function janas_llm_chat_export(byval c as janas_llm_chat ptr, _
+                                       byval path as const zstring ptr, _
+                                       byval format_ as long) as long
+'' The default folder; a folder's saved conversations, a path a line, the
+'' most recent first; what one of them is.
+declare function janas_llm_chats_dir(byval buf as zstring ptr, _
+                                     byval cap as long, _
+                                     byval length as long ptr) as long
+declare function janas_llm_chats_list(byval dir_ as const zstring ptr, _
+                                      byval buf as zstring ptr, _
+                                      byval cap as long, _
+                                      byval length as long ptr) as long
+declare function janas_llm_chat_file_info(byval path as const zstring ptr, _
+                                          byval title as zstring ptr, _
+                                          byval title_cap as long, _
+                                          byval model as zstring ptr, _
+                                          byval model_cap as long, _
+                                          byval model_file as zstring ptr, _
+                                          byval file_cap as long, _
+                                          byval updated as longint ptr, _
+                                          byval messages as long ptr) as long
+
 '' Conversations kept computed besides the current one: at most n, in at
 '' most bytes (0: automatic, see llm.h); n of 0 keeps none.
 declare function janas_llm_chat_keep(byval c as janas_llm_chat ptr, _

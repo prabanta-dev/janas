@@ -124,6 +124,10 @@ button:disabled { opacity: 0.5; cursor: default; }
 <button id="stop" disabled>Stop</button>
 <button id="new">New conversation</button>
 <button id="sample" title="Show a text of ours with every mark this page knows, without asking the model">Markdown sample</button>
+<button id="export" title="Download the conversation in Markdown">Export</button>
+<button id="import" title="Take up a conversation from a file: Markdown, plain text, or one janas-chat saved">Import</button>
+<input id="importFile" type="file" accept=".md,.markdown,.txt,.jsonl,text/*" hidden>
+<select id="saved" title="The conversations kept in this browser"><option value="">Saved conversations</option></select>
 <span class="hint">Enter sends, Shift+Enter starts a new line</span>
 </div>
 </footer>
@@ -522,7 +526,8 @@ async function send() {
   const msgs = [];
   if ($("system").value.trim())
     msgs.push({ role: "system", content: $("system").value.trim() });
-  const body = { model: "janas", messages: msgs.concat(history), stream: true,
+  const sent = history.map((m) => ({ role: m.role, content: m.content }));
+  const body = { model: "janas", messages: msgs.concat(sent), stream: true,
                  stream_options: { include_usage: true },
                  temperature: Number($("temp").value) };
   if ($("think").value)
@@ -581,7 +586,8 @@ async function send() {
         }
       }
     }
-    history.push({ role: "assistant", content: answer });
+    history.push({ role: "assistant", content: answer, reasoning });
+    keep();
     if (usage) {
       const j = usage.janas || {};
       const read = usage.prompt_tokens -
@@ -618,8 +624,9 @@ async function send() {
     err.className = "error";
     err.textContent = e.name === "AbortError" ? "stopped" : e.message;
     am.appendChild(err);
-    if (answer) history.push({ role: "assistant", content: answer });
+    if (answer) history.push({ role: "assistant", content: answer, reasoning });
     else history.pop(); /* the message goes with its failed reply */
+    keep();
   }
   busy = null;
   $("send").disabled = false;
@@ -664,10 +671,173 @@ $("stop").addEventListener("click", () => busy && busy.abort());
 $("new").addEventListener("click", () => {
   if (busy) busy.abort();
   history = [];
+  convId = "";
   wrote = wroteSecs = fastest = slowest = 0;
   chat.textContent = "";
   input.focus();
 });
+
+/*
+ * Conversations kept, exported and taken up (issue #69). The conversation
+ * is this page's: kept in this browser as it goes (the last 50), exported
+ * in the Markdown janas-chat and the library write - a line that does not
+ * show before each message, the reasoning folded - and read back from it,
+ * from plain text ([user], [assistant]) or from a file janas-chat saved.
+ */
+let convId = "";
+const ROLES = ["system", "user", "assistant", "tool"];
+const HEADS = { system: "System", user: "User", assistant: "Assistant",
+                tool: "Tool" };
+
+function titleOf(msgs) {
+  const q = msgs.find((m) => m.role === "user");
+  if (!q) return "Conversation";
+  const line = q.content.trim().split("\n")[0];
+  return line.length > 60 ? line.slice(0, 60).replace(/\s+\S*$/, "") : line;
+}
+
+function savedAll() {
+  try { return JSON.parse(localStorage.getItem("janas-chats") || "[]"); }
+  catch (e) { return []; }
+}
+
+function keep() {
+  if (!history.length) return;
+  const all = savedAll().filter((c) => c.id !== convId);
+  if (!convId) convId = Date.now().toString(36);
+  all.unshift({ id: convId, title: titleOf(history), updated: Date.now(),
+                system: $("system").value.trim(), messages: history });
+  try { localStorage.setItem("janas-chats", JSON.stringify(all.slice(0, 50))); }
+  catch (e) {}
+  list();
+}
+
+function list() {
+  const sel = $("saved");
+  while (sel.options.length > 1) sel.remove(1);
+  for (const c of savedAll()) {
+    const o = document.createElement("option");
+    o.value = c.id;
+    o.textContent = c.title + " · " + new Date(c.updated).toLocaleString();
+    sel.appendChild(o);
+  }
+}
+
+/* A conversation in place of this one, shown as it went. */
+function takeUp(msgs, system, id) {
+  if (busy) busy.abort();
+  chat.textContent = "";
+  wrote = wroteSecs = fastest = slowest = 0;
+  history = [];
+  convId = id || "";
+  if (system !== undefined) $("system").value = system;
+  for (const m of msgs) {
+    if (m.role === "system") { $("system").value = m.content; continue; }
+    if (m.role === "tool") continue;
+    history.push(m);
+    const el = add(m.role === "user" ? "user" : "assistant");
+    if (m.reasoning) {
+      const d = document.createElement("details");
+      d.className = "think";
+      d.innerHTML = "<summary>reasoning</summary>";
+      const t = document.createElement("div");
+      t.className = "text";
+      render(t, m.reasoning);
+      d.appendChild(t);
+      el.appendChild(d);
+    }
+    const t = document.createElement("div");
+    t.className = "text";
+    if (m.role === "user") t.textContent = m.content;
+    else render(t, m.content);
+    el.appendChild(t);
+  }
+  if (!id) keep();
+  scroll();
+  input.focus();
+}
+
+function toMarkdown() {
+  const sys = $("system").value.trim();
+  const msgs = (sys ? [{ role: "system", content: sys }] : []).concat(history);
+  let s = "# " + titleOf(history) + "\n\n*" + new Date().toLocaleString() +
+          ", " + $("model").textContent.split(" (")[0] + ", with Janas-LLM.*\n";
+  for (const m of msgs) {
+    s += "\n<!-- janas:" + m.role + " -->\n## " + HEADS[m.role] + "\n\n";
+    if (m.reasoning)
+      s += "<details><summary>Reasoning</summary>\n\n" + m.reasoning.trim() +
+           "\n\n</details>\n\n";
+    if (m.content) s += m.content.trim() + "\n";
+  }
+  return s;
+}
+
+/* The messages of a file: the saved form, the Markdown (by its markers,
+   else by its headings), or plain text. */
+function fromFile(text) {
+  const lines = text.replace(/\r/g, "").split("\n");
+  const first = lines.find((l) => l.trim());
+  if (first && first.trim().startsWith("{") && first.includes('"janas_chat"'))
+    return lines.slice(1).filter((l) => l.trim()).map((l) => JSON.parse(l))
+      .map((m) => ({ role: m.role, content: m.text,
+                     reasoning: m.reasoning || "" }));
+  const marked = lines.some((l) => /^<!-- janas:(\w+) -->$/.test(l));
+  const msgs = [];
+  let cur = null;
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    let m = marked ? /^<!-- janas:(\w+) -->$/.exec(l)
+                   : /^## (system|user|assistant|tool)\s*$/i.exec(l) ||
+                     /^\[(system|user|assistant|tool)\]$/i.exec(l);
+    if (m && ROLES.includes(m[1].toLowerCase())) {
+      cur = { role: m[1].toLowerCase(), lines: [] };
+      msgs.push(cur);
+      if (marked && /^## /.test(lines[i + 1] || "")) i++;
+    } else if (cur) cur.lines.push(l);
+  }
+  return msgs.map((m) => {
+    let body = m.lines.join("\n"), reasoning = "";
+    const d = /^\s*<details><summary>Reasoning<\/summary>\n([\s\S]*?)\n<\/details>\n?/.exec(body);
+    if (d) { reasoning = d[1].trim(); body = body.slice(d[0].length); }
+    body = body.replace(/\n<!-- janas:call [\s\S]*$/, "");
+    return { role: m.role, content: body.trim(), reasoning };
+  });
+}
+
+$("export").addEventListener("click", () => {
+  if (!history.length) return;
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([toMarkdown()],
+                                        { type: "text/markdown" }));
+  a.download = titleOf(history).replace(/[^\p{L}\p{N}._-]+/gu, "-")
+                 .replace(/^-+|-+$/g, "") + ".md";
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+});
+$("import").addEventListener("click", () => $("importFile").click());
+$("importFile").addEventListener("change", async () => {
+  const f = $("importFile").files[0];
+  $("importFile").value = "";
+  if (!f) return;
+  let msgs = [];
+  try { msgs = fromFile(await f.text()); } catch (e) {}
+  if (!msgs.length) {
+    const el = add("assistant");
+    el.firstChild.textContent = "Import";
+    const t = document.createElement("div");
+    t.className = "error";
+    t.textContent = f.name + ": no conversation found in it";
+    el.appendChild(t);
+    return;
+  }
+  takeUp(msgs, "");
+});
+$("saved").addEventListener("change", () => {
+  const c = savedAll().find((x) => x.id === $("saved").value);
+  $("saved").value = "";
+  if (c) takeUp(c.messages, c.system, c.id);
+});
+list();
 input.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
     e.preventDefault();

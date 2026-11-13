@@ -130,6 +130,8 @@ void janas_llm_chat_destroy(janas_llm_chat *c)
     if (!c)
         return;
     c->llm->chat = NULL;
+    janas_api_tr_settle(c); /* the last reply written down, if it is over */
+    janas_api_tr_free(c);
     janas_api_nuc_free(c); /* the Specialist's chat, before its model */
     /* the tools first: the session holds a filter bound to them */
     janas_api_tools_free(c);
@@ -174,6 +176,9 @@ int32_t janas_llm_chat_system(janas_llm_chat *c, const char *text, int32_t len)
     s[n] = 0;
     free(c->system);
     c->system = s;
+    if (janas_api_tr_system(c, s) != 0)
+        return janas_api_fail(JANAS_LLM_ENOMEM, "out of memory");
+    janas_api_tr_saved(c);
     return JANAS_LLM_OK;
 }
 
@@ -181,6 +186,8 @@ int32_t janas_llm_chat_reset(janas_llm_chat *c)
 {
     if (!c)
         return janas_api_fail(JANAS_LLM_EINVAL, "no chat");
+    janas_api_tr_finish(c); /* the conversation's file ends with it */
+    janas_api_tr_clear(c);
     janas_llm_session_reset(c->s);
     free(c->system);
     c->system = NULL;
@@ -738,6 +745,7 @@ int janas_api_begin_reply(janas_llm_chat *c, uint32_t reply_at, uint32_t total,
     c->npend = 0;
     c->n_rtext = 0;
     c->reply_at = reply_at;
+    c->tr_reply = reply_at != UINT32_MAX; /* written down when it is over */
     memset(&c->stats, 0, sizeof(c->stats));
     c->stats.input_tokens = total - cached;
     c->stats.cached_tokens = cached;
@@ -844,6 +852,7 @@ static int32_t send_turn(janas_llm_chat *c, const char *text, size_t n,
                          int32_t n_res, const char *const *texts,
                          const int32_t *lens)
 {
+    janas_api_tr_finish(c); /* the reply before, if it was cut short */
     janas_api_prep_start(c);
     /* Gemma: the tools answer inside the model's turn, each answer named
        after its call, which the reply's calls say (cleared next) */
@@ -950,6 +959,7 @@ static int32_t send_turn(janas_llm_chat *c, const char *text, size_t n,
         return janas_api_fail(JANAS_LLM_EFULL,
                               "the context is full (%u tokens)", c->llm->n_ctx);
     }
+    janas_api_tr_turn(c, text, n, n_res, texts, lens);
     /* the pictures' embeddings where their tokens are */
     if (c->n_idpics) {
         int bad = janas_api_media_register(c, at, 0);
@@ -970,6 +980,9 @@ int32_t janas_llm_chat_send(janas_llm_chat *c, const char *text, int32_t len)
 {
     if (!c || !text)
         return janas_api_fail(JANAS_LLM_EINVAL, "invalid argument");
+    if (c->tr_pending) /* a conversation taken up: loaded whole with it */
+        return janas_api_tr_resume(c, text, janas_api_text_len(text, len), 0,
+                                   NULL, NULL);
     return send_turn(c, text, janas_api_text_len(text, len), 0, NULL, NULL);
 }
 
@@ -982,6 +995,8 @@ int32_t janas_llm_chat_send_results(janas_llm_chat *c, int32_t n,
     for (int32_t i = 0; i < n; i++)
         if (!texts[i])
             return janas_api_fail(JANAS_LLM_EINVAL, "invalid argument");
+    if (c->llm->tools != JANAS_TOOLS_NONE && c->tr_pending)
+        return janas_api_tr_resume(c, NULL, 0, n, texts, lens);
     if (janas_llm_session_length(c->s) == 0)
         return janas_api_fail(JANAS_LLM_EINVAL,
                               "no reply called a tool: nothing to answer");

@@ -33,6 +33,9 @@ Qwen3.5-0.8B does not take `--head 4`: with it, it answered "3" to "2+3". Gemma 
 |---|---|
 | `--quality <high\|medium\|low>` | the lowest quality the engine may choose to be faster where memory is short (default `low`; asked for, `low` adds the catalog's fast profile; see above). `--profile quality\|fast` is the older name for `high` and `low` |
 | `--models <dir>` | where the models are (default: `JANAS_MODELS`, or `~/.local/share/janas/models`) |
+| `--continue` | take up the last conversation ([below](#saved-conversations)), with its model when none is given |
+| `--resume` | choose a saved conversation to take up, in a menu |
+| `--no-save` | save no conversation |
 | `--tune`, `--no-tune` | measure again how the model runs fastest on this machine; or neither ask nor use that measure |
 | `--mtp <file>` | the model's multi-token prediction file (an MTP block, or Gemma 4's assistant): faster replies, same text; without it, the one beside the model that fits it |
 | `--no-mtp` | no prediction file, not even one found beside the model |
@@ -81,6 +84,10 @@ In the chat, a line starting with `/` is a command, and it turns grey-blue as so
 | `/context` | how full the context is, and with what: the last prompt by its parts (system message and tools, conversation, last message) |
 | `/monitor` | the engine at work, a page made anew every second until ESC: the latest replies, the expert cache, memory and processor ([docs/monitor.md](monitor.md)) |
 | `/reset` | a new conversation, and a clean window |
+| `/resume [n]` | take up a saved conversation: chosen in a menu, or, with no terminal, the n-th of the list it prints |
+| `/rename [title]` | the conversation's title, or a new one |
+| `/export [--title <t>] [--overwrite] [file]` | write the conversation to a file in Markdown (plain text with markdown off, or to a `.txt`), by default named after its title, in the current folder; an existing file is written again only with `--overwrite` |
+| `/import <file>` | take up a conversation from a file: one saved, one exported, or one in Markdown or plain text written by hand |
 | `/system [text\|off]` | show or change the system message |
 | `/temp <t>`, `/spec`, `/think` | sampling, drafts, reasoning (`/think 512`: on, at most 512 tokens of it) |
 | `/image <file>` | a picture (PNG or JPEG) for your next message, with a model that sees (Qwen3.5 or Gemma 4 with its `.vision.jns` beside it, [models.md](models.md)) |
@@ -104,6 +111,14 @@ The box the message is written in takes the rows the message needs, up to a thir
 The conversation is kept as it is written, so **Page Up** and **Page Down** look back over it and **Ctrl-Home** and **Ctrl-End** go to its beginning and its end. The line being written stays where it is while you read, and sending brings the end back. A terminal cannot do this by itself here: the chat pins its footer with a scrolling region, and the lines that leave the top of one never reach the terminal's own history.
 
 The arrows move in the message - up and down between its lines while it has more than one - and bring back earlier prompts from its first and last line, kept between sessions; `Home`, `End`, `Delete`, `Ctrl-A/E/K/U/W` and `Ctrl-L` do what they do everywhere; `Tab` completes a command; a backslash and `Enter` add a line to the message rather than sending it, the backslash itself is not part of what the model reads, and the box grows to hold what is written; `Ctrl-C` stops a reply.
+
+## Saved conversations
+
+Every conversation is saved as it goes, at each message, in a file of its own in `~/.local/share/janas/chats` (`%LOCALAPPDATA%\janas\chats` on Windows), named after the time it began: the messages, the replies with their reasoning and their tool calls, the system message, the model, the settings, and a title - the first line of the first question until `/rename` gives another. Nothing is written before the first question, and `/reset` starts the next file. `--no-save` (or that word in the settings file) saves none.
+
+`janas-chat --continue` takes up the last conversation and `janas-chat --resume` opens a menu of them, the most recent first, each with its title, when it was last written, its model and how many messages it has: the arrows move, **Enter** takes one up, **ESC** leaves. Without a model on the command line the conversation's own is opened; with one, that one goes on with it - any model can take up any conversation. In the chat, `/resume` opens the same menu. The window is cleared and the last messages of the conversation are shown again, the replies read as their marks say; the conversation is read again by the model with the next message, all of it, and with the same model what was computed before is found on the disk (`~/.cache/janas`) and not read again. When it no longer fits in the context, its oldest exchanges are left out of what the model reads, not out of the file.
+
+`/export` writes a conversation for people. In Markdown each message has a heading (`## User`, `## Assistant`), the reasoning folded in a `<details>` block, the tool calls in code blocks, and a line before each message, an HTML comment that does not show, by which `/import` reads it back exactly; a Markdown written by hand is read by its headings, and plain text by lines such as `[user]` and `[assistant]`.
 
 Piped in or out, the chat writes plain text with no drawing at all, so it can be scripted:
 

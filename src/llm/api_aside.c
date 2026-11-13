@@ -42,8 +42,10 @@ int32_t janas_llm_chat_aside(janas_llm_chat *c, const char *system,
         return janas_api_fail(JANAS_LLM_EBUSY,
                               "a reply is being read: ask aside after it");
     const janas_llm *llm = c->llm;
+    /* nothing computed yet (a new conversation, or one taken up and not
+       yet loaded): nothing to put back but the empty session */
     struct janas_llm_saved *sv = janas_llm_session_save(c->s);
-    if (!sv)
+    if (!sv && janas_llm_session_length(c->s) >= 2)
         return janas_api_fail(JANAS_LLM_ENOMEM, "out of memory");
     /* what building a message changes, kept to be put back */
     int thinking = c->p.thinking, in_think = c->in_think, in_turn = c->in_turn,
@@ -93,7 +95,9 @@ int32_t janas_llm_chat_aside(janas_llm_chat *c, const char *system,
         }
     }
     /* the conversation back, as it was */
-    if (janas_llm_session_restore(c->s, sv) != 0 && rc == JANAS_LLM_OK)
+    if (!sv)
+        janas_llm_session_reset(c->s);
+    else if (janas_llm_session_restore(c->s, sv) != 0 && rc == JANAS_LLM_OK)
         rc = janas_api_fail(JANAS_LLM_ENOMEM,
                             "the conversation could not be put back");
     janas_llm_saved_free(sv);

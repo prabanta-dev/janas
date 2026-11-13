@@ -35,6 +35,7 @@
 #include "common/sysinfo.h"
 #include "common/words.h"
 #include "audio_cmd.h"
+#include "chats_menu.h"
 #include "edit.h"
 #include "layout.h"
 #include "janas/llm.h"
@@ -64,10 +65,10 @@ static struct chat_monitor mon;
 
 /* The commands, for Tab and for the help. */
 static const char *const commands[] = {
-    "/help",    "/about",    "/stats", "/monitor", "/reset",
-    "/system",  "/temp",     "/spec",  "/think",   "/mode",
-    "/experts", "/markdown", "/mcp",   "/context", "/image",
-    "/audio",   "/quit",     "/exit",  NULL};
+    "/help",   "/about",   "/stats", "/monitor", "/reset",   "/system",
+    "/temp",   "/spec",    "/think", "/mode",    "/experts", "/markdown",
+    "/mcp",    "/context", "/image", "/audio",   "/resume",  "/rename",
+    "/export", "/import",  "/quit",  "/exit",    NULL};
 
 /* a line /audio says, on the terminal */
 static void say_line(void *user, const char *line)
@@ -327,6 +328,11 @@ static void usage(void)
         "                   levers below (--bits, --head...) win over it\n"
         "  --models <dir>   where the models are (default: JANAS_MODELS,\n"
         "                   or ~/.local/share/janas/models)\n"
+        "  --continue       take up the last conversation, with its model\n"
+        "                   when none is given\n"
+        "  --resume         choose a saved conversation to take up\n"
+        "  --no-save        save no conversation (by default each is saved\n"
+        "                   as it goes in ~/.local/share/janas/chats)\n"
         "  --tune           measure again how this model runs fastest on\n"
         "                   this machine (asked once, on its first start)\n"
         "  --no-tune        neither ask nor use that measure\n"
@@ -442,6 +448,16 @@ static const struct {
      "residual and the experts chosen, layer by layer (it costs the replies "
      "some speed; again: off)"},
     {"/reset", "new conversation"},
+    {"/resume [n]",
+     "take up a saved conversation: chosen with the arrows, or the n-th of "
+     "the list it prints when there is no terminal"},
+    {"/rename [title]", "the conversation's title, or a new one"},
+    {"/export [--title <t>] [--overwrite] [file]",
+     "write the conversation to a file, in Markdown (plain text with "
+     "markdown off, or to a .txt); by default named after its title, here"},
+    {"/import <file>",
+     "take up a conversation from a file: one saved, or one in Markdown or "
+     "plain text"},
     {"/system", "show the system message"},
     {"/system <text>", "new conversation with this system message"},
     {"/system off", "new conversation with no system message"},
@@ -475,6 +491,9 @@ static const struct {
     {"/del-config [global]",
      "forget them: the next start uses the catalog's and the chat's own"},
     {"/quit", "exit (also Ctrl-D)"},
+    {NULL, "Every conversation is saved as it goes, a file each, in "
+           "~/.local/share/janas/chats (--no-save: none); janas-chat "
+           "--continue takes up the last one, --resume one of them."},
     {NULL, "A backslash and Enter add a line to the message (the backslash "
            "is not sent); Enter alone sends it. Ctrl-C stops a reply."},
     {NULL, "The arrows move in the message - up and down between its lines "
@@ -895,6 +914,80 @@ static void restart(janas_llm_chat *c, const char *system)
         term_printf(&term, "%s\n", janas_llm_last_error());
 }
 
+/* A conversation from a file in place of this one, its services and the
+   tools they gave closed as at a reset. 0, or -1 said. */
+static int take_up(janas_llm_chat *c, const char *path)
+{
+    if (janas_llm_chat_restore(c, path) != JANAS_LLM_OK) {
+        term_printf(&term, "%s\n", janas_llm_last_error());
+        return -1;
+    }
+    mcpc_close_services();
+    janas_llm_chat_tools_add(c, NULL, 0);
+    return 0;
+}
+
+/*
+ * A conversation taken up, shown as it went: its last messages, the
+ * questions as they were typed, the replies read as their marks say, the
+ * reasoning and the tools' answers not shown but said.
+ */
+static void show_history(janas_llm_chat *c, int markdown)
+{
+    int32_t n = janas_llm_chat_messages(c), from = 0, k = 0, role;
+    for (int32_t i = n - 1; i >= 0; i--) {
+        free(chat_message_dup(c, i, JANAS_LLM_MESSAGE_TEXT, &role));
+        if (role != JANAS_LLM_ROLE_SYSTEM && ++k > 20) {
+            from = i + 1;
+            break;
+        }
+    }
+    char title[256] = "";
+    int32_t tl;
+    janas_llm_chat_title(c, title, sizeof title, &tl);
+    term_gap(&term);
+    term_printf(&term, "%staken up: %s%s%s\n", T_DIM(&term), title,
+                from ? " (the last messages; /export writes them all)" : "",
+                T_RESET(&term));
+    for (int32_t i = from; i < n; i++) {
+        char *text = chat_message_dup(c, i, JANAS_LLM_MESSAGE_TEXT, &role);
+        char *why = chat_message_dup(c, i, JANAS_LLM_MESSAGE_REASONING, NULL);
+        char *calls = chat_message_dup(c, i, JANAS_LLM_MESSAGE_CALLS, NULL);
+        term_gap(&term);
+        if (role == JANAS_LLM_ROLE_USER) {
+            term_printf(&term, "%s\u203a %s%s\n", T_USER(&term),
+                        text ? text : "", T_RESET(&term));
+        } else if (role == JANAS_LLM_ROLE_TOOL) {
+            term_printf(&term, "%s[a tool answered]%s\n", T_DIM(&term),
+                        T_RESET(&term));
+        } else if (role == JANAS_LLM_ROLE_ASSISTANT) {
+            if (why && *why)
+                term_printf(&term, "%s[reasoning]%s\n", T_THINK(&term),
+                            T_RESET(&term));
+            if (text && *text) {
+                struct janas_md md;
+                md_init(&md, &term, markdown);
+                term_puts(&term, T_MODEL(&term));
+                size_t tn = strlen(text);
+                md_write(&md, text, term_clean(text, tn));
+                md_end(&md);
+                term_puts(&term, T_RESET(&term));
+                if (text[tn - 1] != '\n')
+                    term_write(&term, "\n", 1);
+            }
+            int nc = 0;
+            for (const char *p = calls; p && (p = strstr(p, "{\"name\":")); p++)
+                nc++;
+            if (nc)
+                term_printf(&term, "%s[%d tool call%s]%s\n", T_DIM(&term), nc,
+                            nc == 1 ? "" : "s", T_RESET(&term));
+        }
+        free(text);
+        free(why);
+        free(calls);
+    }
+}
+
 /* Reads one message (lines joined while they end with a backslash).
    Returns its length, or -1 at the end of the input. */
 static long read_message(char **buf, size_t *cap, int tty)
@@ -992,23 +1085,24 @@ struct chat_opts { /* where the words land: main keeps them, this names them */
     int *devices;
     int *npu_int8;
     const char **speech_model;
+    int *save; /* conversations saved as they go */
 };
 
 /* every option, for the nearest to one mistyped: the first N_ALONE stand
    alone, the others take a value */
-#define N_ALONE 15
+#define N_ALONE 18
 static const char *const OPTIONS[] = {
-    "--no-spec",     "--stats",      "--no-markdown", "--no-gpu",
-    "--no-preload",  "--no-recap",   "--no-mtp",      "--no-mcp",
-    "--no-services", "--all-tools",  "--mcp-auto",    "--mcp-instructions",
-    "--tune",        "--no-tune",    "--npu-int8",    "--mtp",
-    "--draft",       "--think",      "--mode",        "--ctx",
-    "--cache",       "--reserve",    "--bits",        "--attention",
-    "--system",      "--mcp-config", "--progress",    "--temp",
-    "--top-k",       "--top-p",      "--min-p",       "--seed",
-    "--max",         "--head",       "--profile",     "--models",
-    "--quality",     "--prompt-on",  "--drafts-on",   "--reply-on",
-    "--speech-model"};
+    "--no-spec",     "--stats",     "--no-markdown", "--no-gpu",
+    "--no-preload",  "--no-recap",  "--no-mtp",      "--no-mcp",
+    "--no-services", "--all-tools", "--mcp-auto",    "--mcp-instructions",
+    "--tune",        "--no-tune",   "--npu-int8",    "--no-save",
+    "--continue",    "--resume",    "--mtp",         "--draft",
+    "--think",       "--mode",      "--ctx",         "--cache",
+    "--reserve",     "--bits",      "--attention",   "--system",
+    "--mcp-config",  "--progress",  "--temp",        "--top-k",
+    "--top-p",       "--min-p",     "--seed",        "--max",
+    "--head",        "--profile",   "--models",      "--quality",
+    "--prompt-on",   "--drafts-on", "--reply-on",    "--speech-model"};
 #define N_OPTIONS (sizeof OPTIONS / sizeof *OPTIONS)
 
 /* v of option a as a whole number or a number within limits; on a
@@ -1113,6 +1207,12 @@ static int take_options(int n, char **w, struct chat_opts *o, char *why,
             *o->tune = a[2] == 't' ? 1 : -1;
             continue;
         }
+        if (strcmp(a, "--no-save") == 0) {
+            *o->save = 0;
+            continue;
+        }
+        if (strcmp(a, "--continue") == 0 || strcmp(a, "--resume") == 0)
+            continue; /* the command line's alone, read before the model */
         if (strcmp(a, "--npu-int8") == 0) {
             *o->npu_int8 = 1;
             setenv("JANAS_NPU_A8", "1", 1); /* read when the model opens */
@@ -1422,6 +1522,8 @@ static void conf_write(const char *path, const struct chat_opts *o)
         }
     if (*o->npu_int8)
         fprintf(f, "--npu-int8\n");
+    if (!*o->save)
+        fprintf(f, "--no-save\n");
     if (*o->mcp_config)
         fprintf(f, "--mcp-config %s\n", *o->mcp_config);
     if (*o->speech_model)
@@ -1856,14 +1958,14 @@ int main(int argc, char **argv)
     const char *speech_model = NULL; /* NULL: one beside the model */
     int mcp = 1, mcp_auto = 0, mcp_instructions = 0, services = 1, no_mtp = 0;
     /* profile: the catalog's faster choices, at --quality low asked */
-    int all_tools = 0, profile = 0, tune = 0, npu_int8 = 0;
+    int all_tools = 0, profile = 0, tune = 0, npu_int8 = 0, save = 1;
     int devices[JANAS_DEVICES_OPTIONS] = {0, 0, 0};
     static char mtp_found[4096];
     struct chat_opts o = {
-        &mp,       &cp,         &system_arg, &stats,       &markdown,
-        &gpu,      &mcp_config, &mcp,        &mcp_auto,    &mcp_instructions,
-        &services, &no_mtp,     mtp_found,   &all_tools,   &profile,
-        &tune,     devices,     &npu_int8,   &speech_model};
+        &mp,       &cp,         &system_arg, &stats,        &markdown,
+        &gpu,      &mcp_config, &mcp,        &mcp_auto,     &mcp_instructions,
+        &services, &no_mtp,     mtp_found,   &all_tools,    &profile,
+        &tune,     devices,     &npu_int8,   &speech_model, &save};
     /*
      * The settings in layers, each over the one before: the catalog's
      * profile for the model, the chat's own file, the model's file, the
@@ -1883,6 +1985,34 @@ int main(int argc, char **argv)
         where = chat_words_last(cn, cw, "--models");
     if (where)
         setenv("JANAS_MODELS", where, 1);
+    /* a conversation to take up, and its model when none is given */
+    static char resume_path[1024], resume_model[1024];
+    static const char *const CONTINUE[] = {"--continue", NULL};
+    static const char *const RESUME[] = {"--resume", NULL};
+    int cont = chat_words_any(argc - oi, argv + oi, CONTINUE);
+    if (cont || chat_words_any(argc - oi, argv + oi, RESUME)) {
+        struct chat_list cl;
+        int k = -1;
+        if (chat_list_load(&cl) != 0 || cl.n == 0)
+            fprintf(stderr, "no conversation saved yet: a new one\n");
+        else if (cont)
+            k = 0;
+        else if (!tty_both())
+            fprintf(stderr, "janas-chat: --resume chooses in a terminal; "
+                            "--continue takes up the last conversation\n");
+        else if ((k = chat_list_menu(&cl)) < 0) {
+            chat_list_free(&cl);
+            return 0; /* left without one: nothing wrong */
+        }
+        if (k >= 0) {
+            snprintf(resume_path, sizeof resume_path, "%s", cl.it[k].path);
+            snprintf(resume_model, sizeof resume_model, "%s",
+                     cl.it[k].model_file);
+            if (!marg && resume_model[0] && access(resume_model, R_OK) == 0)
+                marg = resume_model;
+        }
+        chat_list_free(&cl);
+    }
     struct janas_model_pick cm;
     if (tty_both())
         janas_model_menu = chat_model_menu; /* the arrows, not numbers */
@@ -2107,6 +2237,11 @@ int main(int argc, char **argv)
     if (janas_llm_chat_keep(c, 2, 0) != JANAS_LLM_OK ||
         janas_llm_chat_keep_disk(c, (uint64_t)2 << 30) != JANAS_LLM_OK)
         fprintf(stderr, "janas-chat: %s\n", janas_llm_last_error());
+    /* each conversation saved as it goes (issue #69), and the one asked
+       for taken up */
+    if (save && janas_llm_chat_autosave(c, "") != JANAS_LLM_OK)
+        fprintf(stderr, "janas-chat: %s\n", janas_llm_last_error());
+    int resumed = resume_path[0] && take_up(c, resume_path) == 0;
     char desc[1024];
     int32_t dl;
     janas_llm_describe(llm, desc, sizeof(desc), &dl);
@@ -2125,13 +2260,16 @@ int main(int argc, char **argv)
         else
             hp[0] = 0;
         hist_load(&history, hp);
+        if (resumed)
+            show_history(c, markdown);
         footer(llm, c, NULL);
         idle_llm = llm;
         idle_chat = c;
         line_idle = footer_idle;
         watch_start(llm);
     } else
-        fprintf(stderr, "%s\n/help for the commands\n", desc);
+        fprintf(stderr, "%s\n/help for the commands%s\n", desc,
+                resumed ? "; a conversation taken up" : "");
     prep_start(c);
 
 #ifdef _WIN32
@@ -2314,6 +2452,67 @@ int main(int argc, char **argv)
                 } else
                     term_printf(&term, "new conversation\n");
                 prep_start(c);
+            } else if (strcmp(msg, "/resume") == 0 ||
+                       strcmp(msg, "/import") == 0) {
+                char path[1024] = "";
+                if (msg[1] == 'i') {
+                    if (!*arg) {
+                        term_printf(&term, "/import <file>: a conversation "
+                                           "saved, or in Markdown or text\n");
+                        continue;
+                    }
+                    snprintf(path, sizeof path, "%s", arg);
+                } else {
+                    struct chat_list cl;
+                    if (chat_list_load(&cl) != 0 || cl.n == 0) {
+                        term_printf(&term, "no conversation saved yet\n");
+                        chat_list_free(&cl);
+                        continue;
+                    }
+                    int k = -1;
+                    if (*arg) {
+                        k = atoi(arg) - 1;
+                        if (k < 0 || k >= cl.n)
+                            term_printf(&term, "/resume %s: 1 to %d\n", arg,
+                                        cl.n);
+                    } else if (term.tty) {
+                        k = chat_list_menu(&cl);
+                        scroll_draw(&term, &conv); /* the window back */
+                    } else {
+                        for (int i = 0; i < cl.n; i++) {
+                            char d[400];
+                            chat_item_detail(&cl.it[i], d, sizeof d);
+                            term_printf(&term, "%d. %s\n   %s\n", i + 1,
+                                        cl.it[i].title, d);
+                        }
+                        term_printf(&term, "/resume <n> takes one up\n");
+                    }
+                    if (k >= 0)
+                        snprintf(path, sizeof path, "%s", cl.it[k].path);
+                    chat_list_free(&cl);
+                }
+                if (!path[0] || take_up(c, path) != 0)
+                    continue;
+                if (term.tty) { /* a clean window, then what was said */
+                    term_banner(&term, "Janas-Chat", name[0] ? name : cm.path,
+                                "/help for the commands, /quit to leave");
+                    show_history(c, markdown);
+                    footer(llm, c, NULL);
+                } else
+                    term_printf(&term, "a conversation taken up\n");
+            } else if (strcmp(msg, "/rename") == 0) {
+                char t[256];
+                int32_t tl;
+                if (*arg &&
+                    janas_llm_chat_set_title(c, arg, -1) != JANAS_LLM_OK)
+                    term_printf(&term, "%s\n", janas_llm_last_error());
+                else if (janas_llm_chat_title(c, t, sizeof t, &tl) ==
+                         JANAS_LLM_OK)
+                    term_printf(&term, "%s\n", t[0] ? t : "(no title yet)");
+            } else if (strcmp(msg, "/export") == 0) {
+                char say[1200];
+                chat_export(c, arg, markdown, say, sizeof say);
+                term_printf(&term, "%s\n", say);
             } else if (strcmp(msg, "/system") == 0) {
                 if (!*arg) {
                     term_printf(&term, "%s\n",

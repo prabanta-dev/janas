@@ -236,6 +236,18 @@ napi_value janas_node_open(napi_env env, napi_callback_info info);
 
 /* chat.c */
 napi_value janas_node_chat_class(napi_env env);
+/* history.c: the Chat's conversation and its files, and the module's
+   saved conversations */
+napi_value janas_node_chat_messages(napi_env env, napi_callback_info info);
+napi_value janas_node_chat_title(napi_env env, napi_callback_info info);
+napi_value janas_node_chat_set_title(napi_env env, napi_callback_info info);
+napi_value janas_node_chat_autosave(napi_env env, napi_callback_info info);
+napi_value janas_node_chat_file(napi_env env, napi_callback_info info);
+napi_value janas_node_chat_save(napi_env env, napi_callback_info info);
+napi_value janas_node_chat_restore(napi_env env, napi_callback_info info);
+napi_value janas_node_chat_export(napi_env env, napi_callback_info info);
+napi_value janas_node_chats_dir(napi_env env, napi_callback_info info);
+napi_value janas_node_list_chats(napi_env env, napi_callback_info info);
 napi_value janas_node_chat(napi_env env, struct janas_node_model *m,
                            napi_value options);
 

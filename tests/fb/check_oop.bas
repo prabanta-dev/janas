@@ -114,6 +114,25 @@ scope
     say("t1handler", hexOf(handler.answer))
     check(handler.ended andalso handler.pieces > 0, "the handler's end")
 
+    '' the conversation written down, saved, taken up and exported
+    dim as Janas.MessageRole role
+    dim as string said, tmp = environ("TMPDIR")
+    if tmp = "" then tmp = "/tmp"
+    dim as long nm = chat.Messages()
+    check(nm >= 2 andalso chat.Message(nm - 1, role, said) andalso _
+          role = Janas.MessageRole.Assistant andalso len(said) > 0, _
+          "the messages written down: " & nm & " " & chat.ErrorText)
+    check(chat.SetTitle("FB check") andalso chat.Title() = "FB check", _
+          "the title: " & chat.Title())
+    dim as string saved = tmp & "/janas-fb-check.jsonl"
+    check(chat.SaveTo(saved) andalso chat.RestoreFrom(saved) andalso _
+          chat.Messages() = nm andalso chat.Title() = "FB check", _
+          "saved and taken up: " & chat.ErrorText)
+    check(chat.ExportTo(tmp & "/janas-fb-check.md"), "exported: " & _
+          chat.ErrorText)
+    kill saved
+    kill tmp & "/janas-fb-check.md"
+
     '' tokens, and a request on the side
     dim as long ids()
     check(model.Tokenize("Hello, world!", ids()), "tokenize: " & _

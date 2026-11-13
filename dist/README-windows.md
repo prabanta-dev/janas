@@ -63,7 +63,7 @@ The first says which models it knows, their size and the memory they want; the s
 
 | | |
 |---|---|
-| `janas-chat` | a chat in the terminal: line editor, history, the reasoning shown apart, a context that slides instead of ending, the tools of MCP servers and of Janas's own services |
+| `janas-chat` | a chat in the terminal: line editor, history, the reasoning shown apart, a context that slides instead of ending, conversations saved as they go and taken up (`--continue`, `--resume`, `/export`, `/import`), the tools of MCP servers and of Janas's own services |
 | `janas-server` | the model served over HTTP with an API that follows OpenAI's: chat completions (tools, JSON schemas), completions, responses, embeddings, and llama.cpp's route for filling in code in editors |
 | `janas-get` | downloads a model of the catalog, checked; `--from-gguf` converts the original GGUF here instead |
 | `janas-setup` | gives the models installed here to VS Code's and VSCodium's extensions (Continue, llama.vscode, Cline, VS Code's chat), or installs one, and starts their servers (`janas-setup serve`); `--undo` puts the settings back |

@@ -500,6 +500,91 @@ JANAS_LLM_API int32_t janas_llm_chat_run(janas_llm_chat *c);
 JANAS_LLM_API int32_t janas_llm_chat_count(janas_llm_chat *c, int32_t *n);
 
 /*
+ * The conversation as it was said: every message of the chat, from the
+ * system message to the last reply, written down as they come - what was
+ * sent (janas_llm_chat_send, _send_results) and what the model replied
+ * (with its reasoning and its tool calls, once the reply is over), or the
+ * conversation loaded (janas_llm_chat_load, _run) and its reply. A reset
+ * starts a new one. janas_llm_chat_messages says how many messages there
+ * are (or an error, below 0); janas_llm_chat_message gives message i's
+ * role in *role (NULL: not wanted) and, as text like janas_llm_name's, the
+ * part asked for: JANAS_LLM_MESSAGE_TEXT, _REASONING (empty when none), or
+ * _CALLS, the calls as a JSON array of {"name", "arguments"} ("[]" when
+ * none; arguments as a string of JSON).
+ */
+#define JANAS_LLM_MESSAGE_TEXT 0
+#define JANAS_LLM_MESSAGE_REASONING 1
+#define JANAS_LLM_MESSAGE_CALLS 2
+JANAS_LLM_API int32_t janas_llm_chat_messages(janas_llm_chat *c);
+JANAS_LLM_API int32_t janas_llm_chat_message(janas_llm_chat *c, int32_t i,
+                                             int32_t what, int32_t *role,
+                                             char *buf, int32_t cap,
+                                             int32_t *len);
+/* Its title: the first line of the first question, at most 60 bytes,
+   until one is given (empty text: from the first question again). */
+JANAS_LLM_API int32_t janas_llm_chat_title(janas_llm_chat *c, char *buf,
+                                           int32_t cap, int32_t *len);
+JANAS_LLM_API int32_t janas_llm_chat_set_title(janas_llm_chat *c,
+                                               const char *text, int32_t len);
+
+/*
+ * Conversations in files. janas_llm_chat_autosave saves the conversation as
+ * it goes, at each message, in a file of its own in dir (made if missing;
+ * "": the default, janas_llm_chats_dir; NULL: no longer), named after the
+ * time it began; a reset starts the next file, and nothing is written
+ * before the first question. janas_llm_chat_file gives that file's path
+ * (empty: none yet). janas_llm_chat_save writes the conversation to a file
+ * of the caller's, in the same form: JSON Lines, a first line with the
+ * title, the time it began, the model and its settings, then a line a
+ * message. A file is never left half written: each is written beside
+ * itself, then renamed over.
+ *
+ * janas_llm_chat_restore takes a conversation up again: one saved, or one
+ * exported (below) or written by hand in Markdown (by its "## User", "##
+ * Assistant" headings) or in plain text. The conversation before is over,
+ * as at a reset; the one read becomes the chat's, its system message too
+ * (janas_llm_chat_system may give another before the next message), and is
+ * loaded whole with the next message, the reply following as usual - with
+ * the same model, and with janas_llm_chat_keep_disk, without reading again
+ * what was computed before. When it does not fit in the context, the oldest
+ * exchanges are left out of what is loaded (not of the record). Saved as it
+ * goes, a conversation from the autosave folder goes on in its own file,
+ * any other in a new one. Any model can take up any conversation.
+ *
+ * janas_llm_chat_export writes it for people: JANAS_LLM_EXPORT_MARKDOWN
+ * (headings, the reasoning folded in <details>, the calls in code blocks,
+ * a line before each message that does not show and that restore reads
+ * back) or JANAS_LLM_EXPORT_TEXT (plain, without the reasoning).
+ */
+JANAS_LLM_API int32_t janas_llm_chat_autosave(janas_llm_chat *c,
+                                              const char *dir);
+JANAS_LLM_API int32_t janas_llm_chat_file(janas_llm_chat *c, char *buf,
+                                          int32_t cap, int32_t *len);
+JANAS_LLM_API int32_t janas_llm_chat_save(janas_llm_chat *c, const char *path);
+JANAS_LLM_API int32_t janas_llm_chat_restore(janas_llm_chat *c,
+                                             const char *path);
+#define JANAS_LLM_EXPORT_MARKDOWN 0
+#define JANAS_LLM_EXPORT_TEXT 1
+JANAS_LLM_API int32_t janas_llm_chat_export(janas_llm_chat *c, const char *path,
+                                            int32_t format);
+/* The default folder of saved conversations: $XDG_DATA_HOME/janas/chats,
+   otherwise ~/.local/share/janas/chats (%LOCALAPPDATA%\janas\chats on
+   Windows). */
+JANAS_LLM_API int32_t janas_llm_chats_dir(char *buf, int32_t cap, int32_t *len);
+/* The saved conversations of dir (NULL or "": the default), the most
+   recently written first: their paths, a line each. */
+JANAS_LLM_API int32_t janas_llm_chats_list(const char *dir, char *buf,
+                                           int32_t cap, int32_t *len);
+/* What a saved conversation is, for a list to choose from: its title, its
+   model's name and the model's file (each cut to its buffer, whole
+   characters; NULL: not wanted), when it was last written (seconds since
+   1970) and how many messages it has, the system message not counted. */
+JANAS_LLM_API int32_t
+janas_llm_chat_file_info(const char *path, char *title, int32_t title_cap,
+                         char *model, int32_t model_cap, char *model_file,
+                         int32_t file_cap, int64_t *updated, int32_t *messages);
+
+/*
  * Conversations kept computed besides the current one, for a caller that
  * switches between several: an HTTP server with many clients, or a client
  * that asks on the side for titles and suggestions. When a conversation is

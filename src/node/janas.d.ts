@@ -167,7 +167,56 @@ export declare class Chat {
     reset(): Promise<void>;
     /** Stops its replies and ends it: the model may have another. */
     close(): Promise<void>;
+    /**
+     * The conversation as it was said: what was sent and what the model
+     * replied (with its reasoning and its tool calls, once a reply is over),
+     * or the conversation loaded and its reply.
+     */
+    messages(): Promise<SavedMessage[]>;
+    /** Its title: the first line of the first question, until one is given. */
+    title(): Promise<string>;
+    /** A title of the caller's; none: from the first question again. */
+    setTitle(title?: string): Promise<void>;
+    /**
+     * Saves the conversation as it goes, a file each, in dir (none: the
+     * default, chatsDir(); null: no longer).
+     */
+    autosave(dir?: string | null): Promise<void>;
+    /** The file it is saved to as it goes ("": none yet). */
+    file(): Promise<string>;
+    /** Writes it to a file, in the saved form (JSON Lines). */
+    save(path: string): Promise<void>;
+    /**
+     * Takes a conversation up from a file (saved, or in Markdown or plain
+     * text): it is loaded whole with the next message.
+     */
+    restore(path: string): Promise<void>;
+    /** Writes it for people, in Markdown (the default) or plain text. */
+    export(path: string, format?: "markdown" | "text"): Promise<void>;
 }
+
+export interface SavedMessage {
+    role: "system" | "user" | "assistant" | "tool";
+    text: string;
+    reasoning?: string;
+    calls?: { name: string; arguments: string }[];
+}
+
+export interface SavedChat {
+    path: string;
+    title: string;
+    model: string;
+    modelFile: string;
+    /** when it was last written, in milliseconds since 1970 (as Date.now()) */
+    updated: number;
+    /** the system message not counted */
+    messages: number;
+}
+
+/** The default folder of saved conversations. */
+export declare function chatsDir(): string;
+/** A folder's saved conversations (none: the default), the most recent first. */
+export declare function listChats(dir?: string): SavedChat[];
 
 export interface ReplyOptions {
     /** Stops the reply when it aborts (the client of a request gone). */
