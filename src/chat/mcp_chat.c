@@ -37,6 +37,9 @@ struct server {
 static const struct {
     const char *name, *about; /* for the catalog */
 } SERVICES[] = {
+    {"docs", "the user's own documents (notes, letters, contracts, "
+             "manuals, papers): the passages that answer a question, found "
+             "by their meaning and their words; a document read"},
     {"files", "the user's files and folders: what a folder holds, what a "
               "file says, files found by name or by the text they hold; a "
               "file written or edited, a folder made, each confirmed by the "

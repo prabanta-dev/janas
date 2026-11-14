@@ -1,11 +1,12 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
    Copyright (C) 2026 Maurizio Cammalleri */
 /*
- * inflate.c - DEFLATE (RFC 1951) in a zlib wrapping (RFC 1950): stored,
- * fixed and dynamic Huffman blocks. Codes are decoded canonically, a bit
- * at a time against the count of codes of each length - plain, and fast
- * enough for the pictures it is for. Every read is bounded: broken data
- * ends with a reason, never past the input or the output.
+ * inflate.c - DEFLATE (RFC 1951), bare or in a zlib wrapping (RFC 1950):
+ * stored, fixed and dynamic Huffman blocks. Codes are decoded canonically,
+ * a bit at a time against the count of codes of each length - plain, and
+ * fast enough for the pictures and the documents it is for. Every read is
+ * bounded: broken data ends with a reason, never past the input or the
+ * output.
  */
 #include "inflate.h"
 
@@ -232,6 +233,24 @@ static int dynamic(struct in *s)
     return codes(s, &lc, &dc);
 }
 
+/* the blocks from s's position to the last one: 0, or -1 */
+static int blocks(struct in *s)
+{
+    int last;
+    do {
+        last = bit(s);
+        int type = (int)bits(s, 2);
+        int rc = s->bad      ? -1
+                 : type == 0 ? stored(s)
+                 : type == 1 ? fixed(s)
+                 : type == 2 ? dynamic(s)
+                             : -1;
+        if (rc != 0 || s->bad)
+            return -1;
+    } while (!last);
+    return 0;
+}
+
 int janas_zlib_inflate(const uint8_t *p, size_t n, uint8_t *out, size_t cap,
                        char *why, size_t wn)
 {
@@ -241,23 +260,28 @@ int janas_zlib_inflate(const uint8_t *p, size_t n, uint8_t *out, size_t cap,
         return -1;
     }
     struct in s = {.p = p, .n = n, .pos = 2, .out = out, .cap = cap};
-    int last;
-    do {
-        last = bit(&s);
-        int type = (int)bits(&s, 2);
-        int rc = s.bad       ? -1
-                 : type == 0 ? stored(&s)
-                 : type == 1 ? fixed(&s)
-                 : type == 2 ? dynamic(&s)
-                             : -1;
-        if (rc != 0 || s.bad) {
-            snprintf(why, wn, "broken compressed data");
-            return -1;
-        }
-    } while (!last);
+    if (blocks(&s) != 0) {
+        snprintf(why, wn, "broken compressed data");
+        return -1;
+    }
     if (s.len != cap) {
         snprintf(why, wn, "%zu bytes of pixels where %zu were expected", s.len,
                  cap);
+        return -1;
+    }
+    return 0;
+}
+
+int janas_raw_inflate(const uint8_t *p, size_t n, uint8_t *out, size_t cap,
+                      char *why, size_t wn)
+{
+    struct in s = {.p = p, .n = n, .out = out, .cap = cap};
+    if (blocks(&s) != 0) {
+        snprintf(why, wn, "broken compressed data");
+        return -1;
+    }
+    if (s.len != cap) {
+        snprintf(why, wn, "%zu bytes where %zu were expected", s.len, cap);
         return -1;
     }
     return 0;

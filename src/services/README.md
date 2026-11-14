@@ -4,6 +4,7 @@ A service of Janas is a program that brings data of the world - flights, the wea
 
 | Service | What it answers | Key |
 |---|---|---|
+| [`janas-docs`](docs/README.md) | your own documents: the passages of your notes, letters, contracts, manuals that answer a question, by their words and, with an embedding model, by their meaning; a document read; text, Markdown, Word and LibreOffice files, never the private ones | none; nothing reaches the network, but the embeddings server you name |
 | [`janas-files`](files/README.md) | your files: what a folder holds, what a file says, files found by name or by text; a file written or edited, a folder made, each asked of you; never the private ones (keys, passwords, the browsers' data), nothing deleted | none; nothing reaches the network |
 | [`janas-flights`](flights/README.md) | where a flight is and what it is doing, its times, the flights of a route, what flies over a sea or near a place | none for live data; a free one of your own for schedules |
 | [`janas-git`](git/README.md) | the git repositories of this computer: what has changed, the commits, the branches, a diff; a commit, pull, push or switch of branch, each asked of you first | none |

@@ -1,8 +1,9 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
    Copyright (C) 2026 Maurizio Cammalleri */
 /*
- * inflate.h - DEFLATE data (RFC 1951) inside its zlib wrapping (RFC 1950)
- * made whole again (inflate.c), as PNG keeps its pixels.
+ * inflate.h - DEFLATE data (RFC 1951) made whole again (inflate.c): inside
+ * its zlib wrapping (RFC 1950), as PNG keeps its pixels, or bare, as a zip
+ * archive keeps its files.
  */
 #ifndef JANAS_COMMON_INFLATE_H
 #define JANAS_COMMON_INFLATE_H
@@ -14,5 +15,8 @@
    0, or -1 (data broken, or not cap bytes) with the reason in why. */
 int janas_zlib_inflate(const uint8_t *p, size_t n, uint8_t *out, size_t cap,
                        char *why, size_t wn);
+/* The same for bare DEFLATE data, as a zip archive keeps its files. */
+int janas_raw_inflate(const uint8_t *p, size_t n, uint8_t *out, size_t cap,
+                      char *why, size_t wn);
 
 #endif

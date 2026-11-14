@@ -680,10 +680,11 @@ for src in tests/*.c tools/*.c src/*/main.c src/services/*/main.c; do
         echo "build.sh: no sources match $src" >&2
         exit 2
     fi
-    # janas-files reads POSIX paths (links, the home's private folders):
-    # not on Windows yet, where a path is another thing
+    # janas-files and janas-docs read POSIX paths (links, the home's
+    # private folders): not on Windows yet, where a path is another thing
     [ "$OS" = windows ] && case "$src" in
-    src/services/files/main.c | tests/test_files.c) continue ;;
+    src/services/files/main.c | tests/test_files.c | \
+        src/services/docs/main.c | tests/test_docs.c) continue ;;
     esac
     exe="$BIN/$(basename "${src%.c}")$SUFFIX$EXE"
     own=()
