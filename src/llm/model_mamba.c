@@ -152,24 +152,14 @@ static void gate_worker(void *arg, int tid, int n_threads)
     }
 }
 
-void janas_m_mamba_layer(struct janas_llm_model *m, const struct layer *ly,
-                         uint32_t n)
+/* The middle of a layer, on the block's rows 0 .. n - 1 of big (its
+   ssm_in) and att (its y) and on m->cur's state: the replayed rows and the
+   call's, the conv, the scan, the gate, the log. */
+static void mamba_core(struct janas_llm_model *m, const struct layer *ly,
+                       uint32_t n, double ta)
 {
-    uint32_t dm = m->d_model, nh = m->n_vh, cc = m->conv_ch;
+    uint32_t nh = m->n_vh, cc = m->conv_ch;
     uint32_t di = m->d_inner, qz = m->qkvz_dim;
-    size_t nbi = di / JANAS_QK;
-    double ta = now();
-    struct janas_matvec_task t = {.type = (int)ly->ssm_in->type,
-                                  .w = data(m, ly->ssm_in),
-                                  .x = m->xq,
-                                  .y = m->big,
-                                  .rows = qz,
-                                  .cols = dm,
-                                  .n_vec = n};
-    janas_m_products(m, janas_m_gpu(m, 0), &t, 1);
-    if (ly->in_scale != 1.0f)
-        for (size_t i = 0; i < (size_t)n * qz; i++)
-            m->big[i] *= ly->in_scale;
     uint32_t rp = m->cur->replay;
     size_t L = JANAS_LLM_MAX_BLOCK;
     float *lm = m->cur->log_mixed + (size_t)ly->slot * L * cc;
@@ -205,8 +195,46 @@ void janas_m_mamba_layer(struct janas_llm_model *m, const struct layer *ly,
         memcpy(lb, m->beta + (size_t)rp * nh, (size_t)n * nh * sizeof(float));
         memcpy(ld, m->decay + (size_t)rp * nh, (size_t)n * nh * sizeof(float));
     }
+    m->phase[JANAS_PH_SSM] += now() - tb;
+}
+
+void janas_m_mamba_layer(struct janas_llm_model *m, const struct layer *ly,
+                         uint32_t n)
+{
+    uint32_t dm = m->d_model;
+    uint32_t di = m->d_inner, qz = m->qkvz_dim;
+    size_t nbi = di / JANAS_QK;
+    double ta = now();
+    struct janas_matvec_task t = {.type = (int)ly->ssm_in->type,
+                                  .w = data(m, ly->ssm_in),
+                                  .x = m->xq,
+                                  .y = m->big,
+                                  .rows = qz,
+                                  .cols = dm,
+                                  .n_vec = n};
+    janas_m_products(m, janas_m_gpu(m, 0), &t, 1);
+    if (ly->in_scale != 1.0f)
+        for (size_t i = 0; i < (size_t)n * qz; i++)
+            m->big[i] *= ly->in_scale;
+    if (janas_m_on_cur(m)) {
+        mamba_core(m, ly, n, ta);
+    } else {
+        /* several pieces (janas_llm_model_forward_parts): each on its own
+           sequence's state, the core shown its rows alone */
+        float *big = m->big, *att = m->att;
+        struct janas_seq *cur = m->cur;
+        for (uint32_t i = 0; i < m->n_parts; i++) {
+            uint32_t r0 = m->part_row0[i];
+            m->big = big + (size_t)r0 * qz;
+            m->att = att + (size_t)r0 * di;
+            m->cur = m->parts[i].seq;
+            mamba_core(m, ly, m->parts[i].n, ta);
+        }
+        m->big = big;
+        m->att = att;
+        m->cur = cur;
+    }
     double tc = now();
-    m->phase[JANAS_PH_SSM] += tc - tb;
     for (uint32_t j = 0; j < n; j++)
         janas_q8k_quantize(m->att + (size_t)j * di, m->attq + j * nbi, di);
     struct janas_matvec_task to = {.type = (int)ly->ssm_out->type,
