@@ -17,6 +17,7 @@
 layout(local_size_x = 64) in;
 layout(constant_id = 0) const uint NV = 8;
 layout(constant_id = 1) const uint SG = 8;
+layout(constant_id = 2) const uint ID = 0;
 const uint NX = (19u + SG - 1u) / SG;
 
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer U4 { uvec4 v[]; };
@@ -24,6 +25,10 @@ layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer F 
 
 // w: the first row; x: vector v, block b at uvec4 (v * xs + b) * 20;
 // y: row r of vector v at y[v * ys + r]
+// With ID (constant 2) a mixture's experts, as in q4k_matvec.comp: the
+// table of *_mmid.comp (gpu_token_moe.c) in w, 3 uvec4 an expert, (w, x),
+// (y, nv, ys), (p1, p0), then from uvec4 nv on one a workgroup's z,
+// (expert, first vector); x's vectors nb blocks apart.
 layout(push_constant) uniform P { uvec2 w, x, y; uint rows, nb, nv, xs, ys; } p;
 
 int dp(uint a, uint b) { return dotPacked4x8EXT(int(a), int(b)); }
@@ -32,18 +37,26 @@ uvec4 bc(uvec4 xr[NX], uint k) { return subgroupBroadcast(xr[k / SG], k % SG); }
 
 void main()
 {
-    U4 W = U4(p.w), X = U4(p.x);
-    F Y = F(p.y);
+    uvec2 pw = p.w, px = p.x, py = p.y;
+    uint nv = p.nv, xs = p.xs, ys = p.ys, v0 = gl_WorkGroupID.x * NV;
+    if (ID != 0u) {
+        U4 T = U4(p.w);
+        uvec4 tl = T.v[p.nv + gl_WorkGroupID.z];
+        uvec4 t0 = T.v[3u * tl.x], t1 = T.v[3u * tl.x + 1u];
+        pw = t0.xy, px = t0.zw, py = t1.xy;
+        nv = t1.z, xs = p.nb, ys = t1.w, v0 = tl.y;
+    }
+    U4 W = U4(pw), X = U4(px);
+    F Y = F(py);
     uint lane = gl_SubgroupInvocationID;
     /* workgroup y: 64 rows; x: a group of NV vectors, so that the groups
        of the same rows go out together and the weights the first reads
        from memory the others find in the L3 */
     uint grow = gl_WorkGroupID.y * 64u + gl_LocalInvocationID.x;
     uint row = min(grow, p.rows - 1u);
-    uint v0 = gl_WorkGroupID.x * NV;
     uint xo[NV];
     for (uint v = 0; v < NV; v++)
-        xo[v] = min(v0 + v, p.nv - 1u) * p.xs * 20u;
+        xo[v] = min(v0 + v, nv - 1u) * xs * 20u;
     float acc[NV], accm[NV];
     for (uint v = 0; v < NV; v++) { acc[v] = 0.0; accm[v] = 0.0; }
     uint wo = row * p.nb * 11u;
@@ -93,6 +106,6 @@ void main()
     }
     if (grow < p.rows)
         for (uint v = 0; v < NV; v++)
-            if (v0 + v < p.nv)
-                Y.v[(v0 + v) * p.ys + row] = acc[v] - accm[v];
+            if (v0 + v < nv)
+                Y.v[(v0 + v) * ys + row] = acc[v] - accm[v];
 }

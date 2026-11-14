@@ -123,7 +123,8 @@ static const char *check_ffn(const struct janas_gpu *g,
           (dt == JANAS_MXFP4 && g->pipe_idmx) ||
           (dt == JANAS_Q3_K && g->pipe_id3) || (dt == JANAS_Q2_0 && q20) ||
           (dt == JANAS_Q5_1 && g->pipe_mvid[6]) ||
-          (dt == JANAS_Q8_0 && g->pipe_mvid[7])) ||
+          (dt == JANAS_Q8_0 && g->pipe_mvid[7]) ||
+          (dt == JANAS_Q5_K && g->pipe_mvid[8] && g->pipe_id5)) ||
         (md->eff % JANAS_QK && dt != JANAS_Q2_0 && dt != JANAS_Q5_1 &&
          dt != JANAS_Q8_0) ||
         ly->gate.rows != md->eff || ly->up.rows != md->eff ||

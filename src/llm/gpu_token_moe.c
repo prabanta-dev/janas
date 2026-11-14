@@ -82,9 +82,10 @@ static VkPipeline by_rows(const struct janas_gpu *g,
             : ty == JANAS_Q2_0   ? 5
             : ty == JANAS_Q5_1   ? 6
             : ty == JANAS_Q8_0   ? 7
+            : ty == JANAS_Q5_K   ? 8
                                  : -1;
     /* Q5_1 and Q8_0 have no tiles (*_mmid): by rows on any block */
-    if (i >= 6)
+    if (i == 6 || i == 7)
         return g->pipe_mvid[i];
     return n <= t->mvid_n && i >= 0 ? g->pipe_mvid[i] : VK_NULL_HANDLE;
 }
@@ -168,6 +169,7 @@ void janas_gt_rec_experts(struct janas_gpu *g, struct janas_gpu_tok *t,
                     : dt == JANAS_MXFP4 ? g->pipe_idmx
                     : dt == JANAS_Q3_K  ? g->pipe_id3
                     : dt == JANAS_Q2_0  ? g->pipe_idb[2]
+                    : dt == JANAS_Q5_K  ? g->pipe_id5
                                         : g->pipe_id6,
                     B + t->o_tab2, md->dm, md->eff, nbf, t->tiles2,
                     md->eff / 32, t->o_ind + 16);

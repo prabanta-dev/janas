@@ -6,12 +6,12 @@
  * experts in them (b32_mmid.comp: IQ4_NL, Q5_0, Q2_0), rows ending inside
  * a group of 256 among them (qwen4exp's 640), and experts in the 256-block
  * types of iqk_mmid.comp (Q2_K, IQ2_XXS, IQ2_XS, IQ2_S, IQ3_XXS, IQ1_S,
- * IQ1_M, IQ3_S, IQ4_XS), and the Q4_K and Q6_K tiles (q4k_mmq.comp,
- * q6k_mmq.comp; with JANAS_GPU_TILES_EXACT=1 their _exact variants, which
- * must give the CPU's bits), against the CPU. They round
- * group by group, so not bit for bit: each output within 1e-4 of the
- * largest of its product, and the GPU seen at work (outputs that differ in
- * their last bits). Skips (exit 0) when no GPU is usable.
+ * IQ1_M, IQ3_S, IQ4_XS) and of q5k_mmid.comp (Q5_K), and the Q4_K and Q6_K
+ * tiles (q4k_mmq.comp, q6k_mmq.comp; with JANAS_GPU_TILES_EXACT=1 their _exact
+ * variants, which must give the CPU's bits), against the CPU. They round group
+ * by group, so not bit for bit: each output within 1e-4 of the largest of its
+ * product, and the GPU seen at work (outputs that differ in their last bits).
+ * Skips (exit 0) when no GPU is usable.
  *
  * Usage: gpu_fast_check
  */
@@ -59,7 +59,7 @@ static void fill(uint8_t *w, int type, size_t rows, size_t cols)
             continue;
         }
         uint16_t d = janas_fp32_to_fp16(0.0005f + (rnd() % 1000) * 1e-6f);
-        if (type == JANAS_Q4_K) { /* d and dmin at 0 and 2 */
+        if (type == JANAS_Q4_K || type == JANAS_Q5_K) { /* d, dmin at 0, 2 */
             uint16_t dm = janas_fp32_to_fp16(0.0002f + (rnd() % 1000) * 1e-6f);
             memcpy(blk, &d, 2);
             memcpy(blk + 2, &dm, 2);
@@ -266,13 +266,14 @@ int main(void)
                 bad++;
             }
         }
-    /* the same for the 256-block types of iqk_mmid.comp */
-    static const int ktypes[] = {JANAS_Q2_K,  JANAS_IQ2_XXS, JANAS_IQ2_XS,
-                                 JANAS_IQ2_S, JANAS_IQ3_XXS, JANAS_IQ1_S,
-                                 JANAS_IQ1_M, JANAS_IQ3_S,   JANAS_IQ4_XS};
-    static const char *knames[] = {"Q2_K",  "IQ2_XXS", "IQ2_XS",
-                                   "IQ2_S", "IQ3_XXS", "IQ1_S",
-                                   "IQ1_M", "IQ3_S",   "IQ4_XS"};
+    /* the same for the 256-block types of iqk_mmid.comp, and Q5_K's
+       (q5k_mmid.comp) */
+    static const int ktypes[] = {
+        JANAS_Q2_K,  JANAS_IQ2_XXS, JANAS_IQ2_XS, JANAS_IQ2_S,  JANAS_IQ3_XXS,
+        JANAS_IQ1_S, JANAS_IQ1_M,   JANAS_IQ3_S,  JANAS_IQ4_XS, JANAS_Q5_K};
+    static const char *knames[] = {"Q2_K",    "IQ2_XXS", "IQ2_XS", "IQ2_S",
+                                   "IQ3_XXS", "IQ1_S",   "IQ1_M",  "IQ3_S",
+                                   "IQ4_XS",  "Q5_K"};
     static const size_t kshapes[][2] = {{512, 2048}, {2048, 512}};
     for (size_t ti = 0; ti < sizeof(ktypes) / sizeof(*ktypes); ti++)
         for (size_t s = 0; s < 2; s++) {

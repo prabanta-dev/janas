@@ -51,6 +51,7 @@
 #include "dense_mv.h"      /* janas_spv_dense_mv */
 #include "q3k_mmid.h"      /* janas_spv_q3k_mmid */
 #include "q4k_mmid.h"      /* janas_spv_q4k_mmid */
+#include "q5k_mmid.h"      /* janas_spv_q5k_mmid */
 #include "q6kp_mmid.h"     /* janas_spv_q6kp_mmid */
 #include "q6k_mmid.h"      /* janas_spv_q6k_mmid */
 #include "iq3s_matvec.h"   /* janas_spv_iq3s_matvec */
@@ -786,6 +787,12 @@ struct janas_gpu *janas_gpu_create(char *err, size_t err_len)
                       &g->sm_id3, &g->pipe_id3, 0, NV_PER_GROUP,
                       g->sg) != VK_SUCCESS)
         g->pipe_id3 = VK_NULL_HANDLE;
+    /* Q5_K experts (q5k_mmid.comp: the down matrices of unsloth's UD
+       mixes, issue #50): without it they stay on the CPU */
+    if (make_pipeline(g, janas_spv_q5k_mmid, sizeof(janas_spv_q5k_mmid),
+                      &g->sm_id5, &g->pipe_id5, 0, NV_PER_GROUP,
+                      g->sg) != VK_SUCCESS)
+        g->pipe_id5 = VK_NULL_HANDLE;
     /* qwen4exp's types for the fast prompt (Q5_0 and Q2_0 tiles, iq4nl_mmq
        KIND 2 and 3) and its experts' (b32_mmid KIND 0, 2, 3: IQ4_NL, Q5_0,
        Q2_0): without them those products stay with the CPU */
@@ -838,20 +845,21 @@ struct janas_gpu *janas_gpu_create(char *err, size_t err_len)
         /* the experts' products on a few vectors (gpu_token_moe.c) */
         /* (MXFP4, Q2_0, Q5_1: b32_matvec's kinds; Gemma 4 26B's down
            matrices are Q5_1) */
-        const uint32_t *mc[8] = {janas_spv_q3k_matvec, janas_spv_q4k_matvec,
-                                 janas_spv_q6k_matvec, janas_spv_q6kp_matvec,
-                                 janas_spv_b32_matvec, janas_spv_b32_matvec,
-                                 janas_spv_b32_matvec, janas_spv_q8_0_matvec};
-        size_t mb[8] = {
+        const uint32_t *mc[9] = {
+            janas_spv_q3k_matvec,  janas_spv_q4k_matvec,  janas_spv_q6k_matvec,
+            janas_spv_q6kp_matvec, janas_spv_b32_matvec,  janas_spv_b32_matvec,
+            janas_spv_b32_matvec,  janas_spv_q8_0_matvec, janas_spv_q5k_matvec};
+        size_t mb[9] = {
             sizeof(janas_spv_q3k_matvec), sizeof(janas_spv_q4k_matvec),
             sizeof(janas_spv_q6k_matvec), sizeof(janas_spv_q6kp_matvec),
             sizeof(janas_spv_b32_matvec), sizeof(janas_spv_b32_matvec),
-            sizeof(janas_spv_b32_matvec), sizeof(janas_spv_q8_0_matvec)};
+            sizeof(janas_spv_b32_matvec), sizeof(janas_spv_q8_0_matvec),
+            sizeof(janas_spv_q5k_matvec)};
         /* constant 2: ID, b32_matvec's in bit 8 beside its KIND (MXFP4,
            Q2_0, Q5_1), q8_0_matvec's alone (Gemma 4 26B's down matrices
-           are Q5_1, its last layer's Q8_0) */
-        uint32_t mk[8] = {1, 1, 1, 1, 256 | 4, 256 | 6, 256 | 3, 256};
-        for (int i = 0; i < 8; i++)
+           are Q5_1, its last layer's Q8_0; unsloth's UD mixes' Q5_K) */
+        uint32_t mk[9] = {1, 1, 1, 1, 256 | 4, 256 | 6, 256 | 3, 256, 1};
+        for (int i = 0; i < 9; i++)
             if (janas_g_make_pipeline_nv(g, mc[i], mb[i], &g->sm_mvid[i],
                                          &g->pipe_mvid[i], mk[i],
                                          MVID_NV) != VK_SUCCESS)
@@ -1224,7 +1232,7 @@ void janas_gpu_destroy(struct janas_gpu *g)
             g->vkDestroyPipeline(g->dev, g->pipe_mm5, NULL);
         if (g->sm_mm5)
             g->vkDestroyShaderModule(g->dev, g->sm_mm5, NULL);
-        for (int i = 0; i < 8; i++) {
+        for (int i = 0; i < 9; i++) {
             if (g->pipe_mvid[i])
                 g->vkDestroyPipeline(g->dev, g->pipe_mvid[i], NULL);
             if (g->sm_mvid[i])
@@ -1240,13 +1248,15 @@ void janas_gpu_destroy(struct janas_gpu *g)
             if (g->sm_dv[i])
                 g->vkDestroyShaderModule(g->dev, g->sm_dv[i], NULL);
         }
-        for (int i = 0; i < 5; i++) {
-            VkPipeline pp = i == 4   ? g->pipe_id3
+        for (int i = 0; i < 6; i++) {
+            VkPipeline pp = i == 5   ? g->pipe_id5
+                            : i == 4 ? g->pipe_id3
                             : i == 3 ? g->pipe_idmx
                             : i == 2 ? g->pipe_id6s
                             : i      ? g->pipe_id6
                                      : g->pipe_id4;
-            VkShaderModule ss = i == 4   ? g->sm_id3
+            VkShaderModule ss = i == 5   ? g->sm_id5
+                                : i == 4 ? g->sm_id3
                                 : i == 3 ? g->sm_idmx
                                 : i == 2 ? g->sm_id6s
                                 : i      ? g->sm_id6
@@ -1341,9 +1351,9 @@ static const struct {
     N(iq3xxs_matvec), N(iqk_mmid),    N(iqk_mmq),      N(q2k_matvec),
     N(q80_mmq),       N(q5k_mmq),     N(dense_mm),     N(q3k_mmid),
     N(q4k_mmid),      N(q6kp_mmid),   N(q6k_mmid),     N(iq3s_matvec),
-    N(expert_act),    N(q4k_row),     N(q6k_row),      N(q6kp_row),
-    N(q6ka_row),      N(q4k_mv),      N(q4k_mvd),      N(q6k_mvd),
-    N(q5k_mvd),       N(iq4xs_mvd)
+    N(q5k_mmid),      N(expert_act),  N(q4k_row),      N(q6k_row),
+    N(q6kp_row),      N(q6ka_row),    N(q4k_mv),       N(q4k_mvd),
+    N(q6k_mvd),       N(q5k_mvd),     N(iq4xs_mvd)
 #undef N
 };
 
@@ -2834,7 +2844,8 @@ static int experts_id(struct janas_gpu *g, struct janas_pool *pool,
     int im = iqm_kind(type);
     if (!(type == JANAS_Q4_K || type == JANAS_Q6_K ||
           (type == JANAS_MXFP4 && g->pipe_idmx) ||
-          (type == JANAS_Q3_K && g->pipe_id3) || (ib >= 0 && g->pipe_idb[ib]) ||
+          (type == JANAS_Q3_K && g->pipe_id3) ||
+          (type == JANAS_Q5_K && g->pipe_id5) || (ib >= 0 && g->pipe_idb[ib]) ||
           (im >= 0 && g->pipe_iqm[im]) ||
           (type == JANAS_Q6_K_P && plane_level(&t[s0]) == 3)))
         return experts_off(g, n, type, "a type without its shader");
@@ -2977,6 +2988,7 @@ static int experts_id(struct janas_gpu *g, struct janas_pool *pool,
                          : type == JANAS_Q6_K  ? g->pipe_id6s
                          : type == JANAS_MXFP4 ? g->pipe_idmx
                          : type == JANAS_Q3_K  ? g->pipe_id3
+                         : type == JANAS_Q5_K  ? g->pipe_id5
                                                : g->pipe_id6);
     /* b32_mmid.comp and iqk_mmid.comp also take the groups of 32 a row
        (pc[5]) */

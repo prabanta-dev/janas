@@ -198,15 +198,15 @@ struct janas_gpu {
     /* q3k, q4k, q6k, q6kp_matvec and b32_matvec's MXFP4 and Q2_0 with ID:
        a mixture's experts on a few vectors, MVID_NV a workgroup, from
        *_mmid.comp's table (optional) */
-    VkShaderModule sm_mvid[8];
-    VkPipeline pipe_mvid[8];
+    VkShaderModule sm_mvid[9];
+    VkPipeline pipe_mvid[9];
     int only_fast;   /* janas_gpu_set_only_fast */
     uint32_t pass_n; /* janas_gpu_set_pass; UINT32_MAX until said */
     uint32_t nvg;    /* vectors a product's workgroup takes (NV_PER_GROUP) */
     /* a mixture's experts in one dispatch (experts_id): Q4_K, Q6_K_P,
        Q6_K, MXFP4 */
-    VkShaderModule sm_id4, sm_id6, sm_id6s, sm_idmx, sm_id3;
-    VkPipeline pipe_id4, pipe_id6, pipe_id6s, pipe_idmx, pipe_id3;
+    VkShaderModule sm_id4, sm_id6, sm_id6s, sm_idmx, sm_id3, sm_id5;
+    VkPipeline pipe_id4, pipe_id6, pipe_id6s, pipe_idmx, pipe_id3, pipe_id5;
     /* ... and in blocks of 32 or 64 (b32_mmid.comp): IQ4_NL, Q5_0, Q2_0 */
     VkShaderModule sm_idb[3];
     VkPipeline pipe_idb[3];
