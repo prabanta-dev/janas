@@ -100,7 +100,7 @@ static void qkv_item(const struct tok_job *t, uint32_t j, uint32_t h)
     if (ly->k_norm)
         rms_norm(kv, kv, f32(m, ly->k_norm), hd, m->eps);
     rope_neox(kv, ly->n_rot, cs, sn);
-    uint32_t p = t->pos0 + j, row = t->ring ? p % t->cap : p;
+    uint32_t p = t->pos0 + (j - t->first), row = t->ring ? p % t->cap : p;
     size_t at = ((size_t)h * t->cap + row) * hd;
     size_t as = (size_t)h * t->cap + row;
     float *vr = m->vv + (size_t)j * kvd + (size_t)h * hd;
@@ -150,8 +150,9 @@ static void qkv_worker(void *arg, int tid, int n_threads)
     struct tok_job *t = arg;
     /* a layer without keys and values of its own: its queries alone */
     uint32_t nh = t->m->n_head + (t->ly->wk ? t->ly->n_kv : 0);
-    for (uint32_t i = (uint32_t)tid; i < t->n * nh; i += (uint32_t)n_threads)
-        qkv_item(t, i / nh, i % nh);
+    uint32_t rows = t->n - t->first;
+    for (uint32_t i = (uint32_t)tid; i < rows * nh; i += (uint32_t)n_threads)
+        qkv_item(t, t->first + i / nh, i % nh);
 }
 
 /* the attention output of token j gated (qwen3next) and put in Q8_K */
@@ -291,21 +292,29 @@ void janas_m_attn_core(struct janas_llm_model *m, const struct layer *ly,
                        uint32_t n, uint32_t pos0, double ta)
 {
     uint32_t hd = ly->hd, qd = m->n_head * hd, kvd = ly->n_kv * hd;
-    int8_t *kc = m->cur->kcache + m->kv_off[ly->slot];
-    int8_t *vc = m->cur->vcache + m->kv_off[ly->slot];
-    float *kcs = m->cur->kscale + m->ks_off[ly->slot];
-    float *vcs = m->cur->vscale + m->ks_off[ly->slot];
-    struct tok_job tj = {.m = m,
-                         .ly = ly,
-                         .n = n,
-                         .pos0 = pos0,
-                         .kc_scale = kcs,
-                         .vc_scale = vcs,
-                         .kc = kc,
-                         .vc = vc,
-                         .cap = m->kv_cap[ly->slot],
-                         .ring = m->kv_ring[ly->slot]};
-    janas_pool_run(m->compute, qkv_worker, &tj);
+    /* the pieces of the pass, each on its own sequence's keys and values
+       (janas_llm_model_forward_parts); one on m->cur otherwise - the MTP
+       block's calls among them, outside a pass */
+    int many = !janas_m_on_cur(m);
+    struct janas_llm_part one = {.seq = m->cur, .n = n, .pos0 = pos0};
+    uint32_t np = many ? m->n_parts : 1;
+    for (uint32_t i = 0; i < np; i++) {
+        const struct janas_llm_part *pt = many ? &m->parts[i] : &one;
+        uint32_t r0 = many ? m->part_row0[i] : 0;
+        struct janas_seq *sq = pt->seq;
+        struct tok_job tj = {.m = m,
+                             .ly = ly,
+                             .first = r0,
+                             .n = r0 + pt->n,
+                             .pos0 = pt->pos0,
+                             .kc_scale = sq->kscale + m->ks_off[ly->slot],
+                             .vc_scale = sq->vscale + m->ks_off[ly->slot],
+                             .kc = sq->kcache + m->kv_off[ly->slot],
+                             .vc = sq->vcache + m->kv_off[ly->slot],
+                             .cap = m->kv_cap[ly->slot],
+                             .ring = m->kv_ring[ly->slot]};
+        janas_pool_run(m->compute, qkv_worker, &tj);
+    }
     /* the last token's last head of each, as llama.cpp's graph names them */
     trace_row(m, "Qcur_pos", m->q + (size_t)(n - 1) * qd + (m->n_head - 1) * hd,
               hd);
@@ -318,19 +327,30 @@ void janas_m_attn_core(struct janas_llm_model *m, const struct layer *ly,
     /* attention takes JANAS_LLM_MAX_BLOCK tokens a call; the keys and values
        of the whole block are in the cache already, and each piece sees the
        positions up to its own end, as the block would */
-    /* a picture whose tokens see one another: each sees to its end */
-    int both = m->cur->n_media && janas_m_media_both(m, pos0, n);
+    /* a picture whose tokens see one another: each sees to its end (one
+       piece alone: a sequence with pictures is not taken in several) */
+    int both = !many && m->cur->n_media && janas_m_media_both(m, pos0, n);
     if (both)
         janas_m_media_last(m, pos0, n, m->att_last);
-    for (uint32_t s = 0; s < n; s += JANAS_LLM_MAX_BLOCK) {
-        uint32_t len =
-            n - s < JANAS_LLM_MAX_BLOCK ? n - s : JANAS_LLM_MAX_BLOCK;
-        if (both)
-            janas_attn_set_last(ly->swa ? m->attn_swa : m->attn,
-                                m->att_last + s);
-        janas_attn_run(ly->swa ? m->attn_swa : m->attn, m->compute,
-                       m->q + (size_t)s * qd, kc, kcs, vc, vcs, len, pos0 + s,
-                       m->att + (size_t)s * qd);
+    for (uint32_t i = 0; i < np; i++) {
+        const struct janas_llm_part *pt = many ? &m->parts[i] : &one;
+        uint32_t r0 = many ? m->part_row0[i] : 0;
+        struct janas_seq *sq = pt->seq;
+        int8_t *kc = sq->kcache + m->kv_off[ly->slot];
+        int8_t *vc = sq->vcache + m->kv_off[ly->slot];
+        float *kcs = sq->kscale + m->ks_off[ly->slot];
+        float *vcs = sq->vscale + m->ks_off[ly->slot];
+        for (uint32_t s = 0; s < pt->n; s += JANAS_LLM_MAX_BLOCK) {
+            uint32_t len = pt->n - s < JANAS_LLM_MAX_BLOCK
+                               ? pt->n - s
+                               : JANAS_LLM_MAX_BLOCK;
+            if (both)
+                janas_attn_set_last(ly->swa ? m->attn_swa : m->attn,
+                                    m->att_last + s);
+            janas_attn_run(ly->swa ? m->attn_swa : m->attn, m->compute,
+                           m->q + (size_t)(r0 + s) * qd, kc, kcs, vc, vcs, len,
+                           pt->pos0 + s, m->att + (size_t)(r0 + s) * qd);
+        }
     }
     m->phase[JANAS_PH_ATTN] += now() - tb;
     trace_row(m, "kqv_out", m->att + (size_t)(n - 1) * qd, qd);

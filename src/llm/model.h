@@ -190,6 +190,35 @@ int janas_llm_model_forward(struct janas_llm_model *m, const int32_t *tokens,
                             int all_logits);
 
 /*
+ * Several conversations in one pass (A1): each a sequence of its own (its
+ * keys and values, made with janas_llm_model_seq_new), whose pieces of
+ * tokens go through the pass together - every weight and every expert read
+ * once for all of them, the attention of each piece on its own sequence's
+ * positions. The pieces' rows are one block (at most
+ * janas_llm_model_max_block in all), in their order; with all_logits the
+ * logits of every row, otherwise those of each piece's last token, a row
+ * per piece. Each piece's logits are those janas_llm_model_forward gives its
+ * tokens on its sequence alone, to the bit. For now the models with
+ * attention alone (Qwen3, dense and mixtures), on the CPU; others, and a
+ * sequence with pictures, are refused (-1).
+ */
+struct janas_seq;
+struct janas_llm_part {
+    struct janas_seq *seq;
+    const int32_t *tokens;
+    uint32_t n, pos0;
+};
+/* A sequence of the model's context, empty; NULL out of memory. The
+   model's own (the one janas_llm_model_forward runs) is not one of these. */
+struct janas_seq *janas_llm_model_seq_new(struct janas_llm_model *m);
+void janas_llm_model_seq_free(struct janas_llm_model *m, struct janas_seq *s);
+/* 1 when the model takes several sequences in a pass */
+int janas_llm_model_parts_ok(const struct janas_llm_model *m);
+int janas_llm_model_forward_parts(struct janas_llm_model *m,
+                                  const struct janas_llm_part *p, uint32_t np,
+                                  float *logits, int all_logits);
+
+/*
  * Forgets drop positions starting at keep, of the n_kv already computed:
  * the keys and values of the attention layers move down and the keys are
  * turned back by drop positions, so what is left behaves as if it had

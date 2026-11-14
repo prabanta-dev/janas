@@ -1211,15 +1211,17 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
     m->hq = malloc(P * ff / JANAS_QK * sizeof(*m->hq));
     m->hlen = malloc(P * sizeof(uint32_t));
     m->tok_first = malloc((B + 1) * sizeof(uint32_t));
+    m->part_row0 = malloc((B + 1) * sizeof(uint32_t));
+    m->part_tok = malloc(B * sizeof(int32_t));
     m->tok_fill = malloc(B * sizeof(uint32_t));
     m->tok_list = malloc(P * sizeof(uint32_t));
-    if (!m->tok_first || !m->tok_fill || !m->tok_list || !m->cur->kcache ||
-        !m->cur->vcache || !m->cur->kscale || !m->cur->vscale || !m->x ||
-        !m->xn || !m->q || !m->kk || !m->vv || !m->att || !m->router ||
-        !m->rope_cos || !m->rope_sin || !m->xq || !m->attq || !m->pair_tok ||
-        !m->pair_exp || !m->order || !m->glist || !m->count || !m->pair_w ||
-        !m->gate || !m->up || !m->h || !m->dout || !m->xg || !m->hq ||
-        !m->hlen || m->n_expert > 4096) {
+    if (!m->tok_first || !m->tok_fill || !m->tok_list || !m->part_row0 ||
+        !m->part_tok || !m->cur->kcache || !m->cur->vcache || !m->cur->kscale ||
+        !m->cur->vscale || !m->x || !m->xn || !m->q || !m->kk || !m->vv ||
+        !m->att || !m->router || !m->rope_cos || !m->rope_sin || !m->xq ||
+        !m->attq || !m->pair_tok || !m->pair_exp || !m->order || !m->glist ||
+        !m->count || !m->pair_w || !m->gate || !m->up || !m->h || !m->dout ||
+        !m->xg || !m->hq || !m->hlen || m->n_expert > 4096) {
         snprintf(err, err_len, "out of memory");
         goto fail;
     }
@@ -1678,6 +1680,8 @@ void janas_llm_model_free(struct janas_llm_model *m)
     free(m->xg);
     free(m->hq);
     free(m->tok_first);
+    free(m->part_row0);
+    free(m->part_tok);
     free(m->tok_fill);
     free(m->tok_list);
     janas_m_assist_free(m);

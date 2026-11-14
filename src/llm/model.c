@@ -138,8 +138,15 @@ static void rope_media(struct janas_llm_model *m, uint32_t n, uint32_t pos0)
 
 static void set_rope(struct janas_llm_model *m, uint32_t n, uint32_t pos0)
 {
-    if (m->cur->n_media && (m->mrope[0] || m->mrope[1] || m->mrope[2]))
+    if (janas_m_on_cur(m) && m->cur->n_media &&
+        (m->mrope[0] || m->mrope[1] || m->mrope[2]))
         rope_media(m, n, pos0);
+    else if (!janas_m_on_cur(m)) /* each piece from its own position */
+        for (uint32_t i = 0; i < m->n_parts; i++) {
+            size_t r = (size_t)m->part_row0[i] * (m->n_rot / 2);
+            rope_table(m->rope_cos + r, m->rope_sin + r, m->parts[i].n,
+                       m->parts[i].pos0, m->n_rot, m->rope_base, m->rope_freqs);
+        }
     else
         rope_table(m->rope_cos, m->rope_sin, n, pos0, m->n_rot, m->rope_base,
                    m->rope_freqs);
@@ -515,8 +522,13 @@ static void long_prompt_end(struct janas_llm_model *m, double sec_per_token,
    (10 Nov 2026) */
 static void ring_written(struct janas_llm_model *m, uint32_t pos0, uint32_t n)
 {
-    if (pos0 == 0 || pos0 + n > m->cur->ring_hi)
-        m->cur->ring_hi = pos0 + n;
+    for (uint32_t i = 0; i < m->n_parts; i++) {
+        struct janas_seq *s = m->parts[i].seq;
+        pos0 = m->parts[i].pos0;
+        n = m->parts[i].n;
+        if (pos0 == 0 || pos0 + n > s->ring_hi)
+            s->ring_hi = pos0 + n;
+    }
 }
 
 int janas_llm_model_forward(struct janas_llm_model *m, const int32_t *tokens,
@@ -537,7 +549,14 @@ int janas_llm_model_forward(struct janas_llm_model *m, const int32_t *tokens,
     struct janas_expert_cache_stats c0, c1;
     janas_expert_cache_stats(m->cache, &c0);
     double k0 = janas_llm_model_npu_compile_seconds(m), t0 = now();
+    m->one_part = (struct janas_llm_part){
+        .seq = m->cur, .tokens = tokens, .n = n, .pos0 = pos0};
+    m->parts = &m->one_part;
+    m->n_parts = 1;
+    m->part_row0[0] = 0;
+    m->part_row0[1] = n;
     int r = forward(m, tokens, n, pos0, logits, all_logits);
+    m->n_parts = 0;
     double dt = now() - t0;
     janas_m_npu_pass_end(m);
     janas_expert_cache_stats(m->cache, &c1);
@@ -569,7 +588,8 @@ double janas_llm_model_pass_seconds(const struct janas_llm_model *m)
 static int forward(struct janas_llm_model *m, const int32_t *tokens, uint32_t n,
                    uint32_t pos0, float *logits, int all_logits)
 {
-    if (n < 1 || n > m->blk || pos0 + n > m->n_ctx)
+    /* several pieces: each checked against its own context already */
+    if (n < 1 || n > m->blk || (m->n_parts == 1 && pos0 + n > m->n_ctx))
         return -1;
     for (uint32_t j = 0; j < n; j++)
         if (tokens[j] < 0 || (uint32_t)tokens[j] >= m->n_vocab)
@@ -578,8 +598,9 @@ static int forward(struct janas_llm_model *m, const int32_t *tokens, uint32_t n,
     size_t nbd = dm / JANAS_QK;
     for (uint32_t j = 0; j < n; j++) {
         /* a picture's token: its embedding from the encoder */
-        const float *pic =
-            m->cur->n_media ? janas_m_media_row(m, pos0 + j) : NULL;
+        const float *pic = janas_m_on_cur(m) && m->cur->n_media
+                               ? janas_m_media_row(m, pos0 + j)
+                               : NULL;
         if (pic)
             memcpy(m->x + (size_t)j * dm, pic, sizeof(float) * dm);
         else
@@ -629,7 +650,7 @@ static int forward(struct janas_llm_model *m, const int32_t *tokens, uint32_t n,
     /* not where the NPU takes this pass's products: then the block goes
        product by product, the NPU's to it, the others as before */
     m->gtok_tokens = tokens; /* qwen4exp's n-gram embeddings */
-    int gpu = logits && !janas_m_npu_takes(m, n)
+    int gpu = logits && janas_m_on_cur(m) && !janas_m_npu_takes(m, n)
                   ? janas_m_gpu_token(m, pos0, n, all_logits, logits)
                   : -1;
     if (gpu == -2)
@@ -674,7 +695,7 @@ static int forward(struct janas_llm_model *m, const int32_t *tokens, uint32_t n,
     }
     /* a dense block's first layers on the NPU, graph by graph, as many as
        it holds (model_npu.c); the others here */
-    int npu_layers = janas_m_npu_layers(m, n, pos0);
+    int npu_layers = janas_m_on_cur(m) ? janas_m_npu_layers(m, n, pos0) : 0;
     if (npu_layers == -2)
         return -1; /* the NPU failed halfway: no state to go on from */
     for (uint32_t l = npu_layers > 0 ? (uint32_t)npu_layers : 0; l < m->n_layer;
@@ -762,6 +783,11 @@ output:
     ring_written(m, pos0, n); /* the rings hold up to here */
     double td = now();
     uint32_t first = all_logits ? 0 : n - 1;
+    /* several pieces: the last row of each, side by side at the start of
+       xq once they are all normed */
+    int gather = !all_logits && m->n_parts > 1;
+    if (gather)
+        first = 0;
     /* with an MTP block, every token's final hidden state is kept for it:
        qwen4exp's is its residual's streams before the last mix, which is
        the output norm (llama.cpp's h_nextn) */
@@ -775,8 +801,16 @@ output:
         janas_m_norm_quant(m, f32(m, m->out_norm), keep ? 0 : first, n);
     if (keep && !m->hc_n)
         memcpy(m->hid, m->xn, (size_t)n * dm * sizeof(float));
+    uint32_t n_out = n - first;
+    if (gather) {
+        for (uint32_t i = 0; i < m->n_parts; i++)
+            memmove(m->xq + (size_t)i * nbd,
+                    m->xq + (size_t)(m->part_row0[i + 1] - 1) * nbd,
+                    nbd * sizeof(*m->xq));
+        n_out = m->n_parts;
+    }
     if (logits && m->vs_n) { /* a vocabulary of its own: its rows alone */
-        if (head_of_vocab(m, m->xq + first * nbd, logits, n - first) != 0)
+        if (head_of_vocab(m, m->xq + first * nbd, logits, n_out) != 0)
             return -1;
     } else if (logits) { /* without: the hidden states alone, an embedding */
         struct janas_matvec_task to = {.type = (int)m->output->type,
@@ -785,11 +819,11 @@ output:
                                        .y = logits,
                                        .rows = m->n_vocab,
                                        .cols = dm,
-                                       .n_vec = n - first};
+                                       .n_vec = n_out};
         janas_m_products(m, janas_m_gpu(m, 0), &to, 1);
     }
     if (logits && m->softcap > 0.0f && !m->vs_n) {
-        struct tok_job sc = {.m = m, .n = n - first, .out = logits};
+        struct tok_job sc = {.m = m, .n = n_out, .out = logits};
         janas_pool_run(m->compute, softcap_worker, &sc);
     }
     m->phase[JANAS_PH_OUTPUT] += now() - td;
@@ -805,6 +839,42 @@ output:
         m->cur->log_n = 0;
     }
     return 0;
+}
+
+int janas_llm_model_forward_parts(struct janas_llm_model *m,
+                                  const struct janas_llm_part *p, uint32_t np,
+                                  float *logits, int all_logits)
+{
+    if (!np || np > m->blk || !janas_llm_model_parts_ok(m))
+        return -1;
+    uint32_t n = 0;
+    for (uint32_t i = 0; i < np; i++) {
+        if (!p[i].seq || !p[i].n || p[i].n > m->blk - n ||
+            p[i].pos0 + p[i].n > m->n_ctx || p[i].seq->n_media)
+            return -1;
+        for (uint32_t k = 0; k < i; k++)
+            if (p[k].seq == p[i].seq)
+                return -1; /* a sequence's tokens are one piece */
+        m->part_row0[i] = n;
+        memcpy(m->part_tok + n, p[i].tokens, p[i].n * sizeof(int32_t));
+        n += p[i].n;
+    }
+    m->part_row0[np] = n;
+    m->parts = p;
+    m->n_parts = np;
+    m->fwd_pos0 = p[0].pos0;
+    /* the threads the tuner chose for a block of n; on the CPU alone, so
+       not measured for it */
+    janas_m_apply_candidate(m, janas_tuner_pick(&m->tuner, janas_tune_class(n)),
+                            n);
+    int gpu_off = m->gpu_off, npu_use = m->npu_use;
+    m->gpu_off = 1;
+    m->npu_use = 0;
+    int r = forward(m, m->part_tok, n, p[0].pos0, logits, all_logits);
+    m->gpu_off = gpu_off;
+    m->npu_use = npu_use;
+    m->n_parts = 0;
+    return r;
 }
 
 uint32_t janas_llm_model_max_block(const struct janas_llm_model *m)

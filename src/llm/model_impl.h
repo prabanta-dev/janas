@@ -337,8 +337,16 @@ struct janas_llm_model {
        where that one left them, in the other buffer */
     int rec_cont;
     uint32_t n_ctx_train; /* what the model was trained for, 0 if unsaid */
-    /* the conversation's state: seq0, the only one for now */
+    /* the conversation's state: seq0, the model's own; cur, the one a
+       single pass runs (janas_llm_model_forward) */
     struct janas_seq seq0, *cur;
+    /* the pass's pieces: one on cur, or janas_llm_model_forward_parts's;
+       piece i's rows start at part_row0[i] (part_row0[n_parts]: all of
+       them), part_tok their tokens in a row */
+    const struct janas_llm_part *parts;
+    struct janas_llm_part one_part;
+    uint32_t n_parts, *part_row0;
+    int32_t *part_tok;
 
     /*
      * scratch for a pass of up to blk tokens (janas_llm_model_max_block):
@@ -982,6 +990,15 @@ int janas_m_moe_block(struct janas_llm_model *m, const struct layer *ly,
                       struct janas_expert_cache *cache,
                       const struct janas_jns_layer *jl, uint32_t l, uint32_t n,
                       int part);
+
+/* The pass is on m->cur alone (janas_llm_model_forward, or a call outside
+   a pass: the MTP block's): its pictures, its recurrent state, the GPU's
+   and the NPU's copies are those of the pass. Not so for
+   janas_llm_model_forward_parts, even with one piece. */
+static inline int janas_m_on_cur(const struct janas_llm_model *m)
+{
+    return m->n_parts == 0 || (m->n_parts == 1 && m->parts[0].seq == m->cur);
+}
 
 /*
  * The GPU a product may use, or NULL: the tuner's choice for this pass
