@@ -661,8 +661,14 @@ if [ "$OS" = windows ]; then
     if [ ! -f "$res" ] || [ src/common/win/janas.manifest -nt "$res" ] ||
         [ src/common/win/janas.rc -nt "$res" ]; then
         echo "RC  src/common/win/janas.rc"
-        "${WINDRES:-x86_64-w64-mingw32-windres}" -i src/common/win/janas.rc \
-            -I src/common/win -O coff -o "$res"
+        # MSYS2's MINGW64 has it unprefixed only (binutils 2.47: windres.exe
+        # alone, issue #64), a Linux cross toolchain prefixed
+        wr=${WINDRES:-x86_64-w64-mingw32-windres}
+        if ! command -v "$wr" >/dev/null 2>&1 && [ -z "${WINDRES:-}" ] &&
+            command -v windres >/dev/null 2>&1; then
+            wr=windres
+        fi
+        "$wr" -i src/common/win/janas.rc -I src/common/win -O coff -o "$res"
     fi
     START=("$OBJ/win_start.o" "$res")
 fi

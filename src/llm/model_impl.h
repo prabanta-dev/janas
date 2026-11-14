@@ -502,6 +502,7 @@ struct janas_llm_model {
        PF_WINDOW tokens from the experts the cache would have missed), 2
        always (JANAS_PREFETCH=0, unset, =r,b) */
     uint32_t pf_rank, pf_max;
+    float *ahead_x; /* janas_m_rank_ahead's input and scores */
     int pf_mode, pf_on;
     uint32_t pf_tokens;
     uint64_t pf_would;
@@ -931,6 +932,11 @@ void janas_m_mamba_layer(struct janas_llm_model *m, const struct layer *ly,
 /* The router of layer l applied ahead to the state x (for the predictor
    probe, janas_llm_model_route_predictor): 0 or -1. */
 int janas_m_route_predict(struct janas_llm_model *m, uint32_t l, uint32_t n);
+/* Layer l + 1's k likeliest experts from layer l's normalized input xn of
+   a single token, its norm undone and l + 1's applied (the GPU's token,
+   which keeps the state on the card, reads ahead with them): 0, or -1. */
+int janas_m_rank_ahead(struct janas_llm_model *m, uint32_t l, const float *xn,
+                       uint32_t k, uint32_t *ids);
 /* The router of layer l applied to the state x of n tokens: its first k
    experts for each token into ids (n x k), best first. 0, or -1 when the
    layer has no router to apply ahead. Uses xn, xq and router. */

@@ -1592,6 +1592,7 @@ void janas_llm_model_free(struct janas_llm_model *m)
     janas_gpu_tok_destroy(m->gpu, m->gtok);
     free(m->gtok_layers);
     free(m->gblk_layers);
+    free(m->ahead_x);
     janas_gpu_destroy(m->gpu); /* before the memory it imported; frees
                                   the resident region it allocated */
     janas_aligned_free(m->gtok_att_in);

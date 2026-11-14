@@ -695,6 +695,24 @@ static int cpu_part(struct janas_gpu *g, struct janas_gpu_tok *t,
     for (uint32_t i = 0; i < nc; i++)
         t->ra[i] = cnt[t->on_cpu[i]], t->rb[i] = cnt[t->on_cpu[i] + 1];
     host_side(g, t, t->o_xnf, (size_t)n * md->dm * 4, 0);
+    /* a single token: layer l + 1's likeliest experts not on the card read
+       ahead, while the CPU computes its own and the GPU the rest of the
+       segment, as the CPU's path reads ahead. Without it every miss was
+       read when its layer asked, the GPU waiting: Qwen3-Next-80B with a
+       4 GiB cache and a card of 2.5 GiB (issue #63), 39 ms of a pass's 190
+       in the cache's reads, 0 read ahead (14 Nov 2026) */
+    if (n == 1 && md->rank_ahead && md->read_ahead && t->n_slot &&
+        l + 1 < md->n_layer && md->ahead_k <= 32) {
+        uint32_t ids[32], keep[32], nk = 0, ne = md->n_expert;
+        if (md->rank_ahead(md->ctx, l, (const float *)(t->buf.map + t->o_xnf),
+                           md->ahead_k, ids) == 0) {
+            for (uint32_t i = 0; i < md->ahead_k; i++)
+                if (t->slot_of[(size_t)(l + 1) * ne + ids[i]] < 0)
+                    keep[nk++] = ids[i];
+            if (nk)
+                md->read_ahead(md->ctx, l + 1, keep, nk);
+        }
+    }
     struct timespec c0, c1;
     if (t->qp)
         clock_gettime(CLOCK_MONOTONIC, &c0);

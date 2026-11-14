@@ -169,6 +169,8 @@ struct router_job {
     const uint16_t *w;
     uint32_t n;
     uint32_t ne; /* the layer's experts: the model's, or fewer (Nemotron-H) */
+    const float *x; /* the input (NULL: m->xn) and the scores (NULL: */
+    float *out;     /* m->router), n rows of each */
 };
 
 static float dot_f16_ref(const uint16_t *w, const float *x, uint32_t n)
@@ -205,17 +207,19 @@ static void router_worker(void *arg, int tid, int n_threads)
     struct router_job *r = arg;
     struct janas_llm_model *m = r->m;
     uint32_t ne = m->n_expert, dm = m->d_model;
+    const float *in = r->x ? r->x : m->xn;
+    float *out = r->out ? r->out : m->router;
     for (uint32_t e = (uint32_t)tid; e < r->ne; e += (uint32_t)n_threads)
         for (uint32_t j = 0; j < r->n; j++) {
-            const float *x = m->xn + (size_t)j * dm;
+            const float *x = in + (size_t)j * dm;
             const uint16_t *w = r->w + (size_t)e * dm;
 #if defined(__x86_64__)
             if (m->avx2 && m->f16c) {
-                m->router[(size_t)j * ne + e] = dot_f16_avx2(w, x, dm);
+                out[(size_t)j * ne + e] = dot_f16_avx2(w, x, dm);
                 continue;
             }
 #endif
-            m->router[(size_t)j * ne + e] = dot_f16_ref(w, x, dm);
+            out[(size_t)j * ne + e] = dot_f16_ref(w, x, dm);
         }
 }
 
@@ -436,7 +440,7 @@ int janas_m_route_rank(struct janas_llm_model *m, uint32_t l, uint32_t n,
         return -1;
     /* xn and router are free between layers: l + 1 norms into xn first */
     janas_m_norm_quant(m, f32(m, ly->ffn_norm), 0, n);
-    struct router_job rj = {m, ly->router16, n, ne};
+    struct router_job rj = {.m = m, .w = ly->router16, .n = n, .ne = ne};
     janas_pool_run(m->compute, router_worker, &rj); /* 512 x 2048 a layer */
     for (uint32_t j = 0; j < n; j++) {
         float *r = m->router + (size_t)j * ne;
@@ -448,6 +452,39 @@ int janas_m_route_rank(struct janas_llm_model *m, uint32_t l, uint32_t n,
             ids[(size_t)j * k + i] = best;
             r[best] = -INFINITY;
         }
+    }
+    return 0;
+}
+
+int janas_m_rank_ahead(struct janas_llm_model *m, uint32_t l, const float *xn,
+                       uint32_t k, uint32_t *ids)
+{
+    uint32_t ne = m->n_expert, dm = m->d_model;
+    if (l + 1 >= m->n_layer || k == 0 || k > 32 || k > ne)
+        return -1;
+    const struct layer *a = &m->layers[l], *b = &m->layers[l + 1];
+    if (!a->ffn_norm || !b->ffn_norm || !b->router16)
+        return -1;
+    if (!m->ahead_x) { /* its own: the GPU's pass may hold xn and router */
+        m->ahead_x = malloc(((size_t)dm + ne) * sizeof(float));
+        if (!m->ahead_x)
+            return -1;
+    }
+    /* layer l's norm weights undone, l + 1's applied: the same state */
+    const float *wa = f32(m, a->ffn_norm), *wb = f32(m, b->ffn_norm);
+    float *x = m->ahead_x, *r = m->ahead_x + dm;
+    for (uint32_t i = 0; i < dm; i++)
+        x[i] = fabsf(wa[i]) > 1e-12f ? xn[i] / wa[i] * wb[i] : 0.0f;
+    struct router_job rj = {
+        .m = m, .w = b->router16, .n = 1, .ne = ne, .x = x, .out = r};
+    janas_pool_run(m->compute, router_worker, &rj);
+    for (uint32_t i = 0; i < k; i++) {
+        uint32_t best = 0;
+        for (uint32_t e = 1; e < ne; e++)
+            if (r[e] > r[best])
+                best = e;
+        ids[i] = best;
+        r[best] = -INFINITY;
     }
     return 0;
 }
@@ -736,8 +773,10 @@ int janas_m_moe_block(struct janas_llm_model *m, const struct layer *ly,
     uint32_t np = n * k;
     double t_route = 0;
     if (k) {
-        struct router_job rj = {m, ly->router16, n,
-                                ly->n_exp ? ly->n_exp : m->n_expert};
+        struct router_job rj = {.m = m,
+                                .w = ly->router16,
+                                .n = n,
+                                .ne = ly->n_exp ? ly->n_exp : m->n_expert};
         janas_pool_run(m->compute, router_worker, &rj);
         if (janas_m_exp_tracing())
             t_route = now();

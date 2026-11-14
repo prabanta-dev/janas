@@ -1010,8 +1010,14 @@ int32_t janas_llm_describe(const janas_llm *llm, char *buf, int32_t cap,
         int use = janas_llm_model_gpu_used(llm->m);
         if (janas_llm_model_gpu_prompts(llm->m))
             use |= 1 << 2; /* the fast prompt: every block */
-        if (janas_llm_model_gpu_whole(llm->m))
+        /* until a pass has run there, a forecast: the card may refuse the
+           first one (issue #50: the line said whole, the report failed) */
+        int whole = janas_llm_model_gpu_whole(llm->m);
+        if (whole == 2)
             gpu = ", GPU present (active: every pass whole on the card)";
+        else if (whole)
+            gpu = ", GPU present (active: every pass whole on the card, "
+                  "once the first one runs there)";
         else if (!use)
             gpu = ", GPU present (not used)";
         else {

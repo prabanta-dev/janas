@@ -408,7 +408,8 @@ uint32_t janas_llm_model_pass_cap(const struct janas_llm_model *m);
 int janas_llm_model_gpu_prompts(const struct janas_llm_model *m);
 /* Whether every pass of the model runs whole on a card with memory of its
    own, whatever the tuner chooses (JANAS_GPU_WHOLE): so once it has, or,
-   before the first pass, where nothing stands in its way. */
+   before the first pass, where nothing stands in its way: 2 once it
+   has, 1 before (a forecast), 0 not. */
 int janas_llm_model_gpu_whole(const struct janas_llm_model *m);
 /* What the GPU did for the model, for a report, into buf (len bytes, a
    line a fact, each ending in a newline): the card, its memory and link;

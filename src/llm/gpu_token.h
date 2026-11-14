@@ -158,6 +158,16 @@ struct janas_gpu_tok_model {
        caller goes on (or NULL): a block of many tokens chooses nearly all
        of them, so none is read for nothing */
     void (*prefetch)(void *ctx, uint32_t layer);
+    /* a single token's next layer read ahead (or NULL), as the CPU's path
+       does (model_ffn.c janas_m_prefetch): rank_ahead puts in ids the k
+       experts layer + 1's router likes best from layer's normalized input
+       xn (0, or -1 for none); read_ahead starts the reads of n of them
+       (those the card's tier does not hold) while the caller goes on */
+    int (*rank_ahead)(void *ctx, uint32_t layer, const float *xn, uint32_t k,
+                      uint32_t *ids);
+    void (*read_ahead)(void *ctx, uint32_t layer, const uint32_t *ids,
+                       uint32_t n);
+    uint32_t ahead_k;
     /* whether routed must see each layer's choice (or NULL): then a layer
        at a time even when the card holds every expert */
     int (*watched)(void *ctx);

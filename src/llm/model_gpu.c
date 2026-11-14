@@ -166,7 +166,7 @@ int janas_llm_model_gpu_whole(const struct janas_llm_model *m)
     if (!m->gpu || m->gpu_off || !janas_m_gpu_whole() ||
         janas_gpu_shares_host(m->gpu) || m->lp_cpu || m->gtok_state < 0)
         return 0;
-    return m->gtok_state == 1 || !not_for_gpu(m);
+    return m->gtok_state == 1 ? 2 : !not_for_gpu(m);
 }
 
 void janas_llm_model_gpu_report(const struct janas_llm_model *m, char *buf,
@@ -415,6 +415,22 @@ static int gtok_watched(void *ctx)
 {
     const struct janas_llm_model *m = ctx;
     return m->route_fn != NULL;
+}
+
+/* ... a single token's next layer, its likeliest experts ranked from this
+   layer's normalized input and read ahead, at most pf_max of them, the
+   CPU's path's measured bound (model_load.c) */
+static int gtok_rank_ahead(void *ctx, uint32_t layer, const float *xn,
+                           uint32_t k, uint32_t *ids)
+{
+    return janas_m_rank_ahead(ctx, layer, xn, k, ids);
+}
+
+static void gtok_read_ahead(void *ctx, uint32_t layer, const uint32_t *ids,
+                            uint32_t n)
+{
+    struct janas_llm_model *m = ctx;
+    janas_expert_cache_prefetch(m->cache, layer, ids, n, m->pf_max);
 }
 
 static void gtok_prefetch(void *ctx, uint32_t layer)
@@ -918,6 +934,13 @@ static int build(struct janas_llm_model *m, char *err, size_t len)
         .prefetch = moe && janas_expert_cache_can_prefetch(m->cache)
                         ? gtok_prefetch
                         : NULL,
+        /* JANAS_PREFETCH=0 keeps reads ahead off here too */
+        .rank_ahead = moe && m->pf_mode && m->pf_rank &&
+                              janas_expert_cache_can_prefetch(m->cache)
+                          ? gtok_rank_ahead
+                          : NULL,
+        .read_ahead = moe ? gtok_read_ahead : NULL,
+        .ahead_k = m->pf_rank,
         .tier_bytes = tier_bytes(m),
         .slot_bytes = janas_expert_cache_slot_bytes(m->cache),
         .cpu_rows = gtok_cpu_rows,
