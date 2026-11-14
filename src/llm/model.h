@@ -199,8 +199,9 @@ int janas_llm_model_forward(struct janas_llm_model *m, const int32_t *tokens,
  * logits of every row, otherwise those of each piece's last token, a row
  * per piece. Each piece's logits are those janas_llm_model_forward gives its
  * tokens on its sequence alone, to the bit. For now the models with
- * attention alone (Qwen3, dense and mixtures), on the CPU; others, and a
- * sequence with pictures, are refused (-1).
+ * attention and Gated DeltaNet (Qwen3, Qwen3-Next, Qwen3.5 and 3.6), on the
+ * CPU; others, and a sequence with pictures, are refused (-1). A recurrent
+ * sequence goes back only as janas_llm_model_forward allows.
  */
 struct janas_seq;
 struct janas_llm_part {

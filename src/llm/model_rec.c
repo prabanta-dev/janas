@@ -366,7 +366,27 @@ void janas_m_rec_layer(struct janas_llm_model *m, const struct layer *ly,
                                           .n_vec = n}};
         janas_m_products(m, janas_m_gpu(m, 0), t, 2);
     }
-    janas_m_rec_core(m, ly, n, ta);
+    if (janas_m_on_cur(m)) {
+        janas_m_rec_core(m, ly, n, ta);
+    } else {
+        /* several pieces (janas_llm_model_forward_parts): each on its own
+           sequence's state, the core shown its rows alone - q|k|v|z, the
+           betas and alphas, the outputs from the piece's first row */
+        float *big = m->big, *ba = m->ba, *att = m->att;
+        struct janas_seq *cur = m->cur;
+        for (uint32_t i = 0; i < m->n_parts; i++) {
+            uint32_t r0 = m->part_row0[i];
+            m->big = big + (size_t)r0 * m->qkvz_dim;
+            m->ba = ba + (size_t)r0 * 2 * nv;
+            m->att = att + (size_t)r0 * m->d_inner;
+            m->cur = m->parts[i].seq;
+            janas_m_rec_core(m, ly, m->parts[i].n, ta);
+        }
+        m->big = big;
+        m->ba = ba;
+        m->att = att;
+        m->cur = cur;
+    }
     double tc = now();
     for (uint32_t j = 0; j < n; j++)
         janas_q8k_quantize(m->att + (size_t)j * m->d_inner, m->attq + j * nbi,

@@ -520,6 +520,52 @@ static void long_prompt_end(struct janas_llm_model *m, double sec_per_token,
    shared left Gemma 4 E2B reading its sliding layers' rows of other
    positions: empty replies and <pad>s, MATH 1.4% where it makes 44.3%
    (10 Nov 2026) */
+/* A recurrent sequence's state for a pass from pos0: 0 when it can go on
+   from there - from the start, from the tip (where the last call ended),
+   or replaying the last call's tokens kept on the base - else -1 */
+static int rec_check(const struct janas_seq *s, uint32_t pos0)
+{
+    return pos0 == 0 || (s->base_pos != UINT32_MAX && pos0 >= s->base_pos &&
+                         pos0 <= s->base_pos + s->log_n)
+               ? 0
+               : -1;
+}
+
+static void rec_begin(struct janas_llm_model *m, struct janas_seq *s,
+                      uint32_t pos0)
+{
+    if (pos0 == 0) {
+        s->src = 0;
+        s->replay = 0;
+        memset(s->ssm_buf, 0, (size_t)m->n_rec * m->ssm_per * sizeof(uint16_t));
+        memset(s->conv_buf, 0,
+               (size_t)m->n_rec * m->conv_ch * (m->d_conv - 1) * sizeof(float));
+    } else if (pos0 == s->base_pos + s->log_n && s->log_n > 0) {
+        s->src = 1 - s->base; /* from the tip */
+        s->replay = 0;
+    } else {
+        s->src = s->base; /* replay the accepted tokens on the base */
+        s->replay = pos0 - s->base_pos;
+    }
+    s->base_pos = UINT32_MAX; /* invalid until this pass completes */
+}
+
+/* After the pass: a call short enough is logged, and can be taken back; a
+   longer one is not, and the state stands at its end, in the buffer the
+   call wrote, with nothing before it to replay */
+static void rec_end(struct janas_seq *s, uint32_t pos0, uint32_t n)
+{
+    if (n <= JANAS_LLM_MAX_BLOCK) {
+        s->base = s->src;
+        s->base_pos = pos0;
+        s->log_n = n;
+    } else {
+        s->base = 1 - s->src;
+        s->base_pos = pos0 + n;
+        s->log_n = 0;
+    }
+}
+
 static void ring_written(struct janas_llm_model *m, uint32_t pos0, uint32_t n)
 {
     for (uint32_t i = 0; i < m->n_parts; i++) {
@@ -622,27 +668,12 @@ static int forward(struct janas_llm_model *m, const int32_t *tokens, uint32_t n,
     if (m->gtok_dev && pos0 == 0)
         m->gtok_where = JANAS_GT_HOST;
     if (m->a->rec) {
-        if (pos0 == 0) {
-            m->cur->src = 0;
-            m->cur->replay = 0;
-            memset(m->cur->ssm_buf, 0,
-                   (size_t)m->n_rec * m->ssm_per * sizeof(uint16_t));
-            memset(m->cur->conv_buf, 0,
-                   (size_t)m->n_rec * m->conv_ch * (m->d_conv - 1) *
-                       sizeof(float));
-        } else if (m->cur->base_pos == UINT32_MAX || pos0 < m->cur->base_pos ||
-                   pos0 > m->cur->base_pos + m->cur->log_n) {
-            return -1; /* before the last call: that state is gone */
-        } else if (pos0 == m->cur->base_pos + m->cur->log_n &&
-                   m->cur->log_n > 0) {
-            m->cur->src = 1 - m->cur->base; /* from the tip */
-            m->cur->replay = 0;
-        } else {
-            m->cur->src =
-                m->cur->base; /* replay the accepted tokens on the base */
-            m->cur->replay = pos0 - m->cur->base_pos;
-        }
-        m->cur->base_pos = UINT32_MAX; /* invalid until this pass completes */
+        /* every piece's state checked before any is touched */
+        for (uint32_t i = 0; i < m->n_parts; i++)
+            if (rec_check(m->parts[i].seq, m->parts[i].pos0) != 0)
+                return -1; /* before the last call: that state is gone */
+        for (uint32_t i = 0; i < m->n_parts; i++)
+            rec_begin(m, m->parts[i].seq, m->parts[i].pos0);
     }
     set_rope(m, n, pos0);
     /* a token (or, with JANAS_GPU_BLOCK=1, a block) on the GPU, whole,
@@ -669,16 +700,8 @@ static int forward(struct janas_llm_model *m, const int32_t *tokens, uint32_t n,
         if (m->vs_n && mask_to_vocab(m, logits, all_logits ? n : 1) != 0)
             return -1;
         ring_written(m, pos0, n);
-        if (m->a->rec && n <= JANAS_LLM_MAX_BLOCK) {
-            /* replayed and logged by the GPU: as at the end */
-            m->cur->base = m->cur->src;
-            m->cur->base_pos = pos0;
-            m->cur->log_n = n;
-        } else if (m->a->rec) { /* a long block: as at the end */
-            m->cur->base = 1 - m->cur->src;
-            m->cur->base_pos = pos0 + n;
-            m->cur->log_n = 0;
-        }
+        if (m->a->rec) /* replayed and logged by the GPU: as at the end */
+            rec_end(m->cur, pos0, n);
         return 0;
     }
     /* Nemotron-H: one part a layer (model_nh.c) */
@@ -827,17 +850,9 @@ output:
         janas_pool_run(m->compute, softcap_worker, &sc);
     }
     m->phase[JANAS_PH_OUTPUT] += now() - td;
-    if (m->a->rec && n <= JANAS_LLM_MAX_BLOCK) {
-        m->cur->base = m->cur->src;
-        m->cur->base_pos = pos0;
-        m->cur->log_n = n;
-    } else if (m->a->rec) {
-        /* not logged: the state stands at the end of the call, in the
-           buffer the call wrote, and nothing before it can be replayed */
-        m->cur->base = 1 - m->cur->src;
-        m->cur->base_pos = pos0 + n;
-        m->cur->log_n = 0;
-    }
+    if (m->a->rec)
+        for (uint32_t i = 0; i < m->n_parts; i++)
+            rec_end(m->parts[i].seq, m->parts[i].pos0, m->parts[i].n);
     return 0;
 }
 
