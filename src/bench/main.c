@@ -56,6 +56,7 @@
 #include <sys/utsname.h>
 #include <time.h>
 
+#include "share.h"
 #include "common/devices.h"
 #include "common/env_names.h"
 #include "common/model_pick.h"
@@ -217,11 +218,15 @@ int main(int argc, char **argv)
                 "[--gen <tokens>] [--ctx <tokens>] [--cache <GiB>] "
                 "[--reserve <GiB>] [--rounds <n>] [--settle <seconds>] "
                 "[--no-npu] [--prompt-on <devices>] [--drafts-on <devices>] "
-                "[--reply-on <devices>] [--npu-int8] [--gpu-profile]\n"
+                "[--reply-on <devices>] [--npu-int8] [--gpu-profile] "
+                "[--share]\n"
                 "<model>: a .jns file, or a name of the models Janas knows "
                 "(downloaded if it is not there yet); none: the list\n"
                 "<devices>: auto (default), cpu, gpu, npu, npu+gpu (both in "
-                "each pass), or a list apart by commas to choose from\n");
+                "each pass), or a list apart by commas to choose from\n"
+                "--share: then the address of a new issue with the report, "
+                "for the project's list of machines (nothing is sent: you "
+                "send it, or not)\n");
         return 2;
     }
     struct janas_llm_params p;
@@ -232,12 +237,13 @@ int main(int argc, char **argv)
     int rounds = 3;
     long long settle = 0;
     const char *model = NULL, *models = NULL;
-    int no_mtp = 0;
+    int no_mtp = 0, share = 0;
     static const char *const options[] = {
         "--mtp",       "--no-mtp",   "--models",   "--prompt",
         "--gen",       "--ctx",      "--rounds",   "--cache",
         "--reserve",   "--settle",   "--no-npu",   "--prompt-on",
-        "--drafts-on", "--reply-on", "--npu-int8", "--gpu-profile"};
+        "--drafts-on", "--reply-on", "--npu-int8", "--gpu-profile",
+        "--share"};
     for (int i = 1; i < argc; i += 2) {
         const char *a = argv[i], *v = i + 1 < argc ? argv[i + 1] : NULL;
         char why[200] = "";
@@ -260,6 +266,11 @@ int main(int argc, char **argv)
         }
         if (strcmp(a, "--npu-int8") == 0) {
             setenv("JANAS_NPU_A8", "1", 1); /* so is this */
+            i--;
+            continue;
+        }
+        if (strcmp(a, "--share") == 0) {
+            share = 1;
             i--;
             continue;
         }
@@ -656,7 +667,13 @@ int main(int argc, char **argv)
     janas_llm_close(llm); /* saves the tuning profile */
     if (report) {
         fclose(report);
+        report = NULL;
         printf("\nreport written to %s\n", path);
+        if (share)
+            bench_share(path);
+        else
+            printf("janas-bench --share prepares it as a report for the "
+                   "project's list of machines\n");
     }
     free(text);
     free(prompt);

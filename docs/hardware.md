@@ -21,11 +21,13 @@ git clone https://github.com/prabanta-dev/janas && cd janas
 
 It builds Janas and runs its tests, downloads a model from Hugging Face (checking its SHA-256), converts it (checking the result against the fingerprints of [MODELS.md](../MODELS.md)), checks that the model's answer at temperature 0 is the very text every other machine gets, measures the speed with `janas-bench`, tries `janas-server`, and writes a report with no host name, user name or paths in it. It asks before every long step and shows the report before anything is sent. **Run it with the machine to itself** (close the browser, builds, other models): before measuring it checks how idle the CPU is and, if it is busy, offers to wait; the report says how idle it was, in general terms only (a load average and a percentage, never which programs ran). If you agree, it opens the issue with `gh`, or gives you a link to a filled [test report form](https://github.com/prabanta-dev/janas/issues/new?template=04-test-report.yml). Four levels: `quick` (Qwen3-4B, 2.5 GB to download), `medium` (Qwen3.6-35B-A3B, 22 GB), `full` (Qwen3-Next-80B-A3B with its MTP block, about 52 GB) and `gemma` (Gemma-4-E4B with its assistant, 5.1 GB, runs in about 3 GB of memory); it offers those your machine can hold, and deletes at the end only what it downloaded, if you say so. `--help` lists the options.
 
-**What to send, by hand.** Run the benchmark and attach the report it writes (a `janas-bench-<date>.txt` in the current directory):
+**What to send, by hand.** Run the benchmark with `--share`:
 
 ```sh
-bin/x86_64-linux/janas-bench <model>
+bin/x86_64-linux/janas-bench <model> --share
 ```
+
+It writes its report (a `janas-bench-<date>.txt` in the current directory), then prints the address of a new issue with the hardware report's form filled in, and opens it in your browser if you say yes. Nothing is sent until you send the issue yourself, and every report pasted in an issue joins the ranking of [reports.md](reports.md#every-report-by-model). Without `--share`, attach the report file to an issue.
 
 `<model>` is a name from the list `janas-bench` shows when given none (`qwen3-4b`), or a `.jns` file. The report already carries the CPU's name, the instructions it has that matter to a model (`CPU has:`: AVX2, AVX-VNNI, the AVX-512 kinds, AVX10, AMX; dotprod, i8mm, SVE, SME on ARM) and the kernels Janas chose among them (`kernels:`), the core layout, the GPU if there is one, and the speed of every configuration tried. Add:
 

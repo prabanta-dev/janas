@@ -21,8 +21,10 @@ body:
         `.jns` file. From the binary package: `./janas-bench <model>`, on
         Windows `.\janas-bench <model>`.
 
-        It leaves a `janas-bench-<date>.txt` in the current directory. That
-        file already carries the CPU, the core layout, the GPU if there is one,
+        It leaves a `janas-bench-<date>.txt` in the current directory; with
+        `--share` at the end of that command it also prints the address of
+        this form already filled in with that report, and opens it if you
+        say yes. That file already carries the CPU, the core layout, the GPU if there is one,
         and the speed of every configuration tried; the questions below are the
         things it cannot know.
   - type: textarea
