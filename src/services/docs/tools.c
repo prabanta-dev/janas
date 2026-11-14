@@ -23,7 +23,7 @@ static const char *const TOOLS[] = {
     "{\"name\": \"docs_search\", \"title\": \"Search the documents\", ",
     "\"description\": \"The passages of the user's documents (the folders ",
     "of documents janas-docs indexes: text, Markdown, Word and ",
-    "LibreOffice files) that best answer a question or hold some words, ",
+    "LibreOffice and PDF files) that best answer a question or hold some words, ",
     "each with the document it comes from. Ask in the words the document ",
     "would use; names, codes and numbers are found as written.\", ",
     "\"inputSchema\": {\"type\": \"object\", \"properties\": {\"query\": ",

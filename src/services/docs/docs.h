@@ -33,7 +33,7 @@
 #define DZ_ROOTS 16
 
 /* kinds of document */
-enum { DZ_NONE, DZ_TEXT, DZ_DOCX, DZ_ODT };
+enum { DZ_NONE, DZ_TEXT, DZ_DOCX, DZ_ODT, DZ_PDF };
 
 /* ---- where the documents are (roots.c) ---- */
 
@@ -64,6 +64,10 @@ int dz_zip_get(const uint8_t *z, size_t n, const char *name, uint8_t **out,
 /* The text of a docx's document.xml or an odt's content.xml (kind) added
    to out: 0, or -1 out of memory. */
 int dz_xml_text(const char *x, size_t n, int kind, struct janas_buf *out);
+/* The text of a PDF (pdf.c) added to out: 0, or -1 with the reason (not a
+   PDF, encrypted, no text in it). */
+int dz_pdf_text(const uint8_t *p, size_t n, struct janas_buf *out, char *why,
+                size_t wn);
 /* The kind of document a file's name says. */
 int dz_kind(const char *path);
 int dz_is_text(const char *t, size_t n);
@@ -99,10 +103,10 @@ struct dz_embedder {
     char key[512];  /* its API key, or empty */
     janas_llm *llm;
     pthread_mutex_t mu; /* one text at a time through the model */
-    char name[1400];     /* what made the vectors: the index keeps it */
+    char name[1400];    /* what made the vectors: the index keeps it */
     int dim;            /* 0 until known */
     int ready;          /* it answered: vectors can be made */
-    char err[1400];      /* why it is not ready */
+    char err[1400];     /* why it is not ready */
 };
 
 /* The source of the embeddings: a server (url), else a model (path), else

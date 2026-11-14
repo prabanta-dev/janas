@@ -27,6 +27,7 @@
 #include "services/docs/embed.c"
 #include "services/docs/extract.c"
 #include "services/docs/index.c"
+#include "services/docs/pdf.c"
 #include "services/docs/roots.c"
 #include "services/docs/search.c"
 #include "services/docs/store.c"
@@ -217,6 +218,170 @@ static void documents(void)
         }
     janas_buf_free(&t);
     printf("test_docs: %d of 40000 mutated archives read\n", read_ok);
+}
+
+/* ---- PDF ---- */
+
+/* n bytes wrapped as zlib data of one stored block */
+static size_t zlib_stored(const char *s, size_t n, unsigned char *out)
+{
+    size_t k = 0;
+    out[k++] = 0x78;
+    out[k++] = 0x01;
+    out[k++] = 0x01; /* the last block, stored */
+    out[k++] = (unsigned char)(n & 0xff);
+    out[k++] = (unsigned char)(n >> 8);
+    out[k++] = (unsigned char)(~n & 0xff);
+    out[k++] = (unsigned char)((~n >> 8) & 0xff);
+    memcpy(out + k, s, n);
+    k += n;
+    uint32_t a = 1, b = 0;
+    for (size_t i = 0; i < n; i++) {
+        a = (a + (unsigned char)s[i]) % 65521;
+        b = (b + a) % 65521;
+    }
+    uint32_t ad = b << 16 | a;
+    for (int i = 3; i >= 0; i--)
+        out[k++] = (unsigned char)(ad >> (8 * i));
+    return k;
+}
+
+static struct janas_buf pdf;
+
+static void pdf_obj(int num, const char *dict, const unsigned char *stream,
+                    size_t sn)
+{
+    janas_buf_printf(&pdf, "%d 0 obj\n%s", num, dict);
+    if (stream) {
+        janas_buf_puts(&pdf, "\nstream\n");
+        janas_buf_put(&pdf, (const char *)stream, sn);
+        janas_buf_puts(&pdf, "\nendstream");
+    }
+    janas_buf_puts(&pdf, "\nendobj\n");
+}
+
+/* A PDF of two pages: a Type0 font with its ToUnicode map, glyph by glyph
+   as Skia writes them; a WinAnsi font, a TJ with a kerning gap; a content
+   stream compressed; the font of page 2 in an object stream; a form drawn
+   with text of its own. */
+static void make_pdf(int encrypted)
+{
+    pdf.n = 0;
+    unsigned char z[4096];
+    janas_buf_puts(&pdf, "%PDF-1.7\n%\xe2\xe3\xcf\xd3\n");
+    pdf_obj(1, "<< /Type /Catalog /Pages 2 0 R >>", NULL, 0);
+    pdf_obj(2,
+            "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 /Resources << "
+            "/Font << /F1 5 0 R /F2 6 0 R >> >> >>",
+            NULL, 0);
+    pdf_obj(3, "<< /Type /Page /Parent 2 0 R /Contents 7 0 R >>", NULL, 0);
+    pdf_obj(4,
+            "<< /Type /Page /Parent 2 0 R /Contents [8 0 R 9 0 R] "
+            "/Resources << /Font << /F3 10 0 R >> /XObject << /Fm1 12 0 R "
+            ">> >> >>",
+            NULL, 0);
+    pdf_obj(5,
+            "<< /Type /Font /Subtype /Type0 /BaseFont /X /Encoding "
+            "/Identity-H /ToUnicode 13 0 R /DescendantFonts [<< /Type /Font "
+            "/Subtype /CIDFontType2 /DW 500 /W [1 [600 600] 3 4 250] >>] >>",
+            NULL, 0);
+    pdf_obj(6,
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /FirstChar "
+            "32 /Widths [278] /Encoding /WinAnsiEncoding >>",
+            NULL, 0);
+    /* page 1: "Ciao mondo" glyph by glyph, then a new line in WinAnsi */
+    static const char c1[] =
+        "BT /F1 12 Tf 1 0 0 -1 0 10 Tm <0001> Tj 7.2 0 Td <0002> Tj 7.2 0 "
+        "Td <0003> Tj 3 0 Td <0004> Tj 3 0 Td <0003> Tj 7 0 Td <0001> Tj "
+        "ET BT /F2 10 Tf 72 700 Td (Caff\\351 \\(nero\\)) Tj 0 -14 Td "
+        "[(Fine)-500(riga)] TJ ET";
+    size_t zn = zlib_stored(c1, strlen(c1), z);
+    char d7[64];
+    snprintf(d7, sizeof d7, "<< /Length %zu /Filter /FlateDecode >>", zn);
+    pdf_obj(7, d7, z, zn);
+    static const char c2a[] = "BT /F3 11 Tf 50 600 Td (Seconda) Tj";
+    static const char c2b[] = " ( pagina) Tj ET /Fm1 Do";
+    char d8[64];
+    snprintf(d8, sizeof d8, "<< /Length %zu >>", strlen(c2a));
+    pdf_obj(8, d8, (const unsigned char *)c2a, strlen(c2a));
+    snprintf(d8, sizeof d8, "<< /Length 999 >>"); /* wrong: found anyway */
+    pdf_obj(9, d8, (const unsigned char *)c2b, strlen(c2b));
+    /* object 10 inside the object stream 11 */
+    static const char os[] =
+        "10 0 << /Type /Font /Subtype /Type1 /BaseFont /Times-Roman >>";
+    zn = zlib_stored(os, strlen(os), z);
+    char d11[96];
+    snprintf(d11, sizeof d11,
+             "<< /Type /ObjStm /N 1 /First 5 /Length %zu /Filter "
+             "/FlateDecode >>",
+             zn);
+    pdf_obj(11, d11, z, zn);
+    static const char fm[] = "BT /F3 9 Tf 50 500 Td (nel form) Tj ET";
+    char d12[128];
+    snprintf(d12, sizeof d12,
+             "<< /Type /XObject /Subtype /Form /BBox [0 0 100 100] /Length "
+             "%zu /Resources << /Font << /F3 10 0 R >> >> >>",
+             strlen(fm));
+    pdf_obj(12, d12, (const unsigned char *)fm, strlen(fm));
+    static const char cm[] =
+        "/CIDInit /ProcSet findresource begin 12 dict begin begincmap "
+        "1 begincodespacerange <0000> <FFFF> endcodespacerange "
+        "2 beginbfchar <0001> <0043> <0004> <0020> endbfchar "
+        "1 beginbfrange <0002> <0003> [<0069> <0061>] endbfrange "
+        "endcmap CMapName currentdict /CMap defineresource pop end end";
+    char d13[48];
+    snprintf(d13, sizeof d13, "<< /Length %zu >>", strlen(cm));
+    pdf_obj(13, d13, (const unsigned char *)cm, strlen(cm));
+    janas_buf_printf(&pdf, "trailer\n<< /Root 1 0 R /Size 14%s >>\n%%%%EOF\n",
+                     encrypted ? " /Encrypt 20 0 R" : "");
+}
+
+static void pdfs(void)
+{
+    make_pdf(0);
+    struct janas_buf t = {0};
+    char why[256] = "";
+    int rc = dz_extract_mem((const uint8_t *)pdf.p, pdf.n, DZ_PDF, &t, why,
+                            sizeof why);
+    janas_buf_put(&t, "", 1);
+    /* page 1: C i a ' ' a C, spaced by their widths, the last gap 4 wider
+       than the "a" before it: "Cia a C"; then the
+       WinAnsi line and the TJ's gap; page 2 from two streams and a form */
+    CHECK(rc == 0 && !strcmp(t.p, "Cia a C\nCaff\xc3\xa9 (nero)\nFine riga\n\n"
+                                  "Seconda pagina\nnel form"),
+          "pdf: %d %s [%s]", rc, why, t.p);
+    make_pdf(1);
+    t.n = 0;
+    CHECK(dz_extract_mem((const uint8_t *)pdf.p, pdf.n, DZ_PDF, &t, why,
+                         sizeof why) == -1 &&
+              strstr(why, "encrypted"),
+          "encrypted: %s", why);
+    CHECK(dz_extract_mem((const uint8_t *)"%PDF-1.4\n", 9, DZ_PDF, &t, why,
+                         sizeof why) == -1 &&
+              strstr(why, "no pages"),
+          "empty: %s", why);
+    /* cut at every byte, mutated */
+    make_pdf(0);
+    unsigned char *m = malloc(pdf.n);
+    for (size_t k = 0; m && k <= pdf.n; k++) {
+        memcpy(m, pdf.p, k);
+        t.n = 0;
+        dz_extract_mem(m, k, DZ_PDF, &t, why, sizeof why);
+    }
+    int read_ok = 0;
+    srand(31337);
+    for (int r = 0; m && r < 20000; r++) {
+        memcpy(m, pdf.p, pdf.n);
+        int nm = 1 + rand() % 6;
+        for (int i = 0; i < nm; i++)
+            m[rand() % pdf.n] =
+                (unsigned char)(rand() % 2 ? rand() : "()<>[]/ R"[rand() % 9]);
+        t.n = 0;
+        read_ok += dz_extract_mem(m, pdf.n, DZ_PDF, &t, why, sizeof why) == 0;
+    }
+    free(m);
+    janas_buf_free(&t);
+    printf("test_docs: %d of 20000 mutated PDFs read\n", read_ok);
 }
 
 static void pieces(void)
@@ -682,6 +847,7 @@ static void home_tests(void)
 int main(void)
 {
     documents();
+    pdfs();
     pieces();
     answers();
     const char *h = getenv("HOME");

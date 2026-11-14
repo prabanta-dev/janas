@@ -15,6 +15,11 @@
    0, or -1 (data broken, or not cap bytes) with the reason in why. */
 int janas_zlib_inflate(const uint8_t *p, size_t n, uint8_t *out, size_t cap,
                        char *why, size_t wn);
+/* zlib data of a length not known beforehand, at most max bytes once
+   inflated, into a malloc'd *out (a 0 after it, not counted): its length,
+   or -1 with the reason in why. */
+long janas_zlib_inflate_alloc(const uint8_t *p, size_t n, size_t max,
+                              uint8_t **out, char *why, size_t wn);
 /* The same for bare DEFLATE data, as a zip archive keeps its files. */
 int janas_raw_inflate(const uint8_t *p, size_t n, uint8_t *out, size_t cap,
                       char *why, size_t wn);

@@ -12,6 +12,7 @@
 
 #include <pthread.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 struct in {
@@ -22,6 +23,7 @@ struct in {
     int bad;
     uint8_t *out;
     size_t cap, len;
+    int full; /* it stopped for want of room */
 };
 
 static int bit(struct in *s)
@@ -120,8 +122,10 @@ static int codes(struct in *s, const struct huff *lc, const struct huff *dc)
         if (s->bad || sym < 0)
             return -1;
         if (sym < 256) {
-            if (s->len >= s->cap)
+            if (s->len >= s->cap) {
+                s->full = 1;
                 return -1;
+            }
             s->out[s->len++] = (uint8_t)sym;
         } else if (sym == 256) {
             return 0;
@@ -134,6 +138,8 @@ static int codes(struct in *s, const struct huff *lc, const struct huff *dc)
             if (s->bad || ds < 0 || ds >= 30)
                 return -1;
             size_t dist = (size_t)DBASE[ds] + bits(s, DEXT[ds]);
+            if (len > s->cap - s->len)
+                s->full = 1;
             if (dist > s->len || len > s->cap - s->len)
                 return -1;
             for (size_t i = 0; i < len; i++, s->len++)
@@ -150,6 +156,8 @@ static int stored(struct in *s)
     unsigned len = s->p[s->pos] | (unsigned)s->p[s->pos + 1] << 8;
     unsigned nlen = s->p[s->pos + 2] | (unsigned)s->p[s->pos + 3] << 8;
     s->pos += 4;
+    if ((len ^ 0xffff) == nlen && s->n - s->pos >= len && s->cap - s->len < len)
+        s->full = 1;
     if ((len ^ 0xffff) != nlen || s->n - s->pos < len || s->cap - s->len < len)
         return -1;
     memcpy(s->out + s->len, s->p + s->pos, len);
@@ -285,4 +293,40 @@ int janas_raw_inflate(const uint8_t *p, size_t n, uint8_t *out, size_t cap,
         return -1;
     }
     return 0;
+}
+
+long janas_zlib_inflate_alloc(const uint8_t *p, size_t n, size_t max,
+                              uint8_t **out, char *why, size_t wn)
+{
+    *out = NULL;
+    if (n < 2 || (p[0] & 0x0f) != 8 || ((p[0] << 8) | p[1]) % 31 ||
+        (p[1] & 0x20)) {
+        snprintf(why, wn, "not zlib data");
+        return -1;
+    }
+    size_t cap = n < max / 4 ? 4 * n : max;
+    if (cap < 4096)
+        cap = 4096 < max ? 4096 : max;
+    for (;;) {
+        uint8_t *o = malloc(cap + 1);
+        if (!o) {
+            snprintf(why, wn, "out of memory");
+            return -1;
+        }
+        struct in s = {.p = p, .n = n, .pos = 2, .out = o, .cap = cap};
+        if (blocks(&s) == 0) {
+            o[s.len] = 0;
+            *out = o;
+            return (long)s.len;
+        }
+        free(o);
+        if (!s.full || cap >= max) {
+            if (s.full)
+                snprintf(why, wn, "more than %zu bytes once inflated", max);
+            else
+                snprintf(why, wn, "broken compressed data");
+            return -1;
+        }
+        cap = cap < max / 4 ? 4 * cap : max;
+    }
 }

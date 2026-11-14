@@ -4,7 +4,8 @@
  * extract.c - the text of a document, by the kind its name says: plain
  * text and Markdown as they are (when they are text: no NUL, valid UTF-8
  * but for a byte in a hundred), a docx's word/document.xml and an odt's
- * content.xml through xml.c. Anything else is not a document here.
+ * content.xml through xml.c, a PDF through pdf.c. Anything else is not a
+ * document here.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,6 +29,8 @@ int dz_kind(const char *path)
         return DZ_DOCX;
     if (!strcasecmp(dot, "odt"))
         return DZ_ODT;
+    if (!strcasecmp(dot, "pdf"))
+        return DZ_PDF;
     for (size_t i = 0; i < sizeof TEXT_EXT / sizeof TEXT_EXT[0]; i++)
         if (!strcasecmp(dot, TEXT_EXT[i]))
             return DZ_TEXT;
@@ -75,6 +78,8 @@ int dz_extract_mem(const uint8_t *p, size_t n, int kind, struct janas_buf *text,
         janas_buf_put(text, (const char *)p, n);
         return text->oom ? -1 : 0;
     }
+    if (kind == DZ_PDF)
+        return dz_pdf_text(p, n, text, why, wn);
     if (kind != DZ_DOCX && kind != DZ_ODT) {
         snprintf(why, wn, "not a kind of document read here");
         return -1;

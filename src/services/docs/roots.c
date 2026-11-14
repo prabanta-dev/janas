@@ -143,9 +143,10 @@ int dz_resolve(const struct dz_roots *r, const char *in, char *out, size_t cap,
         return -1;
     }
     if (dz_kind(real) == DZ_NONE) {
-        snprintf(why, wn,
-                 "%s is not a document read here (text, Markdown, docx, odt)",
-                 s);
+        snprintf(
+            why, wn,
+            "%s is not a document read here (text, Markdown, docx, odt, PDF)",
+            s);
         return -1;
     }
     snprintf(out, cap, "%s", real);
