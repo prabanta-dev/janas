@@ -316,21 +316,23 @@ static void head_worker(void *arg, int tid, int n_threads)
     for (uint32_t h = (uint32_t)tid; h < m->n_head; h += (uint32_t)n_threads) {
         uint32_t g = h / rep;
         const float *q = t->q + (size_t)h * hd;
-        const float *ks = m->kscale + m->ks_off[ly->slot] + (size_t)g * cap;
-        const float *vs = m->vscale + m->ks_off[ly->slot] + (size_t)g * cap;
+        const float *ks =
+            m->cur->kscale + m->ks_off[ly->slot] + (size_t)g * cap;
+        const float *vs =
+            m->cur->vscale + m->ks_off[ly->slot] + (size_t)g * cap;
         float mx = -INFINITY;
         for (uint32_t i = 0; i < t->n_pos; i++) {
             uint32_t p = t->pos[i];
             size_t at = ((size_t)g * cap + p) * hd;
             if (m->kv16) {
                 const int16_t *k =
-                    (const int16_t *)(const void *)(m->kcache +
+                    (const int16_t *)(const void *)(m->cur->kcache +
                                                     m->kv_off[ly->slot]) +
                     at;
                 for (uint32_t e = 0; e < hd; e++)
                     kf[e] = (float)k[e];
             } else {
-                const int8_t *k = m->kcache + m->kv_off[ly->slot] + at;
+                const int8_t *k = m->cur->kcache + m->kv_off[ly->slot] + at;
                 for (uint32_t e = 0; e < hd; e++)
                     kf[e] = (float)k[e];
             }
@@ -351,13 +353,13 @@ static void head_worker(void *arg, int tid, int n_threads)
             float w = (float)(sc[i] / sum) * vs[p];
             if (m->kv16) {
                 const int16_t *v =
-                    (const int16_t *)(const void *)(m->vcache +
+                    (const int16_t *)(const void *)(m->cur->vcache +
                                                     m->kv_off[ly->slot]) +
                     at;
                 for (uint32_t e = 0; e < hd; e++)
                     out[e] += w * (float)v[e];
             } else {
-                const int8_t *v = m->vcache + m->kv_off[ly->slot] + at;
+                const int8_t *v = m->cur->vcache + m->kv_off[ly->slot] + at;
                 for (uint32_t e = 0; e < hd; e++)
                     out[e] += w * (float)v[e];
             }

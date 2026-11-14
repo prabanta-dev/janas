@@ -16,8 +16,9 @@
  * compiled the first time a block uses it (INT8, a scale a row, from its
  * rows dequantized), for blocks of the model's largest, and kept in
  * ~/.cache/janas/npu (JANAS_NPU_CACHE=<dir> elsewhere, empty for none) for
- * the next load: prepared once. Only in the passes whose tuner candidate has the NPU (npu_use):
- * the tuner and janas-bench weigh it against the CPU and the GPU.
+ * the next load: prepared once. Only in the passes whose tuner candidate has
+ * the NPU (npu_use): the tuner and janas-bench weigh it against the CPU and the
+ * GPU.
  *
  * x reaches the NPU as the CPU's products see it (its Q8_K blocks expanded
  * to floats); the NPU computes in FP16, so the results are close to the
@@ -1920,7 +1921,7 @@ int janas_m_npu_layers(struct janas_llm_model *m, uint32_t nt, uint32_t pos0)
     if (!n || !janas_m_npu_takes(m, nt) || (int)nt > n->block || n->lmode < 0)
         return -1;
     /* a picture whose tokens attend both ways: the CPU's attention */
-    if (m->n_media && janas_m_media_both(m, pos0, nt))
+    if (m->cur->n_media && janas_m_media_both(m, pos0, nt))
         return -1;
     if (n->lmode == 0 && !n->lg) {
         const char *e = getenv("JANAS_NPU_LAYERS");
@@ -2027,11 +2028,11 @@ int janas_m_npu_layers(struct janas_llm_model *m, uint32_t nt, uint32_t pos0)
                    the tokens to replay (if any) already in it */
                 m->big = n->big[h];
                 janas_m_rec_ba(m, ly, n->hn[h], c[h]);
-                uint32_t rp = m->replay;
+                uint32_t rp = m->cur->replay;
                 if (h)
-                    m->replay = 0, m->rec_cont = 1;
+                    m->cur->replay = 0, m->rec_cont = 1;
                 janas_m_rec_core(m, ly, c[h], ta);
-                m->replay = rp, m->rec_cont = 0;
+                m->cur->replay = rp, m->rec_cont = 0;
             } else {
                 /* with output gates, q and the gates as m->big holds them:
                    the core puts q in m->q, the gates in m->qgate */

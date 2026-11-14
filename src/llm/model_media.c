@@ -29,54 +29,54 @@ int janas_llm_model_media_add(struct janas_llm_model *m, uint32_t at,
     if (both_ways && !m->att_last &&
         !(m->att_last = malloc(sizeof(uint32_t) * m->blk)))
         return -1;
-    for (uint32_t i = 0; i < m->n_media; i++) {
-        const struct janas_media *p = &m->media[i];
+    for (uint32_t i = 0; i < m->cur->n_media; i++) {
+        const struct janas_media *p = &m->cur->media[i];
         if (at < p->at + p->nx * p->ny && p->at < at + n)
             return -1; /* overlapping */
     }
     float *e = malloc(sizeof(float) * (size_t)n * m->d_model);
     struct janas_media *t =
-        e ? realloc(m->media, sizeof(*t) * (m->n_media + 1)) : NULL;
+        e ? realloc(m->cur->media, sizeof(*t) * (m->cur->n_media + 1)) : NULL;
     if (!t) {
         free(e);
         return -1;
     }
     memcpy(e, embd, sizeof(float) * (size_t)n * m->d_model);
-    m->media = t;
+    m->cur->media = t;
     /* in order of their place in the sequence */
-    uint32_t k = m->n_media;
-    while (k > 0 && m->media[k - 1].at > at) {
-        m->media[k] = m->media[k - 1];
+    uint32_t k = m->cur->n_media;
+    while (k > 0 && m->cur->media[k - 1].at > at) {
+        m->cur->media[k] = m->cur->media[k - 1];
         k--;
     }
-    m->media[k] = (struct janas_media){
+    m->cur->media[k] = (struct janas_media){
         .at = at, .nx = nx, .ny = ny, .both = both_ways != 0, .embd = e};
-    m->n_media++;
+    m->cur->n_media++;
     return 0;
 }
 
 void janas_llm_model_media_drop(struct janas_llm_model *m, uint32_t from)
 {
     uint32_t keep = 0;
-    for (uint32_t i = 0; i < m->n_media; i++) {
-        struct janas_media *p = &m->media[i];
+    for (uint32_t i = 0; i < m->cur->n_media; i++) {
+        struct janas_media *p = &m->cur->media[i];
         if (p->at + p->nx * p->ny <= from)
-            m->media[keep++] = *p;
+            m->cur->media[keep++] = *p;
         else
             free(p->embd);
     }
-    m->n_media = keep;
+    m->cur->n_media = keep;
     if (!keep) {
-        free(m->media);
-        m->media = NULL;
+        free(m->cur->media);
+        m->cur->media = NULL;
     }
 }
 
 uint32_t janas_llm_model_media_cut(const struct janas_llm_model *m,
                                    uint32_t pos0, uint32_t n)
 {
-    for (uint32_t i = 0; i < m->n_media; i++) {
-        const struct janas_media *p = &m->media[i];
+    for (uint32_t i = 0; i < m->cur->n_media; i++) {
+        const struct janas_media *p = &m->cur->media[i];
         uint32_t end = p->at + p->nx * p->ny;
         if (!p->both || p->at >= pos0 + n || end <= pos0 + n || end <= pos0)
             continue;
@@ -92,7 +92,7 @@ uint32_t janas_llm_model_media_cut(const struct janas_llm_model *m,
 
 uint32_t janas_llm_model_media_count(const struct janas_llm_model *m)
 {
-    return m->n_media;
+    return m->cur->n_media;
 }
 
 struct janas_pool *janas_llm_model_pool(const struct janas_llm_model *m)
@@ -102,8 +102,8 @@ struct janas_pool *janas_llm_model_pool(const struct janas_llm_model *m)
 
 const float *janas_m_media_row(const struct janas_llm_model *m, uint32_t pos)
 {
-    for (uint32_t i = 0; i < m->n_media; i++) {
-        const struct janas_media *p = &m->media[i];
+    for (uint32_t i = 0; i < m->cur->n_media; i++) {
+        const struct janas_media *p = &m->cur->media[i];
         if (pos >= p->at && pos < p->at + p->nx * p->ny)
             return p->embd + (size_t)(pos - p->at) * m->d_model;
     }
@@ -118,8 +118,8 @@ void janas_m_media_pos(const struct janas_llm_model *m, uint32_t pos,
         return;
     }
     int64_t shift = 0;
-    for (uint32_t i = 0; i < m->n_media; i++) {
-        const struct janas_media *p = &m->media[i];
+    for (uint32_t i = 0; i < m->cur->n_media; i++) {
+        const struct janas_media *p = &m->cur->media[i];
         uint32_t n = p->nx * p->ny;
         if (pos >= p->at && pos < p->at + n) {
             uint32_t k = pos - p->at;
@@ -138,8 +138,8 @@ void janas_m_media_pos(const struct janas_llm_model *m, uint32_t pos,
 int janas_m_media_both(const struct janas_llm_model *m, uint32_t pos0,
                        uint32_t n)
 {
-    for (uint32_t i = 0; i < m->n_media; i++) {
-        const struct janas_media *p = &m->media[i];
+    for (uint32_t i = 0; i < m->cur->n_media; i++) {
+        const struct janas_media *p = &m->cur->media[i];
         if (p->both && p->at < pos0 + n && pos0 < p->at + p->nx * p->ny)
             return 1;
     }
@@ -151,8 +151,8 @@ void janas_m_media_last(const struct janas_llm_model *m, uint32_t pos0,
 {
     for (uint32_t j = 0; j < n; j++)
         last[j] = pos0 + j;
-    for (uint32_t i = 0; i < m->n_media; i++) {
-        const struct janas_media *p = &m->media[i];
+    for (uint32_t i = 0; i < m->cur->n_media; i++) {
+        const struct janas_media *p = &m->cur->media[i];
         uint32_t end = p->at + p->nx * p->ny; /* one past its last token */
         if (!p->both || p->at >= pos0 + n || end <= pos0)
             continue;
@@ -165,11 +165,11 @@ void janas_m_media_last(const struct janas_llm_model *m, uint32_t pos0,
 
 void janas_m_media_free(struct janas_llm_model *m)
 {
-    for (uint32_t i = 0; i < m->n_media; i++)
-        free(m->media[i].embd);
-    free(m->media);
-    m->media = NULL;
-    m->n_media = 0;
+    for (uint32_t i = 0; i < m->cur->n_media; i++)
+        free(m->cur->media[i].embd);
+    free(m->cur->media);
+    m->cur->media = NULL;
+    m->cur->n_media = 0;
     free(m->att_last);
     m->att_last = NULL;
 }

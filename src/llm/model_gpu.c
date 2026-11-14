@@ -531,10 +531,14 @@ static int sync_state(struct janas_llm_model *m, int to_device)
         uint32_t s = ly->slot;
         size_t kb = m->kv_off[s + 1] - m->kv_off[s],
                sb = (m->ks_off[s + 1] - m->ks_off[s]) * sizeof(float);
-        if (janas_gpu_sync(g, m->kcache + m->kv_off[s], kb, to_device) != 0 ||
-            janas_gpu_sync(g, m->vcache + m->kv_off[s], kb, to_device) != 0 ||
-            janas_gpu_sync(g, m->kscale + m->ks_off[s], sb, to_device) != 0 ||
-            janas_gpu_sync(g, m->vscale + m->ks_off[s], sb, to_device) != 0)
+        if (janas_gpu_sync(g, m->cur->kcache + m->kv_off[s], kb, to_device) !=
+                0 ||
+            janas_gpu_sync(g, m->cur->vcache + m->kv_off[s], kb, to_device) !=
+                0 ||
+            janas_gpu_sync(g, m->cur->kscale + m->ks_off[s], sb, to_device) !=
+                0 ||
+            janas_gpu_sync(g, m->cur->vscale + m->ks_off[s], sb, to_device) !=
+                0)
             return -1;
     }
     if (m->a->rec) {
@@ -544,11 +548,11 @@ static int sync_state(struct janas_llm_model *m, int to_device)
                     sizeof(float),
                lm = (size_t)m->n_rec * L * m->conv_ch * sizeof(float),
                lb = (size_t)m->n_rec * L * m->n_vh * sizeof(float);
-        if (janas_gpu_sync(g, m->ssm_buf, sb, to_device) != 0 ||
-            janas_gpu_sync(g, m->conv_buf, cb, to_device) != 0 ||
-            janas_gpu_sync(g, m->log_mixed, lm, to_device) != 0 ||
-            janas_gpu_sync(g, m->log_beta, lb, to_device) != 0 ||
-            janas_gpu_sync(g, m->log_decay, lb, to_device) != 0)
+        if (janas_gpu_sync(g, m->cur->ssm_buf, sb, to_device) != 0 ||
+            janas_gpu_sync(g, m->cur->conv_buf, cb, to_device) != 0 ||
+            janas_gpu_sync(g, m->cur->log_mixed, lm, to_device) != 0 ||
+            janas_gpu_sync(g, m->cur->log_beta, lb, to_device) != 0 ||
+            janas_gpu_sync(g, m->cur->log_decay, lb, to_device) != 0)
             return -1;
     }
     return 0;
@@ -652,10 +656,10 @@ static int build(struct janas_llm_model *m, char *err, size_t len)
     if (!m->qkvz_split && split_qkvz(m, err, len) != 0)
         return -1;
     if (!m->gtok_kv) {
-        if (janas_gpu_import(m->gpu, m->kcache, m->kv_bytes) != 0 ||
-            janas_gpu_import(m->gpu, m->vcache, m->kv_bytes) != 0 ||
-            janas_gpu_import(m->gpu, m->kscale, m->ks_bytes) != 0 ||
-            janas_gpu_import(m->gpu, m->vscale, m->ks_bytes) != 0) {
+        if (janas_gpu_import(m->gpu, m->cur->kcache, m->kv_bytes) != 0 ||
+            janas_gpu_import(m->gpu, m->cur->vcache, m->kv_bytes) != 0 ||
+            janas_gpu_import(m->gpu, m->cur->kscale, m->ks_bytes) != 0 ||
+            janas_gpu_import(m->gpu, m->cur->vscale, m->ks_bytes) != 0) {
             snprintf(err, len, "the KV cache cannot be imported");
             return -1;
         }
@@ -673,11 +677,11 @@ static int build(struct janas_llm_model *m, char *err, size_t len)
                    lm = (size_t)m->n_rec * L * m->conv_ch * sizeof(float),
                    lb = (size_t)m->n_rec * L * m->n_vh * sizeof(float);
 #define PAGES(b) (((b) + 4095) & ~(size_t)4095)
-            if (janas_gpu_import(m->gpu, m->ssm_buf, PAGES(sb)) != 0 ||
-                janas_gpu_import(m->gpu, m->conv_buf, PAGES(cb)) != 0 ||
-                janas_gpu_import(m->gpu, m->log_mixed, PAGES(lm)) != 0 ||
-                janas_gpu_import(m->gpu, m->log_beta, PAGES(lb)) != 0 ||
-                janas_gpu_import(m->gpu, m->log_decay, PAGES(lb)) != 0) {
+            if (janas_gpu_import(m->gpu, m->cur->ssm_buf, PAGES(sb)) != 0 ||
+                janas_gpu_import(m->gpu, m->cur->conv_buf, PAGES(cb)) != 0 ||
+                janas_gpu_import(m->gpu, m->cur->log_mixed, PAGES(lm)) != 0 ||
+                janas_gpu_import(m->gpu, m->cur->log_beta, PAGES(lb)) != 0 ||
+                janas_gpu_import(m->gpu, m->cur->log_decay, PAGES(lb)) != 0) {
                 snprintf(err, len,
                          "the recurrent states cannot be copied "
                          "to the GPU");
@@ -860,10 +864,10 @@ static int build(struct janas_llm_model *m, char *err, size_t len)
             return -1;
         }
         if (!ly->rec) {
-            g->kc = m->kcache + m->kv_off[ly->slot];
-            g->vc = m->vcache + m->kv_off[ly->slot];
-            g->ks = m->kscale + m->ks_off[ly->slot];
-            g->vs = m->vscale + m->ks_off[ly->slot];
+            g->kc = m->cur->kcache + m->kv_off[ly->slot];
+            g->vc = m->cur->vcache + m->kv_off[ly->slot];
+            g->ks = m->cur->kscale + m->ks_off[ly->slot];
+            g->vs = m->cur->vscale + m->ks_off[ly->slot];
         }
     }
     uint32_t a0 = 0; /* the first attention layer: the cache's capacity */
@@ -919,11 +923,11 @@ static int build(struct janas_llm_model *m, char *err, size_t len)
         .conv_ch = m->conv_ch,
         .d_inner = m->d_inner,
         .vmap_mod = m->vmap_mod,
-        .ssm_state = m->ssm_buf,
-        .conv_state = m->conv_buf,
-        .log_mixed = m->a->rec ? m->log_mixed : NULL,
-        .log_beta = m->a->rec ? m->log_beta : NULL,
-        .log_decay = m->a->rec ? m->log_decay : NULL,
+        .ssm_state = m->cur->ssm_buf,
+        .conv_state = m->cur->conv_buf,
+        .log_mixed = m->a->rec ? m->cur->log_mixed : NULL,
+        .log_beta = m->a->rec ? m->cur->log_beta : NULL,
+        .log_decay = m->a->rec ? m->cur->log_decay : NULL,
         .log_rows = JANAS_LLM_MAX_BLOCK,
         .n_expert = moe ? m->n_expert : 0,
         .k = moe ? m->k_use : 0,
@@ -1012,7 +1016,7 @@ int janas_m_gpu_token(struct janas_llm_model *m, uint32_t pos, uint32_t n,
     if (m->gtok_state < 0)
         return -1;
     /* a picture whose tokens attend both ways: the CPU's attention */
-    if (m->n_media && janas_m_media_both(m, pos, n))
+    if (m->cur->n_media && janas_m_media_both(m, pos, n))
         return -1;
     /* a block the tuner gave the CPU alone */
     if (m->prompt_cpu)
@@ -1061,10 +1065,10 @@ int janas_m_gpu_token(struct janas_llm_model *m, uint32_t pos, uint32_t n,
     if (!prompt && !short_pass && !whole && !(tok && (n == 1 || blocks > 0)))
         return -1;
     /* a recurrent model: the GPU replays first what forward() asks (the
-       m->replay tokens of the last call that were kept, at most
+       m->cur->replay tokens of the last call that were kept, at most
        JANAS_GPU_TOK_MAX_REPLAY) and logs a block short enough to be taken
        back, as the CPU's path does, in the same log */
-    if (m->a->rec && m->replay > JANAS_GPU_TOK_MAX_REPLAY)
+    if (m->a->rec && m->cur->replay > JANAS_GPU_TOK_MAX_REPLAY)
         return -1;
     const char *why = not_for_gpu(m);
     if (why) {
@@ -1109,7 +1113,8 @@ int janas_m_gpu_token(struct janas_llm_model *m, uint32_t pos, uint32_t n,
        convolution's rows of state long. The first replays, every piece of
        a block short enough logs its tokens at its row. With an MTP block
        or a drafting model, every token's final hidden state */
-    uint32_t src = m->src, dst = 1 - m->src, rows = m->a->rec ? m->d_conv : 1;
+    uint32_t src = m->cur->src, dst = 1 - m->cur->src,
+             rows = m->a->rec ? m->d_conv : 1;
     int logged = m->a->rec && n <= JANAS_LLM_MAX_BLOCK;
     float *hid = m->mtp || m->asst ? m->hid : NULL;
     size_t hw = (size_t)(m->hc_n ? m->hc_n : 1) * m->d_model; /* hidden's */
@@ -1140,7 +1145,7 @@ int janas_m_gpu_token(struct janas_llm_model *m, uint32_t pos, uint32_t n,
             : all     ? 1
                       : 0,
             logits, hid ? hid + (size_t)j * hw : NULL, j ? dst : src, dst,
-            j ? 0 : m->replay, logged ? j : UINT32_MAX);
+            j ? 0 : m->cur->replay, logged ? j : UINT32_MAX);
         /* -2, or any failure after a first piece that replayed: the base
            was updated in place, the CPU cannot replay on it again */
         if (rc != 0) {
@@ -1155,7 +1160,7 @@ int janas_m_gpu_token(struct janas_llm_model *m, uint32_t pos, uint32_t n,
                before the next pass there */
             if (m->gtok_dev)
                 m->gtok_where = JANAS_GT_HOST;
-            return rc == -2 || (j && m->replay) ? -2 : -1;
+            return rc == -2 || (j && m->cur->replay) ? -2 : -1;
         }
         if (m->gtok_dev)
             m->gtok_where = JANAS_GT_DEV;

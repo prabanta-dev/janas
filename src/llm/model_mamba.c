@@ -51,12 +51,12 @@ static void conv_worker(void *arg, int tid, int n_threads)
 {
     struct mb_job *a = arg;
     struct janas_llm_model *m = a->m;
-    uint32_t cc = m->conv_ch, dc = m->d_conv, rp = m->replay;
+    uint32_t cc = m->conv_ch, dc = m->d_conv, rp = m->cur->replay;
     size_t sz = (size_t)m->n_rec * (dc - 1) * cc;
-    float *src = m->conv_buf +
-                 (size_t)(m->rec_cont ? 1 - m->src : m->src) * sz +
+    float *src = m->cur->conv_buf +
+                 (size_t)(m->rec_cont ? 1 - m->cur->src : m->cur->src) * sz +
                  (size_t)a->ly->slot * (dc - 1) * cc;
-    float *dst = m->conv_buf + (size_t)(1 - m->src) * sz +
+    float *dst = m->cur->conv_buf + (size_t)(1 - m->cur->src) * sz +
                  (size_t)a->ly->slot * (dc - 1) * cc;
     const float *wt = a->ly->conv_t, *bias = a->ly->conv_b;
     for (uint32_t c0 = (uint32_t)tid * 8; c0 < cc;
@@ -93,16 +93,17 @@ static void scan_worker(void *arg, int tid, int n_threads)
     uint32_t hpg = nh / m->n_kh, di = m->d_inner;
     size_t per = (size_t)nh * hd * ds; /* floats a layer */
     size_t sz = (size_t)m->n_rec * per;
-    float *base = (float *)(void *)m->ssm_buf;
+    float *base = (float *)(void *)m->cur->ssm_buf;
     const float *dd = a->ly->ssm_dd;
     for (uint32_t h = (uint32_t)tid; h < nh; h += (uint32_t)n_threads) {
         uint32_t g = h / hpg;
         size_t off = (size_t)a->ly->slot * per + (size_t)h * hd * ds;
-        float *M =
-            base + (size_t)(m->rec_cont ? 1 - m->src : m->src) * sz + off;
-        float *D = base + (size_t)(1 - m->src) * sz + off;
-        for (uint32_t t = 0; t < m->replay + a->n; t++) {
-            if (t == m->replay) {
+        float *M = base +
+                   (size_t)(m->rec_cont ? 1 - m->cur->src : m->cur->src) * sz +
+                   off;
+        float *D = base + (size_t)(1 - m->cur->src) * sz + off;
+        for (uint32_t t = 0; t < m->cur->replay + a->n; t++) {
+            if (t == m->cur->replay) {
                 if (M != D)
                     memcpy(D, M, (size_t)hd * ds * sizeof(float));
                 M = D;
@@ -113,9 +114,10 @@ static void scan_worker(void *arg, int tid, int n_threads)
             const float *C = co + di + (size_t)m->n_kh * ds + (size_t)g * ds;
             float dt = m->beta[(size_t)t * nh + h];
             float dA = m->decay[(size_t)t * nh + h];
-            float *y = t < m->replay ? NULL
-                                     : m->att + (size_t)(t - m->replay) * di +
-                                           (size_t)h * hd;
+            float *y = t < m->cur->replay
+                           ? NULL
+                           : m->att + (size_t)(t - m->cur->replay) * di +
+                                 (size_t)h * hd;
             for (uint32_t r = 0; r < hd; r++) {
                 float *s = M + (size_t)r * ds;
                 float xdt = x[r] * dt, sum = 0.0f;
@@ -168,11 +170,11 @@ void janas_m_mamba_layer(struct janas_llm_model *m, const struct layer *ly,
     if (ly->in_scale != 1.0f)
         for (size_t i = 0; i < (size_t)n * qz; i++)
             m->big[i] *= ly->in_scale;
-    uint32_t rp = m->replay;
+    uint32_t rp = m->cur->replay;
     size_t L = JANAS_LLM_MAX_BLOCK;
-    float *lm = m->log_mixed + (size_t)ly->slot * L * cc;
-    float *lb = m->log_beta + (size_t)ly->slot * L * nh;
-    float *ld = m->log_decay + (size_t)ly->slot * L * nh;
+    float *lm = m->cur->log_mixed + (size_t)ly->slot * L * cc;
+    float *lb = m->cur->log_beta + (size_t)ly->slot * L * nh;
+    float *ld = m->cur->log_decay + (size_t)ly->slot * L * nh;
     /* rows 0 .. rp - 1: the logged tokens to replay, then this call's */
     memcpy(m->mixed, lm, (size_t)rp * cc * sizeof(float));
     memcpy(m->beta, lb, (size_t)rp * nh * sizeof(float));

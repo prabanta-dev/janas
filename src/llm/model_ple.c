@@ -384,7 +384,7 @@ int janas_m_ple_inputs(struct janas_llm_model *m, const int32_t *tokens,
         /* a picture's token takes the padding's row (id 0), as both the
            reference and llama.cpp do */
         int32_t tok =
-            m->n_media && janas_m_media_row(m, pos0 + j) ? 0 : tokens[j];
+            m->cur->n_media && janas_m_media_row(m, pos0 + j) ? 0 : tokens[j];
         off_t at = (off_t)(m->ple_tok->offset + (uint64_t)tok * row_bytes);
         const uint8_t *src = raw;
         if (m->ple_ram) /* the table in memory (janas_llm_options) */

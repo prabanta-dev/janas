@@ -786,6 +786,7 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
     struct janas_llm_model *m = calloc(1, sizeof(*m));
     if (!m)
         return NULL;
+    m->cur = &m->seq0;
     if (janas_jns_open(path, &m->j, err, err_len) != 0) {
         free(m);
         return NULL;
@@ -1132,10 +1133,10 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
        (gpu_token.h) */
     size_t kvb = (kv_len + 4095) / 4096 * 4096,
            ksb = (ks_len * sizeof(float) + 4095) / 4096 * 4096;
-    m->kcache = janas_aligned_alloc(4096, kvb ? kvb : 4096);
-    m->vcache = janas_aligned_alloc(4096, kvb ? kvb : 4096);
-    m->kscale = janas_aligned_alloc(4096, ksb ? ksb : 4096);
-    m->vscale = janas_aligned_alloc(4096, ksb ? ksb : 4096);
+    m->cur->kcache = janas_aligned_alloc(4096, kvb ? kvb : 4096);
+    m->cur->vcache = janas_aligned_alloc(4096, kvb ? kvb : 4096);
+    m->cur->kscale = janas_aligned_alloc(4096, ksb ? ksb : 4096);
+    m->cur->vscale = janas_aligned_alloc(4096, ksb ? ksb : 4096);
     m->kv_bytes = kvb;
     m->ks_bytes = ksb;
     /* a pair's rows: the experts', or a wider shared feed-forward's */
@@ -1212,13 +1213,13 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
     m->tok_first = malloc((B + 1) * sizeof(uint32_t));
     m->tok_fill = malloc(B * sizeof(uint32_t));
     m->tok_list = malloc(P * sizeof(uint32_t));
-    if (!m->tok_first || !m->tok_fill || !m->tok_list || !m->kcache ||
-        !m->vcache || !m->kscale || !m->vscale || !m->x || !m->xn || !m->q ||
-        !m->kk || !m->vv || !m->att || !m->router || !m->rope_cos ||
-        !m->rope_sin || !m->xq || !m->attq || !m->pair_tok || !m->pair_exp ||
-        !m->order || !m->glist || !m->count || !m->pair_w || !m->gate ||
-        !m->up || !m->h || !m->dout || !m->xg || !m->hq || !m->hlen ||
-        m->n_expert > 4096) {
+    if (!m->tok_first || !m->tok_fill || !m->tok_list || !m->cur->kcache ||
+        !m->cur->vcache || !m->cur->kscale || !m->cur->vscale || !m->x ||
+        !m->xn || !m->q || !m->kk || !m->vv || !m->att || !m->router ||
+        !m->rope_cos || !m->rope_sin || !m->xq || !m->attq || !m->pair_tok ||
+        !m->pair_exp || !m->order || !m->glist || !m->count || !m->pair_w ||
+        !m->gate || !m->up || !m->h || !m->dout || !m->xg || !m->hq ||
+        !m->hlen || m->n_expert > 4096) {
         snprintf(err, err_len, "out of memory");
         goto fail;
     }
@@ -1321,12 +1322,12 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
         size_t sb = 2 * (size_t)m->n_rec * m->ssm_per * sizeof(uint16_t),
                cb = 2 * (size_t)m->n_rec * m->conv_ch * (m->d_conv - 1) *
                     sizeof(float);
-        m->ssm_buf = (uint16_t *)out_alloc(m, sb);
-        m->conv_buf = out_alloc(m, cb);
-        if (m->ssm_buf)
-            memset(m->ssm_buf, 0, sb);
-        if (m->conv_buf)
-            memset(m->conv_buf, 0, cb);
+        m->cur->ssm_buf = (uint16_t *)out_alloc(m, sb);
+        m->cur->conv_buf = out_alloc(m, cb);
+        if (m->cur->ssm_buf)
+            memset(m->cur->ssm_buf, 0, sb);
+        if (m->cur->conv_buf)
+            memset(m->cur->conv_buf, 0, cb);
         m->ba = malloc(B * 2 * m->n_vh * sizeof(float));
         /* the rows of the replayed tokens (a logged call, at most
            JANAS_LLM_MAX_BLOCK), then the block */
@@ -1337,15 +1338,15 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
         m->decay = malloc(R * m->n_vh * sizeof(float));
         /* the log too, which the GPU writes for a chain of drafts it
            verifies and reads back to replay the tokens kept */
-        m->log_mixed =
+        m->cur->log_mixed =
             out_alloc(m, (size_t)m->n_rec * L * m->conv_ch * sizeof(float));
-        m->log_beta =
+        m->cur->log_beta =
             out_alloc(m, (size_t)m->n_rec * L * m->n_vh * sizeof(float));
-        m->log_decay =
+        m->cur->log_decay =
             out_alloc(m, (size_t)m->n_rec * L * m->n_vh * sizeof(float));
-        if (!m->ssm_buf || !m->conv_buf || !m->ba || !m->mixed ||
-            !m->conv_out || !m->beta || !m->decay || !m->log_mixed ||
-            !m->log_beta || !m->log_decay) {
+        if (!m->cur->ssm_buf || !m->cur->conv_buf || !m->ba || !m->mixed ||
+            !m->conv_out || !m->beta || !m->decay || !m->cur->log_mixed ||
+            !m->cur->log_beta || !m->cur->log_decay) {
             snprintf(err, err_len, "out of memory");
             goto fail;
         }
@@ -1625,11 +1626,26 @@ void janas_llm_model_free(struct janas_llm_model *m)
     for (size_t i = 0; i < sizeof(fl) / sizeof(fl[0]); i++)
         free(fl[i]);
     /* the products' buffers (out_alloc) and the KV cache: aligned */
-    void *al[] = {m->conv_buf,  m->x,      m->xn,        m->q,
-                  m->kk,        m->vv,     m->big,       m->gate,
-                  m->up,        m->dout,   m->log_mixed, m->log_beta,
-                  m->log_decay, m->ple,    m->ple_g,     m->ssm_buf,
-                  m->kcache,    m->vcache, m->kscale,    m->vscale};
+    void *al[] = {m->cur->conv_buf,
+                  m->x,
+                  m->xn,
+                  m->q,
+                  m->kk,
+                  m->vv,
+                  m->big,
+                  m->gate,
+                  m->up,
+                  m->dout,
+                  m->cur->log_mixed,
+                  m->cur->log_beta,
+                  m->cur->log_decay,
+                  m->ple,
+                  m->ple_g,
+                  m->cur->ssm_buf,
+                  m->cur->kcache,
+                  m->cur->vcache,
+                  m->cur->kscale,
+                  m->cur->vscale};
     for (size_t i = 0; i < sizeof(al) / sizeof(al[0]); i++)
         janas_aligned_free(al[i]);
     free(m->kv_off);

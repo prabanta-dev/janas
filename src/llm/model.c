@@ -138,7 +138,7 @@ static void rope_media(struct janas_llm_model *m, uint32_t n, uint32_t pos0)
 
 static void set_rope(struct janas_llm_model *m, uint32_t n, uint32_t pos0)
 {
-    if (m->n_media && (m->mrope[0] || m->mrope[1] || m->mrope[2]))
+    if (m->cur->n_media && (m->mrope[0] || m->mrope[1] || m->mrope[2]))
         rope_media(m, n, pos0);
     else
         rope_table(m->rope_cos, m->rope_sin, n, pos0, m->n_rot, m->rope_base,
@@ -291,7 +291,7 @@ int janas_llm_model_shift(struct janas_llm_model *m, uint32_t keep,
     /* pictures' positions are not slid (yet): the caller reads the prompt
        again instead */
     if (!drop || n_kv > m->n_ctx || keep + drop > n_kv || m->hd_max > 512 ||
-        m->n_media)
+        m->cur->n_media)
         return -1;
     /* qwen4exp: its n-gram history first (the one part that can refuse) */
     if (m->hc_n && janas_m_hc_shift(m, keep, drop, n_kv) != 0)
@@ -318,10 +318,12 @@ int janas_llm_model_shift(struct janas_llm_model *m, uint32_t keep,
         }
         size_t row = hd * elt;
         for (uint32_t h = 0; h < m->kv_heads[sl]; h++) {
-            uint8_t *k = (uint8_t *)m->kcache + m->kv_off[sl] + h * cap * row;
-            uint8_t *v = (uint8_t *)m->vcache + m->kv_off[sl] + h * cap * row;
-            float *kz = m->kscale + m->ks_off[sl] + (size_t)h * cap;
-            float *vz = m->vscale + m->ks_off[sl] + (size_t)h * cap;
+            uint8_t *k =
+                (uint8_t *)m->cur->kcache + m->kv_off[sl] + h * cap * row;
+            uint8_t *v =
+                (uint8_t *)m->cur->vcache + m->kv_off[sl] + h * cap * row;
+            float *kz = m->cur->kscale + m->ks_off[sl] + (size_t)h * cap;
+            float *vz = m->cur->vscale + m->ks_off[sl] + (size_t)h * cap;
             if (!m->kv_ring[sl]) {
                 if (move) {
                     memmove(k + keep * row, k + (keep + drop) * row,
@@ -366,24 +368,24 @@ int janas_llm_model_shift(struct janas_llm_model *m, uint32_t keep,
     free(ring_tmp);
     if (m->hc_n) /* and the indexer's keys and blocks */
         janas_m_qsa_shift(m, keep, drop, n_kv);
-    if (m->ring_hi > keep + drop)
-        m->ring_hi -= drop;
+    if (m->cur->ring_hi > keep + drop)
+        m->cur->ring_hi -= drop;
     /* the recurrent state holds what it has seen, dropped tokens included -
        that is what carries the older text - but the position it stands at
        moves with everything else */
-    if (m->base_pos != UINT32_MAX) {
-        uint32_t b = m->base_pos, t = b + m->log_n;
+    if (m->cur->base_pos != UINT32_MAX) {
+        uint32_t b = m->cur->base_pos, t = b + m->cur->log_n;
         if (b >= keep + drop)
-            m->base_pos = b - drop;
-        else if (m->log_n && t > keep) {
+            m->cur->base_pos = b - drop;
+        else if (m->cur->log_n && t > keep) {
             /* the log runs into what is dropped (or past it): replaying
                it would count the dropped tokens and land short of the
                tip, so the state goes on from the tip, the other buffer */
-            m->base = 1 - m->base;
-            m->base_pos = t >= keep + drop ? t - drop : keep;
-            m->log_n = 0;
+            m->cur->base = 1 - m->cur->base;
+            m->cur->base_pos = t >= keep + drop ? t - drop : keep;
+            m->cur->log_n = 0;
         } else if (b > keep)
-            m->base_pos = keep;
+            m->cur->base_pos = keep;
     }
     return 0;
 }
@@ -513,8 +515,8 @@ static void long_prompt_end(struct janas_llm_model *m, double sec_per_token,
    (10 Nov 2026) */
 static void ring_written(struct janas_llm_model *m, uint32_t pos0, uint32_t n)
 {
-    if (pos0 == 0 || pos0 + n > m->ring_hi)
-        m->ring_hi = pos0 + n;
+    if (pos0 == 0 || pos0 + n > m->cur->ring_hi)
+        m->cur->ring_hi = pos0 + n;
 }
 
 int janas_llm_model_forward(struct janas_llm_model *m, const int32_t *tokens,
@@ -576,7 +578,8 @@ static int forward(struct janas_llm_model *m, const int32_t *tokens, uint32_t n,
     size_t nbd = dm / JANAS_QK;
     for (uint32_t j = 0; j < n; j++) {
         /* a picture's token: its embedding from the encoder */
-        const float *pic = m->n_media ? janas_m_media_row(m, pos0 + j) : NULL;
+        const float *pic =
+            m->cur->n_media ? janas_m_media_row(m, pos0 + j) : NULL;
         if (pic)
             memcpy(m->x + (size_t)j * dm, pic, sizeof(float) * dm);
         else
@@ -599,24 +602,26 @@ static int forward(struct janas_llm_model *m, const int32_t *tokens, uint32_t n,
         m->gtok_where = JANAS_GT_HOST;
     if (m->a->rec) {
         if (pos0 == 0) {
-            m->src = 0;
-            m->replay = 0;
-            memset(m->ssm_buf, 0,
+            m->cur->src = 0;
+            m->cur->replay = 0;
+            memset(m->cur->ssm_buf, 0,
                    (size_t)m->n_rec * m->ssm_per * sizeof(uint16_t));
-            memset(m->conv_buf, 0,
+            memset(m->cur->conv_buf, 0,
                    (size_t)m->n_rec * m->conv_ch * (m->d_conv - 1) *
                        sizeof(float));
-        } else if (m->base_pos == UINT32_MAX || pos0 < m->base_pos ||
-                   pos0 > m->base_pos + m->log_n) {
+        } else if (m->cur->base_pos == UINT32_MAX || pos0 < m->cur->base_pos ||
+                   pos0 > m->cur->base_pos + m->cur->log_n) {
             return -1; /* before the last call: that state is gone */
-        } else if (pos0 == m->base_pos + m->log_n && m->log_n > 0) {
-            m->src = 1 - m->base; /* from the tip */
-            m->replay = 0;
+        } else if (pos0 == m->cur->base_pos + m->cur->log_n &&
+                   m->cur->log_n > 0) {
+            m->cur->src = 1 - m->cur->base; /* from the tip */
+            m->cur->replay = 0;
         } else {
-            m->src = m->base; /* replay the accepted tokens on the base */
-            m->replay = pos0 - m->base_pos;
+            m->cur->src =
+                m->cur->base; /* replay the accepted tokens on the base */
+            m->cur->replay = pos0 - m->cur->base_pos;
         }
-        m->base_pos = UINT32_MAX; /* invalid until this pass completes */
+        m->cur->base_pos = UINT32_MAX; /* invalid until this pass completes */
     }
     set_rope(m, n, pos0);
     /* a token (or, with JANAS_GPU_BLOCK=1, a block) on the GPU, whole,
@@ -645,13 +650,13 @@ static int forward(struct janas_llm_model *m, const int32_t *tokens, uint32_t n,
         ring_written(m, pos0, n);
         if (m->a->rec && n <= JANAS_LLM_MAX_BLOCK) {
             /* replayed and logged by the GPU: as at the end */
-            m->base = m->src;
-            m->base_pos = pos0;
-            m->log_n = n;
+            m->cur->base = m->cur->src;
+            m->cur->base_pos = pos0;
+            m->cur->log_n = n;
         } else if (m->a->rec) { /* a long block: as at the end */
-            m->base = 1 - m->src;
-            m->base_pos = pos0 + n;
-            m->log_n = 0;
+            m->cur->base = 1 - m->cur->src;
+            m->cur->base_pos = pos0 + n;
+            m->cur->log_n = 0;
         }
         return 0;
     }
@@ -789,15 +794,15 @@ output:
     }
     m->phase[JANAS_PH_OUTPUT] += now() - td;
     if (m->a->rec && n <= JANAS_LLM_MAX_BLOCK) {
-        m->base = m->src;
-        m->base_pos = pos0;
-        m->log_n = n;
+        m->cur->base = m->cur->src;
+        m->cur->base_pos = pos0;
+        m->cur->log_n = n;
     } else if (m->a->rec) {
         /* not logged: the state stands at the end of the call, in the
            buffer the call wrote, and nothing before it can be replayed */
-        m->base = 1 - m->src;
-        m->base_pos = pos0 + n;
-        m->log_n = 0;
+        m->cur->base = 1 - m->cur->src;
+        m->cur->base_pos = pos0 + n;
+        m->cur->log_n = 0;
     }
     return 0;
 }
@@ -827,7 +832,7 @@ int janas_llm_model_rewind_ok(const struct janas_llm_model *m, uint32_t n)
     /* a ring keeps the window before n only while nothing past n + (its
        capacity - the window) has been written over it */
     for (uint32_t sl = 0; sl < m->n_attn; sl++)
-        if (m->kv_ring[sl] && m->ring_hi > n + m->kv_cap[sl] - m->window)
+        if (m->kv_ring[sl] && m->cur->ring_hi > n + m->kv_cap[sl] - m->window)
             return 0;
     return 1;
 }

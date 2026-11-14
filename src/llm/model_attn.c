@@ -291,10 +291,10 @@ void janas_m_attn_core(struct janas_llm_model *m, const struct layer *ly,
                        uint32_t n, uint32_t pos0, double ta)
 {
     uint32_t hd = ly->hd, qd = m->n_head * hd, kvd = ly->n_kv * hd;
-    int8_t *kc = m->kcache + m->kv_off[ly->slot];
-    int8_t *vc = m->vcache + m->kv_off[ly->slot];
-    float *kcs = m->kscale + m->ks_off[ly->slot];
-    float *vcs = m->vscale + m->ks_off[ly->slot];
+    int8_t *kc = m->cur->kcache + m->kv_off[ly->slot];
+    int8_t *vc = m->cur->vcache + m->kv_off[ly->slot];
+    float *kcs = m->cur->kscale + m->ks_off[ly->slot];
+    float *vcs = m->cur->vscale + m->ks_off[ly->slot];
     struct tok_job tj = {.m = m,
                          .ly = ly,
                          .n = n,
@@ -319,7 +319,7 @@ void janas_m_attn_core(struct janas_llm_model *m, const struct layer *ly,
        of the whole block are in the cache already, and each piece sees the
        positions up to its own end, as the block would */
     /* a picture whose tokens see one another: each sees to its end */
-    int both = m->n_media && janas_m_media_both(m, pos0, n);
+    int both = m->cur->n_media && janas_m_media_both(m, pos0, n);
     if (both)
         janas_m_media_last(m, pos0, n, m->att_last);
     for (uint32_t s = 0; s < n; s += JANAS_LLM_MAX_BLOCK) {

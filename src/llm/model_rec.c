@@ -45,7 +45,7 @@ struct ssm_job {
 static void conv_head_ref(struct janas_llm_model *m, const float *wt,
                           float *src, float *dst, uint32_t c0, uint32_t n)
 {
-    uint32_t cc = m->conv_ch, dc = m->d_conv, a = m->replay;
+    uint32_t cc = m->conv_ch, dc = m->d_conv, a = m->cur->replay;
     for (uint32_t c = c0; c < c0 + m->ds; c++) {
         float win[MAX_CONV];
         for (uint32_t i = 0; i + 1 < dc; i++)
@@ -72,7 +72,7 @@ __attribute__((target("avx2,fma"))) static void
 conv_head_avx2(struct janas_llm_model *m, const float *wt, float *src,
                float *dst, uint32_t c0, uint32_t n)
 {
-    uint32_t cc = m->conv_ch, dc = m->d_conv, a = m->replay;
+    uint32_t cc = m->conv_ch, dc = m->d_conv, a = m->cur->replay;
     for (uint32_t c = c0; c < c0 + m->ds; c += 8) {
         __m256 win[MAX_CONV], w[MAX_CONV];
         for (uint32_t i = 0; i < dc; i++)
@@ -127,10 +127,10 @@ static void conv_worker(void *arg, int tid, int n_threads)
     struct janas_llm_model *m = a->m;
     uint32_t cc = m->conv_ch, ds = m->ds, kd = m->n_kh * ds;
     size_t sz = (size_t)m->n_rec * (m->d_conv - 1) * cc;
-    float *src = m->conv_buf +
-                 (size_t)(m->rec_cont ? 1 - m->src : m->src) * sz +
+    float *src = m->cur->conv_buf +
+                 (size_t)(m->rec_cont ? 1 - m->cur->src : m->cur->src) * sz +
                  (size_t)a->ly->slot * (m->d_conv - 1) * cc;
-    float *dst = m->conv_buf + (size_t)(1 - m->src) * sz +
+    float *dst = m->cur->conv_buf + (size_t)(1 - m->cur->src) * sz +
                  (size_t)a->ly->slot * (m->d_conv - 1) * cc;
     for (uint32_t c0 = (uint32_t)tid * ds; c0 < cc;
          c0 += (uint32_t)n_threads * ds) {
@@ -142,7 +142,7 @@ static void conv_worker(void *arg, int tid, int n_threads)
             conv_head_ref(m, a->ly->conv_t, src, dst, c0, a->n);
         if (c0 >= 2 * kd) /* a value head: not normalized */
             continue;
-        for (uint32_t t = 0; t < m->replay + a->n; t++) {
+        for (uint32_t t = 0; t < m->cur->replay + a->n; t++) {
             float *x = m->conv_out + (size_t)t * cc + c0;
 #if defined(__x86_64__)
             if (m->avx2)
@@ -175,18 +175,20 @@ static void rec_worker(void *arg, int tid, int n_threads)
         uint32_t g = m->vmap_mod ? h % m->n_kh : h / rf;
         size_t off = (((size_t)a->ly->slot * nv + h) * ds + r0) * ds;
         uint16_t *M =
-            m->ssm_buf + (size_t)(m->rec_cont ? 1 - m->src : m->src) * sz + off;
-        uint16_t *D = m->ssm_buf + (size_t)(1 - m->src) * sz + off;
-        for (uint32_t t = 0; t < m->replay + a->n; t++) {
-            if (t == m->replay) {
+            m->cur->ssm_buf +
+            (size_t)(m->rec_cont ? 1 - m->cur->src : m->cur->src) * sz + off;
+        uint16_t *D = m->cur->ssm_buf + (size_t)(1 - m->cur->src) * sz + off;
+        for (uint32_t t = 0; t < m->cur->replay + a->n; t++) {
+            if (t == m->cur->replay) {
                 if (M != D) /* not a call going on from the one before */
                     memcpy(D, M, (size_t)SSM_ROWS * ds * sizeof(uint16_t));
                 M = D;
             }
             const float *co = m->conv_out + (size_t)t * cc;
-            float *o = t < m->replay
+            float *o = t < m->cur->replay
                            ? junk
-                           : m->att + (size_t)(t - m->replay) * m->d_inner +
+                           : m->att +
+                                 (size_t)(t - m->cur->replay) * m->d_inner +
                                  (size_t)h * ds + r0;
             janas_gdn_step_h(
                 M, co + (size_t)g * ds, co + kd + (size_t)g * ds,
@@ -392,11 +394,11 @@ void janas_m_rec_core(struct janas_llm_model *m, const struct layer *ly,
     /* per key head g the projection holds q, k, the values and the z gates
        of its rf value heads, then per g: rf betas and rf alphas */
     const float *dt = f32(m, ly->dt_bias), *A = f32(m, ly->ssm_a);
-    uint32_t a = m->replay;
+    uint32_t a = m->cur->replay;
     size_t B = JANAS_LLM_MAX_BLOCK;
-    float *lm = m->log_mixed + (size_t)ly->slot * B * cc;
-    float *lb = m->log_beta + (size_t)ly->slot * B * nv;
-    float *ld = m->log_decay + (size_t)ly->slot * B * nv;
+    float *lm = m->cur->log_mixed + (size_t)ly->slot * B * cc;
+    float *lb = m->cur->log_beta + (size_t)ly->slot * B * nv;
+    float *ld = m->cur->log_decay + (size_t)ly->slot * B * nv;
     /* rows 0 .. a - 1: the logged tokens to replay, then this call's */
     memcpy(m->mixed, lm, (size_t)a * cc * sizeof(float));
     memcpy(m->beta, lb, (size_t)a * nv * sizeof(float));
@@ -444,10 +446,10 @@ void janas_m_rec_core(struct janas_llm_model *m, const struct layer *ly,
               m->d_inner);
     struct ssm_job sj = {m, ly, n};
     janas_pool_run(m->compute, conv_worker, &sj);
-    trace_row(m, "conv_out", m->conv_out + (size_t)(m->replay + n - 1) * cc,
-              cc);
+    trace_row(m, "conv_out",
+              m->conv_out + (size_t)(m->cur->replay + n - 1) * cc, cc);
     if (m->trace >= 3) {
-        const float *co = m->conv_out + (size_t)(m->replay + n - 1) * cc;
+        const float *co = m->conv_out + (size_t)(m->cur->replay + n - 1) * cc;
         trace_row(m, "conv_q_h15", co + (size_t)15 * ds, ds);
         trace_row(m, "conv_k_h15", co + kd + (size_t)15 * ds, ds);
         trace_row(m, "conv_v_h31", co + 2 * kd + (size_t)31 * ds, ds);

@@ -416,10 +416,10 @@ int janas_m_assist_draft(struct janas_llm_model *m, int32_t token,
                       L->swa ? a->sn_swa : a->sn);
         }
         janas_attn_run(L->swa ? a->attn_swa : a->attn, m->compute, a->q,
-                       m->kcache + m->kv_off[L->slot],
-                       m->kscale + m->ks_off[L->slot],
-                       m->vcache + m->kv_off[L->slot],
-                       m->vscale + m->ks_off[L->slot], 1, p, a->att);
+                       m->cur->kcache + m->kv_off[L->slot],
+                       m->cur->kscale + m->ks_off[L->slot],
+                       m->cur->vcache + m->kv_off[L->slot],
+                       m->cur->vscale + m->ks_off[L->slot], 1, p, a->att);
         janas_q8k_quantize(a->att, a->attq, qd);
         mvt(m, a, L->wo, a->attq, a->xn);
         rms_norm(a->xn, a->xn, adata(a, L->post_attn), d, a->eps);

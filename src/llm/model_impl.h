@@ -107,6 +107,65 @@ enum { JANAS_NH_MAMBA, JANAS_NH_ATTN, JANAS_NH_MOE };
 
 _Static_assert(JANAS_ATTN_MAX_BLOCK == JANAS_LLM_MAX_BLOCK, "block size");
 
+/* pictures in a sequence (model_media.c): where each begins, its grid of
+   tokens and their embeddings; both: its tokens attend to one another both
+   ways */
+struct janas_media {
+    uint32_t at, nx, ny;
+    int both;
+    float *embd;
+};
+
+/*
+ * A conversation's state (A1: the model will hold several): what its
+ * positions left behind - the keys and values of the attention layers, the
+ * recurrent layers' state and log, the pictures in it. The weights, the
+ * expert cache and the pass's scratch stay the model's. m->cur is the one
+ * a pass reads and writes.
+ */
+struct janas_seq {
+    /*
+     * n_attn x n_head_kv x n_ctx x head_dim: the positions of one KV head
+     * are contiguous, so attention streams them. Interleaving the heads of a
+     * position (a 2 KiB stride between the rows one head reads) defeated the
+     * hardware prefetcher, which does not cross 4 KiB pages: every position
+     * cost a DRAM access and attention took 6.5 ms per token instead of ~1.
+     * Half precision: attention at long context is bound by reading it.
+     */
+    int8_t *kcache, *vcache;
+    float *kscale, *vscale; /* one per position and KV head */
+    /* one past the last position written (Gemma 4's rings) */
+    uint32_t ring_hi;
+    /*
+     * Recurrent state in two buffers, a base and a tip, so that rolling back
+     * costs no memory traffic. Each holds, per DeltaNet layer, the state
+     * (n_vh x ds x ds, deltanet.h layout) and the last d_conv - 1 inputs of
+     * every channel ((d_conv - 1) x conv_ch). The base holds positions
+     * 0 .. base_pos - 1; the tip the log_n positions after them, run by the
+     * last call, whose per-token inputs (conv inputs, decays, betas) are in
+     * the log.
+     *
+     * A call starting where the last one ended (plain decoding, prefill, a
+     * fully accepted draft) starts from the tip, which becomes the base. A
+     * call starting earlier (rejected draft tokens) replays the accepted
+     * logged tokens on the base in place. Either way the call's tokens leave
+     * their state in the other buffer: the state is read and written once
+     * per call, as with an in-place update.
+     */
+    /* two buffers each, back to back. The DeltaNet state, read and written
+       in full for every call, in half precision: half the traffic; its
+       rounding stays within the model's own numerical noise (an int16
+       format with row scales, 7x more precise, changed nothing measurable) */
+    uint16_t *ssm_buf;
+    float *conv_buf;
+    float *log_mixed, *log_beta, *log_decay;
+    int base; /* buffer holding the base */
+    int src;  /* this call: buffer the tokens start from */
+    uint32_t base_pos, log_n, replay;
+    struct janas_media *media;
+    uint32_t n_media;
+};
+
 struct janas_llm_model {
     struct janas_jns j;
     uint8_t *resident; /* the resident region, read at load */
@@ -181,13 +240,9 @@ struct janas_llm_model {
        (rope.dimension_sections, Qwen3.5: 11, 11, 10; 0: none), which give
        a picture's tokens their row and column as positions; both: its
        tokens attend to one another both ways; att_last, a pass's last
-       positions seen (blk) when one is */
-    struct janas_media {
-        uint32_t at, nx, ny;
-        int both;
-        float *embd;
-    } *media;
-    uint32_t n_media, mrope[3];
+       positions seen (blk) when one is; the pictures themselves are the
+       sequence's (struct janas_seq) */
+    uint32_t mrope[3];
     uint32_t *att_last;
     /* Gemma 4's per-layer embeddings (0: none): ple_dim numbers per layer
        and token, from a table of their own read a row at a time from the
@@ -210,11 +265,9 @@ struct janas_llm_model {
     uint32_t *kv_hd, *kv_heads;
     int kv16; /* keys and values of 16 bits (arch, or JANAS_KV=8|16) */
     /* positions a slot holds per KV head: n_ctx, or for a sliding-window
-       layer a ring of fewer (kv_ring), position p in row p mod kv_cap;
-       ring_hi: one past the last position written */
+       layer a ring of fewer (kv_ring), position p in row p mod kv_cap */
     uint32_t *kv_cap;
     uint8_t *kv_ring, *kv_swa; /* and whether its layer is a sliding one */
-    uint32_t ring_hi;
     /* Gated DeltaNet geometry: ds = head size (keys and values), n_kh key
        heads, n_vh value heads (n_vh / n_kh per key head), conv over the
        q|k|v channels */
@@ -246,15 +299,6 @@ struct janas_llm_model {
     struct layer *layers;
     const struct janas_jns_tensor *tok_embd, *out_norm, *output;
 
-    /*
-     * n_attn x n_head_kv x n_ctx x head_dim: the positions of one KV head
-     * are contiguous, so attention streams them. Interleaving the heads of a
-     * position (a 2 KiB stride between the rows one head reads) defeated the
-     * hardware prefetcher, which does not cross 4 KiB pages: every position
-     * cost a DRAM access and attention took 6.5 ms per token instead of ~1.
-     * Half precision: attention at long context is bound by reading it.
-     */
-    int8_t *kcache, *vcache;
     size_t kv_bytes, ks_bytes; /* the caches' and the scales' allocations */
     /* the whole token on the GPU (gpu_token.h, JANAS_GPU_TOKEN=1): 0 not
        tried yet, 1 ready, -1 not for this model; loads: the experts' loads
@@ -288,38 +332,13 @@ struct janas_llm_model {
        in the GPU driver's memory, kept for a rebuild */
     uint8_t *gtok_repack;
     size_t gtok_repack_bytes;
-    float *kscale, *vscale; /* one per position and KV head */
-    /*
-     * Recurrent state in two buffers, a base and a tip, so that rolling back
-     * costs no memory traffic. Each holds, per DeltaNet layer, the state
-     * (n_vh x ds x ds, deltanet.h layout) and the last d_conv - 1 inputs of
-     * every channel ((d_conv - 1) x conv_ch). The base holds positions
-     * 0 .. base_pos - 1; the tip the log_n positions after them, run by the
-     * last call, whose per-token inputs (conv inputs, decays, betas) are in
-     * the log.
-     *
-     * A call starting where the last one ended (plain decoding, prefill, a
-     * fully accepted draft) starts from the tip, which becomes the base. A
-     * call starting earlier (rejected draft tokens) replays the accepted
-     * logged tokens on the base in place. Either way the call's tokens leave
-     * their state in the other buffer: the state is read and written once
-     * per call, as with an in-place update.
-     */
-    /* two buffers each, back to back. The DeltaNet state, read and written
-       in full for every call, in half precision: half the traffic; its
-       rounding stays within the model's own numerical noise (an int16
-       format with row scales, 7x more precise, changed nothing measurable) */
-    uint16_t *ssm_buf;
-    float *conv_buf;
-    float *log_mixed, *log_beta, *log_decay;
-    int base; /* buffer holding the base */
-    int src;  /* this call: buffer the tokens start from */
-    uint32_t base_pos, log_n, replay;
     /* the call goes on from the one before it in the same pass (the NPU's
        second half of a block): the state and the convolution's inputs read
        where that one left them, in the other buffer */
     int rec_cont;
     uint32_t n_ctx_train; /* what the model was trained for, 0 if unsaid */
+    /* the conversation's state: seq0, the only one for now */
+    struct janas_seq seq0, *cur;
 
     /*
      * scratch for a pass of up to blk tokens (janas_llm_model_max_block):

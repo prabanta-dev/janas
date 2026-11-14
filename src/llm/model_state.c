@@ -188,15 +188,15 @@ static void copy_kv(struct janas_llm_model *m, struct janas_llm_state *st,
                     size_t cb = m->kv_off[sl] + r * hd;
                     size_t cs = m->ks_off[sl] + r;
                     if (out) {
-                        memcpy(st->k + sb, m->kcache + cb, hd);
-                        memcpy(st->v + sb, m->vcache + cb, hd);
-                        st->ks[ss] = m->kscale[cs];
-                        st->vs[ss] = m->vscale[cs];
+                        memcpy(st->k + sb, m->cur->kcache + cb, hd);
+                        memcpy(st->v + sb, m->cur->vcache + cb, hd);
+                        st->ks[ss] = m->cur->kscale[cs];
+                        st->vs[ss] = m->cur->vscale[cs];
                     } else {
-                        memcpy(m->kcache + cb, st->k + sb, hd);
-                        memcpy(m->vcache + cb, st->v + sb, hd);
-                        m->kscale[cs] = st->ks[ss];
-                        m->vscale[cs] = st->vs[ss];
+                        memcpy(m->cur->kcache + cb, st->k + sb, hd);
+                        memcpy(m->cur->vcache + cb, st->v + sb, hd);
+                        m->cur->kscale[cs] = st->ks[ss];
+                        m->cur->vscale[cs] = st->vs[ss];
                     }
                 }
             continue;
@@ -205,15 +205,15 @@ static void copy_kv(struct janas_llm_model *m, struct janas_llm_state *st,
             size_t cb = m->kv_off[sl] + h * cap * hd;
             size_t cs = m->ks_off[sl] + h * cap;
             if (out) {
-                memcpy(st->k + sb, m->kcache + cb, n * hd);
-                memcpy(st->v + sb, m->vcache + cb, n * hd);
-                memcpy(st->ks + ss, m->kscale + cs, n * sizeof(float));
-                memcpy(st->vs + ss, m->vscale + cs, n * sizeof(float));
+                memcpy(st->k + sb, m->cur->kcache + cb, n * hd);
+                memcpy(st->v + sb, m->cur->vcache + cb, n * hd);
+                memcpy(st->ks + ss, m->cur->kscale + cs, n * sizeof(float));
+                memcpy(st->vs + ss, m->cur->vscale + cs, n * sizeof(float));
             } else {
-                memcpy(m->kcache + cb, st->k + sb, n * hd);
-                memcpy(m->vcache + cb, st->v + sb, n * hd);
-                memcpy(m->kscale + cs, st->ks + ss, n * sizeof(float));
-                memcpy(m->vscale + cs, st->vs + ss, n * sizeof(float));
+                memcpy(m->cur->kcache + cb, st->k + sb, n * hd);
+                memcpy(m->cur->vcache + cb, st->v + sb, n * hd);
+                memcpy(m->cur->kscale + cs, st->ks + ss, n * sizeof(float));
+                memcpy(m->cur->vscale + cs, st->vs + ss, n * sizeof(float));
             }
         }
     }
@@ -238,10 +238,10 @@ struct janas_llm_state *janas_llm_model_state_save(struct janas_llm_model *m,
     int nbuf = 0;
     if (m->a->rec) {
         /* the state must stand at n, or be able to get there by replay */
-        if (n == 0 || m->base_pos == UINT32_MAX || n < m->base_pos ||
-            n > m->base_pos + m->log_n)
+        if (n == 0 || m->cur->base_pos == UINT32_MAX || n < m->cur->base_pos ||
+            n > m->cur->base_pos + m->cur->log_n)
             return NULL;
-        nbuf = n == m->base_pos + m->log_n ? 1 : 2;
+        nbuf = n == m->cur->base_pos + m->cur->log_n ? 1 : 2;
     }
     struct janas_llm_state *st = calloc(1, sizeof(*st));
     if (!st)
@@ -264,11 +264,11 @@ struct janas_llm_state *janas_llm_model_state_save(struct janas_llm_model *m,
     if (nbuf == 1) {
         /* the buffer holding the state after n - 1: the tip, or the base
            when the last call has been taken back to its start */
-        int b = m->log_n > 0 ? 1 - m->base : m->base;
-        st->ssm =
-            dup_mem(m->ssm_buf + b * ssm_len(m), ssm_len(m) * sizeof(uint16_t));
-        st->conv =
-            dup_mem(m->conv_buf + b * conv_len(m), conv_len(m) * sizeof(float));
+        int b = m->cur->log_n > 0 ? 1 - m->cur->base : m->cur->base;
+        st->ssm = dup_mem(m->cur->ssm_buf + b * ssm_len(m),
+                          ssm_len(m) * sizeof(uint16_t));
+        st->conv = dup_mem(m->cur->conv_buf + b * conv_len(m),
+                           conv_len(m) * sizeof(float));
         bad |= !st->ssm || !st->conv;
         st->bytes +=
             ssm_len(m) * sizeof(uint16_t) + conv_len(m) * sizeof(float);
@@ -276,16 +276,16 @@ struct janas_llm_state *janas_llm_model_state_save(struct janas_llm_model *m,
         size_t B = JANAS_LLM_MAX_BLOCK;
         size_t lm = (size_t)m->n_rec * B * m->conv_ch * sizeof(float);
         size_t lb = (size_t)m->n_rec * B * m->n_vh * sizeof(float);
-        st->ssm = dup_mem(m->ssm_buf, 2 * ssm_len(m) * sizeof(uint16_t));
-        st->conv = dup_mem(m->conv_buf, 2 * conv_len(m) * sizeof(float));
-        st->log_mixed = dup_mem(m->log_mixed, lm);
-        st->log_beta = dup_mem(m->log_beta, lb);
-        st->log_decay = dup_mem(m->log_decay, lb);
+        st->ssm = dup_mem(m->cur->ssm_buf, 2 * ssm_len(m) * sizeof(uint16_t));
+        st->conv = dup_mem(m->cur->conv_buf, 2 * conv_len(m) * sizeof(float));
+        st->log_mixed = dup_mem(m->cur->log_mixed, lm);
+        st->log_beta = dup_mem(m->cur->log_beta, lb);
+        st->log_decay = dup_mem(m->cur->log_decay, lb);
         bad |= !st->ssm || !st->conv || !st->log_mixed || !st->log_beta ||
                !st->log_decay;
-        st->base = m->base;
-        st->base_pos = m->base_pos;
-        st->log_n = m->log_n;
+        st->base = m->cur->base;
+        st->base_pos = m->cur->base_pos;
+        st->log_n = m->cur->log_n;
         st->bytes += 2 * ssm_len(m) * sizeof(uint16_t) +
                      2 * conv_len(m) * sizeof(float) + lm + 2 * lb;
     }
@@ -321,28 +321,28 @@ int janas_llm_model_state_load(struct janas_llm_model *m,
         (m->ix_heads != 0) != (st->ix != 0))
         return -1;
     copy_kv(m, (struct janas_llm_state *)st, 0);
-    m->ring_hi = st->n;
+    m->cur->ring_hi = st->n;
     if (st->nbuf == 1) {
         /* into the base, standing at n with nothing logged: the next call
            starts from it */
-        m->base = 0;
-        memcpy(m->ssm_buf, st->ssm, ssm_len(m) * sizeof(uint16_t));
-        memcpy(m->conv_buf, st->conv, conv_len(m) * sizeof(float));
-        m->base_pos = st->n;
-        m->log_n = 0;
+        m->cur->base = 0;
+        memcpy(m->cur->ssm_buf, st->ssm, ssm_len(m) * sizeof(uint16_t));
+        memcpy(m->cur->conv_buf, st->conv, conv_len(m) * sizeof(float));
+        m->cur->base_pos = st->n;
+        m->cur->log_n = 0;
     } else if (st->nbuf == 2) {
         size_t B = JANAS_LLM_MAX_BLOCK;
-        memcpy(m->ssm_buf, st->ssm, 2 * ssm_len(m) * sizeof(uint16_t));
-        memcpy(m->conv_buf, st->conv, 2 * conv_len(m) * sizeof(float));
-        memcpy(m->log_mixed, st->log_mixed,
+        memcpy(m->cur->ssm_buf, st->ssm, 2 * ssm_len(m) * sizeof(uint16_t));
+        memcpy(m->cur->conv_buf, st->conv, 2 * conv_len(m) * sizeof(float));
+        memcpy(m->cur->log_mixed, st->log_mixed,
                (size_t)m->n_rec * B * m->conv_ch * sizeof(float));
-        memcpy(m->log_beta, st->log_beta,
+        memcpy(m->cur->log_beta, st->log_beta,
                (size_t)m->n_rec * B * m->n_vh * sizeof(float));
-        memcpy(m->log_decay, st->log_decay,
+        memcpy(m->cur->log_decay, st->log_decay,
                (size_t)m->n_rec * B * m->n_vh * sizeof(float));
-        m->base = st->base;
-        m->base_pos = st->base_pos;
-        m->log_n = st->log_n;
+        m->cur->base = st->base;
+        m->cur->base_pos = st->base_pos;
+        m->cur->log_n = st->log_n;
     }
     copy_hc(m, (struct janas_llm_state *)st, 0);
     return 0;
