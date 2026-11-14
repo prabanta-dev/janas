@@ -406,8 +406,10 @@ static enum MHD_Result dispatch(struct srv_req *r)
             return MHD_NO;
         MHD_add_response_header(resp, "Access-Control-Allow-Methods",
                                 "GET, POST, DELETE, OPTIONS");
-        MHD_add_response_header(resp, "Access-Control-Allow-Headers",
-                                "Authorization, Content-Type");
+        MHD_add_response_header(
+            resp, "Access-Control-Allow-Headers",
+            srv_allow_headers(MHD_lookup_connection_value(
+                r->conn, MHD_HEADER_KIND, "Access-Control-Request-Headers")));
         MHD_add_response_header(resp, "Access-Control-Max-Age", "600");
         return queue(r->conn, 204, resp, NULL);
     }

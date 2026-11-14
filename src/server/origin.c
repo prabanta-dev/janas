@@ -97,3 +97,13 @@ int srv_origin_check(const struct srv_config *c, const char *origin,
         return SRV_ORIGIN_REFUSED;
     return trusted_host(hh, c->host) ? SRV_ORIGIN_SAME : SRV_ORIGIN_REFUSED;
 }
+
+const char *srv_allow_headers(const char *asked)
+{
+    int ok = asked && *asked && strlen(asked) < 1024;
+    for (const char *c = asked; ok && *c; c++)
+        ok = (*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z') ||
+             (*c >= '0' && *c <= '9') || *c == '-' || *c == '_' || *c == ',' ||
+             *c == ' ';
+    return ok ? asked : "Authorization, Content-Type";
+}

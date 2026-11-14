@@ -1,5 +1,7 @@
 # Janas-LLM in the editor and with coding agents
 
+Every program tried with Janas, editors and others (AnythingLLM, Obsidian, Zed), with its version and date: [compatibility.md](compatibility.md).
+
 `janas-server` answers the APIs the editors' extensions and the coding agents speak - OpenAI's, Ollama's and Anthropic's ([serving.md](serving.md)) - so that they work with a model of this machine, and nothing leaves it. This page says how each one tried was set up, and what it did. For the completion of code at the cursor alone, see [code completion](code-completion.md).
 
 The task given to each was the same, from [issue #52](https://github.com/prabanta-dev/janas/issues/52): a folder holds a small Gambas3 project (`ref/Notes`: `.project`, `.src/FMain.class`, `.src/FMain.form`, a list of notes saved in `~/.notes.txt`); read it, and write in `new/Todo` a to-do list in the same structure and style, with a Done button that removes the selected item, saved in `~/.todo.txt`. The model was Qwen3-Coder-30B-A3B-Instruct (Q4_K_M), on an Intel Core Ultra 9 185H with 30 GB of memory, 2-3 November 2026.

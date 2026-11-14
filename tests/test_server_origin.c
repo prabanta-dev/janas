@@ -149,10 +149,33 @@ static void addresses(void)
           "public_only 0 refused");
 }
 
+/* What a listed page's preflight may send: the headers asked for, while
+   they are header names; else the two every client sends. */
+static void preflight(void)
+{
+    const char *sdk = "authorization,content-type,x-stainless-os,"
+                      "x-stainless-retry-count";
+    CHECK(srv_allow_headers(sdk) == sdk, "the SDK's headers refused");
+    CHECK(!strcmp(srv_allow_headers(NULL), "Authorization, Content-Type"),
+          "none asked");
+    CHECK(!strcmp(srv_allow_headers(""), "Authorization, Content-Type"),
+          "empty");
+    const char *bad[] = {"content-type\r\nX-Evil: 1", "a;b", "x:y", "é"};
+    for (size_t i = 0; i < sizeof bad / sizeof *bad; i++)
+        CHECK(!strcmp(srv_allow_headers(bad[i]), "Authorization, Content-Type"),
+              "taken: %s", bad[i]);
+    char big[1100];
+    memset(big, 'a', sizeof big - 1);
+    big[sizeof big - 1] = 0;
+    CHECK(!strcmp(srv_allow_headers(big), "Authorization, Content-Type"),
+          "too long taken");
+}
+
 int main(void)
 {
     origins();
     addresses();
+    preflight();
     if (!failures)
         printf("test_server_origin: ok\n");
     return failures != 0;

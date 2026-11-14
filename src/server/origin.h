@@ -20,4 +20,12 @@ enum {
 int srv_origin_check(const struct srv_config *c, const char *origin,
                      const char *host);
 
+/* The headers a listed page's preflight may send (its
+   Access-Control-Request-Headers, NULL if none): those it asks for when
+   they are header names only and fewer than 1024 bytes, else the two every
+   client sends. The clients' SDKs add their own (OpenAI's JavaScript one
+   its x-stainless-*, which Obsidian's Copilot sends): a preflight that
+   left them out failed the request. */
+const char *srv_allow_headers(const char *asked);
+
 #endif

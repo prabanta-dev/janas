@@ -221,6 +221,7 @@ sudo pacman -S vulkan-headers glslang vulkan-tools           # the same, Arch
 - [examples/fb-chat](examples/fb-chat/README.md) — a chat in FreeBASIC, procedure by procedure and with Janas's classes
 - [docs/serving.md](docs/serving.md) — the model as tools for Claude Code, editors and other MCP clients (`janas-mcp`), and over HTTP, an API that follows OpenAI's, Ollama's and Anthropic's (Claude Code), with a chat page to try it from a browser (`janas-server`)
 - [docs/monitor.md](docs/monitor.md) — the engine at work: a page in the browser (`janas-server --monitor`) and in the terminal (`/monitor` in `janas-chat`), and the counters for a program
+- [docs/compatibility.md](docs/compatibility.md) — the programs tried with Janas, their versions and what was done with them: AnythingLLM, Obsidian, Zed, Continue, Cline, Roo Code, Claude Code, aider, Open WebUI
 - [docs/editor.md](docs/editor.md) — Continue, Cline, Roo Code, Claude Code, aider and Open WebUI with a model of this machine, each set up and tried on the same task; your files outside the editor (`janas-files`)
 - [docs/code-completion.md](docs/code-completion.md) — code filled in at an editor's cursor, in VSCodium and VS Code through `janas-server`: 1.5-2.2 s a proposal on a laptop, where a window slid a line was read again in 17 s
 - [docs/tools.md](docs/tools.md) — the converters, checkers and benchmarks built beside the programs
