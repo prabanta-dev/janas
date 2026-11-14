@@ -6,7 +6,9 @@
  * experts in them (b32_mmid.comp: IQ4_NL, Q5_0, Q2_0), rows ending inside
  * a group of 256 among them (qwen4exp's 640), and experts in the 256-block
  * types of iqk_mmid.comp (Q2_K, IQ2_XXS, IQ2_XS, IQ2_S, IQ3_XXS, IQ1_S,
- * IQ1_M, IQ3_S, IQ4_XS), against the CPU. They round
+ * IQ1_M, IQ3_S, IQ4_XS), and the Q4_K and Q6_K tiles (q4k_mmq.comp,
+ * q6k_mmq.comp; with JANAS_GPU_TILES_EXACT=1 their _exact variants, which
+ * must give the CPU's bits), against the CPU. They round
  * group by group, so not bit for bit: each output within 1e-4 of the
  * largest of its product, and the GPU seen at work (outputs that differ in
  * their last bits). Skips (exit 0) when no GPU is usable.
@@ -57,7 +59,13 @@ static void fill(uint8_t *w, int type, size_t rows, size_t cols)
             continue;
         }
         uint16_t d = janas_fp32_to_fp16(0.0005f + (rnd() % 1000) * 1e-6f);
-        if (type == JANAS_Q2_K) { /* d and dmin at 80 and 82 */
+        if (type == JANAS_Q4_K) { /* d and dmin at 0 and 2 */
+            uint16_t dm = janas_fp32_to_fp16(0.0002f + (rnd() % 1000) * 1e-6f);
+            memcpy(blk, &d, 2);
+            memcpy(blk + 2, &dm, 2);
+        } else if (type == JANAS_Q6_K) { /* d at its end */
+            memcpy(blk + 208, &d, 2);
+        } else if (type == JANAS_Q2_K) { /* d and dmin at 80 and 82 */
             uint16_t dm = janas_fp32_to_fp16(0.0002f + (rnd() % 1000) * 1e-6f);
             memcpy(blk + 80, &d, 2);
             memcpy(blk + 82, &dm, 2);
@@ -131,13 +139,13 @@ int main(void)
     struct janas_pool *pool = janas_pool_create(4, NULL);
     /* and the 256-block types of iqk_mmq.comp (only the shapes of whole
        groups of 256) */
-    static const int types[] = {JANAS_Q5_0,   JANAS_Q2_0,  JANAS_IQ4_NL,
-                                JANAS_MXFP4,  JANAS_Q2_K,  JANAS_IQ2_XXS,
-                                JANAS_IQ2_XS, JANAS_IQ2_S, JANAS_IQ3_XXS,
-                                JANAS_IQ1_S,  JANAS_IQ1_M};
-    static const char *names[] = {"Q5_0",    "Q2_0",    "IQ4_NL", "MXFP4",
-                                  "Q2_K",    "IQ2_XXS", "IQ2_XS", "IQ2_S",
-                                  "IQ3_XXS", "IQ1_S",   "IQ1_M"};
+    static const int types[] = {
+        JANAS_Q5_0,    JANAS_Q2_0,   JANAS_IQ4_NL, JANAS_MXFP4,   JANAS_Q2_K,
+        JANAS_IQ2_XXS, JANAS_IQ2_XS, JANAS_IQ2_S,  JANAS_IQ3_XXS, JANAS_IQ1_S,
+        JANAS_IQ1_M,   JANAS_Q4_K,   JANAS_Q6_K};
+    static const char *names[] = {
+        "Q5_0",  "Q2_0",    "IQ4_NL", "MXFP4", "Q2_K", "IQ2_XXS", "IQ2_XS",
+        "IQ2_S", "IQ3_XXS", "IQ1_S",  "IQ1_M", "Q4_K", "Q6_K"};
     /* rows x cols; the last three end inside a group of 256 */
     static const size_t shapes[][2] = {
         {512, 2560}, {640, 2560}, {2560, 640}, {300, 896}, {130, 128}};
@@ -156,6 +164,8 @@ int main(void)
         return 1;
     }
     int bad = 0, runs = 0;
+    const char *ex = getenv("JANAS_GPU_TILES_EXACT");
+    int exact = ex && atoi(ex) > 0;
     double worst_all = 0;
     for (size_t ti = 0; ti < sizeof(types) / sizeof(*types); ti++)
         for (size_t s = 0; s < sizeof(shapes) / sizeof(*shapes); s++)
@@ -184,7 +194,16 @@ int main(void)
                 runs++;
                 if (e > worst_all)
                     worst_all = e;
-                if (e > 1e-4 || diff == 0) {
+                /* JANAS_GPU_TILES_EXACT=1: Q4_K's and Q6_K's tiles the
+                   CPU's bits (their _exact shaders) */
+                if (exact && (type == JANAS_Q4_K || type == JANAS_Q6_K)) {
+                    if (diff != 0) {
+                        printf("%s %zux%zu nv %zu: exact, yet %zu of %zu "
+                               "outputs differ (error %.2e)\n",
+                               names[ti], rows, cols, nv, diff, rows * nv, e);
+                        bad++;
+                    }
+                } else if (e > 1e-4 || diff == 0) {
                     printf("%s %zux%zu nv %zu: error %.2e, %zu of %zu "
                            "outputs differ%s\n",
                            names[ti], rows, cols, nv, e, diff, rows * nv,
