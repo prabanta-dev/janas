@@ -30,6 +30,8 @@
 #include "q4k_mmq.h"       /* janas_spv_q4k_mmq */
 #include "q6kp_mmq.h"      /* janas_spv_q6kp_mmq */
 #include "q6k_mmq.h"       /* janas_spv_q6k_mmq */
+#include "q4k_mmq_exact.h" /* janas_spv_q4k_mmq_exact (build.sh) */
+#include "q6k_mmq_exact.h" /* janas_spv_q6k_mmq_exact */
 #include "q3k_mmq.h"       /* janas_spv_q3k_mmq */
 #include "iq4xs_mmq.h"     /* janas_spv_iq4xs_mmq */
 #include "iq3s_mmq.h"      /* janas_spv_iq3s_mmq */
@@ -534,8 +536,8 @@ int janas_g_copy_asked(void)
 }
 
 /* JANAS_GPU_TILES_EXACT=1: the fast prompt's Q4_K and Q6_K tiles summed
-   as the CPU sums, a block at a time (q4k_mmq.comp, q6k_mmq.comp EXACT),
-   being measured */
+   as the CPU sums, a block at a time (q4k_mmq.comp, q6k_mmq.comp EXACT:
+   their _exact variants, which build.sh compiles), being measured */
 static int tiles_exact(void)
 {
     const char *e = getenv("JANAS_GPU_TILES_EXACT");
@@ -714,15 +716,25 @@ struct janas_gpu *janas_gpu_create(char *err, size_t err_len)
         (r = janas_g_make_pipeline(g, janas_spv_iq3s_matvec,
                                    sizeof(janas_spv_iq3s_matvec), &g->smi3,
                                    &g->pipei3, 0)) != VK_SUCCESS ||
-        (r = make_pipeline(g, janas_spv_q4k_mmq, sizeof(janas_spv_q4k_mmq),
-                           &g->sm_mm, &g->pipe_mm, (uint32_t)tiles_exact(),
-                           NV_PER_GROUP, g->sg)) != VK_SUCCESS ||
+        (r = tiles_exact()
+                 ? make_pipeline(g, janas_spv_q4k_mmq_exact,
+                                 sizeof(janas_spv_q4k_mmq_exact), &g->sm_mm,
+                                 &g->pipe_mm, 0, NV_PER_GROUP, g->sg)
+                 : make_pipeline(g, janas_spv_q4k_mmq,
+                                 sizeof(janas_spv_q4k_mmq), &g->sm_mm,
+                                 &g->pipe_mm, 0, NV_PER_GROUP, g->sg)) !=
+            VK_SUCCESS ||
         (r = make_pipeline(g, janas_spv_q6kp_mmq, sizeof(janas_spv_q6kp_mmq),
                            &g->sm_mm6, &g->pipe_mm6, 0, NV_PER_GROUP, g->sg)) !=
             VK_SUCCESS ||
-        (r = make_pipeline(g, janas_spv_q6k_mmq, sizeof(janas_spv_q6k_mmq),
-                           &g->sm_mm6s, &g->pipe_mm6s, (uint32_t)tiles_exact(),
-                           NV_PER_GROUP, g->sg)) != VK_SUCCESS ||
+        (r = tiles_exact()
+                 ? make_pipeline(g, janas_spv_q6k_mmq_exact,
+                                 sizeof(janas_spv_q6k_mmq_exact), &g->sm_mm6s,
+                                 &g->pipe_mm6s, 0, NV_PER_GROUP, g->sg)
+                 : make_pipeline(g, janas_spv_q6k_mmq,
+                                 sizeof(janas_spv_q6k_mmq), &g->sm_mm6s,
+                                 &g->pipe_mm6s, 0, NV_PER_GROUP, g->sg)) !=
+            VK_SUCCESS ||
         (r = make_pipeline(g, janas_spv_q3k_mmq, sizeof(janas_spv_q3k_mmq),
                            &g->sm_mm3, &g->pipe_mm3, 0, NV_PER_GROUP, g->sg)) !=
             VK_SUCCESS ||

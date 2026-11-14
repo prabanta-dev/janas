@@ -9,10 +9,6 @@
 // minimum applied in float. NOT bit for bit with the CPU: the sums are
 // rounded group by group, not exactly per block; on the development
 // laptop's GPU 1.5 times the exact product's speed on a prompt's block.
-// EXACT (constant 2): a whole block of 8 groups staged per barrier, its
-// integer sums (scales times the groups' dots, minimums times the
-// activations' sums) then two float accumulators, as q4k_matvec.comp and
-// the CPU (src/llm/quant_dotn.h): bit for bit with it.
 #extension GL_EXT_control_flow_attributes : require
 #extension GL_EXT_integer_dot_product : require
 #extension GL_EXT_buffer_reference : require
@@ -21,9 +17,8 @@
 layout(local_size_x = 128) in;
 layout(constant_id = 0) const uint NV = 8; // unused: the table's constants
 layout(constant_id = 1) const uint SG = 8;
-layout(constant_id = 2) const uint EXACT = 0;
 
-const uint BM = 64u, BN = 64u, BK = 32u, KS = EXACT != 0u ? 8u : 4u;
+const uint BM = 64u, BN = 64u, BK = 32u, KS = 4u;
 const uint WM = 32u, WN = 32u, TM = 2u, TN = 2u, WARP = 32u;
 const uint WNITER = (WM * WN) / (WARP * TM * TN); // 8
 const uint WSUBN = WN / WNITER;                    // 4
@@ -37,10 +32,8 @@ layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer F 
 // y: row r of vector v at y[v * ys + r]
 layout(push_constant) uniform P { uvec2 w, x, y; uint rows, nb, nv, xs, ys; } p;
 
-/* a group: nibbles 2 by 2, d*sc and dmin*m (EXACT: d and dmin, sc, m) */
-struct ACache { uint qs[4]; vec2 dm; int sc, mn; };
-/* a group: quants, d8 and d8 * their sum (EXACT: their sum alone) */
-struct BCache { int qs[8]; vec2 ds; int bs; };
+struct ACache { uint qs[4]; vec2 dm; }; // a group: nibbles 2 by 2, d*sc, dmin*m
+struct BCache { int qs[8]; vec2 ds; };  // a group: quants, d8, d8 * their sum
 shared ACache sa[BM * KS];
 shared BCache sb[BN * KS];
 
@@ -56,8 +49,6 @@ void main()
     uint warp_r = warp % (BM / WM), warp_c = warp / (BM / WM);
     float sums[WNITER * TN * TM];
     [[unroll]] for (uint i = 0; i < WNITER * TN * TM; i++) sums[i] = 0.0;
-    precise float sums2[EXACT != 0u ? 2u * WNITER * TN * TM : 1u];
-    [[unroll]] for (uint i = 0; i < sums2.length(); i++) sums2[i] = 0.0;
     uint ngroups = p.nb * 8u;
     for (uint g0 = 0; g0 < ngroups; g0 += KS) {
         // weights: 4 invocations a row, each one word of the row's group
@@ -87,10 +78,7 @@ void main()
                             int mn = jh < 4u ? int(bitfieldExtract(hd.z, int(8u * jj), 6))
                                              : int(bitfieldExtract(hd.w, int(8u * jj + 4u), 4) |
                                                    (bitfieldExtract(hd.z, int(8u * jj + 6u), 2) << 4));
-                            sa[(k + h) * BM + rl + l].dm =
-                                EXACT != 0u ? dd : vec2(dd.x * float(sc), dd.y * float(mn));
-                            sa[(k + h) * BM + rl + l].sc = sc;
-                            sa[(k + h) * BM + rl + l].mn = mn;
+                            sa[(k + h) * BM + rl + l].dm = vec2(dd.x * float(sc), dd.y * float(mn));
                         }
                     }
                 }
@@ -114,41 +102,10 @@ void main()
                     uint bw = j % 4u == 0u ? bs.x : j % 4u == 1u ? bs.y : j % 4u == 2u ? bs.z : bs.w;
                     int s = bitfieldExtract(int(bw), 0, 16) + bitfieldExtract(int(bw), 16, 16);
                     sb[k * BN + c].ds = vec2(d8, d8 * float(s));
-                    sb[k * BN + c].bs = s;
                 }
             }
         }
         barrier();
-        if (EXACT != 0u) {
-            /* the block's integer sums, then its share of the two
-               accumulators: sums[2 i] + sums[2 i + 1] the minimums' */
-            [[unroll]] for (uint wsic = 0; wsic < WNITER; wsic++)
-                [[unroll]] for (uint cc = 0; cc < TN; cc++) {
-                    uint col = warp_c * WN + wsic * WSUBN + tiwc * TN + cc;
-                    [[unroll]] for (uint cr = 0; cr < TM; cr++) {
-                        uint rl = warp_r * WM + tiwr * TM + cr;
-                        int isum = 0, imin = 0;
-                        for (uint k = 0; k < 8u; k++) {
-                            ACache ca = sa[k * BM + rl];
-                            BCache cb = sb[k * BN + col];
-                            int q = 0;
-                            [[unroll]] for (uint i = 0; i < 8u; i++)
-                                q += dotPacked4x8EXT(int((ca.qs[i / 2u] >> ((i % 2u) * 4u)) & 0x0f0f0f0fu),
-                                                     cb.qs[i]);
-                            isum += q * ca.sc;
-                            imin += ca.mn * cb.bs;
-                        }
-                        vec2 dd = sa[rl].dm;
-                        float d8 = sb[col].ds.x;
-                        uint o = 2u * ((wsic * TN + cc) * TM + cr);
-                        precise float ds = dd.x * d8, dm = dd.y * d8;
-                        sums2[o] = fma(ds, float(isum), sums2[o]);
-                        sums2[o + 1u] = fma(dm, float(imin), sums2[o + 1u]);
-                    }
-                }
-            barrier();
-            continue;
-        }
         for (uint k = 0; k < KS; k++) {
             ACache ca[TM];
             [[unroll]] for (uint cr = 0; cr < TM; cr++)
@@ -173,9 +130,7 @@ void main()
             [[unroll]] for (uint cr = 0; cr < TM; cr++) {
                 uint row = r0 + warp_r * WM + tiwr * TM + cr;
                 uint v = v0 + warp_c * WN + wsic * WSUBN + tiwc * TN + cc;
-                uint o = (wsic * TN + cc) * TM + cr;
                 if (row < p.rows && v < p.nv)
-                    Y.v[v * p.ys + row] =
-                        EXACT != 0u ? sums2[2u * o] - sums2[2u * o + 1u] : sums[o];
+                    Y.v[v * p.ys + row] = sums[(wsic * TN + cc) * TM + cr];
             }
 }
