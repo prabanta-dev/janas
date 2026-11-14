@@ -309,6 +309,23 @@ const struct janas_model_entry janas_catalog[] = {
          "0276b0697a05075fec8ab076a757205537804ff41dd7e9dadace7c6993763563",
      .ram_gb = 32,
      .fast = "--head 4 --bits 4"},
+    /* NVIDIA's own 24GB GGUF, in one step (no planes: its experts are
+       IQ2_XXS); under NVIDIA's OpenMDW-1.1, which lets it be passed on
+       with the licence and NVIDIA's notices (MODELS.md) */
+    {.name = "nemotron-3.5-bolt-74b",
+     .what = "NVIDIA Nemotron-3.5-Bolt-74B-A9B, mixture of experts with "
+             "Mamba-2 layers, its experts at two bits",
+     .repo = "nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB-GGUF",
+     .parts = {"NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB.gguf"},
+     .part_sha =
+         {"91d63363e782c8a3d5f4be42816eba8e0d42dd2530bd07a7d0d2dc440599af75"},
+     .gguf_gb = 22.0,
+     .out = "nemotron-3.5-bolt-74b-24gb.jns",
+     .jns_repo = "prabanta-dev/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-JNS",
+     .jns_gb = 22.02,
+     .flat_sha =
+         "5c67c321b7e4dd2397d990bb12cd4ae5cd08db2edd75dbbc71b7aeea139b54c1",
+     .ram_gb = 32},
     {.name = "qwen3-embedding-0.6b",
      .what = "Qwen3-Embedding-0.6B, for janas-server --embedding-model",
      .repo = "Qwen/Qwen3-Embedding-0.6B-GGUF",
