@@ -67,8 +67,8 @@ int main(int argc, char **argv)
     }
     S = argc > 3 ? (uint32_t)atoi(argv[3]) : 4;
     N = argc > 4 ? (uint32_t)atoi(argv[4]) : 48;
-    if (S < 2 || S > 64 || N < 8 || N > 1024) {
-        fprintf(stderr, "multiseq_check: 2 <= S <= 64, 8 <= N <= 1024\n");
+    if (S < 2 || S > 64 || N < 8 || N > 2048) {
+        fprintf(stderr, "multiseq_check: 2 <= S <= 64, 8 <= N <= 2048\n");
         return 2;
     }
     tok = malloc((size_t)S * N * sizeof(int32_t));

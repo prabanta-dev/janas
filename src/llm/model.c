@@ -150,7 +150,13 @@ static void set_rope(struct janas_llm_model *m, uint32_t n, uint32_t pos0)
     else
         rope_table(m->rope_cos, m->rope_sin, n, pos0, m->n_rot, m->rope_base,
                    m->rope_freqs);
-    if (m->a->swa)
+    if (m->a->swa && !janas_m_on_cur(m)) /* the sliding layers' too */
+        for (uint32_t i = 0; i < m->n_parts; i++) {
+            size_t r = (size_t)m->part_row0[i] * (m->n_rot_swa / 2);
+            rope_table(m->rope_cos_swa + r, m->rope_sin_swa + r, m->parts[i].n,
+                       m->parts[i].pos0, m->n_rot_swa, m->rope_base_swa, NULL);
+        }
+    else if (m->a->swa)
         rope_table(m->rope_cos_swa, m->rope_sin_swa, n, pos0, m->n_rot_swa,
                    m->rope_base_swa, NULL);
 }

@@ -200,7 +200,7 @@ int janas_llm_model_forward(struct janas_llm_model *m, const int32_t *tokens,
  * per piece. Each piece's logits are those janas_llm_model_forward gives its
  * tokens on its sequence alone, to the bit. For now the models with
  * attention, Gated DeltaNet and Mamba-2 (Qwen3, Qwen3-Next, Qwen3.5 and 3.6,
- * Nemotron-H), on the
+ * Gemma 4, Nemotron-H), on the
  * CPU; others, and a sequence with pictures, are refused (-1). A recurrent
  * sequence goes back only as janas_llm_model_forward allows.
  */

@@ -14,11 +14,12 @@
 
 int janas_llm_model_parts_ok(const struct janas_llm_model *m)
 {
-    /* attention, and the recurrent layers - Gated DeltaNet (Qwen3-Next,
-       Qwen3.5 and 3.6) and Mamba-2 (Nemotron-H) - each piece on its own
-       sequence: not yet Gemma 4's rings and per-layer inputs, qwen4exp's
+    /* attention - Gemma 4's sliding windows and rings too, and its
+       per-layer inputs, which are the tokens' - and the recurrent layers,
+       Gated DeltaNet (Qwen3-Next, Qwen3.5 and 3.6) and Mamba-2
+       (Nemotron-H), each piece on its own sequence: not yet qwen4exp's
        streams and sparse attention */
-    return !m->a->swa && !m->ple_dim && !m->hc_n && !m->ix_heads;
+    return !m->hc_n && !m->ix_heads;
 }
 
 struct janas_seq *janas_llm_model_seq_new(struct janas_llm_model *m)
