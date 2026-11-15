@@ -28,13 +28,18 @@ struct fl_roots {
     char home[PATH_MAX], cwd[PATH_MAX];
     char root[FL_ROOTS][PATH_MAX];
     int n_root;
+    int n_write;  /* the first n_write roots may be written in */
+    int confined; /* a workspace: no home, the rest read only */
 };
 
 /* The path meant (~/x, absolute, or relative to cwd) as an absolute one,
    not yet followed: 0, or -1 when too long. */
 int fl_expand(const struct fl_roots *r, const char *in, char *out, size_t cap);
 /* The roots from the environment (HOME, the working directory) and the
-   list. 0, or -1 when there is no home. */
+   list, all of them written in; or, with JANAS_FILES_WORKSPACE set (an
+   app's workspace, Brebus's), that folder alone to write in, the working
+   directory, and the folders of JANAS_FILES_READ_ONLY (separated by ':')
+   only read, the home not reached. 0, or -1 when there is no home. */
 int fl_roots_load(struct fl_roots *r);
 /* The path meant (~/x, absolute, or relative to cwd) into out, with every
    link followed: must_exist 1 for a file or folder there is, 0 for one to
@@ -83,3 +88,8 @@ int fl_fail(struct janas_buf *b, const char *fmt, ...)
     __attribute__((format(gnu_printf, 2, 3)));
 
 #endif
+
+/* fl_resolve for a file or folder to write, make or edit: also refused
+   where it may only be read. */
+int fl_resolve_write(const struct fl_roots *r, const char *in, int must_exist,
+                     char *out, size_t cap, char *why, size_t why_len);

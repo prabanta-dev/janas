@@ -26,9 +26,12 @@
 #include "services/docs/chunks.c"
 #include "services/docs/embed.c"
 #include "services/docs/extract.c"
+#include "services/docs/html.c"
 #include "services/docs/index.c"
+#include "services/docs/office.c"
 #include "services/docs/pdf.c"
 #include "services/docs/roots.c"
+#include "services/docs/rtf.c"
 #include "services/docs/search.c"
 #include "services/docs/store.c"
 #include "services/docs/tools.c"
@@ -218,6 +221,242 @@ static void documents(void)
         }
     janas_buf_free(&t);
     printf("test_docs: %d of 40000 mutated archives read\n", read_ok);
+}
+
+/* ---- more formats: sheets, slides, web pages, books, RTF ---- */
+
+/* a zip archive of stored files (names and texts, NULL-ended), into z:
+   its length. No CRC: zip.c does not check it. */
+static size_t zip_make(const char *const *files, unsigned char *z, size_t cap)
+{
+    size_t at = 0, cd[16], nf = 0;
+    for (const char *const *f = files; *f && nf < 16; f += 2, nf++) {
+        size_t nl = strlen(f[0]), dl = strlen(f[1]);
+        if (at + 30 + nl + dl > cap)
+            return 0;
+        cd[nf] = at;
+        unsigned char *h = z + at;
+        memset(h, 0, 30);
+        h[0] = 'P', h[1] = 'K', h[2] = 3, h[3] = 4, h[4] = 20;
+        for (int i = 0; i < 4; i++) {
+            h[18 + i] = (unsigned char)(dl >> (8 * i));
+            h[22 + i] = (unsigned char)(dl >> (8 * i));
+        }
+        h[26] = (unsigned char)nl, h[27] = (unsigned char)(nl >> 8);
+        memcpy(h + 30, f[0], nl);
+        memcpy(h + 30 + nl, f[1], dl);
+        at += 30 + nl + dl;
+    }
+    size_t cd_at = at;
+    nf = 0;
+    for (const char *const *f = files; *f && nf < 16; f += 2, nf++) {
+        size_t nl = strlen(f[0]), dl = strlen(f[1]);
+        if (at + 46 + nl > cap)
+            return 0;
+        unsigned char *h = z + at;
+        memset(h, 0, 46);
+        h[0] = 'P', h[1] = 'K', h[2] = 1, h[3] = 2, h[4] = 20, h[6] = 20;
+        for (int i = 0; i < 4; i++) {
+            h[20 + i] = (unsigned char)(dl >> (8 * i));
+            h[24 + i] = (unsigned char)(dl >> (8 * i));
+            h[42 + i] = (unsigned char)(cd[nf] >> (8 * i));
+        }
+        h[28] = (unsigned char)nl, h[29] = (unsigned char)(nl >> 8);
+        memcpy(h + 46, f[0], nl);
+        at += 46 + nl;
+    }
+    if (at + 22 > cap)
+        return 0;
+    unsigned char *e = z + at;
+    memset(e, 0, 22);
+    size_t cs = at - cd_at;
+    e[0] = 'P', e[1] = 'K', e[2] = 5, e[3] = 6;
+    e[8] = e[10] = (unsigned char)nf;
+    for (int i = 0; i < 4; i++) {
+        e[12 + i] = (unsigned char)(cs >> (8 * i));
+        e[16 + i] = (unsigned char)(cd_at >> (8 * i));
+    }
+    return at + 22;
+}
+
+static const char *const XLSX_FILES[] = {
+    "xl/workbook.xml",
+    "<workbook><sheets><sheet name=\"Fiumi &amp; laghi\" sheetId=\"1\" "
+    "r:id=\"rId2\"/><sheet name=\"Vuoto\" sheetId=\"2\" r:id=\"rId9\"/>"
+    "</sheets></workbook>",
+    "xl/_rels/workbook.xml.rels",
+    "<Relationships><Relationship Id=\"rId2\" Target=\"worksheets/a.xml\"/>"
+    "</Relationships>",
+    "xl/sharedStrings.xml",
+    "<sst><si><t>Fiume</t></si><si><r><t>Lun</t></r><r><t xml:space="
+    "\"preserve\">ghezza</t></r></si><si><t>Po</t></si></sst>",
+    "xl/worksheets/a.xml",
+    "<worksheet><sheetData><row r=\"1\"><c r=\"A1\" t=\"s\"><v>0</v></c>"
+    "<c r=\"C1\" t=\"s\"><v>1</v></c></row><row r=\"2\"/><row r=\"3\">"
+    "<c r=\"A3\" t=\"s\"><v>2</v></c><c r=\"B3\"/><c r=\"C3\"><f>1+1</f>"
+    "<v>652</v></c><c r=\"D3\" t=\"b\"><v>1</v></c><c r=\"E3\" "
+    "t=\"inlineStr\"><is><t>&lt;nord&gt;</t></is></c></row></sheetData>"
+    "</worksheet>",
+    NULL};
+static const char XLSX_TEXT[] =
+    "## Fiumi & laghi\nFiume\t\tLunghezza\nPo\t\t652\tTRUE\t<nord>";
+
+static const char *const PPTX_FILES[] = {
+    "ppt/presentation.xml",
+    "<p:presentation><p:sldIdLst><p:sldId id=\"257\" r:id=\"rId3\"/>"
+    "<p:sldId id=\"256\" r:id=\"rId2\"/></p:sldIdLst></p:presentation>",
+    "ppt/_rels/presentation.xml.rels",
+    "<Relationships><Relationship Id=\"rId2\" Target=\"slides/slide1.xml\"/>"
+    "<Relationship Id=\"rId3\" Target=\"/ppt/slides/slide2.xml\"/>"
+    "</Relationships>",
+    "ppt/slides/slide1.xml",
+    "<p:sld><a:p><a:pPr/><a:r><a:t>Seconda</a:t></a:r></a:p></p:sld>",
+    "ppt/slides/slide2.xml",
+    "<p:sld><a:p><a:r><a:t>Le domus </a:t></a:r><a:r><a:t>de "
+    "janas</a:t></a:r><a:tab/></a:p><a:p/><a:p><a:r><a:t>&#x263A;"
+    "</a:t></a:r></a:p></p:sld>",
+    NULL};
+static const char PPTX_TEXT[] =
+    "## Slide 1\nLe domus de janas\n\xe2\x98\xba\n\n## Slide 2\nSeconda";
+
+static const char *const ODS_FILES[] = {
+    "content.xml",
+    "<office:document-content><office:body><table:table table:name=\"Conti\">"
+    "<table:table-row><table:table-cell><text:p>Voce</text:p>"
+    "</table:table-cell><table:table-cell><text:p>a</text:p><text:p>b"
+    "</text:p></table:table-cell><table:table-cell/></table:table-row>"
+    "<table:table-row><table:table-cell table:number-columns-repeated="
+    "\"1024\"/></table:table-row></table:table></office:body>"
+    "</office:document-content>",
+    NULL};
+static const char ODS_TEXT[] = "## Conti\nVoce\ta b";
+
+static const char *const ODP_FILES[] = {
+    "content.xml",
+    "<office:document-content><office:body><office:presentation>"
+    "<draw:page><draw:frame><draw:text-box><text:p>Titolo</text:p>"
+    "<text:p>Corpo</text:p></draw:text-box></draw:frame></draw:page>"
+    "<draw:page><draw:frame><draw:text-box><text:p>Due</text:p>"
+    "</draw:text-box></draw:frame></draw:page></office:presentation>"
+    "</office:body></office:document-content>",
+    NULL};
+static const char ODP_TEXT[] = "## Slide 1\nTitolo\nCorpo\n\n## Slide 2\nDue";
+
+static const char *const EPUB_FILES[] = {
+    "META-INF/container.xml",
+    "<container><rootfiles><rootfile full-path=\"OEBPS/content.opf\" "
+    "media-type=\"application/oebps-package+xml\"/></rootfiles></container>",
+    "OEBPS/content.opf",
+    "<package><manifest><item id=\"c2\" href=\"Text/due%20b.xhtml\"/>"
+    "<item id=\"c1\" href=\"Text/uno.xhtml#top\"/></manifest><spine>"
+    "<itemref idref=\"c1\"/><itemref idref=\"missing\"/><itemref "
+    "idref=\"c2\"/></spine></package>",
+    "OEBPS/Text/uno.xhtml",
+    "<html><body><h2>Capitolo uno</h2><p>Le <i>janas</i> tessevano.</p>"
+    "</body></html>",
+    "OEBPS/Text/due b.xhtml",
+    "<html><body><p>Fine.</p></body></html>",
+    NULL};
+static const char EPUB_TEXT[] = "## Capitolo uno\nLe janas tessevano.\n\nFine.";
+
+static const char HTML_PAGE[] =
+    "<!DOCTYPE html><html><head><title>Nota &amp; prova</title>"
+    "<style>p{x:1}</style><script>if (a<b) x();</script></head><body>"
+    "<!-- note --><h1>I nuraghi</h1><p>Il  nuraghe\n  &egrave; dell&#39;"
+    "et&agrave; del bronzo.</p><ul><li><p>Su Nuraxi</p></li><li>Losa</li>"
+    "</ul><table><tr><td><p>Nome</p></td><td>Secolo</td></tr><tr><td>Losa"
+    "</td><td>XV</td></tr></table><pre>a  b\n c</pre><p>fine<br>riga</p>"
+    "</body></html>";
+static const char HTML_TEXT[] =
+    "# Nota & prova\n\n# I nuraghi\nIl nuraghe \xc3\xa8 dell'et\xc3\xa0 del "
+    "bronzo.\n- Su Nuraxi\n- Losa\nNome\tSecolo\nLosa\tXV\n\na  b\n c\nfine"
+    "\nriga";
+
+static const char RTF_DOC[] =
+    "{\\rtf1\\ansi\\ansicpg1252\\deff0{\\fonttbl{\\f0 Times;}}{\\colortbl;"
+    "\\red0\\green0\\blue0;}{\\*\\generator Writer;}{\\info{\\title X}}"
+    "\\pard Il nuraghe \\'e8 dell\\rquote et\\'e0\\par\n"
+    "Prezzo 12 \\'80\\tab\\uc1\\u9786?\\par{\\*\\unknown nascosto}{\\pict ff}"
+    "\\{graffe\\}\\par\\par\\par fine}";
+static const char RTF_TEXT[] =
+    "Il nuraghe \xc3\xa8 dell\xe2\x80\x99"
+    "et\xc3\xa0\nPrezzo 12 \xe2\x82\xac\t\xe2\x98\xba\n{graffe}\n\nfine";
+
+static void more_formats(void)
+{
+    struct janas_buf t = {0};
+    char why[256];
+    static unsigned char z[5][8192];
+    size_t zn[5];
+    const char *const *files[5] = {XLSX_FILES, PPTX_FILES, ODS_FILES, ODP_FILES,
+                                   EPUB_FILES};
+    const int kinds[5] = {DZ_XLSX, DZ_PPTX, DZ_ODS, DZ_ODP, DZ_EPUB};
+    const char *want[5] = {XLSX_TEXT, PPTX_TEXT, ODS_TEXT, ODP_TEXT, EPUB_TEXT};
+    const char *names[5] = {"xlsx", "pptx", "ods", "odp", "epub"};
+    for (int a = 0; a < 5; a++) {
+        zn[a] = zip_make(files[a], z[a], sizeof z[a]);
+        t.n = 0;
+        int rc = dz_extract_mem(z[a], zn[a], kinds[a], &t, why, sizeof why);
+        CHECK(rc == 0 && t.n == strlen(want[a]) && !memcmp(t.p, want[a], t.n),
+              "%s (%d, %s): [%.*s]", names[a], rc, why, (int)t.n,
+              t.p ? t.p : "");
+    }
+    t.n = 0;
+    CHECK(dz_extract_mem((const uint8_t *)HTML_PAGE, strlen(HTML_PAGE), DZ_HTML,
+                         &t, why, sizeof why) == 0 &&
+              t.n == strlen(HTML_TEXT) && !memcmp(t.p, HTML_TEXT, t.n),
+          "html: [%.*s]", (int)t.n, t.p ? t.p : "");
+    t.n = 0;
+    CHECK(dz_extract_mem((const uint8_t *)RTF_DOC, strlen(RTF_DOC), DZ_RTF, &t,
+                         why, sizeof why) == 0 &&
+              t.n == strlen(RTF_TEXT) && !memcmp(t.p, RTF_TEXT, t.n),
+          "rtf: [%.*s]", (int)t.n, t.p ? t.p : "");
+    /* a page in Latin-1 is read as such */
+    t.n = 0;
+    dz_html_text("<p>citt\xe0</p>", 11, &t);
+    CHECK(t.n == 6 && !memcmp(t.p, "citt\xc3\xa0", 6), "latin-1: [%.*s]",
+          (int)t.n, t.p ? t.p : "");
+    CHECK(dz_kind("/a/b.XLSX") == DZ_XLSX && dz_kind("/a/b.htm") == DZ_HTML &&
+              dz_kind("/a/b.epub") == DZ_EPUB &&
+              dz_kind("/a/b.rtf") == DZ_RTF && dz_kind("/a/b.odp") == DZ_ODP &&
+              dz_kind("/a/b.ods") == DZ_ODS && dz_kind("/a/b.pptx") == DZ_PPTX,
+          "the new kinds");
+    t.n = 0;
+    CHECK(dz_extract_mem(z[2], zn[2], DZ_XLSX, &t, why, sizeof why) != 0,
+          "an ods read as an xlsx");
+    t.n = 0;
+    CHECK(dz_extract_mem((const uint8_t *)"{\\rt", 4, DZ_RTF, &t, why,
+                         sizeof why) != 0,
+          "not RTF read");
+
+    /* every input cut at every byte, then mutated */
+    unsigned char *m = malloc(8192);
+    srand(777);
+    int read_ok = 0, tries = 0;
+    for (int a = 0; a < 7 && m; a++) {
+        const unsigned char *src = a < 5    ? z[a]
+                                   : a == 5 ? (const unsigned char *)HTML_PAGE
+                                            : (const unsigned char *)RTF_DOC;
+        size_t n = a < 5 ? zn[a] : strlen((const char *)src);
+        int kind = a < 5 ? kinds[a] : a == 5 ? DZ_HTML : DZ_RTF;
+        for (size_t k = 0; k <= n; k++) {
+            memcpy(m, src, k);
+            t.n = 0;
+            dz_extract_mem(m, k, kind, &t, why, sizeof why);
+        }
+        for (int r = 0; r < 3000; r++, tries++) {
+            memcpy(m, src, n);
+            int nm = 1 + rand() % 6;
+            for (int i = 0; i < nm; i++)
+                m[rand() % n] = (unsigned char)rand();
+            t.n = 0;
+            read_ok += dz_extract_mem(m, n, kind, &t, why, sizeof why) == 0;
+        }
+    }
+    free(m);
+    janas_buf_free(&t);
+    printf("test_docs: more formats, %d of %d mutated inputs read\n", read_ok,
+           tries);
 }
 
 /* ---- PDF ---- */
@@ -847,6 +1086,7 @@ static void home_tests(void)
 int main(void)
 {
     documents();
+    more_formats();
     pdfs();
     pieces();
     answers();

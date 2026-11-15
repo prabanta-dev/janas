@@ -137,7 +137,8 @@ static int make_parent(const struct fl_roots *r, const char *in, char *why,
             char real[PATH_MAX];
             struct stat st;
             if (stat(full, &st) != 0) {
-                if (fl_resolve(r, full, 0, real, sizeof real, why, why_len))
+                if (fl_resolve_write(r, full, 0, real, sizeof real, why,
+                                     why_len))
                     return -1;
                 if (mkdir(real, 0755) != 0 && errno != EEXIST) {
                     snprintf(why, why_len, "%s: %s", real, strerror(errno));
@@ -170,7 +171,7 @@ int fl_tool_write(const struct fl_roots *r, const struct janas_json *args,
     if (!(md && md->type == JANAS_JSON_FALSE) &&
         make_parent(r, in, why, sizeof why) != 0)
         return fl_fail(b, "%s.", why);
-    if (fl_resolve(r, in, 0, path, sizeof path, why, sizeof why))
+    if (fl_resolve_write(r, in, 0, path, sizeof path, why, sizeof why))
         return fl_fail(b, "%s.", why);
     fl_short(r, path, s, sizeof s);
     struct stat st;
@@ -213,7 +214,7 @@ int fl_tool_edit(const struct fl_roots *r, const struct janas_json *args,
                           "and the new_text.");
     size_t on = ov->n, rn = nv->n;
     char path[PATH_MAX], why[PATH_MAX + 200], s[PATH_MAX], kept[PATH_MAX];
-    if (fl_resolve(r, in, 1, path, sizeof path, why, sizeof why))
+    if (fl_resolve_write(r, in, 1, path, sizeof path, why, sizeof why))
         return fl_fail(b, "%s.", why);
     fl_short(r, path, s, sizeof s);
     FILE *f = fopen(path, "rb");
@@ -288,7 +289,7 @@ int fl_tool_mkdir(const struct fl_roots *r, const struct janas_json *args,
         return fl_fail(b, "files_mkdir needs a path.");
     char path[PATH_MAX], why[PATH_MAX + 200], s[PATH_MAX];
     if (make_parent(r, in, why, sizeof why) != 0 ||
-        fl_resolve(r, in, 0, path, sizeof path, why, sizeof why) != 0)
+        fl_resolve_write(r, in, 0, path, sizeof path, why, sizeof why) != 0)
         return fl_fail(b, "%s.", why);
     fl_short(r, path, s, sizeof s);
     struct stat st;

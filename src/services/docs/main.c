@@ -37,13 +37,15 @@ static void usage(void)
         "usage: janas-docs [--server URL [--key KEY] | --embedding-model "
         "FILE]\n"
         "                  [--index | --search TEXT]\n"
+        "       janas-docs --text FILE\n"
         "An MCP server over stdio: a client starts it and calls its tools,\n"
         "which only read - docs_search, the passages of the user's\n"
         "documents that answer a question; docs_read, a document's text;\n"
         "docs_status, what is indexed. It indexes in the background the\n"
         "folders listed, a path a line, in ~/.config/janas/docs-dirs.txt\n"
-        "(the Documents folder without it): text, Markdown, docx, odt and\n"
-        "PDF,\n"
+        "(the Documents folder without it): text, Markdown, PDF, Word,\n"
+        "Excel and PowerPoint (docx, xlsx, pptx), LibreOffice's (odt, ods,\n"
+        "odp), RTF, web pages and EPUB books,\n"
         "never the private files (keys, passwords, the browsers' data).\n"
         "The index is kept in ~/.local/share/janas/docs/.\n"
         "Searched by their words always, and by their meaning with an\n"
@@ -54,6 +56,7 @@ static void usage(void)
         "qwen3-embedding-0.6b-q8.jns from janas-get.\n"
         "  --index        index now, say what is there, and end\n"
         "  --search TEXT  search the index as it is, and end\n"
+        "  --text FILE    the text read from one document, as indexed\n"
         "Configured in a client as, for instance:\n"
         "  {\"mcpServers\": {\"docs\": {\"command\": \"janas-docs\"}}}\n");
 }
@@ -71,7 +74,8 @@ static void mkdirs(char *p)
 
 int main(int argc, char **argv)
 {
-    const char *server = NULL, *key = NULL, *model = NULL, *search = NULL;
+    const char *server = NULL, *key = NULL, *model = NULL, *search = NULL,
+               *one = NULL;
     int index_only = 0;
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i], *v = i + 1 < argc ? argv[i + 1] : NULL;
@@ -85,10 +89,26 @@ int main(int argc, char **argv)
             search = v, i++;
         else if (!strcmp(a, "--index"))
             index_only = 1;
+        else if (!strcmp(a, "--text") && v)
+            one = v, i++;
         else {
             usage();
             return !strcmp(a, "-h") || !strcmp(a, "--help") ? 0 : 2;
         }
+    }
+    if (one) { /* a document's text, as the index reads it */
+        struct janas_buf t = {0};
+        char why[256];
+        if (dz_extract(one, &t, why, sizeof why) != 0) {
+            fprintf(stderr, "janas-docs: %s: %s\n", one, why);
+            janas_buf_free(&t);
+            return 1;
+        }
+        fwrite(t.p, 1, t.n, stdout);
+        if (t.n)
+            fputc('\n', stdout);
+        janas_buf_free(&t);
+        return 0;
     }
     static struct dz_ctx c;
     if (dz_roots_load(&c.roots) != 0) {
@@ -100,7 +120,11 @@ int main(int argc, char **argv)
                                         "embedding_model"};
     char conf[PATH_MAX + 64], cs[1024], ck[512], cm[PATH_MAX], why[256];
     static char cm_home[2 * PATH_MAX];
-    snprintf(conf, sizeof conf, "%s/.config/janas/docs.conf", c.roots.home);
+    const char *own_conf = getenv("JANAS_DOCS_CONF"); /* an app's own */
+    if (own_conf && *own_conf == '/')
+        snprintf(conf, sizeof conf, "%s", own_conf);
+    else
+        snprintf(conf, sizeof conf, "%s/.config/janas/docs.conf", c.roots.home);
     if (!server && !model &&
         janas_conf_get(conf, NAMES, 3, "server", cs, sizeof cs, why,
                        sizeof why))

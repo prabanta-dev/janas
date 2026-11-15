@@ -12,13 +12,25 @@ All three only read, and run without asking:
 
 ## What it reads
 
-The folders listed, a path a line (`~/...` or absolute, `#` starts a comment), in `~/.config/janas/docs-dirs.txt`; without that file, your Documents folder (the one your desktop names in `~/.config/user-dirs.dirs`, `~/Documents` otherwise). The list is read again at every round of indexing.
+The folders listed, a path a line (`~/...` or absolute, `#` starts a comment), in `~/.config/janas/docs-dirs.txt` (an app with a list of its own, as [Brebus](../../../docs/brebus.md) for its workspace, names it with `JANAS_DOCS_DIRS`, and its settings file with `JANAS_DOCS_CONF`); without that file, your Documents folder (the one your desktop names in `~/.config/user-dirs.dirs`, `~/Documents` otherwise). The list is read again at every round of indexing.
 
-Under them: plain text (`.txt`, `.text`, `.csv`, `.tsv`), Markdown (`.md`, `.markdown`, `.mdown`), reStructuredText, Org, AsciiDoc and TeX files, Word documents (`.docx`), LibreOffice ones (`.odt`) and PDF, of up to 64 MiB each. Not yet: spreadsheets, presentations, web pages.
+Under them, of up to 64 MiB each:
+
+| Kind | Files | Read as |
+|---|---|---|
+| Text | `.txt`, `.text`, `.csv`, `.tsv`, Markdown (`.md`, `.markdown`, `.mdown`), reStructuredText, Org, AsciiDoc, TeX | as they are |
+| Word processors | Word (`.docx`), LibreOffice (`.odt`), RTF (`.rtf`) | the text a reader sees, headings as Markdown's |
+| Sheets | Excel (`.xlsx`, `.xlsm`), LibreOffice (`.ods`) | each sheet headed by its name, a row a line, the cells by tabs |
+| Slides | PowerPoint (`.pptx`), LibreOffice (`.odp`) | each slide headed "Slide N", in the presentation's order |
+| Web pages | `.html`, `.htm`, `.xhtml` | their text, without scripts and styles, headings and list items marked |
+| Books | EPUB (`.epub`) | the chapters in their reading order |
+| PDF | `.pdf` | below |
+
+Not yet: the old binary Office formats (`.doc`, `.xls`, `.ppt`), scanned pages (no OCR).
 
 Never: the names starting with a dot (hidden files and folders), `node_modules`, links (neither to files nor to folders: a link cannot take the indexing out of the folders you named), and the private files, the same as [`janas-files`](../files/README.md#where-it-reaches) keeps away from - keys, passwords, tokens, `.env` files, the browsers' and the mail's data. `docs_read` reads only a document under one of the folders, of a kind read here, and not private.
 
-A Word document is read from its `word/document.xml`, a LibreOffice one from its `content.xml`, with the archive opened and decompressed by Janas's own code: the text a reader sees, its headings marked as in Markdown (`#`, `##`...), without the deleted text of tracked changes, the codes of fields, or the comments.
+A Word document is read from its `word/document.xml`, LibreOffice's documents, sheets and slides from their `content.xml`, an Excel workbook from its sheets in the workbook's order (with its shared strings, a formula's last value, TRUE and FALSE), a PowerPoint presentation from its slides in the presentation's order, an EPUB from the chapters its package's spine lists, with the archive opened and decompressed by Janas's own code: the text a reader sees, its headings marked as in Markdown (`#`, `##`...), without the deleted text of tracked changes, the codes of fields, or the comments.
 
 A PDF is read by Janas's own code too:
 
@@ -93,3 +105,5 @@ On the development laptop, 25 PDFs at hand, compared word by word with poppler's
 - **Not read, and said so:** an encrypted PDF.
 
 In `janas-chat` with Qwen3-4B (Q4_K_M), on a pipe, the same folder searched by words: "Cerca nei miei documenti cosa dicono di Obsidian e riassumilo." opened the service, called `docs_search` with "Obsidian", and summed up the Obsidian section of `compatibility.md` with its `--allow-origin app://obsidian.md` command. Asked less directly ("Nei miei documenti c'è scritto come collegare Obsidian a janas-server?"), Qwen3-4B did not open the service and answered from its own guesses: a small model's limit.
+
+More formats, 15 November 2026: in `tests/test_docs.c`, an xlsx (two sheets, one missing; shared strings in rich runs, an empty column kept by a tab, a formula's value, a boolean, an inline string), a pptx (slides out of their files' order, an absolute target), an ods (a cell of two paragraphs, a row of 1,024 repeated empty cells), an odp, an EPUB (a chapter missing, an href with `%20` and a fragment), a web page (a script holding `<b`, a style, a comment, entities, a list, a table, `pre`, a page in Latin-1) and an RTF (font and colour tables, `\*` destinations, a picture, `\'80` as €, `鞆?`, escaped braces) read to their exact text; each cut at every byte and mutated 3,000 times. And files made by LibreOffice 25.2 from a CSV, a web page and a presentation (xlsx, ods, pptx, odp, odt, rtf, epub, xhtml), read with `janas-docs --text`: their cells, slides, paragraphs, lists and tables as written.

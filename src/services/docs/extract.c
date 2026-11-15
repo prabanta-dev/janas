@@ -3,9 +3,11 @@
 /*
  * extract.c - the text of a document, by the kind its name says: plain
  * text and Markdown as they are (when they are text: no NUL, valid UTF-8
- * but for a byte in a hundred), a docx's word/document.xml and an odt's
- * content.xml through xml.c, a PDF through pdf.c. Anything else is not a
- * document here.
+ * but for a byte in a hundred), a docx's word/document.xml and the
+ * content.xml of LibreOffice's documents, sheets and slides (odt, ods, odp)
+ * through xml.c, Excel's and PowerPoint's (xlsx, pptx) through office.c,
+ * web pages and EPUB books through html.c, RTF through rtf.c, a PDF
+ * through pdf.c. Anything else is not a document here.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -31,6 +33,16 @@ int dz_kind(const char *path)
         return DZ_ODT;
     if (!strcasecmp(dot, "pdf"))
         return DZ_PDF;
+    static const struct {
+        const char *ext;
+        int kind;
+    } MORE[] = {{"ods", DZ_ODS},   {"odp", DZ_ODP},    {"xlsx", DZ_XLSX},
+                {"xlsm", DZ_XLSX}, {"pptx", DZ_PPTX},  {"html", DZ_HTML},
+                {"htm", DZ_HTML},  {"xhtml", DZ_HTML}, {"epub", DZ_EPUB},
+                {"rtf", DZ_RTF}};
+    for (size_t i = 0; i < sizeof MORE / sizeof MORE[0]; i++)
+        if (!strcasecmp(dot, MORE[i].ext))
+            return MORE[i].kind;
     for (size_t i = 0; i < sizeof TEXT_EXT / sizeof TEXT_EXT[0]; i++)
         if (!strcasecmp(dot, TEXT_EXT[i]))
             return DZ_TEXT;
@@ -80,7 +92,22 @@ int dz_extract_mem(const uint8_t *p, size_t n, int kind, struct janas_buf *text,
     }
     if (kind == DZ_PDF)
         return dz_pdf_text(p, n, text, why, wn);
-    if (kind != DZ_DOCX && kind != DZ_ODT) {
+    if (kind == DZ_XLSX)
+        return dz_xlsx_text(p, n, text, why, wn);
+    if (kind == DZ_PPTX)
+        return dz_pptx_text(p, n, text, why, wn);
+    if (kind == DZ_EPUB)
+        return dz_epub_text(p, n, text, why, wn);
+    if (kind == DZ_RTF)
+        return dz_rtf_text((const char *)p, n, text, why, wn);
+    if (kind == DZ_HTML) {
+        if (dz_html_text((const char *)p, n, text) != 0) {
+            snprintf(why, wn, "out of memory");
+            return -1;
+        }
+        return 0;
+    }
+    if (kind != DZ_DOCX && kind != DZ_ODT && kind != DZ_ODS && kind != DZ_ODP) {
         snprintf(why, wn, "not a kind of document read here");
         return -1;
     }

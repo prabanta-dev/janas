@@ -304,6 +304,41 @@ static void listed(void)
     CHECK(is_error == 1, "a private key in a listed folder: %s", text);
 }
 
+/* an app's workspace (Brebus's): proj/ref to write in, out to read only,
+   the rest of the home out of reach */
+static void workspace(void)
+{
+    char path[PATH_MAX + 64], line[PATH_MAX + 64];
+    setenv("JANAS_FILES_WORKSPACE", P("%s/proj/ref", home), 1);
+    setenv("JANAS_FILES_READ_ONLY", out, 1);
+    struct fl_roots keep = roots;
+    CHECK(fl_roots_load(&roots) == 0 && roots.confined && roots.n_write == 1,
+          "a workspace's roots");
+    call("files_read", "{\"path\": \"FMain.class\"}");
+    CHECK(!is_error && strstr(text, "Print"), "relative to the workspace: %s",
+          text);
+    snprintf(line, sizeof line, "{\"path\": \"%s/secret.txt\"}", out);
+    call("files_read", line);
+    CHECK(!is_error && strstr(text, "outside"), "a folder read only, read: %s",
+          text);
+    snprintf(line, sizeof line, "{\"path\": \"%s/w.txt\", \"content\": \"x\"}",
+             out);
+    call("files_write", line);
+    CHECK(is_error == 1 && strstr(text, "read only"),
+          "a folder read only, written: %s", text);
+    snprintf(line, sizeof line, "{\"path\": \"%s/sub\"}", out);
+    call("files_mkdir", line);
+    CHECK(is_error == 1, "a folder made where it may only be read: %s", text);
+    call("files_read", "{\"path\": \"~/proj/notes.txt\"}");
+    CHECK(is_error == 1 && strstr(text, "workspace"),
+          "the home reached from a workspace: %s", text);
+    call("files_write", "{\"path\": \"new.txt\", \"content\": \"hi\"}");
+    CHECK(!is_error, "written in the workspace: %s", text);
+    unsetenv("JANAS_FILES_WORKSPACE");
+    unsetenv("JANAS_FILES_READ_ONLY");
+    roots = keep;
+}
+
 int main(void)
 {
     const char *h = getenv("HOME");
@@ -330,6 +365,7 @@ int main(void)
     reads();
     writes();
     listed();
+    workspace();
     nftw(base, rm_one, 16, FTW_DEPTH | FTW_PHYS);
     if (failures) {
         printf("test_files: %d failures\n", failures);

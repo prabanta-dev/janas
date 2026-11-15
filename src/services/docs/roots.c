@@ -2,7 +2,8 @@
    Copyright (C) 2026 Maurizio Cammalleri */
 /*
  * roots.c - the folders janas-docs indexes: those listed, a path a line, in
- * ~/.config/janas/docs-dirs.txt, or else the system's Documents folder
+ * ~/.config/janas/docs-dirs.txt (or the file JANAS_DOCS_DIRS names, an
+ * app's own list), or else the system's Documents folder
  * (XDG_DOCUMENTS_DIR in ~/.config/user-dirs.dirs, ~/Documents without
  * it). A path is followed to its end before it is judged, and the private
  * files (services/common/private.c) are never read, wherever they are.
@@ -70,7 +71,12 @@ int dz_roots_load(struct dz_roots *r)
     if (!h || !*h || !realpath(h, r->home))
         return -1;
     char list[PATH_MAX + 64];
-    snprintf(list, sizeof list, "%s/.config/janas/docs-dirs.txt", r->home);
+    /* an app's own list (Brebus's, for its workspace), else the user's */
+    const char *own = getenv("JANAS_DOCS_DIRS");
+    if (own && *own == '/')
+        snprintf(list, sizeof list, "%s", own);
+    else
+        snprintf(list, sizeof list, "%s/.config/janas/docs-dirs.txt", r->home);
     FILE *f = fopen(list, "r");
     char line[PATH_MAX];
     while (f && fgets(line, sizeof line, f)) {

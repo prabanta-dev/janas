@@ -2,13 +2,14 @@
    Copyright (C) 2026 Maurizio Cammalleri */
 /*
  * xml.c - the text of a word processor's document: word/document.xml of a
- * docx, content.xml of an odt. Not an XML parser: the tags that end a
- * paragraph, break a line or stand for a tab or spaces are turned into
- * them, the headings get the "#" of Markdown (their level from the style,
- * Heading1 or text:outline-level), the entities become their characters,
- * and only the text a reader sees is kept - a docx's w:t runs (not its
- * deleted text nor its fields' codes), an odt's office:body without its
- * comments. The document is input from outside: every read is bounded by
+ * docx, content.xml of an odt - and of LibreOffice's sheets and slides
+ * (ods, odp), the cells of a row by tabs, each sheet and slide headed. Not an
+ * XML parser: the tags that end a paragraph, break a line or stand for a tab or
+ * spaces are turned into them, the headings get the "#" of Markdown (their
+ * level from the style, Heading1 or text:outline-level), the entities become
+ * their characters, and only the text a reader sees is kept - a docx's w:t runs
+ * (not its deleted text nor its fields' codes), an odt's office:body without
+ * its comments. The document is input from outside: every read is bounded by
  * its length, a tag left open at the end only ends the text.
  */
 #include <stdio.h>
@@ -26,6 +27,8 @@ struct xs {
     int in_body; /* odt: inside office:body */
     int skip;    /* odt: inside a comment (office:annotation), its depth */
     int nl;      /* newlines just written, at most two kept */
+    int cell;    /* odf: inside a table's cell, its depth */
+    int slide;   /* odp: slides so far */
 };
 
 static void emit(struct xs *s, const char *p, size_t n)
@@ -240,8 +243,45 @@ static void tag(struct xs *s)
             s->skip++;
         else if (closing && s->skip)
             s->skip--;
+    } else if (is(nm, nn, "table:table") && !closing && keeping(s) &&
+               s->kind == DZ_ODS) {
+        /* a sheet: its name as a heading */
+        newline(s);
+        newline(s);
+        emit(s, "## ", 3);
+        char name[256];
+        if (attr(nm, ae, "table:name", name, sizeof name))
+            emit(s, name, strlen(name));
+        newline(s);
+    } else if (is(nm, nn, "draw:page") && !closing && keeping(s)) {
+        char line[96];
+        int k = snprintf(line, sizeof line, "## Slide %d", ++s->slide);
+        newline(s);
+        newline(s);
+        emit(s, line, (size_t)k);
+        newline(s);
+    } else if (is(nm, nn, "table:table-cell") ||
+               is(nm, nn, "table:covered-table-cell")) {
+        /* the cells of a row by tabs, the row on a line */
+        if (!closing && !empty)
+            s->cell++;
+        else if (closing && s->cell)
+            s->cell--;
+        if ((closing || empty) && keeping(s)) {
+            while (s->out->n && s->out->p[s->out->n - 1] == ' ')
+                s->out->n--; /* the space after its last paragraph */
+            emit(s, "\t", 1);
+        }
+    } else if (is(nm, nn, "table:table-row") && closing && keeping(s)) {
+        while (s->out->n && s->out->p[s->out->n - 1] == '\t')
+            s->out->n--; /* the row's empty cells at its end */
+        if (s->out->n && s->out->p[s->out->n - 1] != '\n')
+            newline(s);
     } else if (is(nm, nn, "text:p") || is(nm, nn, "text:h")) {
-        if ((closing || empty) && keeping(s))
+        if ((closing || empty) && keeping(s) && s->cell) {
+            if (s->out->n && s->out->p[s->out->n - 1] != '\t')
+                emit(s, " ", 1); /* paragraphs of a cell on its line */
+        } else if ((closing || empty) && keeping(s))
             newline(s);
         else if (is(nm, nn, "text:h") &&
                  attr(nm, ae, "text:outline-level", v, sizeof v))

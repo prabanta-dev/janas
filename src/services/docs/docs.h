@@ -33,7 +33,20 @@
 #define DZ_ROOTS 16
 
 /* kinds of document */
-enum { DZ_NONE, DZ_TEXT, DZ_DOCX, DZ_ODT, DZ_PDF };
+enum {
+    DZ_NONE,
+    DZ_TEXT,
+    DZ_DOCX,
+    DZ_ODT,
+    DZ_PDF,
+    DZ_ODS,  /* LibreOffice's sheets, content.xml as an odt's */
+    DZ_ODP,  /* and its slides */
+    DZ_XLSX, /* office.c */
+    DZ_PPTX,
+    DZ_HTML, /* html.c */
+    DZ_EPUB,
+    DZ_RTF, /* rtf.c */
+};
 
 /* ---- where the documents are (roots.c) ---- */
 
@@ -64,6 +77,28 @@ int dz_zip_get(const uint8_t *z, size_t n, const char *name, uint8_t **out,
 /* The text of a docx's document.xml or an odt's content.xml (kind) added
    to out: 0, or -1 out of memory. */
 int dz_xml_text(const char *x, size_t n, int kind, struct janas_buf *out);
+/* The text of an Excel workbook (its sheets, a row a line, the cells
+   by tabs) or of a PowerPoint presentation (its slides' paragraphs), from
+   the zip archive p of n bytes (office.c), added to out: 0, or -1 with the
+   reason. */
+int dz_xlsx_text(const uint8_t *p, size_t n, struct janas_buf *out, char *why,
+                 size_t wn);
+int dz_pptx_text(const uint8_t *p, size_t n, struct janas_buf *out, char *why,
+                 size_t wn);
+/* The text a reader sees of a web page (html.c): no tags, scripts or
+   styles, its headings as Markdown's, its entities turned back; a page not
+   in UTF-8 read as Latin-1. Added to out: 0, or -1 out of memory. */
+int dz_html_text(const char *h, size_t n, struct janas_buf *out);
+/* An EPUB's chapters in their reading order, each as a page (html.c): 0,
+   or -1 with the reason. */
+int dz_epub_text(const uint8_t *p, size_t n, struct janas_buf *out, char *why,
+                 size_t wn);
+/* The text of an RTF document (rtf.c): 0, or -1 with the reason. */
+int dz_rtf_text(const char *r, size_t n, struct janas_buf *out, char *why,
+                size_t wn);
+/* An XML text's entities turned back (&amp;, &#x263A;...), appended to
+   out (office.c, html.c share it). */
+void dz_unescape(const char *s, size_t n, struct janas_buf *out);
 /* The text of a PDF (pdf.c) added to out: 0, or -1 with the reason (not a
    PDF, encrypted, no text in it). */
 int dz_pdf_text(const uint8_t *p, size_t n, struct janas_buf *out, char *why,

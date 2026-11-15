@@ -5,7 +5,9 @@
  * path is followed to its end - every link, every ".." - before it is
  * judged, so that a link in the home pointing elsewhere leads nowhere: what
  * counts is the file it reaches. Allowed: the home and the folders the
- * user listed in ~/.config/janas/files-dirs.txt. Never, wherever they are:
+ * user listed in ~/.config/janas/files-dirs.txt; or, for an app's
+ * workspace (JANAS_FILES_WORKSPACE), that folder to write in and those of
+ * JANAS_FILES_READ_ONLY to read only. Never, wherever they are:
  * the private files (services/common/private.c), which hold keys,
  * passwords and tokens.
  */
@@ -40,12 +42,39 @@ static void add_root(struct fl_roots *r, const char *dir)
         snprintf(r->root[r->n_root++], PATH_MAX, "%s", real);
 }
 
+/* a workspace and its folders read only: those alone */
+static int roots_workspace(struct fl_roots *r, const char *ws)
+{
+    char real[PATH_MAX];
+    if (*ws != '/' || !realpath(ws, real))
+        return -1;
+    r->confined = 1;
+    snprintf(r->cwd, sizeof r->cwd, "%s", real);
+    add_root(r, real);
+    r->n_write = r->n_root;
+    const char *ro = getenv("JANAS_FILES_READ_ONLY");
+    char dir[PATH_MAX];
+    while (ro && *ro) {
+        size_t n = strcspn(ro, ":");
+        if (n && n < sizeof dir && ro[0] == '/') {
+            memcpy(dir, ro, n);
+            dir[n] = 0;
+            add_root(r, dir);
+        }
+        ro += n + (ro[n] == ':');
+    }
+    return 0;
+}
+
 int fl_roots_load(struct fl_roots *r)
 {
     memset(r, 0, sizeof *r);
     const char *h = getenv("HOME");
     if (!h || !*h || !realpath(h, r->home))
         return -1;
+    const char *ws = getenv("JANAS_FILES_WORKSPACE");
+    if (ws && *ws)
+        return roots_workspace(r, ws);
     if (!getcwd(r->cwd, sizeof r->cwd))
         snprintf(r->cwd, sizeof r->cwd, "%s", r->home);
     add_root(r, r->home);
@@ -66,6 +95,7 @@ int fl_roots_load(struct fl_roots *r)
     }
     if (f)
         fclose(f);
+    r->n_write = r->n_root;
     return 0;
 }
 
@@ -88,6 +118,13 @@ static int allowed(const struct fl_roots *r, const char *real, char *why,
     int in = 0;
     for (int i = 0; i < r->n_root && !in; i++)
         in = under(real, r->root[i]);
+    if (!in && r->confined) {
+        snprintf(why, why_len,
+                 "%s is outside the folders these tools reach: the "
+                 "workspace and the folders added to it",
+                 real);
+        return -1;
+    }
     if (!in) {
         snprintf(why, why_len,
                  "%s is outside the folders these tools reach: the home, "
@@ -148,4 +185,19 @@ int fl_resolve(const struct fl_roots *r, const char *in, int must_exist,
         return -1;
     }
     return allowed(r, out, why, why_len);
+}
+
+int fl_resolve_write(const struct fl_roots *r, const char *in, int must_exist,
+                     char *out, size_t cap, char *why, size_t why_len)
+{
+    if (fl_resolve(r, in, must_exist, out, cap, why, why_len) != 0)
+        return -1;
+    for (int i = 0; i < r->n_write; i++)
+        if (under(out, r->root[i]))
+            return 0;
+    snprintf(why, why_len,
+             "%s is in a folder added to be read only: write in the "
+             "workspace (%s)",
+             out, r->n_write ? r->root[0] : "none");
+    return -1;
 }

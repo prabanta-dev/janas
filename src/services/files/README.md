@@ -25,6 +25,8 @@ A path is `~/...`, absolute, or relative to the folder `janas-chat` runs in. It 
 - your home;
 - the folders you list in `~/.config/janas/files-dirs.txt`, a path a line (`#` starts a comment), read again at every call.
 
+An app that works in a folder of yours, as [Brebus](../../../docs/brebus.md) does, starts it with `JANAS_FILES_WORKSPACE` set to that folder: then it reaches only that folder, to read and write (paths relative to it), and the folders of `JANAS_FILES_READ_ONLY` (separated by `:`), only to read; not the rest of the home.
+
 Never, wherever they are, the private files: `~/.ssh`, `~/.gnupg`, `~/.password-store`, the keyrings, `~/.config/janas` (the services' keys), the browsers' and the mail's profiles (Firefox, Thunderbird, Chrome, Chromium, Brave, Edge, Vivaldi, Opera), the clouds' and the tools' credentials (`~/.aws`, `~/.azure`, `~/.config/gcloud`, `~/.kube`, `~/.docker`, `~/.config/gh`, `.netrc`, `.git-credentials`, `.pgpass`, `.npmrc`, `.pypirc`, Cargo's), the shells' histories; and any file named `.env`, `.env.*`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, `id_rsa*`, `id_ed25519*`, `id_ecdsa*`, `id_dsa*`, `*.kdbx`, `*.keystore`, `*.jks`, `credentials.json`, `secrets.*`. They are neither listed, nor read, nor searched, nor written, nor reached by a link. A file outside the home - `/etc/machine-id`, say - is refused with the reason, and the model is told to say so.
 
 ## In janas-chat
