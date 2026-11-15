@@ -176,6 +176,26 @@ static enum MHD_Result handler(void *cls, struct MHD_Connection *conn,
         return reply(conn, get ? 404 : 400, "application/json", no,
                      sizeof no - 1, 1);
     }
+    if (post && !strcmp(url, "/brebus/attach")) {
+        int rc = brebus_attach(b, r->body.p, r->body.n, &o);
+        return json(conn, rc ? 400 : 200, &o);
+    }
+    if (get && !strcmp(url, "/brebus/tools")) {
+        brebus_tools_list(b, &o);
+        return json(conn, 200, &o);
+    }
+    if (post && !strcmp(url, "/brebus/tools/call")) {
+        int rc = brebus_tools_call(b, r->body.p, r->body.n, &o);
+        return json(conn, rc ? 400 : 200, &o);
+    }
+    if (!strcmp(url, "/brebus/folders") && (get || post)) {
+        if (get) {
+            brebus_folders_get(b, &o);
+            return json(conn, 200, &o);
+        }
+        int rc = brebus_folders_set(b, r->body.p, r->body.n, &o);
+        return json(conn, rc ? 400 : 200, &o);
+    }
     if (get && !strcmp(url, "/brebus/workspace")) {
         brebus_ws_status(b, &o);
         return json(conn, 200, &o);

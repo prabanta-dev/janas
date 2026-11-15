@@ -104,6 +104,7 @@ int main(int argc, char **argv)
     janas_mkdirs(b.data_dir);
     pthread_mutex_init(&b.mu, NULL);
     pthread_mutex_init(&b.get.mu, NULL);
+    pthread_mutex_init(&b.tools_mu, NULL);
     char why[600];
     /* the workspace: the one given, or this terminal's folder; from the
        desktop's menu (no terminal, the home) the page asks */
@@ -143,6 +144,7 @@ int main(int argc, char **argv)
     struct janas_buf o = {0};
     brebus_server_stop(&b, &o); /* the model's server goes with it */
     brebus_get_stop(&b);        /* a download too, to go on next time */
+    brebus_tools_stop(&b);
     janas_buf_free(&o);
     return 0;
 }

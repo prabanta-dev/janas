@@ -232,6 +232,52 @@ int main(void)
     snprintf(want, sizeof want, "%s/work/.brebus/chats", dir);
     CHECK(access(want, W_OK) == 0, "no %s", want);
 
+    /* the workspace's tools (janas-docs and janas-files beside brebus),
+       a folder read only, a file attached */
+    st = ask("GET", "/brebus/tools", NULL, NULL, &o);
+    CHECK(st == 200 && strstr(o.p, "\"docs_search\"") &&
+              strstr(o.p, "\"files_write\"") &&
+              strstr(o.p, "\"read_only\": [\""),
+          "the tools: %d %.300s", st, o.p);
+    char ro[4300], note[4400];
+    snprintf(ro, sizeof ro, "%s/ro", dir);
+    janas_mkdirs(ro);
+    snprintf(note, sizeof note, "%s/note.txt", ro);
+    FILE *nf = fopen(note, "w");
+    if (nf) {
+        fputs("a note of the folder read only\n", nf);
+        fclose(nf);
+    }
+    snprintf(body, sizeof body, "{\"read_only\": [\"%s\", \"/nowhere\"]}", ro);
+    st = ask("POST", "/brebus/folders", body, own, &o);
+    CHECK(st == 200 && strstr(o.p, ro) && strstr(o.p, "\"refused\": true"),
+          "a folder read only: %d %s", st, o.p);
+    snprintf(body, sizeof body,
+             "{\"name\": \"files_write\", \"arguments\": {\"path\": "
+             "\"%s/x.txt\", \"content\": \"x\"}}",
+             ro);
+    st = ask("POST", "/brebus/tools/call", body, own, &o);
+    CHECK(st == 200 && strstr(o.p, "read only") &&
+              strstr(o.p, "\"is_error\": true"),
+          "written where it may only be read: %d %s", st, o.p);
+    st = ask("POST", "/brebus/tools/call",
+             "{\"name\": \"files_write\", \"arguments\": {\"path\": "
+             "\"w.txt\", \"content\": \"ok\"}}",
+             own, &o);
+    snprintf(want, sizeof want, "%s/work/w.txt", dir);
+    CHECK(st == 200 && access(want, F_OK) == 0,
+          "written in the workspace: %d %s", st, o.p);
+    snprintf(body, sizeof body, "{\"source\": \"%s\", \"mode\": \"copy\"}",
+             note);
+    st = ask("POST", "/brebus/attach", body, own, &o);
+    snprintf(want, sizeof want, "%s/work/sources/note.txt", dir);
+    CHECK(st == 200 && strstr(o.p, want) &&
+              strstr(o.p, "\"text\": \"a note of the folder read only\""),
+          "a file attached: %d %s", st, o.p);
+    st = ask("POST", "/brebus/attach", "{\"source\": \"relative.txt\"}", own,
+             &o);
+    CHECK(st == 400, "a relative path attached: %d", st);
+
     /* conversations and settings, on disk */
     st = ask("POST", "/brebus/chats/a-1",
              "{\"title\": \"one\", \"updated\": 1, \"messages\": []}", own, &o);

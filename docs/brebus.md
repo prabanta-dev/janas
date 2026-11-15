@@ -22,6 +22,21 @@ Brebus works in a folder, as Claude Code does: started from a terminal, the fold
 |---|---|
 | `.brebus/chats/` | its conversations, a JSON file each |
 | `exports/` | the conversations exported in Markdown |
+| `sources/` | the files attached to the chat by copy, and the web pages downloaded, each with `<name>.url.txt` (its address and when) |
+| `.brebus/workspace.json` | the folders and files added to be read only |
+| `.brebus/data/`, `.brebus/config/` | the index of its documents, and its list |
+
+**Read only, beside it**: folders and files of yours (documents, code, pictures, audio; video is not read by Janas yet) that the model may search and read but never write, added and removed in the workspace's window.
+
+## Documents and tools in the chat
+
+Brebus starts, for the workspace, [`janas-docs`](../src/services/docs/README.md), which indexes the workspace and the folders added to it (PDF, Word, Excel, PowerPoint, LibreOffice's, RTF, web pages, EPUB, text and Markdown), and [`janas-files`](../src/services/files/README.md), which reaches the workspace to read and write and the folders added only to read, not the rest of the home.
+
+- **Search documents** (on by default): before each question, Brebus searches the workspace's documents for it and gives the model the passages found, each with its document, as LM Studio's documents do; it works with models that cannot call tools. The passages are shown, folded, under the question.
+- **Attach** (the `+` in the field): a file of this computer by its path, or a web address. A file is copied into `sources/` or read where it is (then added to the folders read only); a copy is offered up to 100 MB. A web address is always downloaded into `sources/`. A document of up to 24,000 characters goes into the message whole; a longer one is named, for the model to search or read.
+- **Tools** (on by default): the model may search and read the documents (`docs_search`, `docs_read`), list, read and search the files, and write in the workspace (`files_write`, `files_edit`, `files_mkdir`). A tool that writes runs only once you allow it, its arguments shown; the calls and their results are shown, folded, in the conversation.
+
+The index searches by words; by meaning too when `janas-docs` has an embedding model (`.brebus/config/janas/docs.conf`, `embedding_model =`).
 
 The recent ones are listed in `~/.local/share/janas/brebus/workspaces.json`; the conversations the first Brebus kept in that folder move, once, to the first workspace opened.
 
@@ -43,4 +58,4 @@ A page of another site could make the browser send requests to the loopback addr
 
 ## What has been tried
 
-On the development laptop, with Qwen3-0.6B: the page in Chromium (headless), the model loaded from *My models*, two turns of a chat with their reasoning, the conversation still there after the page was opened again, the model unloaded, no `janas-server` left; Qwen3-0.6B downloaded from *Discover* into an empty folder and then in *My models*, Qwen3.5-2B stopped at 0.27 GB and taken up from there; settings saved and the server started with them (`--parallel 2 --ctx 8192 --think off`), a reply in Markdown, a conversation renamed and deleted, and those the first Brebus kept in the browser moved to their files. Its window on a virtual screen (Xvfb) with the models of the development laptop. `tests/test_brebus` starts `brebus` with no model and checks its page, its API, another site's page refused, a model that is not there refused (to load and to download), workspaces (none at first, the home and `/` refused, a new one in `Documents/Brebus`, one opened), conversations and settings saved, listed, read and deleted, with bad names and what is not a JSON object refused, exports never written over a file, `/v1` answered 503 with no model loaded, and Brebus ending on SIGTERM.
+On the development laptop, with Qwen3-0.6B: the page in Chromium (headless), the model loaded from *My models*, two turns of a chat with their reasoning, the conversation still there after the page was opened again, the model unloaded, no `janas-server` left; Qwen3-0.6B downloaded from *Discover* into an empty folder and then in *My models*, Qwen3.5-2B stopped at 0.27 GB and taken up from there; settings saved and the server started with them (`--parallel 2 --ctx 8192 --think off`), a reply in Markdown, a conversation renamed and deleted, and those the first Brebus kept in the browser moved to their files. Its window on a virtual screen (Xvfb) with the models of the development laptop. With Qwen3-4B, from the page in Chromium: a note attached and put whole into the message, quoted by the model; "which river is in Lazio, and how long" answered "the Tevere, 405 km" from an Excel sheet in a folder read only, its document named; a file written by the model with `files_write` once allowed. `tests/test_brebus` starts `brebus` with no model and checks its page, its API, another site's page refused, a model that is not there refused (to load and to download), workspaces (none at first, the home and `/` refused, a new one in `Documents/Brebus`, one opened), conversations and settings saved, listed, read and deleted, with bad names and what is not a JSON object refused, exports never written over a file, the tools of the workspace (a write where it may only be read refused, one in the workspace done), a folder read only added (a path that is not there refused), a file attached by copy with its text, `/v1` answered 503 with no model loaded, and Brebus ending on SIGTERM.

@@ -31,6 +31,8 @@ struct brebus_get {
     double done_gb, total_gb, pct, mbs;
 };
 
+struct janas_mcp;
+
 struct brebus {
     unsigned short port; /* where it listens, on 127.0.0.1 */
     void *mhd;           /* the HTTP daemon */
@@ -51,6 +53,9 @@ struct brebus {
     char srv_key[256]; /* the key its clients send, or "" */
     int srv_lan;       /* reachable from the local network */
     struct brebus_get get;
+    /* tools.c: the chat's tools, MCP servers of the workspace's own */
+    pthread_mutex_t tools_mu;
+    struct janas_mcp *docs, *files;
 };
 
 /* http.c: the daemon on 127.0.0.1:port; 0, or -1 with the reason */
@@ -128,6 +133,28 @@ int brebus_ws_open(struct brebus *b, const char *path, int create, char *why,
                    size_t wn);
 int brebus_ws_new(struct brebus *b, char *why, size_t wn);
 void brebus_ws_status(struct brebus *b, struct janas_buf *out);
+
+/* tools.c: janas-docs and janas-files for the workspace open, started
+   (again: its folders changed) and stopped; their tools as OpenAI's
+   functions, with those that only read, as JSON into out; a call
+   ({"name", "arguments"}), its result into out: 0, or -1 with the error;
+   the folders added to the workspace to be read, and set */
+int brebus_tools_start(struct brebus *b);
+void brebus_tools_stop(struct brebus *b);
+void brebus_tools_list(struct brebus *b, struct janas_buf *out);
+int brebus_tools_call(struct brebus *b, const char *body, size_t n,
+                      struct janas_buf *out);
+void brebus_folders_get(struct brebus *b, struct janas_buf *out);
+int brebus_folders_set(struct brebus *b, const char *body, size_t n,
+                       struct janas_buf *out);
+
+/* attach.c: a document for the chat ({"source": a file's full path or
+   a web address, "mode": "copy", "place" or "info"}): copied or downloaded
+   into the workspace's sources/, or read where it is; its path, size and
+   text as JSON into out ("info": its size alone). 0, or -1 with the
+   reason */
+int brebus_attach(struct brebus *b, const char *body, size_t n,
+                  struct janas_buf *out);
 
 /* proxy.c: a request to the model's API passed on: 0 with the response to
    queue and its status, -1 when no server runs or it cannot be reached */

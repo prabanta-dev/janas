@@ -189,6 +189,7 @@ int brebus_ws_open(struct brebus *b, const char *path, int create, char *why,
     pthread_mutex_unlock(&b->mu);
     move_old_chats(b, real);
     recent_add(b, real);
+    brebus_tools_start(b); /* its documents and files for the chat */
     return 0;
 }
 

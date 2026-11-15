@@ -141,9 +141,24 @@ main h3 { font-size: 15px; margin: 24px 0 10px; }
 .msg details { color: var(--dim); font-size: 13px; margin-bottom: 6px; }
 .msg .speed { color: var(--dim); font-size: 12px; margin-top: 6px; }
 #form { position: relative; width: 100%; max-width: 820px; margin: 0 auto; }
+.tog { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer; }
+#chips { width: 100%; max-width: 820px; margin: 0 auto 6px; display: flex; flex-wrap: wrap; gap: 6px; }
+#chips span { font-size: 12px; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--line);
+              background: var(--panel); display: inline-flex; gap: 6px; align-items: center; }
+#chips button { all: unset; cursor: pointer; color: var(--dim); }
+#attach { all: unset; position: absolute; left: 10px; bottom: 10px; width: 34px; height: 34px;
+          border-radius: 10px; display: flex; align-items: center; justify-content: center;
+          font-size: 22px; color: var(--dim); cursor: pointer; }
+#attach:hover { background: var(--bg); color: var(--fg); }
+.msg.tool { align-self: flex-start; font-size: 12px; color: var(--dim); padding: 4px 10px;
+            border: 1px dashed var(--line); background: transparent; max-width: 80ch; }
+.msg.tool pre { white-space: pre-wrap; max-height: 260px; overflow: auto; }
+.msg .att { font-size: 12px; opacity: .85; margin-top: 4px; }
+#rolist div { display: flex; gap: 8px; align-items: center; font: 13px var(--mono); padding: 3px 0; }
+#rolist button { all: unset; cursor: pointer; color: var(--warn); font-size: 12px; }
 #form textarea { display: block; width: 100%; box-sizing: border-box; resize: none;
                  min-height: 56px; max-height: 40vh; overflow-y: auto;
-                 padding: 14px 56px 14px 16px; border-radius: 16px;
+                 padding: 14px 56px 14px 50px; border-radius: 16px;
                  border: 1px solid var(--line); background: var(--panel);
                  color: var(--fg); font: inherit; line-height: 1.45; }
 #form textarea:focus { outline: none; border-color: var(--accent); }
@@ -178,12 +193,15 @@ main h3 { font-size: 15px; margin: 24px 0 10px; }
     <div id="convs"><button class="act quiet" id="newc">New chat</button></div>
     <div id="talk">
       <div id="bar"><span id="loaded">No model loaded.</span>
+        <label class="tog" title="Before each question, Brebus searches the workspace's documents and gives the model the passages found"><input type="checkbox" id="usedocs"> Search documents</label>
+        <label class="tog" title="The model may search and read the workspace's documents and files, and write in the workspace (asking you first)"><input type="checkbox" id="usetools"> Tools</label>
         <span class="tools" hidden><button class="act quiet" id="sys">System</button>
           <button class="act quiet" id="ren">Rename</button>
           <button class="act quiet" id="exp">Export</button>
           <button class="act quiet" id="del">Delete</button></span></div>
       <div id="log"></div>
-      <form id="form"><textarea id="ask" rows="1" placeholder="Ask the model. Enter sends, Shift+Enter a new line."></textarea>
+      <div id="chips"></div>
+      <form id="form"><button type="button" id="attach" title="Attach a file of this computer or a web address" aria-label="Attach">+</button><textarea id="ask" rows="1" placeholder="Ask the model. Enter sends, Shift+Enter a new line."></textarea>
         <button type="submit" id="send" title="Send (Enter)" aria-label="Send" disabled></button></form>
     </div>
   </section>
@@ -242,6 +260,13 @@ main h3 { font-size: 15px; margin: 24px 0 10px; }
     <button class="act quiet" type="submit">Open</button>
   </form>
   <p><button class="act" id="wsnew">New folder</button> <span class="note" id="wsnewin"></span></p>
+  <div id="wsro" hidden><h3>Read only, beside it</h3>
+    <p class="note">Folders and files the model may search and read, never write: documents, code, pictures, audio. Video is not read by Janas yet.</p>
+    <div id="rolist"></div>
+    <form id="roform" class="hfget" onsubmit="return false">
+      <input name="path" spellcheck="false" placeholder="/home/you/Documents/contracts">
+      <button class="act quiet" type="submit">Add</button>
+    </form></div>
   <p class="right"><button class="act quiet" id="wsclose">Cancel</button></p>
 </div></div>
 <script>
@@ -551,10 +576,33 @@ function bubble(m) {
     t.append(document.createTextNode(m.think));
     d.append(t);
   }
+  if (m.role === "tool") {
+    const t = document.createElement("details");
+    t.innerHTML = `<summary>${esc(m.name)}${m.denied ? " (not allowed)" : ""}</summary>`;
+    const pre = document.createElement("pre");
+    pre.textContent = (m.args ? "arguments: " + m.args + "\n\n" : "") + (m.content || "");
+    t.append(pre); d.append(t);
+    return d;
+  }
   const body = document.createElement("div");
-  if (m.role === "assistant") body.innerHTML = md(m.content || "");
+  if (m.role === "assistant") body.innerHTML = md(m.content || "") ||
+    (m.tool_calls ? "<i>…</i>" : "");
   else body.textContent = m.content || "";
   d.append(body);
+  if (m.attached && m.attached.length) {
+    const a = document.createElement("div");
+    a.className = "att";
+    a.textContent = "📎 " + m.attached.map((x) => x.name).join(", ");
+    d.append(a);
+  }
+  if (m.found) {
+    const f = document.createElement("details");
+    f.className = "att";
+    f.innerHTML = "<summary>Passages found in the documents</summary>";
+    const pre = document.createElement("pre");
+    pre.style.whiteSpace = "pre-wrap"; pre.textContent = m.found;
+    f.append(pre); d.append(f);
+  }
   if (m.speed) {
     const s = document.createElement("div");
     s.className = "speed"; s.textContent = m.speed; d.append(s);
@@ -586,33 +634,110 @@ function growAsk() {
   sendButton();
 }
 function stopReply() { if (busy) busy.abort(); }
-async function sendAsk(ev) {
-  ev.preventDefault();
-  if (busy) { stopReply(); return; }
-  const text = $("#ask").value.trim();
-  if (!text) return;
+/* the tools of the workspace (janas-docs, janas-files), and those that
+   only read */
+let tools = {tools: [], read_only: []};
+async function readTools() {
+  try { tools = await ask("tools"); } catch (e) { tools = {tools: [], read_only: []}; }
+  const has = (n) => tools.tools.some((t) => t.function && t.function.name === n);
+  $("#usedocs").disabled = !has("docs_search");
+  $("#usetools").disabled = !tools.tools.length;
+}
+const pref = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : v === "1"; } catch (e) { return d; } };
+$("#usedocs").checked = pref("brebus.usedocs", true);
+$("#usetools").checked = pref("brebus.usetools", true);
+for (const id of ["usedocs", "usetools"])
+  $("#" + id).onchange = () => { try { localStorage.setItem("brebus." + id, $("#" + id).checked ? "1" : "0"); } catch (e) {} };
+
+async function callTool(name, args) {
+  const r = await fetch("/brebus/tools/call", {method: "POST",
+    body: JSON.stringify({name, arguments: args})});
+  const j = await r.json();
+  return r.ok ? j : {result: j.error || "the tool did not answer", is_error: true};
+}
+
+/* attachments waiting for the next message */
+let pending = [];
+function drawChips() {
+  $("#chips").innerHTML = pending.map((a, i) =>
+    `<span>📎 ${esc(a.name)} <button data-i="${i}" title="Remove">×</button></span>`).join("");
+  for (const b of document.querySelectorAll("#chips button"))
+    b.onclick = () => { pending.splice(+b.dataset.i, 1); drawChips(); };
+}
+const kb = (n) => n < 1e6 ? (n / 1024).toFixed(0) + " KB" : (n / 1048576).toFixed(1) + " MB";
+async function attach() {
   if (!ws.path) { wsShow(true); return; }
-  if (!server.running) { alert("Load a model first, in My models."); return; }
-  if (!cur) newConv();
-  cur.messages.push({role: "user", content: text});
-  if (!cur.title) cur.title = text.slice(0, 40);
-  cur.model = server.model;
-  const e = convs.find((c) => c.id === cur.id); if (e) e.title = cur.title;
-  $("#ask").value = ""; growAsk();
-  const reply = {role: "assistant", content: "", think: ""};
-  cur.messages.push(reply); listConvs(); drawLog();
-  const msgs = cur.messages.slice(0, -1).map((m) => ({role: m.role, content: m.content}));
-  if (cur.system) msgs.unshift({role: "system", content: cur.system});
+  const src = (prompt("A file of this computer (its full path), or a web address") || "").trim();
+  if (!src) return;
+  let mode = "copy";
+  if (!/^https?:\/\//.test(src)) {
+    const i = await (await fetch("/brebus/attach", {method: "POST",
+      body: JSON.stringify({source: src, mode: "info"})})).json();
+    if (i.error) { alert(i.error); return; }
+    if (!i.inside) {
+      /* copied into the workspace, or read where it is: copying is offered
+         up to 100 MB */
+      const big = i.bytes > 100 * 1048576;
+      mode = big
+        ? (confirm(`${kb(i.bytes)}: read it where it is (OK), or copy it into the workspace (Cancel)?`) ? "place" : "copy")
+        : (confirm(`${kb(i.bytes)}: copy it into the workspace (OK), or read it where it is (Cancel)?`) ? "copy" : "place");
+    }
+  }
+  $("#attach").textContent = "…";
+  const r = await fetch("/brebus/attach", {method: "POST", body: JSON.stringify({source: src, mode})});
+  const j = await r.json();
+  $("#attach").textContent = "+";
+  if (!r.ok) { alert(j.error || "not attached"); return; }
+  pending.push(j); drawChips();
+  if (mode === "place") readFolders();
+}
+$("#attach").onclick = () => attach().catch((e) => alert(e.message));
+
+const WHOLE = 24000; /* characters of a document put whole into a message */
+/* what the model reads of a user's message: its text, the documents
+   attached, the passages found */
+function userContent(m) {
+  let c = m.content;
+  for (const a of m.attached || []) {
+    if (a.text !== undefined && a.text.length <= WHOLE && !a.cut)
+      c += `\n\n<document name="${a.name}" path="${a.path}">\n${a.text}\n</document>`;
+    else if (a.text !== undefined)
+      c += `\n\n[Attached: ${a.path}, ${kb(a.bytes)}, too long to be put here whole: search it with docs_search, or read it with docs_read.]`;
+    else
+      c += `\n\n[Attached: ${a.path}, which could not be read: ${a.unread}.]`;
+  }
+  if (m.found)
+    c += "\n\n[Passages found in the user's documents for this question, each with its document. Use them if they answer, and name the documents you use; say so if they do not answer.]\n" + m.found;
+  return c;
+}
+function apiMessages() {
+  const out = [];
+  if (cur.system) out.push({role: "system", content: cur.system});
+  for (const m of cur.messages) {
+    if (m.role === "user") out.push({role: "user", content: userContent(m)});
+    else if (m.role === "assistant") {
+      const a = {role: "assistant", content: m.content || ""};
+      if (m.tool_calls) a.tool_calls = m.tool_calls;
+      out.push(a);
+    } else if (m.role === "tool")
+      out.push({role: "tool", tool_call_id: m.tool_call_id, content: m.content});
+  }
+  return out;
+}
+
+/* one reply of the model, streamed into reply: its tool calls, if any */
+async function streamTurn(reply, withTools) {
   const t0 = performance.now(); let t1 = 0, tokens = 0, pieces = 0;
-  busy = new AbortController(); sendButton();
+  const calls = [];
+  const body = {model: server.model, stream: true, stream_options: {include_usage: true},
+                messages: apiMessages().slice(0, -1)};
+  if (withTools) body.tools = tools.tools;
+  const r = await fetch("/v1/chat/completions", {method: "POST", signal: busy.signal,
+    headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  if (!r.ok) { reply.content = "(" + r.status + ") " + await r.text(); return []; }
+  const rd = r.body.getReader(), dec = new TextDecoder();
+  let buf = "";
   try {
-    const r = await fetch("/v1/chat/completions", {method: "POST", signal: busy.signal,
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({model: server.model, stream: true,
-        stream_options: {include_usage: true}, messages: msgs})});
-    if (!r.ok) { reply.content = "(" + r.status + ") " + await r.text(); return; }
-    const rd = r.body.getReader(), dec = new TextDecoder();
-    let buf = "";
     for (;;) {
       const {done, value} = await rd.read();
       if (done) break;
@@ -630,6 +755,13 @@ async function sendAsk(ev) {
             const d = j.choices?.[0]?.delta || {};
             if (d.reasoning_content) reply.think += d.reasoning_content;
             if (d.content) reply.content += d.content;
+            for (const tc of d.tool_calls || []) {
+              const k = tc.index ?? calls.length;
+              calls[k] = calls[k] || {id: "", type: "function", function: {name: "", arguments: ""}};
+              if (tc.id) calls[k].id = tc.id;
+              if (tc.function?.name) calls[k].function.name += tc.function.name;
+              if (tc.function?.arguments) calls[k].function.arguments += tc.function.arguments;
+            }
             if (d.content || d.reasoning_content) { pieces++; if (!t1) t1 = performance.now(); }
           } catch (e) {}
         }
@@ -638,18 +770,99 @@ async function sendAsk(ev) {
         $("#log").scrollTop = $("#log").scrollHeight;
       }
     }
-    const t2 = performance.now();
-    if (tokens > 1 && t1)
-      reply.speed = `${tokens} tokens, ${((tokens - 1) / ((t2 - t1) / 1000)).toFixed(1)} tok/s, first after ${((t1 - t0) / 1000).toFixed(2)} s`;
   } catch (err) {
-    /* stopped: what came is kept */
     reply.speed = err.name === "AbortError" ? `stopped after ${pieces} pieces` : "failed: " + err.message;
+    throw err;
+  }
+  const t2 = performance.now();
+  if (tokens > 1 && t1)
+    reply.speed = `${tokens} tokens, ${((tokens - 1) / ((t2 - t1) / 1000)).toFixed(1)} tok/s, first after ${((t1 - t0) / 1000).toFixed(2)} s`;
+  return calls.filter(Boolean);
+}
+
+async function sendAsk(ev) {
+  ev.preventDefault();
+  if (busy) { stopReply(); return; }
+  const text = $("#ask").value.trim();
+  if (!text) return;
+  if (!ws.path) { wsShow(true); return; }
+  if (!server.running) { alert("Load a model first, in My models."); return; }
+  if (!cur) newConv();
+  const um = {role: "user", content: text};
+  if (pending.length) { um.attached = pending; pending = []; drawChips(); }
+  cur.messages.push(um);
+  if (!cur.title) cur.title = text.slice(0, 40);
+  cur.model = server.model;
+  const e = convs.find((c) => c.id === cur.id); if (e) e.title = cur.title;
+  $("#ask").value = ""; growAsk();
+  listConvs(); drawLog();
+  busy = new AbortController(); sendButton();
+  try {
+    /* the workspace's documents searched for the question */
+    if ($("#usedocs").checked && !$("#usedocs").disabled) {
+      const f = await callTool("docs_search", JSON.stringify({query: text, max: 4}));
+      if (!f.is_error && f.result && !/^0 passages|^No /.test(f.result))
+        um.found = f.result.slice(0, 8000);
+      drawLog();
+    }
+    const withTools = $("#usetools").checked && tools.tools.length > 0;
+    for (let round = 0; round < 6; round++) {
+      const reply = {role: "assistant", content: "", think: ""};
+      cur.messages.push(reply); drawLog();
+      const calls = await streamTurn(reply, withTools);
+      if (!calls.length) break;
+      reply.tool_calls = calls;
+      for (const c of calls) {
+        const name = c.function.name, args = c.function.arguments || "{}";
+        const only_reads = tools.read_only.includes(name);
+        let res;
+        if (!only_reads && !confirm(`The model wants to run ${name}:\n\n${args}\n\nAllow it?`))
+          res = {result: "The user did not allow this call.", is_error: true, denied: true};
+        else
+          res = await callTool(name, args);
+        cur.messages.push({role: "tool", tool_call_id: c.id, name, args,
+                           content: res.result, denied: !!res.denied});
+        drawLog();
+      }
+    }
+  } catch (err) {
+    if (err.name !== "AbortError") {
+      const last = cur.messages[cur.messages.length - 1];
+      if (last && last.role === "assistant" && !last.speed) last.speed = "failed: " + err.message;
+    }
   } finally {
     busy = null; sendButton();
     drawLog(); await saveConv(cur);
     $("#ask").focus();
   }
 }
+
+/* the folders read only beside the workspace */
+async function readFolders() {
+  const f = await ask("folders");
+  $("#wsro").hidden = !ws.path;
+  $("#rolist").innerHTML = f.read_only.length
+    ? f.read_only.map((p, i) => `<div><span>${esc(p)}</span><button data-i="${i}">remove</button></div>`).join("")
+    : '<div class="note">none</div>';
+  for (const b of document.querySelectorAll("#rolist button"))
+    b.onclick = async () => { f.read_only.splice(+b.dataset.i, 1); await setFolders(f.read_only); };
+  return f;
+}
+async function setFolders(list) {
+  const r = await fetch("/brebus/folders", {method: "POST", body: JSON.stringify({read_only: list})});
+  const j = await r.json();
+  if (j.refused) alert("Some were not added: a folder or file there is, by its full path.");
+  await readFolders(); await readTools();
+}
+$("#roform").onsubmit = async () => {
+  const p = $("#roform").path.value.trim();
+  if (!p) return false;
+  const f = await ask("folders");
+  await setFolders([...f.read_only, p]);
+  $("#roform").path.value = "";
+  return false;
+};
+
 $("#newc").onclick = newConv;
 $("#form").onsubmit = sendAsk;
 $("#ask").addEventListener("input", growAsk);
@@ -691,6 +904,7 @@ async function wsOpen(path, create) {
   const j = await r.json();
   if (!r.ok) { alert(j.error || "it did not open"); return; }
   ws = j; wsShow(false);
+  await readTools(); await readFolders();
   cur = null; await readConvs();
   if (convs.length) await openConv(convs[0].id); else { listConvs(); drawLog(); }
 }
@@ -706,6 +920,7 @@ $("#wsform").onsubmit = () => {
   ws = await ask("workspace");
   wsShow(!ws.path);
   if (!ws.path) return;
+  await readTools(); await readFolders();
   await readConvs();
   if (convs.length) await openConv(convs[0].id); else listConvs();
 })().catch(() => {});
