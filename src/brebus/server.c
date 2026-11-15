@@ -170,13 +170,29 @@ int brebus_server_start(struct brebus *b, const char *body, size_t n,
     snprintf(exe, sizeof exe, "%s/janas-server%s", b->bin_dir, b->suffix);
     b->srv_port = (unsigned short)(b->port + 1);
     snprintf(port, sizeof port, "%u", b->srv_port);
-    const char *argv[24 + 2 * MAX_ORIGINS];
+    const char *argv[26 + 2 * MAX_ORIGINS];
     int k = 0;
     argv[k++] = exe;
     argv[k++] = m[at].path;
     argv[k++] = "--port";
     argv[k++] = port;
     argv[k++] = "--monitor";
+    /* a Whisper of the models' folder, for the recordings attached: the
+       best there is (large-v3-turbo, large-v3, small, small.en) */
+    static const char *const W[] = {"whisper-large-v3-turbo",
+                                    "whisper-large-v3", "whisper-small",
+                                    "whisper-small.en"};
+    static char speech[4300];
+    speech[0] = 0;
+    for (size_t i = 0; i < sizeof W / sizeof *W && !speech[0]; i++) {
+        snprintf(speech, sizeof speech, "%s/%s.jns", b->models_dir, W[i]);
+        if (access(speech, R_OK) != 0)
+            speech[0] = 0;
+    }
+    if (speech[0]) {
+        argv[k++] = "--speech-model";
+        argv[k++] = speech;
+    }
     if (lan) {
         argv[k++] = "--host";
         argv[k++] = "0.0.0.0";

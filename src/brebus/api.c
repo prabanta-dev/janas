@@ -6,6 +6,7 @@
  * and the catalog of janas-get with whether each model is meant for a
  * machine of this memory.
  */
+#include <dirent.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -42,6 +43,25 @@ static void machine(struct janas_buf *o)
                      janas_on_mains());
 }
 
+/* whether a model sees pictures: a .vision.jns beside it whose name is a
+   prefix of its (qwen3.5-0.8b.vision.jns serves qwen3.5-0.8b-q4km), as the
+   engine finds it (src/llm/api_image.c) */
+static int sees(const char *dir, const char *name)
+{
+    DIR *d = opendir(dir);
+    struct dirent *e;
+    int yes = 0;
+    while (d && !yes && (e = readdir(d))) {
+        size_t n = strlen(e->d_name), sfx = strlen(".vision.jns");
+        if (n > sfx && !strcmp(e->d_name + n - sfx, ".vision.jns") &&
+            !strncmp(name, e->d_name, n - sfx))
+            yes = 1;
+    }
+    if (d)
+        closedir(d);
+    return yes;
+}
+
 static void models(struct brebus *b, struct janas_buf *o)
 {
     static struct janas_model_file m[JANAS_MODELS_MAX];
@@ -58,9 +78,10 @@ static void models(struct brebus *b, struct janas_buf *o)
         str(o, m[i].arch);
         janas_buf_printf(o,
                          ", \"bytes\": %llu, \"context\": %u, \"fim\": %d, "
-                         "\"recurrent\": %d, \"coder\": %d}",
+                         "\"recurrent\": %d, \"coder\": %d, \"vision\": %d}",
                          (unsigned long long)m[i].bytes, m[i].ctx, m[i].fim,
-                         m[i].recurrent, m[i].coder);
+                         m[i].recurrent, m[i].coder,
+                         sees(b->models_dir, m[i].name));
     }
     janas_buf_puts(o, "]}");
 }

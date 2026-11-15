@@ -56,6 +56,7 @@ struct brebus {
     /* tools.c: the chat's tools, MCP servers of the workspace's own */
     pthread_mutex_t tools_mu;
     struct janas_mcp *docs, *files;
+    char embedding[128]; /* janas-docs's embedding model, "": words only */
 };
 
 /* http.c: the daemon on 127.0.0.1:port; 0, or -1 with the reason */
@@ -155,6 +156,24 @@ int brebus_folders_set(struct brebus *b, const char *body, size_t n,
    reason */
 int brebus_attach(struct brebus *b, const char *body, size_t n,
                   struct janas_buf *out);
+/* a picture's or a recording's type by its name (audio set to 1 for a
+   recording), or NULL */
+const char *brebus_media_type(const char *path, int *audio);
+/* a file of the workspace or of its folders read only, for the page: 0
+   with its bytes and type, -1 when it is outside them or not there */
+int brebus_file(struct brebus *b, const char *path, struct janas_buf *out,
+                const char **mime);
+
+/* python.c: the python tool in the cage, the workspace its /mnt/data:
+   whether there can be one (1, or 0 with why); its definition as an
+   OpenAI function into o (nothing where there can be none); a piece of
+   code run, its result as tools_call's JSON into out; the session ended.
+   The run and the stop with tools_mu held. */
+int brebus_python_ok(char *why, size_t n);
+void brebus_python_tool(struct brebus *b, struct janas_buf *o);
+int brebus_python_run(struct brebus *b, const char *code,
+                      struct janas_buf *out);
+void brebus_python_stop(void);
 
 /* proxy.c: a request to the model's API passed on: 0 with the response to
    queue and its status, -1 when no server runs or it cannot be reached */

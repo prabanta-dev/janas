@@ -180,7 +180,26 @@ static enum MHD_Result handler(void *cls, struct MHD_Connection *conn,
         int rc = brebus_attach(b, r->body.p, r->body.n, &o);
         return json(conn, rc ? 400 : 200, &o);
     }
+    if (get && !strcmp(url, "/brebus/file")) {
+        const char *path =
+            MHD_lookup_connection_value(conn, MHD_GET_ARGUMENT_KIND, "path");
+        const char *mime = NULL;
+        if (brebus_file(b, path, &o, &mime) == 0) {
+            enum MHD_Result ret = reply(conn, 200, mime, o.p, o.n, 0);
+            janas_buf_free(&o);
+            return ret;
+        }
+        janas_buf_free(&o);
+        static const char no[] =
+            "{\"error\": \"not a file of the workspace or of its folders\"}";
+        return reply(conn, 404, "application/json", no, sizeof no - 1, 1);
+    }
     if (get && !strcmp(url, "/brebus/tools")) {
+        brebus_tools_list(b, &o);
+        return json(conn, 200, &o);
+    }
+    if (post && !strcmp(url, "/brebus/tools/restart")) {
+        brebus_tools_start(b); /* the settings changed: the embedding */
         brebus_tools_list(b, &o);
         return json(conn, 200, &o);
     }

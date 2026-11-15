@@ -14,6 +14,7 @@
  * JANAS_FILES_READ_ONLY), not the rest of the home. The folders added are
  * kept in .brebus/workspace.json.
  */
+#include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -65,8 +66,61 @@ static int read_only(const char *ws, char dirs[][4096], int max)
     return n;
 }
 
+/* the embedding models of the models' folder (their names have
+   "embedding"), sorted: their number, names into names */
+static int embedders(const struct brebus *b, char names[][128], int max)
+{
+    DIR *d = opendir(b->models_dir);
+    int n = 0;
+    struct dirent *de;
+    while (d && n < max && (de = readdir(d))) {
+        size_t l = strlen(de->d_name);
+        if (l < 5 || l - 4 >= 128 || strcmp(de->d_name + l - 4, ".jns") ||
+            !strstr(de->d_name, "embedding"))
+            continue;
+        memcpy(names[n], de->d_name, l - 4);
+        names[n][l - 4] = 0;
+        n++;
+    }
+    if (d)
+        closedir(d);
+    qsort(names, (size_t)n, 128, (int (*)(const void *, const void *))strcmp);
+    return n;
+}
+
+/* the one chosen: settings.json's _docs.embedding ("none": words only),
+   else the first there is; "" for none */
+static void embedder_chosen(struct brebus *b, char *out, size_t cap)
+{
+    static char names[16][128];
+    int n = embedders(b, names, 16);
+    out[0] = 0;
+    struct janas_buf f = {0};
+    char err[160];
+    brebus_settings_get(b, &f);
+    struct janas_json_doc *d =
+        f.n ? janas_json_parse(f.p, f.n, err, sizeof err) : NULL;
+    const struct janas_json *dc =
+        d ? janas_json_get(janas_json_root(d), "_docs") : NULL;
+    const char *want =
+        dc ? janas_json_str(janas_json_get(dc, "embedding")) : NULL;
+    if (want && !strcmp(want, "none")) {
+        janas_json_free(d);
+        janas_buf_free(&f);
+        return;
+    }
+    for (int i = 0; i < n && !out[0]; i++)
+        if (!want || !strcmp(want, names[i]))
+            snprintf(out, cap, "%.127s", names[i]);
+    if (!out[0] && n) /* the one asked for is gone: the first */
+        snprintf(out, cap, "%.127s", names[0]);
+    janas_json_free(d);
+    janas_buf_free(&f);
+}
+
 static void stop_locked(struct brebus *b)
 {
+    brebus_python_stop(); /* its folders may change */
     if (b->docs)
         janas_mcp_close(b->docs);
     if (b->files)
@@ -97,6 +151,18 @@ int brebus_tools_start(struct brebus *b)
     snprintf(list, sizeof list, "%s/docs-dirs.txt", cfg);
     janas_mkdirs(cfg);
     janas_mkdirs(data);
+    /* its settings: the embedding model, for a search by meaning too */
+    char emb[128], conf[4400];
+    embedder_chosen(b, emb, sizeof emb);
+    snprintf(b->embedding, sizeof b->embedding, "%s", emb);
+    snprintf(conf, sizeof conf, "%s/docs.conf", cfg);
+    FILE *cf = fopen(conf, "w");
+    if (cf) {
+        fprintf(cf, "# written by Brebus\n");
+        if (emb[0])
+            fprintf(cf, "embedding_model = %s/%s.jns\n", b->models_dir, emb);
+        fclose(cf);
+    }
     FILE *f = fopen(list, "w");
     if (f) {
         fprintf(f,
@@ -169,6 +235,14 @@ void brebus_tools_list(struct brebus *b, struct janas_buf *out)
     int first = 1;
     list_of(b->docs, out, &first);
     list_of(b->files, out, &first);
+    /* python, in the cage, where one can be built */
+    struct janas_buf py = {0};
+    brebus_python_tool(b, &py);
+    if (py.n) {
+        janas_buf_puts(out, first ? "" : ", ");
+        janas_buf_put(out, py.p, py.n);
+    }
+    janas_buf_free(&py);
     janas_buf_puts(out, "], \"read_only\": [");
     /* the tools that say they only read, run without asking */
     janas_mcp *ms[] = {b->docs, b->files};
@@ -188,8 +262,17 @@ void brebus_tools_list(struct brebus *b, struct janas_buf *out)
                 str(out, t);
             }
     }
-    janas_buf_printf(out, "], \"docs\": %s, \"files\": %s}",
+    janas_buf_printf(out, "], \"docs\": %s, \"files\": %s, \"embedding\": ",
                      b->docs ? "true" : "false", b->files ? "true" : "false");
+    str(out, b->embedding);
+    janas_buf_puts(out, ", \"embedding_models\": [");
+    static char names[16][128];
+    int ne = embedders(b, names, 16);
+    for (int i = 0; i < ne; i++) {
+        janas_buf_puts(out, i ? ", " : "");
+        str(out, names[i]);
+    }
+    janas_buf_puts(out, "]}");
     pthread_mutex_unlock(&b->tools_mu);
 }
 
@@ -233,6 +316,24 @@ int brebus_tools_call(struct brebus *b, const char *body, size_t n,
         janas_buf_puts(&a, "{}");
     int rc = -1;
     pthread_mutex_lock(&b->tools_mu);
+    if (name && !strcmp(name, "python")) {
+        /* its code, from the arguments as given */
+        char e2[160];
+        struct janas_json_doc *pd = janas_json_parse(a.p, a.n, e2, sizeof e2);
+        const char *code =
+            pd ? janas_json_str(janas_json_get(janas_json_root(pd), "code"))
+               : NULL;
+        if (code)
+            brebus_python_run(b, code, out);
+        else
+            janas_buf_puts(out, "{\"result\": \"python needs its code\", "
+                                "\"is_error\": true}");
+        janas_json_free(pd);
+        pthread_mutex_unlock(&b->tools_mu);
+        janas_buf_free(&a);
+        janas_json_free(d);
+        return 0;
+    }
     janas_mcp *m = name ? owner(b, name) : NULL;
     if (!m) {
         janas_buf_puts(out, "{\"error\": \"no such tool\"}");
@@ -328,4 +429,41 @@ int brebus_folders_set(struct brebus *b, const char *body, size_t n,
         janas_buf_puts(out, ", \"refused\": true}");
     }
     return 0;
+}
+
+int brebus_file(struct brebus *b, const char *path, struct janas_buf *out,
+                const char **mime)
+{
+    char ws[4096], real[4096];
+    static char ro[MAX_RO][4096];
+    struct stat st;
+    if (!path || *path != '/' || brebus_ws_path(b, ws, sizeof ws) != 0 ||
+        !realpath(path, real) || stat(real, &st) != 0 || !S_ISREG(st.st_mode) ||
+        st.st_size > (32 << 20))
+        return -1;
+    /* under the workspace (not its .brebus/), or one of its folders */
+    size_t wl = strlen(ws);
+    int in = !strncmp(real, ws, wl) && real[wl] == '/' &&
+             strncmp(real + wl, "/.brebus/", 9);
+    int n = read_only(ws, ro, MAX_RO);
+    for (int i = 0; i < n && !in; i++) {
+        size_t l = strlen(ro[i]);
+        in = !strcmp(real, ro[i]) ||
+             (!strncmp(real, ro[i], l) && real[l] == '/');
+    }
+    if (!in)
+        return -1;
+    FILE *f = fopen(real, "rb");
+    if (!f)
+        return -1;
+    char buf[65536];
+    size_t r;
+    while ((r = fread(buf, 1, sizeof buf, f)) > 0)
+        janas_buf_put(out, buf, r);
+    fclose(f);
+    int audio;
+    *mime = brebus_media_type(real, &audio);
+    if (!*mime)
+        *mime = "application/octet-stream";
+    return out->oom ? -1 : 0;
 }

@@ -231,11 +231,16 @@ int dz_tool_status(struct dz_ctx *c, struct janas_buf *o)
             dz_short(x->roots, x->roots->root[i], s, sizeof s);
             janas_buf_printf(o, "%s %s", i ? "," : "", s);
         }
-        janas_buf_printf(o, " (%s).\n",
-                         x->roots->listed ? "from ~/.config/janas/docs-dirs.txt"
-                                          : "the Documents folder: list "
-                                            "others in "
-                                            "~/.config/janas/docs-dirs.txt");
+        /* the list an app gave (JANAS_DOCS_DIRS), or the user's */
+        const char *own = getenv("JANAS_DOCS_DIRS");
+        if (x->roots->listed && own && *own == '/')
+            janas_buf_printf(o, " (from %s).\n", own);
+        else
+            janas_buf_printf(o, " (%s).\n",
+                             x->roots->listed
+                                 ? "from ~/.config/janas/docs-dirs.txt"
+                                 : "the Documents folder: list others in "
+                                   "~/.config/janas/docs-dirs.txt");
     }
     size_t pieces = 0, vec = 0, empty = 0;
     for (size_t i = 0; i < x->n; i++) {

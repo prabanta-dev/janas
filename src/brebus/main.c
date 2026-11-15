@@ -14,6 +14,7 @@
 
 #include "brebus.h"
 #include "common/catalog.h"
+#include "common/sandbox.h"
 #include "common/sysinfo.h"
 
 #ifndef JANAS_VERSION
@@ -57,6 +58,7 @@ static void open_browser(const char *url)
 
 int main(int argc, char **argv)
 {
+    janas_sandbox_main(argc, argv); /* a cage for python.c being built */
     struct brebus b = {.port = 41414};
     int open = 1, browser = 0;
     const char *workspace = NULL;

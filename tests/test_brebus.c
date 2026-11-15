@@ -274,6 +274,26 @@ int main(void)
     CHECK(st == 200 && strstr(o.p, want) &&
               strstr(o.p, "\"text\": \"a note of the folder read only\""),
           "a file attached: %d %s", st, o.p);
+    /* python in the cage, where one can be built: the workspace written,
+       the folder read only not */
+    st = ask("GET", "/brebus/tools", NULL, NULL, &o);
+    if (st == 200 && strstr(o.p, "\"python\"")) {
+        st = ask("POST", "/brebus/tools/call",
+                 "{\"name\": \"python\", \"arguments\": {\"code\": "
+                 "\"open('py.txt', 'w').write('from the cage'); 6 * 7\"}}",
+                 own, &o);
+        snprintf(want, sizeof want, "%s/work/py.txt", dir);
+        CHECK(st == 200 && strstr(o.p, "42") && access(want, F_OK) == 0,
+              "python in the workspace: %d %s", st, o.p);
+        snprintf(body, sizeof body,
+                 "{\"name\": \"python\", \"arguments\": {\"code\": "
+                 "\"open('%s/x.txt', 'w')\"}}",
+                 ro);
+        st = ask("POST", "/brebus/tools/call", body, own, &o);
+        CHECK(st == 200 && strstr(o.p, "Read-only file system"),
+              "python writing where it may only read: %d %s", st, o.p);
+    } else
+        printf("test_brebus: no cage here, python not tried\n");
     st = ask("POST", "/brebus/attach", "{\"source\": \"relative.txt\"}", own,
              &o);
     CHECK(st == 400, "a relative path attached: %d", st);

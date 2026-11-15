@@ -103,7 +103,15 @@ nav button.ws { margin: -6px 10px 14px; padding: 4px 8px; font-size: 12px; color
 .dlg[hidden] { display: none; }
 .dlg .box { background: var(--bg); border: 1px solid var(--line); border-radius: 14px;
             padding: 22px 26px; width: min(620px, 92vw); max-height: 86vh; overflow: auto; }
-.dlg .box h2 { margin-top: 0; }
+.dlg .box h2 { margin-top: 0; font-size: 18px; }
+.dlg .dtext { line-height: 1.5; }
+.dlg .din { width: 100%; box-sizing: border-box; margin-top: 12px; padding: 8px 10px;
+            border-radius: 8px; border: 1px solid var(--line); background: var(--panel);
+            color: var(--fg); font: 13px var(--mono); }
+.dlg .drem { display: flex; gap: 6px; align-items: center; margin-top: 12px; }
+.dlg .dargs { background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+              padding: 8px 10px; max-height: 40vh; overflow: auto; font: 12px var(--mono);
+              white-space: pre-wrap; }
 .dlg .right { text-align: right; margin-bottom: 0; }
 #wsrecent { display: flex; flex-direction: column; gap: 4px; margin-bottom: 14px; }
 #wsrecent button { all: unset; cursor: pointer; padding: 6px 10px; border-radius: 8px;
@@ -195,6 +203,7 @@ main h3 { font-size: 15px; margin: 24px 0 10px; }
       <div id="bar"><span id="loaded">No model loaded.</span>
         <label class="tog" title="Before each question, Brebus searches the workspace's documents and gives the model the passages found"><input type="checkbox" id="usedocs"> Search documents</label>
         <label class="tog" title="The model may search and read the workspace's documents and files, and write in the workspace (asking you first)"><input type="checkbox" id="usetools"> Tools</label>
+        <label class="tog" title="The model may run Python in a sandbox: the workspace and its folders, no network, no other file; each piece of code only once you allow it"><input type="checkbox" id="usecode"> Run code</label>
         <span class="tools" hidden><button class="act quiet" id="sys">System</button>
           <button class="act quiet" id="ren">Rename</button>
           <button class="act quiet" id="exp">Export</button>
@@ -260,6 +269,9 @@ main h3 { font-size: 15px; margin: 24px 0 10px; }
     <button class="act quiet" type="submit">Open</button>
   </form>
   <p><button class="act" id="wsnew">New folder</button> <span class="note" id="wsnewin"></span></p>
+  <div id="wsemb" hidden><h3>Search by meaning</h3>
+    <p class="note" id="embnote"></p>
+    <select id="embsel"></select></div>
   <div id="wsro" hidden><h3>Read only, beside it</h3>
     <p class="note">Folders and files the model may search and read, never write: documents, code, pictures, audio. Video is not read by Janas yet.</p>
     <div id="rolist"></div>
@@ -272,6 +284,54 @@ main h3 { font-size: 15px; margin: 24px 0 10px; }
 <script>
 "use strict";
 const $ = (s) => document.querySelector(s);
+
+/* Brebus's own dialogs, in place of the browser's alert, confirm and
+   prompt: a title, a text (or HTML), a field when asked, buttons, a box
+   to remember the choice. A promise of {button, value, remember}; Esc is
+   the last button, Enter the primary one. window.__dialogAuto, when a
+   test sets it, answers in the user's place. */
+function dialog(o) {
+  if (window.__dialogAuto) return Promise.resolve(window.__dialogAuto(o));
+  return new Promise((done) => {
+    const box = document.createElement("div");
+    box.className = "dlg";
+    const btns = o.buttons || [{label: "OK", value: "ok", primary: true}];
+    box.innerHTML = `<div class="box" role="dialog" aria-modal="true">
+      ${o.title ? `<h2>${esc(o.title)}</h2>` : ""}
+      <div class="dtext">${o.html || esc(o.text || "").replace(/\n/g, "<br>")}</div>
+      ${o.input !== undefined ? (o.multiline
+        ? `<textarea class="din" rows="4" spellcheck="false">${esc(o.input)}</textarea>`
+        : `<input class="din" spellcheck="false" value="${esc(o.input)}" placeholder="${esc(o.placeholder || "")}">`) : ""}
+      ${o.remember ? `<label class="note drem"><input type="checkbox"> ${esc(o.remember)}</label>` : ""}
+      <p class="right">${btns.map((b, i) => `<button class="act${b.primary ? "" : " quiet"}" data-i="${i}">${esc(b.label)}</button>`).join(" ")}</p>
+    </div>`;
+    document.body.append(box);
+    const field = box.querySelector(".din");
+    const end = (b) => {
+      const res = {button: b.value, value: field ? field.value : undefined,
+                   remember: !!box.querySelector(".drem input")?.checked};
+      box.remove(); document.removeEventListener("keydown", key, true);
+      done(res);
+    };
+    const key = (e) => {
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); end(btns[btns.length - 1]); }
+      else if (e.key === "Enter" && !e.shiftKey && !(field && field.tagName === "TEXTAREA")) {
+        e.preventDefault(); end(btns.find((b) => b.primary) || btns[0]);
+      }
+    };
+    document.addEventListener("keydown", key, true);
+    for (const b of box.querySelectorAll("button[data-i]")) b.onclick = () => end(btns[+b.dataset.i]);
+    (field || box.querySelector("button.act:not(.quiet)") || box.querySelector("button"))?.focus();
+  });
+}
+const say = (text, title) => dialog({title, text, buttons: [{label: "OK", value: "ok", primary: true}]});
+const yes = async (text, title, ok = "OK") => (await dialog({title, text,
+  buttons: [{label: ok, value: "yes", primary: true}, {label: "Cancel", value: "no"}]})).button === "yes";
+const input = async (title, value, text, multiline) => {
+  const r = await dialog({title, text, input: value || "", multiline,
+    buttons: [{label: "OK", value: "ok", primary: true}, {label: "Cancel", value: "no"}]});
+  return r.button === "ok" ? r.value : null;
+};
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
   ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"})[c]);
 const gib = (b) => (b / 2 ** 30).toFixed(1) + " GiB";
@@ -308,10 +368,11 @@ async function load() {
   await status();
   await getStatus();
 }
-let catalog = null;
+let catalog = null, modelInfo = {};
 async function mine() {
   const c = catalog = catalog || await ask("catalog");
   const my = await ask("models");
+  for (const x of my.models) modelInfo[x.name] = x;
   try { settings = await ask("settings"); } catch (e) { settings = {}; }
   srvForm();
   const have = new Set(my.models.map((x) => x.path.split("/").pop()));
@@ -328,7 +389,7 @@ async function mine() {
   $("#dir").textContent = my.dir;
   $("#mine").innerHTML = my.models.map((x) =>
     `<tr><td><b>${esc(x.name)}</b></td>
-     <td>${esc(x.arch)}${x.recurrent ? " · recurrent" : ""}${x.fim ? " · fills in the middle" : ""}</td>
+     <td>${esc(x.arch)}${x.recurrent ? " · recurrent" : ""}${x.fim ? " · fills in the middle" : ""}${x.vision ? " · sees pictures" : ""}</td>
      <td class="num">${gib(x.bytes)}</td><td class="num">${x.context ? x.context.toLocaleString() : "—"}</td>
      <td class="row-acts"><button class="act load" data-m="${esc(x.name)}">Load</button>
        <button class="act quiet opts" data-m="${esc(x.name)}">Settings</button></td></tr>
@@ -375,7 +436,7 @@ function hfSpec(t) {
 $("#hfget").onsubmit = () => {
   const spec = hfSpec($("#hfget").spec.value);
   if (!/^hf:[\w.-]+\/[\w.-]+\/[\w.\/-]+\.(gguf|jns)$/.test(spec)) {
-    alert("A GGUF or JNS file of Hugging Face: its address, or hf:owner/repo/file.gguf");
+    say("A GGUF or JNS file of Hugging Face: its address, or hf:owner/repo/file.gguf");
     return false;
   }
   getModel(spec);
@@ -387,7 +448,7 @@ let getting = false;
 async function getModel(name) {
   const r = await fetch("/brebus/get/start", {method: "POST", body: JSON.stringify({model: name})});
   const j = await r.json();
-  if (!r.ok) { alert(j.error || "it did not start"); return; }
+  if (!r.ok) { say(j.error || "it did not start"); return; }
   getStatus();
 }
 async function getStatus() {
@@ -442,11 +503,11 @@ async function srvSave() {
   const f = $("#srvset");
   const origins = f.origins.value.split(/\s+/).filter((x) => /^https?:\/\/[^\s]+$/.test(x));
   const key = f.api_key.value.trim();
-  if (key && !/^[\x21-\x7e]{8,199}$/.test(key)) { alert("A key is 8 or more letters, digits or signs, no spaces."); return; }
-  if (f.lan.checked && !key && !confirm("Without a key anyone on this network can use the model. Go on?")) return;
+  if (key && !/^[\x21-\x7e]{8,199}$/.test(key)) { say("A key is 8 or more letters, digits or signs, no spaces."); return; }
+  if (f.lan.checked && !key && !await yes("Without a key anyone on this network can use the model.", "No key", "Go on")) return;
   settings._server = {lan: f.lan.checked, api_key: key, origins};
   await fetch("/brebus/settings", {method: "POST", body: JSON.stringify(settings)});
-  if (server.running && confirm("Saved. Start the model's server again now, to use them?")) {
+  if (server.running && await yes("Saved. Start the model's server again now, to use them?", "Settings", "Start again")) {
     const b = document.querySelector(`button.load[data-m="${CSS.escape(server.model)}"]`);
     if (b) await loadModel(server.model, b);
   }
@@ -464,7 +525,7 @@ async function loadModel(name, btn) {
     body: JSON.stringify({model: name, ...(settings[name] || {})})});
   const j = await r.json();
   btn.disabled = false;
-  if (!r.ok) alert(j.error || "it did not start");
+  if (!r.ok) say(j.error || "it did not start");
   await status();
 }
 async function unload() {
@@ -516,7 +577,7 @@ function newConv() {
   listConvs(); drawLog();
 }
 async function renameConv() {
-  const t = prompt("A title for this chat", cur.title || "");
+  const t = await input("A title for this chat", cur.title || "");
   if (t === null) return;
   cur.title = t.trim();
   await saveConv(cur);
@@ -524,7 +585,7 @@ async function renameConv() {
   listConvs();
 }
 async function deleteConv() {
-  if (!confirm(`Delete "${cur.title || "New chat"}"?`)) return;
+  if (!await yes(`"${cur.title || "New chat"}" and its messages are deleted from the workspace.`, "Delete this chat?", "Delete")) return;
   await fetch("/brebus/chats/" + cur.id, {method: "DELETE"});
   convs = convs.filter((c) => c.id !== cur.id);
   cur = null;
@@ -538,7 +599,7 @@ async function exportConv() {
   const r = await fetch("/brebus/export", {method: "POST",
     body: JSON.stringify({name: cur.title || "chat", text: md.join("\n")})});
   const j = await r.json();
-  alert(r.ok ? "Saved in the workspace: " + j.path : j.error || "not saved");
+  say(r.ok ? j.path : j.error || "not saved", r.ok ? "Exported" : "Not exported");
 }
 
 /* Markdown of a reply: the text escaped first, then a few marks made into
@@ -642,11 +703,23 @@ async function readTools() {
   const has = (n) => tools.tools.some((t) => t.function && t.function.name === n);
   $("#usedocs").disabled = !has("docs_search");
   $("#usetools").disabled = !tools.tools.length;
+  $("#usecode").disabled = !has("python");
+  $("#usecode").parentElement.hidden = !has("python");
+  /* the embedding model of janas-docs: words only without one */
+  const em = tools.embedding_models || [];
+  $("#wsemb").hidden = !ws.path;
+  $("#embnote").textContent = em.length
+    ? "The documents are searched by their words, and by their meaning with an embedding model, which finds what is said in other words. It indexes them again when changed."
+    : "The documents are searched by their words alone: get qwen3-embedding-0.6b in Discover to search them by their meaning too.";
+  $("#embsel").hidden = !em.length;
+  $("#embsel").innerHTML = em.map((n) => `<option value="${esc(n)}"${n === tools.embedding ? " selected" : ""}>${esc(n)}</option>`).join("") +
+    `<option value="none"${tools.embedding ? "" : " selected"}>words only</option>`;
 }
 const pref = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : v === "1"; } catch (e) { return d; } };
 $("#usedocs").checked = pref("brebus.usedocs", true);
 $("#usetools").checked = pref("brebus.usetools", true);
-for (const id of ["usedocs", "usetools"])
+$("#usecode").checked = pref("brebus.usecode", false);
+for (const id of ["usedocs", "usetools", "usecode"])
   $("#" + id).onchange = () => { try { localStorage.setItem("brebus." + id, $("#" + id).checked ? "1" : "0"); } catch (e) {} };
 
 async function callTool(name, args) {
@@ -667,39 +740,59 @@ function drawChips() {
 const kb = (n) => n < 1e6 ? (n / 1024).toFixed(0) + " KB" : (n / 1048576).toFixed(1) + " MB";
 async function attach() {
   if (!ws.path) { wsShow(true); return; }
-  const src = (prompt("A file of this computer (its full path), or a web address") || "").trim();
+  const src = ((await input("Attach", "", "A file of this computer, by its full path, or a web address (downloaded into the workspace's sources/).")) || "").trim();
   if (!src) return;
   let mode = "copy";
   if (!/^https?:\/\//.test(src)) {
     const i = await (await fetch("/brebus/attach", {method: "POST",
       body: JSON.stringify({source: src, mode: "info"})})).json();
-    if (i.error) { alert(i.error); return; }
+    if (i.error) { say(i.error); return; }
     if (!i.inside) {
-      /* copied into the workspace, or read where it is: copying is offered
-         up to 100 MB */
-      const big = i.bytes > 100 * 1048576;
-      mode = big
-        ? (confirm(`${kb(i.bytes)}: read it where it is (OK), or copy it into the workspace (Cancel)?`) ? "place" : "copy")
-        : (confirm(`${kb(i.bytes)}: copy it into the workspace (OK), or read it where it is (Cancel)?`) ? "copy" : "place");
+      /* copied into the workspace, or read where it is: copying offered up
+         to 100 MB, the choice remembered for files of that size if asked */
+      const big = i.bytes > 100 * 1048576, key = "brebus.attach." + (big ? "big" : "small");
+      let kept = null;
+      try { kept = localStorage.getItem(key); } catch (e) {}
+      if (kept === "copy" || kept === "place") mode = kept;
+      else {
+        const copy = {label: "Copy into the workspace", value: "copy", primary: !big};
+        const place = {label: "Read it where it is", value: "place", primary: big};
+        const d = await dialog({title: "Attach " + src.split("/").pop(),
+          text: `${kb(i.bytes)}. A copy keeps the workspace whole and is read again as it is now; read where it is, it is added to the folders read only and follows its changes.`,
+          buttons: big ? [place, copy, {label: "Cancel", value: "no"}] : [copy, place, {label: "Cancel", value: "no"}],
+          remember: `Do the same for files ${big ? "over" : "up to"} 100 MB`});
+        if (d.button === "no") return;
+        mode = d.button;
+        if (d.remember) try { localStorage.setItem(key, mode); } catch (e) {}
+      }
     }
   }
   $("#attach").textContent = "…";
   const r = await fetch("/brebus/attach", {method: "POST", body: JSON.stringify({source: src, mode})});
   const j = await r.json();
   $("#attach").textContent = "+";
-  if (!r.ok) { alert(j.error || "not attached"); return; }
+  if (!r.ok) { say(j.error || "not attached"); return; }
   pending.push(j); drawChips();
   if (mode === "place") readFolders();
 }
-$("#attach").onclick = () => attach().catch((e) => alert(e.message));
+$("#attach").onclick = () => attach().catch((e) => say(e.message));
 
 const WHOLE = 24000; /* characters of a document put whole into a message */
 /* what the model reads of a user's message: its text, the documents
    attached, the passages found */
 function userContent(m) {
   let c = m.content;
+  const sees = modelInfo[server.model]?.vision;
   for (const a of m.attached || []) {
-    if (a.text !== undefined && a.text.length <= WHOLE && !a.cut)
+    if (a.media === "image" && !sees)
+      c += `\n\n[A picture was attached, ${a.name}; this model does not see pictures.]`;
+    else if (a.media === "image")
+      continue; /* sent as the picture itself (apiMessages) */
+    else if (a.media === "audio" && a.transcript !== undefined)
+      c += `\n\n<transcript of="${a.name}">\n${a.transcript}\n</transcript>`;
+    else if (a.media === "audio")
+      c += `\n\n[A recording was attached, ${a.name}, which could not be transcribed: ${a.unread || "no speech model"}.]`;
+    else if (a.text !== undefined && a.text.length <= WHOLE && !a.cut)
       c += `\n\n<document name="${a.name}" path="${a.path}">\n${a.text}\n</document>`;
     else if (a.text !== undefined)
       c += `\n\n[Attached: ${a.path}, ${kb(a.bytes)}, too long to be put here whole: search it with docs_search, or read it with docs_read.]`;
@@ -714,7 +807,15 @@ function apiMessages() {
   const out = [];
   if (cur.system) out.push({role: "system", content: cur.system});
   for (const m of cur.messages) {
-    if (m.role === "user") out.push({role: "user", content: userContent(m)});
+    if (m.role === "user") {
+      /* pictures as pictures, for a model that sees them */
+      const pics = modelInfo[server.model]?.vision
+        ? (m.attached || []).filter((a) => a.media === "image" && pictures.has(a.path)) : [];
+      out.push({role: "user", content: pics.length
+        ? [{type: "text", text: userContent(m)},
+           ...pics.map((a) => ({type: "image_url", image_url: {url: pictures.get(a.path)}}))]
+        : userContent(m)});
+    }
     else if (m.role === "assistant") {
       const a = {role: "assistant", content: m.content || ""};
       if (m.tool_calls) a.tool_calls = m.tool_calls;
@@ -731,7 +832,9 @@ async function streamTurn(reply, withTools) {
   const calls = [];
   const body = {model: server.model, stream: true, stream_options: {include_usage: true},
                 messages: apiMessages().slice(0, -1)};
-  if (withTools) body.tools = tools.tools;
+  if (withTools)
+    body.tools = tools.tools.filter((t) => t.function.name === "python"
+      ? $("#usecode").checked : $("#usetools").checked);
   const r = await fetch("/v1/chat/completions", {method: "POST", signal: busy.signal,
     headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
   if (!r.ok) { reply.content = "(" + r.status + ") " + await r.text(); return []; }
@@ -780,13 +883,44 @@ async function streamTurn(reply, withTools) {
   return calls.filter(Boolean);
 }
 
+/* the pictures of the conversation, as data URLs, kept in memory only (the
+   conversation's file keeps their paths) */
+const pictures = new Map();
+async function fileBlob(path) {
+  const r = await fetch("/brebus/file?path=" + encodeURIComponent(path));
+  if (!r.ok) throw new Error("not found: " + path);
+  return r.blob();
+}
+const dataURL = (blob) => new Promise((ok, no) => {
+  const f = new FileReader(); f.onload = () => ok(f.result); f.onerror = no; f.readAsDataURL(blob);
+});
+async function prepareMedia() {
+  for (const m of cur.messages)
+    for (const a of (m.role === "user" && m.attached) || []) {
+      if (a.media === "image" && !pictures.has(a.path))
+        try { pictures.set(a.path, await dataURL(await fileBlob(a.path))); } catch (e) {}
+      if (a.media === "audio" && a.transcript === undefined && !a.unread) {
+        /* transcribed by the model's server (its Whisper) */
+        try {
+          const fd = new FormData();
+          fd.append("file", await fileBlob(a.path), a.name);
+          fd.append("model", "whisper");
+          const r = await fetch("/v1/audio/transcriptions", {method: "POST", body: fd});
+          const j = await r.json();
+          if (r.ok && typeof j.text === "string") a.transcript = j.text.trim();
+          else a.unread = j.error?.message || j.error || "the server did not transcribe it";
+        } catch (e) { a.unread = e.message; }
+      }
+    }
+}
+
 async function sendAsk(ev) {
   ev.preventDefault();
   if (busy) { stopReply(); return; }
   const text = $("#ask").value.trim();
   if (!text) return;
   if (!ws.path) { wsShow(true); return; }
-  if (!server.running) { alert("Load a model first, in My models."); return; }
+  if (!server.running) { say("Load a model first, in My models."); return; }
   if (!cur) newConv();
   const um = {role: "user", content: text};
   if (pending.length) { um.attached = pending; pending = []; drawChips(); }
@@ -798,6 +932,7 @@ async function sendAsk(ev) {
   listConvs(); drawLog();
   busy = new AbortController(); sendButton();
   try {
+    await prepareMedia();
     /* the workspace's documents searched for the question */
     if ($("#usedocs").checked && !$("#usedocs").disabled) {
       const f = await callTool("docs_search", JSON.stringify({query: text, max: 4}));
@@ -805,7 +940,7 @@ async function sendAsk(ev) {
         um.found = f.result.slice(0, 8000);
       drawLog();
     }
-    const withTools = $("#usetools").checked && tools.tools.length > 0;
+    const withTools = ($("#usetools").checked || $("#usecode").checked) && tools.tools.length > 0;
     for (let round = 0; round < 6; round++) {
       const reply = {role: "assistant", content: "", think: ""};
       cur.messages.push(reply); drawLog();
@@ -816,7 +951,15 @@ async function sendAsk(ev) {
         const name = c.function.name, args = c.function.arguments || "{}";
         const only_reads = tools.read_only.includes(name);
         let res;
-        if (!only_reads && !confirm(`The model wants to run ${name}:\n\n${args}\n\nAllow it?`))
+        let pretty = args, what = "It changes something in the workspace. Its arguments:";
+        try {
+          const a = JSON.parse(args);
+          pretty = name === "python" && typeof a.code === "string" ? a.code : JSON.stringify(a, null, 2);
+          if (name === "python") what = "Python code, run in a sandbox: the workspace (read and write) and its folders read only, no network:";
+        } catch (e) {}
+        if (!only_reads && (await dialog({title: "The model wants to run " + name,
+              html: `${what}<pre class="dargs">${esc(pretty)}</pre>`,
+              buttons: [{label: "Allow", value: "yes", primary: true}, {label: "Don't allow", value: "no"}]})).button !== "yes")
           res = {result: "The user did not allow this call.", is_error: true, denied: true};
         else
           res = await callTool(name, args);
@@ -851,9 +994,15 @@ async function readFolders() {
 async function setFolders(list) {
   const r = await fetch("/brebus/folders", {method: "POST", body: JSON.stringify({read_only: list})});
   const j = await r.json();
-  if (j.refused) alert("Some were not added: a folder or file there is, by its full path.");
+  if (j.refused) say("Some were not added: a folder or file there is, by its full path.");
   await readFolders(); await readTools();
 }
+$("#embsel").onchange = async () => {
+  settings._docs = {embedding: $("#embsel").value};
+  await fetch("/brebus/settings", {method: "POST", body: JSON.stringify(settings)});
+  await fetch("/brebus/tools/restart", {method: "POST", body: "{}"});
+  await readTools();
+};
 $("#roform").onsubmit = async () => {
   const p = $("#roform").path.value.trim();
   if (!p) return false;
@@ -881,7 +1030,7 @@ $("#ren").onclick = renameConv;
 $("#del").onclick = deleteConv;
 $("#exp").onclick = exportConv;
 $("#sys").onclick = async () => {
-  const t = prompt("A system message for this chat (empty: none)", cur.system || "");
+  const t = await input("System message", cur.system || "", "What the model is told before this chat (empty: none).", true);
   if (t === null) return;
   cur.system = t.trim(); await saveConv(cur);
 };
@@ -902,7 +1051,7 @@ async function wsOpen(path, create) {
   const r = await fetch(create === "new" ? "/brebus/workspace/new" : "/brebus/workspace/open",
     {method: "POST", body: JSON.stringify({path, create: !!create})});
   const j = await r.json();
-  if (!r.ok) { alert(j.error || "it did not open"); return; }
+  if (!r.ok) { say(j.error || "it did not open"); return; }
   ws = j; wsShow(false);
   await readTools(); await readFolders();
   cur = null; await readConvs();
@@ -913,7 +1062,7 @@ $("#wsclose").onclick = () => wsShow(false);
 $("#wsnew").onclick = () => wsOpen("", "new");
 $("#wsform").onsubmit = () => {
   const p = $("#wsform").path.value.trim();
-  if (p) wsOpen(p, confirm(`Make ${p} if it is not there?`));
+  if (p) yes(`Make ${p} if it is not there?`, "Open a folder", "Make it").then((m) => wsOpen(p, m));
   return false;
 };
 (async () => {

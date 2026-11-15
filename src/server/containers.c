@@ -152,6 +152,7 @@ int srv_container_files_content(struct srv_req *r)
 #include <time.h>
 #include <unistd.h>
 
+#include "common/pysession.h"
 #include "common/sandbox.h"
 #include "files_store.h"
 #include "llm/json.h"
@@ -173,83 +174,6 @@ static char off_why[300] = "Start the server with --code-interpreter to "
 static int on;
 
 /* the Python driver: pieces of code in, results out (see above) */
-static const char DRIVER[] =
-    "import sys, os, io, ast, json, traceback, contextlib\n"
-    "_o = os.fdopen(os.dup(1), 'wb', 0)\n"
-    "os.dup2(2, 1)\n"
-    "_i = os.fdopen(0, 'rb', 0)\n"
-    "_g = {'__name__': '__main__', '__builtins__': __builtins__}\n"
-    "os.makedirs('/tmp/mpl', exist_ok=True)\n"
-    "def _rd(n):\n"
-    "    b = b''\n"
-    "    while len(b) < n:\n"
-    "        c = _i.read(n - len(b))\n"
-    "        if not c:\n"
-    "            os._exit(0)\n"
-    "        b += c\n"
-    "    return b\n"
-    "def _len():\n"
-    "    b = b''\n"
-    "    while not b.endswith(bytes([10])):\n"
-    "        b += _rd(1)\n"
-    "    return int(b)\n"
-    "def _pngs():\n"
-    "    try:\n"
-    "        return {n: os.stat('/mnt/data/' + n).st_mtime_ns for n in\n"
-    "                os.listdir('/mnt/data') if n.endswith('.png')}\n"
-    "    except OSError:\n"
-    "        return {}\n"
-    "def _figs(before):\n"
-    "    m = sys.modules.get('matplotlib.pyplot')\n"
-    "    out = []\n"
-    "    if m is None:\n"
-    "        return out\n"
-    "    if _pngs() != before:\n"
-    "        m.close('all')\n"
-    "        return out\n"
-    "    for num in m.get_fignums():\n"
-    "        k = 1\n"
-    "        while os.path.exists('/mnt/data/figure_%d.png' % k):\n"
-    "            k += 1\n"
-    "        p = '/mnt/data/figure_%d.png' % k\n"
-    "        try:\n"
-    "            m.figure(num).savefig(p, format='png', dpi=100)\n"
-    "            out.append(p)\n"
-    "        except Exception:\n"
-    "            pass\n"
-    "    m.close('all')\n"
-    "    return out\n"
-    "while True:\n"
-    "    code = _rd(_len()).decode('utf-8', 'replace')\n"
-    "    before = _pngs()\n"
-    "    buf = io.StringIO()\n"
-    "    err = None\n"
-    "    with contextlib.redirect_stdout(buf), "
-    "contextlib.redirect_stderr(buf):\n"
-    "        try:\n"
-    "            t = ast.parse(code, '<cell>', 'exec')\n"
-    "            last = None\n"
-    "            if t.body and isinstance(t.body[-1], ast.Expr):\n"
-    "                last = ast.Expression(t.body.pop().value)\n"
-    "            exec(compile(t, '<cell>', 'exec'), _g)\n"
-    "            if last is not None:\n"
-    "                v = eval(compile(last, '<cell>', 'eval'), _g)\n"
-    "                if v is not None:\n"
-    "                    print(repr(v))\n"
-    "        except SystemExit:\n"
-    "            pass\n"
-    "        except BaseException:\n"
-    "            e = sys.exc_info()\n"
-    "            tb = e[2].tb_next if e[2] is not None else None\n"
-    "            err = ''.join(traceback.format_exception(e[0], e[1], tb))\n"
-    "    try:\n"
-    "        figs = _figs(before)\n"
-    "    except Exception:\n"
-    "        figs = []\n"
-    "    r = json.dumps({'logs': buf.getvalue()[-200000:], 'error': err,\n"
-    "                    'images': figs}).encode()\n"
-    "    _o.write(str(len(r)).encode() + bytes([10]) + r)\n";
-
 /* ---- paths, kept safe from what the code leaves ---- */
 
 static void path_of(char *out, size_t cap, const char *cid, const char *what)
@@ -594,7 +518,7 @@ static struct kernel *kernel_of(const char *cid, int64_t mem, char *why,
         .tmp_bytes = (uint64_t)256 << 20};
     const char *py =
         server->cfg.code_python ? server->cfg.code_python : "/usr/bin/python3";
-    char *argv[] = {(char *)py, "-I", "-c", (char *)DRIVER, NULL};
+    char *argv[] = {(char *)py, "-I", "-c", (char *)JANAS_PY_DRIVER, NULL};
     char *envp[] = {"PATH=/usr/local/bin:/usr/bin:/bin",
                     "HOME=/tmp",
                     "LANG=C.UTF-8",
@@ -622,79 +546,6 @@ void srv_cell_free(struct srv_cell *c)
     free(c->file_id);
     free(c->path);
     memset(c, 0, sizeof(*c));
-}
-
-/* the piece of code sent, the answer read (k->run held): the answer's JSON
-   text, or NULL with the reason; raw output (C code writing to its fd 1 or
-   2) appended to raw */
-static char *exchange(struct kernel *k, const char *code, struct janas_buf *raw,
-                      char *why, size_t n)
-{
-    char head[32];
-    size_t len = strlen(code);
-    int hl = snprintf(head, sizeof head, "%zu\n", len);
-    if (write(k->sb.in, head, (size_t)hl) != hl ||
-        write(k->sb.in, code, len) != (ssize_t)len) {
-        snprintf(why, n, "the Python session is gone");
-        return NULL;
-    }
-    struct janas_buf out = {0};
-    time_t end = time(NULL) + CELL_SECONDS;
-    long want = -1;
-    for (;;) {
-        /* the answer: its length, a newline, its bytes */
-        if (want < 0) {
-            char *nl = out.n ? memchr(out.p, '\n', out.n) : NULL;
-            if (nl) {
-                want = strtol(out.p, NULL, 10);
-                size_t skip = (size_t)(nl - out.p) + 1;
-                memmove(out.p, out.p + skip, out.n - skip);
-                out.n -= skip;
-            }
-        }
-        if (want >= 0 && out.n >= (size_t)want) {
-            janas_buf_put(&out, "", 1);
-            if (out.oom)
-                break;
-            return out.p;
-        }
-        int left = (int)(end - time(NULL));
-        if (left <= 0) {
-            snprintf(why, n,
-                     "The code ran past %d seconds and was stopped; the "
-                     "Python session started over (its variables are lost).",
-                     CELL_SECONDS);
-            janas_buf_free(&out);
-            return NULL;
-        }
-        struct pollfd p[2] = {{k->sb.out, POLLIN, 0}, {k->sb.err, POLLIN, 0}};
-        if (poll(p, 2, left * 1000) <= 0)
-            continue;
-        for (int i = 0; i < 2; i++) {
-            if (!(p[i].revents & (POLLIN | POLLHUP)))
-                continue;
-            char buf[8192];
-            ssize_t got = read(i ? k->sb.err : k->sb.out, buf, sizeof buf);
-            if (got <= 0) {
-                if (i == 0 || got < 0) {
-                    snprintf(why, n,
-                             "The Python session ended (out of memory, or the "
-                             "code ended it); it starts over at the next "
-                             "piece of code.");
-                    janas_buf_free(&out);
-                    return NULL;
-                }
-                continue;
-            }
-            if (i)
-                janas_buf_put(raw, buf, (size_t)got);
-            else
-                janas_buf_put(&out, buf, (size_t)got);
-        }
-    }
-    janas_buf_free(&out);
-    snprintf(why, n, "out of memory");
-    return NULL;
 }
 
 int srv_container_run(struct srv *s, const char *id, const char *code,
@@ -726,7 +577,8 @@ int srv_container_run(struct srv *s, const char *id, const char *code,
     }
     pthread_mutex_lock(&k->run);
     struct janas_buf raw = {0};
-    char *ans = exchange(k, code, &raw, why, sizeof why);
+    char *ans =
+        janas_py_exchange(&k->sb, code, CELL_SECONDS, &raw, why, sizeof why);
     pthread_mutex_unlock(&k->run);
     pthread_mutex_lock(&mu);
     if (!ans) {         /* the session is over */

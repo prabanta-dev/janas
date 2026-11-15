@@ -140,11 +140,52 @@ static int text_of(struct brebus *b, const char *path, struct janas_buf *t,
     return cut; /* 1: cut at MAX_TEXT */
 }
 
-/* {"path", "name", "bytes", "text", "cut"} or {"path", ..., "unread"} */
+/* a picture or a recording, by its name: its type, else NULL */
+const char *brebus_media_type(const char *path, int *audio)
+{
+    static const struct {
+        const char *ext, *mime;
+        int audio;
+    } M[] = {{".png", "image/png", 0},   {".jpg", "image/jpeg", 0},
+             {".jpeg", "image/jpeg", 0}, {".webp", "image/webp", 0},
+             {".gif", "image/gif", 0},   {".bmp", "image/bmp", 0},
+             {".wav", "audio/wav", 1},   {".mp3", "audio/mpeg", 1},
+             {".flac", "audio/flac", 1}, {".ogg", "audio/ogg", 1},
+             {".oga", "audio/ogg", 1},   {".opus", "audio/ogg", 1},
+             {".m4a", "audio/mp4", 1},   {".webm", "audio/webm", 1}};
+    const char *dot = strrchr(path, '.'), *slash = strrchr(path, '/');
+    if (!dot || (slash && dot < slash))
+        return NULL;
+    for (size_t i = 0; i < sizeof M / sizeof *M; i++)
+        if (!strcasecmp(dot, M[i].ext)) {
+            if (audio)
+                *audio = M[i].audio;
+            return M[i].mime;
+        }
+    return NULL;
+}
+
+/* {"path", "name", "bytes", "text", "cut"}, {"path", ..., "unread"}, or a
+   picture's or a recording's {"path", ..., "media", "mime"} */
 static void answer(struct brebus *b, const char *path, struct janas_buf *out)
 {
     struct stat st;
     stat(path, &st);
+    int audio = 0;
+    const char *mime = brebus_media_type(path, &audio);
+    if (mime) { /* the page sends it to the model, or to the transcription */
+        const char *sl = strrchr(path, '/');
+        janas_buf_puts(out, "{\"path\": ");
+        str(out, path);
+        janas_buf_puts(out, ", \"name\": ");
+        str(out, sl ? sl + 1 : path);
+        janas_buf_printf(out,
+                         ", \"bytes\": %lld, \"media\": \"%s\", "
+                         "\"mime\": \"%s\"}",
+                         (long long)st.st_size, audio ? "audio" : "image",
+                         mime);
+        return;
+    }
     struct janas_buf t = {0};
     char why[600];
     int cut = text_of(b, path, &t, why, sizeof why);
