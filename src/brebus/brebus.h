@@ -37,6 +37,8 @@ struct brebus {
     char models_dir[4096];
     char bin_dir[4096];  /* where brebus is: janas-server beside it */
     char data_dir[4096]; /* ~/.local/share/janas/brebus */
+    char ws[4096];       /* the workspace (workspace.c), "" until chosen;
+                            under mu */
     char suffix[16];     /* a sanitizer's build: brebus-asan starts
                             janas-server-asan */
     /* the model's server (server.c): a janas-server of its own */
@@ -116,6 +118,16 @@ extern const unsigned char *const brebus_icon_svg;
 extern const unsigned brebus_icon_svg_len;
 /* the one of that size, or NULL */
 const struct brebus_icon *brebus_icon(int size);
+
+/* workspace.c: the folder Brebus works in. Its path into out: 0, or -1
+   while none is chosen; one opened (create: made first), a new one in
+   <Documents>/Brebus: 0, or -1 with the reason; how it stands, with the
+   recent ones, as JSON into out */
+int brebus_ws_path(struct brebus *b, char *out, size_t n);
+int brebus_ws_open(struct brebus *b, const char *path, int create, char *why,
+                   size_t wn);
+int brebus_ws_new(struct brebus *b, char *why, size_t wn);
+void brebus_ws_status(struct brebus *b, struct janas_buf *out);
 
 /* proxy.c: a request to the model's API passed on: 0 with the response to
    queue and its status, -1 when no server runs or it cannot be reached */

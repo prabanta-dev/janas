@@ -1,13 +1,14 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
    Copyright (C) 2026 Maurizio Cammalleri */
 /*
- * store.c - what Brebus keeps on disk, in its data folder: the page's
- * conversations, one JSON file each in chats/ (named by the page's id of
- * the conversation, letters, digits, - and _ only), and the settings of
- * each model in settings.json. Brebus checks that what it is given is a
- * JSON object, and writes it aside first, then renames it: a file is
- * never left half written. A conversation exported goes to the downloads
- * folder (XDG_DOWNLOAD_DIR of user-dirs.dirs, else ~/Downloads).
+ * store.c - what Brebus keeps on disk: the page's conversations, in the
+ * workspace (workspace.c), one JSON file each in .brebus/chats/ (named by the
+ * page's id of the conversation, letters, digits, - and _ only), and the
+ * settings of each model in settings.json, in Brebus's data folder. Brebus
+ * checks that what it is given is a JSON object, and writes it aside first,
+ * then renames it: a file is never left half written. A conversation exported
+ * goes to the workspace's exports/ (with none, the downloads folder:
+ * XDG_DOWNLOAD_DIR of user-dirs.dirs, else ~/Downloads).
  */
 #include <dirent.h>
 #include <errno.h>
@@ -78,9 +79,23 @@ static int put(const char *path, const char *body, size_t n)
     return 0;
 }
 
-static void chat_path(const struct brebus *b, const char *id, char *p, size_t n)
+/* the workspace's conversations' folder: 0, or -1 with no workspace */
+static int chats_dir(struct brebus *b, char *dir, size_t n)
 {
-    snprintf(p, n, "%s/chats/%s.json", b->data_dir, id);
+    char ws[4096];
+    if (brebus_ws_path(b, ws, sizeof ws) != 0)
+        return -1;
+    snprintf(dir, n, "%s/.brebus/chats", ws);
+    return 0;
+}
+
+static int chat_path(struct brebus *b, const char *id, char *p, size_t n)
+{
+    char dir[4200];
+    if (chats_dir(b, dir, sizeof dir) != 0)
+        return -1;
+    snprintf(p, n, "%s/%s.json", dir, id);
+    return 0;
 }
 
 struct entry {
@@ -103,10 +118,9 @@ static void str(struct janas_buf *o, const char *s)
 void brebus_chats_list(struct brebus *b, struct janas_buf *out)
 {
     char dir[4200];
-    snprintf(dir, sizeof dir, "%s/chats", b->data_dir);
     struct entry *e = calloc(MAX_CHATS, sizeof *e);
     int n = 0;
-    DIR *d = e ? opendir(dir) : NULL;
+    DIR *d = e && chats_dir(b, dir, sizeof dir) == 0 ? opendir(dir) : NULL;
     struct dirent *de;
     while (d && n < MAX_CHATS && (de = readdir(d))) {
         size_t len = strlen(de->d_name);
@@ -118,8 +132,9 @@ void brebus_chats_list(struct brebus *b, struct janas_buf *out)
         if (!good_id(e[n].id))
             continue;
         char p[4400], err[160];
-        chat_path(b, e[n].id, p, sizeof p);
         struct janas_buf f = {0};
+        if (chat_path(b, e[n].id, p, sizeof p) != 0)
+            continue;
         struct janas_json_doc *doc =
             slurp(p, &f) == 0 ? janas_json_parse(f.p, f.n, err, sizeof err)
                               : NULL;
@@ -166,9 +181,8 @@ void brebus_chats_list(struct brebus *b, struct janas_buf *out)
 int brebus_chat_get(struct brebus *b, const char *id, struct janas_buf *out)
 {
     char p[4400];
-    if (!good_id(id))
+    if (!good_id(id) || chat_path(b, id, p, sizeof p) != 0)
         return -1;
-    chat_path(b, id, p, sizeof p);
     return slurp(p, out);
 }
 
@@ -176,20 +190,19 @@ int brebus_chat_put(struct brebus *b, const char *id, const char *body,
                     size_t n)
 {
     char dir[4200], p[4400];
-    if (!good_id(id))
+    if (!good_id(id) || chats_dir(b, dir, sizeof dir) != 0)
         return -1;
-    snprintf(dir, sizeof dir, "%s/chats", b->data_dir);
     janas_mkdirs(dir);
-    chat_path(b, id, p, sizeof p);
+    if (chat_path(b, id, p, sizeof p) != 0)
+        return -1;
     return put(p, body, n);
 }
 
 int brebus_chat_delete(struct brebus *b, const char *id)
 {
     char p[4400];
-    if (!good_id(id))
+    if (!good_id(id) || chat_path(b, id, p, sizeof p) != 0)
         return -1;
-    chat_path(b, id, p, sizeof p);
     return remove(p);
 }
 
@@ -253,7 +266,6 @@ static void downloads(char *dir, size_t n)
 int brebus_export(struct brebus *b, const char *body, size_t n,
                   struct janas_buf *out)
 {
-    (void)b;
     char err[160], name[96], dir[4200], path[4400];
     struct janas_json_doc *d =
         body && n ? janas_json_parse(body, n, err, sizeof err) : NULL;
@@ -279,7 +291,13 @@ int brebus_export(struct brebus *b, const char *body, size_t n,
     name[k] = 0;
     if (!k)
         snprintf(name, sizeof name, "chat");
-    downloads(dir, sizeof dir);
+    /* the workspace's exports/, or the downloads folder with none */
+    char ws[4096];
+    if (brebus_ws_path(b, ws, sizeof ws) == 0) {
+        snprintf(dir, sizeof dir, "%s/exports", ws);
+        janas_mkdirs(dir);
+    } else
+        downloads(dir, sizeof dir);
     int fd = -1;
     for (int i = 1; i < 100 && fd < 0; i++) {
         if (i == 1)

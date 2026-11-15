@@ -176,6 +176,38 @@ static enum MHD_Result handler(void *cls, struct MHD_Connection *conn,
         return reply(conn, get ? 404 : 400, "application/json", no,
                      sizeof no - 1, 1);
     }
+    if (get && !strcmp(url, "/brebus/workspace")) {
+        brebus_ws_status(b, &o);
+        return json(conn, 200, &o);
+    }
+    if (post && (!strcmp(url, "/brebus/workspace/open") ||
+                 !strcmp(url, "/brebus/workspace/new"))) {
+        char why[600], err[160];
+        int rc;
+        if (url[18] == 'n')
+            rc = brebus_ws_new(b, why, sizeof why);
+        else {
+            struct janas_json_doc *d =
+                r->body.n
+                    ? janas_json_parse(r->body.p, r->body.n, err, sizeof err)
+                    : NULL;
+            const struct janas_json *v = d ? janas_json_root(d) : NULL;
+            const char *path =
+                v ? janas_json_str(janas_json_get(v, "path")) : NULL;
+            const struct janas_json *c = v ? janas_json_get(v, "create") : NULL;
+            rc = brebus_ws_open(b, path, c && c->type == JANAS_JSON_TRUE, why,
+                                sizeof why);
+            janas_json_free(d);
+        }
+        if (rc != 0) {
+            janas_buf_puts(&o, "{\"error\": ");
+            janas_json_write_str(&o, why, strlen(why));
+            janas_buf_puts(&o, "}");
+            return json(conn, 400, &o);
+        }
+        brebus_ws_status(b, &o);
+        return json(conn, 200, &o);
+    }
     if (post && !strcmp(url, "/brebus/export")) {
         int rc = brebus_export(b, r->body.p, r->body.n, &o);
         return json(conn, rc ? 400 : 200, &o);

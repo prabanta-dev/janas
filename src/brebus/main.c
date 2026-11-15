@@ -31,12 +31,15 @@ static void on_signal(int s)
 static void usage(void)
 {
     fprintf(stderr,
-            "usage: brebus [--port N] [--browser | --no-open]\n"
+            "usage: brebus [--port N] [--workspace DIR] [--browser | "
+            "--no-open]\n"
             "       brebus --install-desktop\n"
             "Brebus, Janas's app for the models of this computer: its page\n"
             "on http://127.0.0.1:41414 (--port), in a window of its own, or\n"
             "in the browser with --browser or where there is no WebKitGTK;\n"
             "--no-open: neither. Only this computer reaches it.\n"
+            "It works in a folder: --workspace, or the one it is started\n"
+            "in from a terminal; else the page asks.\n"
             "--install-desktop puts Brebus in the desktop's menu, with its\n"
             "icon (~/.local/share/applications).\n");
 }
@@ -56,6 +59,7 @@ int main(int argc, char **argv)
 {
     struct brebus b = {.port = 41414};
     int open = 1, browser = 0;
+    const char *workspace = NULL;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--port") && i + 1 < argc) {
             int p = atoi(argv[++i]);
@@ -64,6 +68,8 @@ int main(int argc, char **argv)
                 return 2;
             }
             b.port = (unsigned short)p;
+        } else if (!strcmp(argv[i], "--workspace") && i + 1 < argc) {
+            workspace = argv[++i];
         } else if (!strcmp(argv[i], "--no-open")) {
             open = 0;
         } else if (!strcmp(argv[i], "--install-desktop")) {
@@ -98,7 +104,23 @@ int main(int argc, char **argv)
     janas_mkdirs(b.data_dir);
     pthread_mutex_init(&b.mu, NULL);
     pthread_mutex_init(&b.get.mu, NULL);
-    char why[256];
+    char why[600];
+    /* the workspace: the one given, or this terminal's folder; from the
+       desktop's menu (no terminal, the home) the page asks */
+    char cwd[4096];
+    if (workspace) {
+        char abs[4200];
+        if (*workspace != '/' && getcwd(cwd, sizeof cwd))
+            snprintf(abs, sizeof abs, "%s/%s", cwd, workspace);
+        else
+            snprintf(abs, sizeof abs, "%s", workspace);
+        if (brebus_ws_open(&b, abs, 1, why, sizeof why) != 0) {
+            fprintf(stderr, "brebus: %s\n", why);
+            return 1;
+        }
+    } else if (isatty(STDIN_FILENO) && getcwd(cwd, sizeof cwd) &&
+               brebus_ws_open(&b, cwd, 0, why, sizeof why) != 0)
+        fprintf(stderr, "brebus: %s; the page will ask for a folder\n", why);
     if (brebus_http_start(&b, why, sizeof why) != 0) {
         fprintf(stderr, "brebus: %s\n", why);
         return 1;

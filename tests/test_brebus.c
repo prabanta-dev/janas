@@ -20,6 +20,9 @@ int main(void)
 }
 #else
 #include <arpa/inet.h>
+#include <errno.h>
+#include <ftw.h>
+#include <sys/stat.h>
 #include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -44,6 +47,12 @@ static int failures;
     } while (0)
 
 static int port;
+
+static int rm_one(const char *p, const struct stat *st, int kind, struct FTW *f)
+{
+    (void)st, (void)kind, (void)f;
+    return remove(p) != 0 && errno != ENOENT ? -1 : 0;
+}
 
 static int free_port(void)
 {
@@ -195,6 +204,34 @@ int main(void)
     st = ask("GET", "/brebus/get", NULL, NULL, &o);
     CHECK(st == 200 && strstr(o.p, "\"running\": false"), "get: %d %s", st,
           o.p);
+    /* the workspace: none yet (not started from a terminal), so no
+       conversation can be kept; too wide ones refused; one opened */
+    st = ask("POST", "/brebus/chats/a-1", "{}", own, &o);
+    CHECK(st == 400, "a conversation kept with no workspace: %d", st);
+    st = ask("GET", "/brebus/workspace", NULL, NULL, &o);
+    CHECK(st == 200 && strstr(o.p, "\"path\": \"\""), "no workspace: %s", o.p);
+    st = ask("POST", "/brebus/workspace/open", "{\"path\": \"/\"}", own, &o);
+    CHECK(st == 400 && strstr(o.p, "too wide"), "/ taken: %d %s", st, o.p);
+    char body[4600], want[4600];
+    snprintf(body, sizeof body, "{\"path\": \"%s\"}", dir);
+    st = ask("POST", "/brebus/workspace/open", body, own, &o);
+    CHECK(st == 400 && strstr(o.p, "too wide"), "the home taken: %d %s", st,
+          o.p);
+    st =
+        ask("POST", "/brebus/workspace/open", "{\"path\": \"rel/x\"}", own, &o);
+    CHECK(st == 400, "a relative path taken: %d", st);
+    st = ask("POST", "/brebus/workspace/new", "{}", own, &o);
+    snprintf(want, sizeof want, "\"path\": \"%s/Documents/Brebus/", dir);
+    CHECK(st == 200 && strstr(o.p, want), "a new workspace: %d %s", st, o.p);
+    snprintf(body, sizeof body, "{\"path\": \"%s/work\", \"create\": true}",
+             dir);
+    st = ask("POST", "/brebus/workspace/open", body, own, &o);
+    snprintf(want, sizeof want, "\"path\": \"%s/work\"", dir);
+    CHECK(st == 200 && strstr(o.p, want) && strstr(o.p, "\"recent\": [\""),
+          "a workspace opened: %d %s", st, o.p);
+    snprintf(want, sizeof want, "%s/work/.brebus/chats", dir);
+    CHECK(access(want, W_OK) == 0, "no %s", want);
+
     /* conversations and settings, on disk */
     st = ask("POST", "/brebus/chats/a-1",
              "{\"title\": \"one\", \"updated\": 1, \"messages\": []}", own, &o);
@@ -239,14 +276,14 @@ int main(void)
     st = ask("GET", "/brebus/settings", NULL, NULL, &o);
     CHECK(st == 200 && strstr(o.p, "8192"), "settings kept: %s", o.p);
     /* an export: a name of its own, never over a file */
-    char want[4400];
     st = ask("POST", "/brebus/export",
              "{\"name\": \"../a/b..x\", \"text\": \"# hi\"}", own, &o);
-    snprintf(want, sizeof want, "\"path\": \"%s/abx.md\"", dir);
+    snprintf(want, sizeof want, "\"path\": \"%s/work/exports/abx.md\"", dir);
     CHECK(st == 200 && strstr(o.p, want), "an export: %d %s", st, o.p);
     st = ask("POST", "/brebus/export", "{\"name\": \"abx\", \"text\": \"2\"}",
              own, &o);
-    snprintf(want, sizeof want, "\"path\": \"%s/abx (2).md\"", dir);
+    snprintf(want, sizeof want, "\"path\": \"%s/work/exports/abx (2).md\"",
+             dir);
     CHECK(st == 200 && strstr(o.p, want), "a second export: %d %s", st, o.p);
     st = ask("POST", "/brebus/export", "{\"name\": \"x\"}", own, &o);
     CHECK(st == 400, "an export of nothing: %d", st);
@@ -272,23 +309,8 @@ int main(void)
     CHECK(ended == 1 && code == 0, "brebus did not end well: %d %d", ended,
           code);
     janas_buf_free(&o);
-    /* what it wrote, then the folders, deepest first */
-    static const char *const left[] = {"data/janas/brebus/chats/b_2.json",
-                                       "data/janas/brebus/chats",
-                                       "data/janas/brebus/settings.json",
-                                       "data/janas/brebus",
-                                       "data/janas",
-                                       "data",
-                                       "models",
-                                       "tsan.supp",
-                                       "abx.md",
-                                       "abx (2).md"};
-    for (size_t i = 0; i < sizeof left / sizeof *left; i++) {
-        char f[4400];
-        snprintf(f, sizeof f, "%s/%s", dir, left[i]);
-        remove(f);
-    }
-    rmdir(dir);
+    /* what it wrote, all of it: the test's own folder */
+    nftw(dir, rm_one, 16, FTW_DEPTH | FTW_PHYS);
     if (!failures)
         printf("test_brebus: ok\n");
     return failures != 0;

@@ -95,6 +95,21 @@ button.act[disabled] { opacity: .5; cursor: default; }
                border: 1px solid var(--line); background: var(--panel); color: var(--fg);
                font: 13px var(--mono); }
 .hfget .note { flex-basis: 100%; }
+nav button.ws { margin: -6px 10px 14px; padding: 4px 8px; font-size: 12px; color: var(--dim);
+                white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 170px;
+                border: 1px dashed var(--line); }
+.dlg { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex;
+       align-items: center; justify-content: center; z-index: 10; }
+.dlg[hidden] { display: none; }
+.dlg .box { background: var(--bg); border: 1px solid var(--line); border-radius: 14px;
+            padding: 22px 26px; width: min(620px, 92vw); max-height: 86vh; overflow: auto; }
+.dlg .box h2 { margin-top: 0; }
+.dlg .right { text-align: right; margin-bottom: 0; }
+#wsrecent { display: flex; flex-direction: column; gap: 4px; margin-bottom: 14px; }
+#wsrecent button { all: unset; cursor: pointer; padding: 6px 10px; border-radius: 8px;
+                   font: 13px var(--mono); overflow: hidden; text-overflow: ellipsis;
+                   white-space: nowrap; }
+#wsrecent button:hover { background: var(--panel); }
 main h3 { font-size: 15px; margin: 24px 0 10px; }
 .srvset { display: flex; flex-direction: column; gap: 14px; font-size: 14px; }
 .srvset label { display: flex; flex-direction: column; gap: 6px; }
@@ -107,6 +122,7 @@ main h3 { font-size: 15px; margin: 24px 0 10px; }
   padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line);
   background: var(--panel); color: var(--fg); font: 13px var(--mono); flex: 1; }
 .srvset textarea { resize: vertical; }
+#bar .tools[hidden] { display: none; }
 #bar .tools { margin-left: auto; display: flex; gap: 6px; }
 .msg pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
            padding: 8px 10px; overflow-x: auto; white-space: pre; }
@@ -149,6 +165,7 @@ main h3 { font-size: 15px; margin: 24px 0 10px; }
 <body>
 <nav>
   <h1><img src="/prabanta.png" alt="Prabanta" width="28" height="28"> Brebus</h1>
+  <button id="wsbtn" class="ws" title="The folder Brebus works in">…</button>
   <button data-s="chat">Chat</button>
   <button data-s="discover">Discover</button>
   <button data-s="models">My models</button>
@@ -216,6 +233,17 @@ main h3 { font-size: 15px; margin: 24px 0 10px; }
     <div class="card"><dl id="mach"></dl></div>
   </section>
 </main>
+<div id="wsdlg" class="dlg" hidden><div class="box">
+  <h2>Where should Brebus work?</h2>
+  <p class="lead">A folder of yours: its conversations, the files copied into it and what is written for you stay there.</p>
+  <div id="wsrecent"></div>
+  <form id="wsform" class="hfget" onsubmit="return false">
+    <input name="path" spellcheck="false" placeholder="/home/you/Projects/something">
+    <button class="act quiet" type="submit">Open</button>
+  </form>
+  <p><button class="act" id="wsnew">New folder</button> <span class="note" id="wsnewin"></span></p>
+  <p class="right"><button class="act quiet" id="wsclose">Cancel</button></p>
+</div></div>
 <script>
 "use strict";
 const $ = (s) => document.querySelector(s);
@@ -485,7 +513,7 @@ async function exportConv() {
   const r = await fetch("/brebus/export", {method: "POST",
     body: JSON.stringify({name: cur.title || "chat", text: md.join("\n")})});
   const j = await r.json();
-  alert(r.ok ? "Saved: " + j.path : j.error || "not saved");
+  alert(r.ok ? "Saved in the workspace: " + j.path : j.error || "not saved");
 }
 
 /* Markdown of a reply: the text escaped first, then a few marks made into
@@ -563,6 +591,7 @@ async function sendAsk(ev) {
   if (busy) { stopReply(); return; }
   const text = $("#ask").value.trim();
   if (!text) return;
+  if (!ws.path) { wsShow(true); return; }
   if (!server.running) { alert("Load a model first, in My models."); return; }
   if (!cur) newConv();
   cur.messages.push({role: "user", content: text});
@@ -643,7 +672,43 @@ $("#sys").onclick = async () => {
   if (t === null) return;
   cur.system = t.trim(); await saveConv(cur);
 };
-readConvs().then(() => convs.length ? openConv(convs[0].id) : listConvs()).catch(() => {});
+/* the workspace: chosen before the conversations, which live in it */
+let ws = {path: ""};
+function wsShow(open) {
+  $("#wsbtn").textContent = ws.path ? "📁 " + ws.name : "Choose a folder";
+  $("#wsbtn").title = ws.path || "The folder Brebus works in";
+  $("#wsrecent").innerHTML = ws.recent.length
+    ? "<b>Recent</b>" + ws.recent.map((p) => `<button data-p="${esc(p)}" title="${esc(p)}">${esc(p)}</button>`).join("")
+    : "";
+  for (const b of document.querySelectorAll("#wsrecent button")) b.onclick = () => wsOpen(b.dataset.p, false);
+  $("#wsnewin").textContent = "in " + ws.new_in + ", named by today's date";
+  $("#wsclose").hidden = !ws.path;
+  $("#wsdlg").hidden = !open;
+}
+async function wsOpen(path, create) {
+  const r = await fetch(create === "new" ? "/brebus/workspace/new" : "/brebus/workspace/open",
+    {method: "POST", body: JSON.stringify({path, create: !!create})});
+  const j = await r.json();
+  if (!r.ok) { alert(j.error || "it did not open"); return; }
+  ws = j; wsShow(false);
+  cur = null; await readConvs();
+  if (convs.length) await openConv(convs[0].id); else { listConvs(); drawLog(); }
+}
+$("#wsbtn").onclick = () => wsShow(true);
+$("#wsclose").onclick = () => wsShow(false);
+$("#wsnew").onclick = () => wsOpen("", "new");
+$("#wsform").onsubmit = () => {
+  const p = $("#wsform").path.value.trim();
+  if (p) wsOpen(p, confirm(`Make ${p} if it is not there?`));
+  return false;
+};
+(async () => {
+  ws = await ask("workspace");
+  wsShow(!ws.path);
+  if (!ws.path) return;
+  await readConvs();
+  if (convs.length) await openConv(convs[0].id); else listConvs();
+})().catch(() => {});
 status().catch(() => {});
 
 load().catch((e) => { document.body.insertAdjacentHTML("beforeend",
