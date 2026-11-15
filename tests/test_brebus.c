@@ -179,6 +179,19 @@ int main(void)
     st = ask("POST", "/brebus/get/start", "{\"model\": \"x\"}", own, &o);
     CHECK(st == 400 && strstr(o.p, "no such model"),
           "a download of a model not in the catalog: %d %s", st, o.p);
+    /* files of Hugging Face: only hf:<owner>/<repo>/<file>.gguf or .jns,
+       never a path out of the models' folder nor an option */
+    static const char *const bad_hf[] = {
+        "hf:a/b/../../x.gguf", "hf:a/b/x.txt",   "hf:a/x.gguf",
+        "hf:-a/b/x.gguf",      "hf:a/b/./x.jns", "hf:a/b c/x.gguf",
+        "hf:a//b/x.gguf"};
+    for (size_t i = 0; i < sizeof bad_hf / sizeof *bad_hf; i++) {
+        char body[160];
+        snprintf(body, sizeof body, "{\"model\": \"%s\"}", bad_hf[i]);
+        st = ask("POST", "/brebus/get/start", body, own, &o);
+        CHECK(st == 400 && strstr(o.p, "not a file of Hugging Face"),
+              "%s taken: %d %s", bad_hf[i], st, o.p);
+    }
     st = ask("GET", "/brebus/get", NULL, NULL, &o);
     CHECK(st == 200 && strstr(o.p, "\"running\": false"), "get: %d %s", st,
           o.p);
@@ -242,6 +255,10 @@ int main(void)
           st);
     st = ask("POST", "/v1/chat/completions", "{\"messages\": []}", own, &o);
     CHECK(st == 503, "/v1 with no model: %d", st);
+    st = ask("GET", "/api/tags", NULL, NULL, &o);
+    CHECK(st == 503, "/api with no model: %d", st);
+    st = ask("GET", "/monitor", NULL, NULL, &o);
+    CHECK(st == 503, "/monitor with no model: %d", st);
     st = ask("GET", "/api/tags", NULL, NULL, &o);
     CHECK(st == 503, "/api with no model: %d", st);
 

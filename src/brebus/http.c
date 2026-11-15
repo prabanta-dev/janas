@@ -131,7 +131,9 @@ static enum MHD_Result handler(void *cls, struct MHD_Connection *conn,
         const struct brebus_icon *i = brebus_icon(64);
         return reply(conn, 200, "image/png", (const char *)i->png, i->len, 1);
     }
-    if (!strncmp(url, "/v1/", 4) || !strncmp(url, "/api/", 5)) {
+    if (!strncmp(url, "/v1/", 4) || !strncmp(url, "/api/", 5) ||
+        (get && (!strcmp(url, "/monitor") || !strcmp(url, "/monitor/") ||
+                 !strcmp(url, "/monitor/events")))) {
         struct MHD_Response *resp = NULL;
         unsigned status = 0;
         if (brebus_proxy(b, conn, method, url, r->body.p, r->body.n, &resp,

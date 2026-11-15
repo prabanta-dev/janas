@@ -89,6 +89,24 @@ button.act[disabled] { opacity: .5; cursor: default; }
 .setf input, .setf select { margin-left: 6px; padding: 4px 6px; border-radius: 6px;
         border: 1px solid var(--line); background: var(--panel); color: var(--fg); font: inherit; }
 .setf input { width: 130px; }
+.hfget { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 16px;
+         max-width: 900px; }
+.hfget input { flex: 1; min-width: 260px; padding: 6px 10px; border-radius: 8px;
+               border: 1px solid var(--line); background: var(--panel); color: var(--fg);
+               font: 13px var(--mono); }
+.hfget .note { flex-basis: 100%; }
+main h3 { font-size: 15px; margin: 24px 0 10px; }
+.srvset { display: flex; flex-direction: column; gap: 14px; font-size: 14px; }
+.srvset label { display: flex; flex-direction: column; gap: 6px; }
+.srvset label:has(> input[type=checkbox]) { flex-direction: row; flex-wrap: wrap;
+                                            align-items: center; gap: 8px; }
+.srvset .note, .note { color: var(--dim); font-size: 12px; }
+.srvset label:has(> input[type=checkbox]) .note { flex-basis: 100%; margin-left: 24px; }
+.srvset .row { display: flex; gap: 8px; align-items: center; }
+.srvset input:not([type=checkbox]), .srvset textarea {
+  padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line);
+  background: var(--panel); color: var(--fg); font: 13px var(--mono); flex: 1; }
+.srvset textarea { resize: vertical; }
 #bar .tools { margin-left: auto; display: flex; gap: 6px; }
 .msg pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
            padding: 8px 10px; overflow-x: auto; white-space: pre; }
@@ -156,6 +174,11 @@ button.act[disabled] { opacity: .5; cursor: default; }
     <h2>Discover</h2>
     <p class="lead">The models Janas knows, converted and checked. <span id="mem"></span></p>
     <div class="card" id="dl" hidden></div>
+    <form class="hfget" id="hfget" onsubmit="return false">
+      <input name="spec" spellcheck="false" placeholder="Any model of Hugging Face: its file's address, or hf:owner/repo/file.gguf">
+      <button class="act" type="submit">Get</button>
+      <span class="note">a GGUF is converted here; not checked against MODELS.md as the catalog's are</span>
+    </form>
     <table><thead><tr><th>Model</th><th></th><th class="num">Download</th>
       <th class="num">Memory it is meant for</th><th class="tag">Here</th><th class="tag"></th></tr></thead>
       <tbody id="cat"><tr><td colspan="6" class="empty">Reading…</td></tr></tbody></table>
@@ -171,6 +194,21 @@ button.act[disabled] { opacity: .5; cursor: default; }
     <h2>Server</h2>
     <p class="lead">A model for other programs too: OpenAI's, Ollama's and Anthropic's APIs.</p>
     <div class="card"><dl id="srv"></dl></div>
+    <h3>Settings</h3>
+    <div class="card">
+      <form id="srvset" class="srvset" onsubmit="return false">
+        <label><input type="checkbox" name="lan"> Reachable from the local network
+          <span class="note">other computers of this network can use the model: set a key too</span></label>
+        <label>Key the other programs must send
+          <span class="row"><input name="api_key" autocomplete="off" spellcheck="false" placeholder="none: anyone who reaches it">
+          <button class="act quiet" type="button" id="genkey">New key</button></span>
+          <span class="note">as <code>Authorization: Bearer &lt;key&gt;</code>; this page needs none</span></label>
+        <label>Web pages of other sites allowed to call it, one a line
+          <textarea name="origins" rows="2" spellcheck="false" placeholder="http://localhost:3000"></textarea></label>
+        <span class="row"><button class="act" type="button" id="srvsave">Save</button>
+          <span class="note" id="srvnote"></span></span>
+      </form>
+    </div>
   </section>
   <section id="machine">
     <h2>Machine</h2>
@@ -222,6 +260,7 @@ async function mine() {
   const c = catalog = catalog || await ask("catalog");
   const my = await ask("models");
   try { settings = await ask("settings"); } catch (e) { settings = {}; }
+  srvForm();
   const have = new Set(my.models.map((x) => x.path.split("/").pop()));
   $("#cat").innerHTML = c.models.filter((x) => !x.test_only).map((x) =>
     `<tr><td><b>${esc(x.name)}</b><br><span class="mono" style="color:var(--dim)">${esc(x.file)}</span></td>
@@ -272,6 +311,24 @@ async function saveSettings(f) {
   await fetch("/brebus/settings", {method: "POST", body: JSON.stringify(settings)});
 }
 
+/* a file of Hugging Face: hf:owner/repo/file, or its page's address
+   (huggingface.co/owner/repo/blob/main/file, or resolve/) */
+function hfSpec(t) {
+  t = t.trim();
+  const m = t.match(/^https?:\/\/(?:www\.)?huggingface\.co\/([\w.-]+)\/([\w.-]+)\/(?:blob|resolve)\/[\w.-]+\/([^?#]+)/);
+  if (m) return `hf:${m[1]}/${m[2]}/${decodeURIComponent(m[3])}`;
+  return t.startsWith("hf:") ? t : "";
+}
+$("#hfget").onsubmit = () => {
+  const spec = hfSpec($("#hfget").spec.value);
+  if (!/^hf:[\w.-]+\/[\w.-]+\/[\w.\/-]+\.(gguf|jns)$/.test(spec)) {
+    alert("A GGUF or JNS file of Hugging Face: its address, or hf:owner/repo/file.gguf");
+    return false;
+  }
+  getModel(spec);
+  return false;
+};
+
 /* downloads, by janas-get: one at a time, followed every second */
 let getting = false;
 async function getModel(name) {
@@ -309,14 +366,45 @@ async function status() {
     ? `Model: <b>${esc(server.model)}</b> <button class="act quiet" id="unload">Unload</button>`
     : "No model loaded: choose one in My models.";
   if (server.running) $("#unload").onclick = unload;
+  const base = (u) => u.replace(/\/v1$/, "");
   $("#srv").innerHTML = server.running
     ? `<dt>Model</dt><dd>${esc(server.model)}</dd>
-       <dt>For other programs</dt><dd><code>${esc(server.url)}</code> (OpenAI), <code>${esc(server.url.replace(/\/v1$/, ""))}</code> (Ollama, Anthropic)</dd>`
+       <dt>On this computer</dt><dd><code>${esc(server.url)}</code> (OpenAI), <code>${esc(base(server.url))}</code> (Ollama, Anthropic)</dd>
+       ${server.lan_url ? `<dt>On the local network</dt><dd><code>${esc(server.lan_url)}</code>, <code>${esc(base(server.lan_url))}</code></dd>` : ""}
+       <dt>Key</dt><dd>${server.api_key ? "<code>" + esc(server.api_key) + "</code>" : "none"}</dd>
+       <dt>Engine monitor</dt><dd><a href="/monitor" target="_blank" rel="noopener">open it</a>: the reply being written, the engine's memory and devices</dd>`
     : `<dt>State</dt><dd>off${server.error ? " - " + esc(server.error) : ""}</dd>
        <dt>To start it</dt><dd>load a model in My models</dd>`;
   for (const b of document.querySelectorAll("button.load"))
     b.textContent = server.running && b.dataset.m === server.model ? "Loaded" : "Load";
 }
+/* the server's own settings, under "_server" with the models' ones */
+function srvForm() {
+  const f = $("#srvset"), v = settings._server || {};
+  f.lan.checked = !!v.lan;
+  f.api_key.value = v.api_key || "";
+  f.origins.value = (v.origins || []).join("\n");
+}
+async function srvSave() {
+  const f = $("#srvset");
+  const origins = f.origins.value.split(/\s+/).filter((x) => /^https?:\/\/[^\s]+$/.test(x));
+  const key = f.api_key.value.trim();
+  if (key && !/^[\x21-\x7e]{8,199}$/.test(key)) { alert("A key is 8 or more letters, digits or signs, no spaces."); return; }
+  if (f.lan.checked && !key && !confirm("Without a key anyone on this network can use the model. Go on?")) return;
+  settings._server = {lan: f.lan.checked, api_key: key, origins};
+  await fetch("/brebus/settings", {method: "POST", body: JSON.stringify(settings)});
+  if (server.running && confirm("Saved. Start the model's server again now, to use them?")) {
+    const b = document.querySelector(`button.load[data-m="${CSS.escape(server.model)}"]`);
+    if (b) await loadModel(server.model, b);
+  }
+  $("#srvnote").textContent = server.running ? "" : "Saved: used at the next Load.";
+}
+$("#srvsave").onclick = srvSave;
+$("#genkey").onclick = () => {
+  const a = new Uint8Array(24); crypto.getRandomValues(a);
+  $("#srvset").api_key.value = "jns-" + Array.from(a, (x) => x.toString(16).padStart(2, "0")).join("");
+};
+
 async function loadModel(name, btn) {
   btn.disabled = true; btn.textContent = "Loading…";
   const r = await fetch("/brebus/server/start", {method: "POST",

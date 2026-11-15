@@ -50,6 +50,62 @@ static void done(void *cls)
     free(p);
 }
 
+/* the request's query, which libmicrohttpd keeps apart from its path,
+   made again (%-encoded) for the server: ?layers=1 of the monitor */
+struct query {
+    char *p;
+    size_t n, cap;
+    int bad;
+};
+
+static void q_put(struct query *q, const char *s)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    for (; *s && !q->bad; s++) {
+        unsigned char c = (unsigned char)*s;
+        int plain = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                    (c >= '0' && c <= '9') || c == '-' || c == '_' ||
+                    c == '.' || c == '~';
+        if (q->n + 4 >= q->cap) {
+            q->bad = 1;
+            break;
+        }
+        if (plain)
+            q->p[q->n++] = (char)c;
+        else {
+            q->p[q->n++] = '%';
+            q->p[q->n++] = hex[c >> 4];
+            q->p[q->n++] = hex[c & 15];
+        }
+    }
+    q->p[q->n] = 0;
+}
+
+static enum MHD_Result q_arg(void *cls, enum MHD_ValueKind kind,
+                             const char *key, const char *value)
+{
+    (void)kind;
+    struct query *q = cls;
+    if (q->n + 2 >= q->cap) {
+        q->bad = 1;
+        return MHD_NO;
+    }
+    char sep = q->n ? '&' : '?';
+    q->p[q->n++] = sep;
+    q->p[q->n] = 0;
+    q_put(q, key);
+    if (value) {
+        if (q->n + 2 >= q->cap) {
+            q->bad = 1;
+            return MHD_NO;
+        }
+        q->p[q->n++] = '=';
+        q->p[q->n] = 0;
+        q_put(q, value);
+    }
+    return MHD_YES;
+}
+
 int brebus_proxy(struct brebus *b, struct MHD_Connection *conn,
                  const char *method, const char *url, const char *body,
                  size_t n, struct MHD_Response **resp, unsigned *status)
@@ -57,8 +113,12 @@ int brebus_proxy(struct brebus *b, struct MHD_Connection *conn,
     unsigned short port = brebus_server_port(b);
     if (!port)
         return -1;
-    char to[4200], err[160];
-    snprintf(to, sizeof to, "http://127.0.0.1:%u%s", port, url);
+    char to[4200], err[160], qs[2048] = "";
+    struct query q = {.p = qs, .cap = sizeof qs};
+    MHD_get_connection_values(conn, MHD_GET_ARGUMENT_KIND, q_arg, &q);
+    if (q.bad)
+        return -1;
+    snprintf(to, sizeof to, "http://127.0.0.1:%u%s%s", port, url, qs);
     struct janas_url u;
     if (janas_url_parse(to, &u, err, sizeof err) != 0)
         return -1;
@@ -66,18 +126,29 @@ int brebus_proxy(struct brebus *b, struct MHD_Connection *conn,
     static const char *const keep[] = {"Content-Type", "Authorization",
                                        "Accept", "Anthropic-Version",
                                        "X-Api-Key"};
-    char hv[5][1024];
-    const char *hdr[5];
+    char hv[6][1024];
+    const char *hdr[6];
     size_t nh = 0;
+    int has_auth = 0;
     for (size_t i = 0; i < sizeof keep / sizeof keep[0]; i++) {
         const char *v =
             MHD_lookup_connection_value(conn, MHD_HEADER_KIND, keep[i]);
         if (v && strlen(v) < 900) {
+            has_auth |= i == 1;
             snprintf(hv[nh], sizeof hv[nh], "%s: %s", keep[i], v);
             hdr[nh] = hv[nh];
             nh++;
         }
     }
+    /* the page's own requests carry no key: Brebus, reached only from this
+       computer and its own page, adds the server's */
+    pthread_mutex_lock(&b->mu);
+    if (!has_auth && b->srv_key[0]) {
+        snprintf(hv[nh], sizeof hv[nh], "Authorization: Bearer %s", b->srv_key);
+        hdr[nh] = hv[nh];
+        nh++;
+    }
+    pthread_mutex_unlock(&b->mu);
     struct pass *p = calloc(1, sizeof(*p));
     if (!p)
         return -1;

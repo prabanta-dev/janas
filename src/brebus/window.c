@@ -42,6 +42,8 @@ static struct {
     int (*gdk_pixbuf_loader_close)(P, P *);
     P (*gdk_pixbuf_loader_get_pixbuf)(P);
     P (*webkit_web_view_new)(void);
+    P (*webkit_web_view_new_with_related_view)(P);
+    void (*gtk_widget_destroy)(P);
     void (*webkit_web_view_load_uri)(P, const char *);
     P (*webkit_navigation_policy_decision_get_navigation_action)(P);
     P (*webkit_navigation_action_get_request)(P);
@@ -80,6 +82,47 @@ static int decide(P view, P decision, int type, P data)
         open_outside(uri);
     w.webkit_policy_decision_ignore(decision);
     return 1;
+}
+
+static P app_icon;
+
+/* a page of Brebus's own opened apart (its engine monitor): a second
+   window, closed with its page; another site's goes to the browser */
+static void popup_ready(P view, P win)
+{
+    (void)view;
+    w.gtk_widget_show_all(win);
+}
+
+static void popup_close(P view, P win)
+{
+    (void)view;
+    w.gtk_widget_destroy(win);
+}
+
+static P create(P view, P action, P data)
+{
+    (void)data;
+    P req = w.webkit_navigation_action_get_request(action);
+    const char *uri = req ? w.webkit_uri_request_get_uri(req) : NULL;
+    if (!uri)
+        return NULL;
+    if (strncmp(uri, own, strlen(own))) {
+        if (!strncmp(uri, "https://", 8) || !strncmp(uri, "http://", 7))
+            open_outside(uri);
+        return NULL;
+    }
+    P win = w.gtk_window_new(0);
+    w.gtk_window_set_title(win, "Brebus");
+    w.gtk_window_set_default_size(win, 1100, 760);
+    if (app_icon)
+        w.gtk_window_set_icon(win, app_icon);
+    P nv = w.webkit_web_view_new_with_related_view(view);
+    w.g_signal_connect_data(nv, "decide-policy", (P)decide, NULL, NULL, 0);
+    w.g_signal_connect_data(nv, "ready-to-show", (P)popup_ready, win, NULL, 0);
+    w.g_signal_connect_data(nv, "close", (P)popup_close, win, NULL, 0);
+    w.gtk_container_add(win, nv);
+    return nv;
 }
 
 static void closed(P widget, P data)
@@ -136,6 +179,8 @@ int brebus_window(const char *url, volatile sig_atomic_t *quit, char *why,
     SYM(gdk_pixbuf_loader_close)
     SYM(gdk_pixbuf_loader_get_pixbuf)
     SYM(webkit_web_view_new)
+    SYM(webkit_web_view_new_with_related_view)
+    SYM(gtk_widget_destroy)
     SYM(webkit_web_view_load_uri)
     SYM(webkit_navigation_policy_decision_get_navigation_action)
     SYM(webkit_navigation_action_get_request)
@@ -166,10 +211,11 @@ int brebus_window(const char *url, volatile sig_atomic_t *quit, char *why,
         w.gdk_pixbuf_loader_close(loader, NULL)) {
         P icon = w.gdk_pixbuf_loader_get_pixbuf(loader);
         if (icon)
-            w.gtk_window_set_icon(win, icon);
+            w.gtk_window_set_icon(win, app_icon = icon);
     }
     P view = w.webkit_web_view_new();
     w.g_signal_connect_data(view, "decide-policy", (P)decide, NULL, NULL, 0);
+    w.g_signal_connect_data(view, "create", (P)create, NULL, NULL, 0);
     w.g_signal_connect_data(win, "destroy", (P)closed, NULL, NULL, 0);
     w.gtk_container_add(win, view);
     w.webkit_web_view_load_uri(view, url);

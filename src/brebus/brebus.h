@@ -25,7 +25,7 @@ struct brebus_get {
     struct janas_proc proc;
     pthread_t th; /* reads its output */
     int joinable, running, stopped, code, fd;
-    char model[128];
+    char model[416];
     char step[256]; /* its last "== ..." line */
     char said[512]; /* its last other line */
     double done_gb, total_gb, pct, mbs;
@@ -46,6 +46,8 @@ struct brebus {
     unsigned short srv_port;
     char srv_model[256];
     char srv_err[512];
+    char srv_key[256]; /* the key its clients send, or "" */
+    int srv_lan;       /* reachable from the local network */
     struct brebus_get get;
 };
 
