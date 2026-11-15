@@ -125,11 +125,52 @@ int32_t janas_llm_chat_create(janas_llm *llm,
     return JANAS_LLM_OK;
 }
 
+int32_t janas_llm_parallel_ok(const janas_llm *llm)
+{
+    return llm && !llm->nuc_on && janas_llm_model_parts_ok(llm->m);
+}
+
+int64_t janas_llm_parallel_bytes(const janas_llm *llm)
+{
+    return llm ? (int64_t)janas_llm_model_seq_bytes(llm->m) : 0;
+}
+
+int32_t janas_llm_chat_create_parallel(janas_llm *llm,
+                                       const struct janas_llm_chat_params *p,
+                                       janas_llm_chat **out)
+{
+    if (!llm || !out)
+        return janas_api_fail(JANAS_LLM_EINVAL, "no model or no output handle");
+    *out = NULL;
+    if (!janas_llm_parallel_ok(llm))
+        return janas_api_fail(JANAS_LLM_EMODEL,
+                              "this model takes one conversation at a time");
+    janas_llm_chat *c = calloc(1, sizeof(*c));
+    if (!c)
+        return janas_api_fail(JANAS_LLM_ENOMEM, "out of memory");
+    c->llm = llm;
+    int32_t rc = take_params(c, p);
+    struct janas_gen_options o;
+    if (rc == 0 && (rc = gen_options(c, &o)) == 0 &&
+        (!(c->seq = janas_llm_model_seq_new(llm->m)) ||
+         !(c->s = janas_llm_session_create(llm->m, &o))))
+        rc = janas_api_fail(JANAS_LLM_ENOMEM, "out of memory");
+    if (rc != 0) {
+        janas_llm_model_seq_free(llm->m, c->seq);
+        free(c);
+        return rc;
+    }
+    janas_llm_session_set_seq(c->s, c->seq);
+    *out = c;
+    return JANAS_LLM_OK;
+}
+
 void janas_llm_chat_destroy(janas_llm_chat *c)
 {
     if (!c)
         return;
-    c->llm->chat = NULL;
+    if (c->llm->chat == c)
+        c->llm->chat = NULL;
     janas_api_tr_settle(c); /* the last reply written down, if it is over */
     janas_api_tr_free(c);
     janas_api_nuc_free(c); /* the Specialist's chat, before its model */
@@ -138,6 +179,7 @@ void janas_llm_chat_destroy(janas_llm_chat *c)
     janas_api_msgs_free(c);
     janas_api_keep_free(c); /* before the session: it may be written */
     janas_llm_session_destroy(c->s);
+    janas_llm_model_seq_free(c->llm->m, c->seq);
     free(c->system);
     free(c->ids);
     free(c->text);

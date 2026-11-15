@@ -105,6 +105,9 @@ static void usage(FILE *f)
         "                    outlive the server: a long system message and\n"
         "                    tools are read once (default 8; 0: none)\n"
         "  --queue N         requests allowed to wait (default 16)\n"
+        "  --parallel N      replies written at once, every weight read once\n"
+        "                    for all of them (default: as many as the free\n"
+        "                    memory holds, up to 8; 1: one at a time)\n"
         "  --max-body MIB    largest request body (default 32)\n"
         "  --connections N   open connections at most (default 64)\n"
         "  --max-input N     the longest input a request may have, in tokens,\n"
@@ -201,6 +204,7 @@ static const char *const OPTIONS[] = {"--help",
                                       "--store",
                                       "--no-store",
                                       "--queue",
+                                      "--parallel",
                                       "--max-body",
                                       "--connections",
                                       "--max-input",
@@ -387,6 +391,8 @@ int main(int argc, char **argv)
             no_store = 0;
         } else if (!strcmp(a, "--no-store")) {
             no_store = 1;
+        } else if (!strcmp(a, "--parallel")) {
+            c->parallel = (int)num(argc, argv, &i, 1, 16);
         } else if (!strcmp(a, "--queue")) {
             c->max_queue = (uint32_t)num(argc, argv, &i, 0, 1 << 20);
         } else if (!strcmp(a, "--max-body")) {

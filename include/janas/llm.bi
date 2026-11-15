@@ -279,6 +279,16 @@ declare function janas_llm_chat_create(byval llm as janas_llm ptr, _
                                        byval p as const janas_llm_chat_params ptr, _
                                        byval out as janas_llm_chat ptr ptr) as long
 declare sub janas_llm_chat_destroy(byval c as janas_llm_chat ptr)
+'' Several conversations at once (llm.h): a chat beside the model's on a
+'' sequence of its own, and a step that moves the chats given on together
+'' before each one's janas_llm_chat_next.
+declare function janas_llm_parallel_ok(byval llm as const janas_llm ptr) as long
+declare function janas_llm_parallel_bytes(byval llm as const janas_llm ptr) as longint
+declare function janas_llm_chat_create_parallel(byval llm as janas_llm ptr, _
+                                                byval p as const janas_llm_chat_params ptr, _
+                                                byval out as janas_llm_chat ptr ptr) as long
+declare function janas_llm_chats_step(byval chats as janas_llm_chat ptr ptr, _
+                                      byval n as long) as long
 declare function janas_llm_chat_set_params(byval c as janas_llm_chat ptr, _
                                            byval p as const janas_llm_chat_params ptr) as long
 declare function janas_llm_chat_system(byval c as janas_llm_chat ptr, _

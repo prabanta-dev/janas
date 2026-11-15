@@ -296,7 +296,17 @@ struct janas_llm_session {
     float *dlogits;
     struct planner pl;
     struct janas_gen_stats st;
+    /* its sequence (NULL: the model's own); held: a step of several read a
+       block of its prompt, which prefill_step then does not read again */
+    struct janas_seq *seq;
+    int held;
 };
+
+/* the session's sequence made the model's current one, before any call */
+static void on_seq(const struct janas_llm_session *s)
+{
+    janas_llm_model_set_seq(s->m, s->seq);
+}
 
 static int valid_options(const struct janas_llm_model *m,
                          const struct janas_gen_options *o)
@@ -362,6 +372,7 @@ static void planner_save(const struct janas_llm_session *s)
 int janas_llm_session_slide(struct janas_llm_session *s, uint32_t keep,
                             uint32_t drop)
 {
+    on_seq(s);
     if (!drop || keep + drop > s->n_kv || s->n_kv > s->n)
         return -1;
     if (janas_llm_model_shift(s->m, keep, drop, s->n_kv) != 0)
@@ -480,8 +491,10 @@ void janas_llm_session_destroy(struct janas_llm_session *s)
 
 void janas_llm_session_reset(struct janas_llm_session *s)
 {
+    on_seq(s);
     janas_llm_model_media_drop(s->m, 0); /* the pictures go with it */
     s->dpos_set = 0;
+    s->held = 0;
     s->n = s->n_kv = s->ret = s->call_start = 0;
     s->n_mdraft = 0;
     s->mtp = janas_llm_model_has_mtp(s->m);
@@ -499,6 +512,7 @@ struct janas_llm_saved {
 
 struct janas_llm_saved *janas_llm_session_save(struct janas_llm_session *s)
 {
+    on_seq(s);
     /* what was returned, the last token not computed: as after a truncate */
     uint32_t n = s->ret, n_kv = s->n_kv < n ? s->n_kv : n - 1;
     if (n < 2 || n_kv == 0)
@@ -531,6 +545,7 @@ struct janas_llm_saved *janas_llm_session_save(struct janas_llm_session *s)
 int janas_llm_session_restore(struct janas_llm_session *s,
                               const struct janas_llm_saved *sv)
 {
+    on_seq(s);
     if (!sv->st || sv->n > s->cap ||
         janas_llm_model_state_load(s->m, sv->st) != 0)
         return -1;
@@ -643,6 +658,7 @@ uint32_t janas_llm_session_tokens(const struct janas_llm_session *s,
 
 int janas_llm_session_truncate(struct janas_llm_session *s, uint32_t n)
 {
+    on_seq(s);
     if (n > s->ret)
         return -1;
     if (n == s->ret) /* nothing to drop but what nobody has seen */
@@ -693,6 +709,7 @@ static int is_stop(const struct janas_gen_options *o, int32_t t)
 int janas_llm_session_append(struct janas_llm_session *s, const int32_t *tokens,
                              uint32_t n)
 {
+    on_seq(s);
     if (s->ret < s->n) {
         /* drop the generated tokens nobody has seen; if the last kept one
            already ran, run it again: its MTP row paired it with a dropped
@@ -726,6 +743,11 @@ int janas_llm_session_append(struct janas_llm_session *s, const int32_t *tokens,
 
 int janas_llm_session_prefill_step(struct janas_llm_session *s)
 {
+    on_seq(s);
+    if (s->held) { /* read already, in a step of several */
+        s->held = 0;
+        return s->n_kv + 1 < s->n ? 1 : 0;
+    }
     struct janas_llm_model *m = s->m;
     double t0 = now();
     if (s->n_kv + 1 < s->n) {
@@ -863,6 +885,7 @@ static int draft_step(struct janas_llm_session *s, uint32_t pos, int k,
 
 int janas_llm_session_next(struct janas_llm_session *s, int32_t *token)
 {
+    on_seq(s);
     if (s->ret < s->n) {
         *token = s->hist[s->ret++];
         return 0;
@@ -1118,4 +1141,127 @@ int janas_llm_generate(struct janas_llm_model *m, const int32_t *prompt,
         st->new_tokens = (uint32_t)produced;
     janas_llm_session_destroy(s);
     return produced;
+}
+
+void janas_llm_session_set_seq(struct janas_llm_session *s,
+                               struct janas_seq *seq)
+{
+    s->seq = seq;
+}
+
+/* janas_llm_sessions_step and janas_llm_sessions_advance: give, whether a
+   token drawn is handed back here (and a session holding one is given it)
+   or left in its history for janas_llm_session_next to hand back */
+static int step(struct janas_llm_session **ss, int n, int32_t *tokens,
+                int *status, int give)
+{
+    if (n < 1)
+        return -1;
+    struct janas_llm_model *m = ss[0]->m;
+    uint32_t most = janas_llm_model_max_block(m), rows = 0;
+    struct janas_llm_part *p = malloc((size_t)n * sizeof(*p));
+    int *which = malloc((size_t)2 * n * sizeof(int)), np = 0;
+    float *lg = NULL;
+    int rc = -1;
+    if (!p || !which || !janas_llm_model_parts_ok(m))
+        goto out;
+    double t0 = now();
+    /* what each session asks of the pass: nothing (a token it holds, a full
+       context), a block of its prompt, or the rest of its prompt with its
+       next token - the last token of a prompt read with the block before
+       it: the same bits as apart */
+    for (int i = 0; i < n; i++) {
+        struct janas_llm_session *s = ss[i];
+        status[i] = -1;
+        tokens[i] = -1;
+        if (s->m != m)
+            goto out;
+        if (s->ret < s->n) {
+            if (give) {
+                tokens[i] = s->hist[s->ret++];
+                status[i] = 0;
+            } else {
+                status[i] = 0; /* janas_llm_session_next has it */
+            }
+            continue;
+        }
+        if (s->n == 0)
+            continue; /* -1: nothing to go on from */
+        if (s->n > s->cap) {
+            status[i] = 1;
+            continue;
+        }
+        uint32_t left = most - rows, rest = s->n - s->n_kv;
+        if (!left) {
+            status[i] = 2; /* its turn in the next step */
+            continue;
+        }
+        p[np] = (struct janas_llm_part){
+            .seq = s->seq ? s->seq : janas_llm_model_seq_own(m),
+            .tokens = s->hist + s->n_kv,
+            .n = rest <= left ? rest : left,
+            .pos0 = s->n_kv};
+        rows += p[np].n;
+        which[np] = i;
+        which[n + np++] = rest <= left; /* its token comes out of it */
+    }
+    if (np) {
+        lg = malloc((size_t)np * ss[0]->nv * sizeof(float));
+        if (!lg ||
+            janas_llm_model_forward_parts(m, p, (uint32_t)np, lg, 0) != 0)
+            goto out;
+    }
+    double dt = now() - t0;
+    for (int k = 0; k < np; k++) {
+        struct janas_llm_session *s = ss[which[k]];
+        int i = which[k];
+        s->mtp = 0; /* its MTP block's rows are not run here */
+        s->n_mdraft = 0;
+        s->call_start = p[k].pos0;
+        s->n_kv = p[k].pos0 + p[k].n;
+        if (!which[n + k]) { /* a block of its prompt */
+            s->st.prompt_tokens += p[k].n;
+            s->st.prefill_seconds += dt;
+            s->held = !give;
+            status[i] = 2;
+            continue;
+        }
+        s->st.prompt_tokens += p[k].n - 1;
+        double ts = now();
+        int32_t t = sample(s, lg + (size_t)k * s->nv, s->n);
+        s->st.sample_seconds += now() - ts;
+        if (t < 0)
+            goto out; /* the filter allows nothing: a broken grammar */
+        s->hist[s->n++] = t;
+        s->st.new_tokens++;
+        s->st.passes++;
+        s->st.decode_seconds += dt;
+        if (give)
+            tokens[i] = s->hist[s->ret++];
+        status[i] = 0;
+    }
+    rc = 0;
+out:
+    free(lg);
+    free(p);
+    free(which);
+    return rc;
+}
+
+int janas_llm_sessions_step(struct janas_llm_session **ss, int n,
+                            int32_t *tokens, int *status)
+{
+    return step(ss, n, tokens, status, 1);
+}
+
+int janas_llm_sessions_advance(struct janas_llm_session **ss, int n,
+                               int *status)
+{
+    int32_t stack[64], *tk = n <= 64 ? stack : malloc((size_t)n * 4);
+    if (!tk)
+        return -1;
+    int r = step(ss, n, tk, status, 0);
+    if (tk != stack)
+        free(tk);
+    return r;
 }

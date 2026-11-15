@@ -37,6 +37,8 @@ struct srv_config {
     uint16_t port;        /* default 8080 */
     const char *api_key;  /* NULL: none asked */
     uint32_t max_queue;   /* requests waiting at most (default 16) */
+    int parallel;         /* replies written at once: 0 as the memory allows
+                             (default), 1 one at a time, N at most N */
     size_t max_body;      /* bytes of a request body at most */
     int max_connections;
     int verbose;

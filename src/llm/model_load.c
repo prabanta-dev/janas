@@ -1556,8 +1556,10 @@ fail:
 
 void janas_llm_model_free(struct janas_llm_model *m)
 {
-    if (m)
+    if (m) {
+        m->cur = &m->seq0; /* the model's own pictures, its own state */
         janas_m_media_free(m);
+    }
     if (janas_m_exp_tracing())
         janas_m_exp_report();
     if (m && getenv("JANAS_GPU_VERBOSE") &&

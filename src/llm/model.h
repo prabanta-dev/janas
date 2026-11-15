@@ -214,6 +214,13 @@ struct janas_llm_part {
    model's own (the one janas_llm_model_forward runs) is not one of these. */
 struct janas_seq *janas_llm_model_seq_new(struct janas_llm_model *m);
 void janas_llm_model_seq_free(struct janas_llm_model *m, struct janas_seq *s);
+/* The sequence the single calls run on (janas_llm_model_forward and the
+   rest): s, or the model's own with NULL. */
+void janas_llm_model_set_seq(struct janas_llm_model *m, struct janas_seq *s);
+/* What a sequence of janas_llm_model_seq_new takes, in bytes */
+size_t janas_llm_model_seq_bytes(const struct janas_llm_model *m);
+/* The model's own sequence, as a piece of janas_llm_model_forward_parts */
+struct janas_seq *janas_llm_model_seq_own(struct janas_llm_model *m);
 /* 1 when the model takes several sequences in a pass */
 int janas_llm_model_parts_ok(const struct janas_llm_model *m);
 int janas_llm_model_forward_parts(struct janas_llm_model *m,

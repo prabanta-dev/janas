@@ -7,7 +7,7 @@ All the trials below ran on the development laptop (Intel Core Ultra 9 185H, 32 
 | Program | Version | API | What was tried | Result | Tried |
 |---|---|---|---|---|---|
 | [AnythingLLM](https://anythingllm.com) Desktop | 1.19.0 | Ollama | chat, streamed; a document embedded with `--embedding-model` and asked about; the agent, with a tool call | works | 14 Nov 2026 |
-| [Obsidian](https://obsidian.md) with [Copilot for Obsidian](https://github.com/logancyang/obsidian-copilot) | 1.15.1, Copilot 4.0.20 | OpenAI (Copilot's "Ollama" provider) | the model listed and verified, a question in Copilot's chat | works with `--allow-origin app://obsidian.md`, and Janas from the develop branch of 14 November 2026 on (below) | 14 Nov 2026 |
+| [Obsidian](https://obsidian.md) with [Copilot for Obsidian](https://github.com/logancyang/obsidian-copilot) | 1.15.1, Copilot 4.0.20 | OpenAI (Copilot's "Ollama" provider) | the model listed and verified, a question in Copilot's chat | works with `--allow-origin app://obsidian.md`, and Janas from the release of 15 November 2026 on (below) | 14 Nov 2026 |
 | [Zed](https://zed.dev) | 1.28.1 | Ollama | the Agent panel: a question about a file of the project, the model calling Zed's tool to read it | works; the first message is slow (below) | 14 Nov 2026 |
 | [Continue](https://www.continue.dev) (VSCodium, VS Code) | 2.0.0 | Ollama | chat, edits, completion at the cursor, its command-line agent | works ([editor.md](editor.md#continue-vscodium-vs-code)) | Nov 2026 |
 | [Cline](https://cline.bot) | 4.1.26 | Ollama | agent tasks with tools | works ([editor.md](editor.md#cline-vscodium-vs-code)) | Nov 2026 |
@@ -36,7 +36,7 @@ In Copilot's settings, **BYOK**, **Add a provider**, **Ollama**: it lists the se
 janas-server qwen3-4b.jns --port 11434 --think off --allow-origin app://obsidian.md
 ```
 
-Without it Copilot says "Connection error" and the server's answer, which Copilot does not show, says which option lets it in. Janas from the release of 13 November 2026 and earlier still fails with the option: the browser's preliminary request (CORS) was allowed two headers only, and the JavaScript client Copilot uses sends more of its own. From the develop branch of 14 November 2026 the server allows the headers such a page asks for. Asked "Name three Italian islands", Qwen3-4B answered through it in about 5 s.
+Without it Copilot says "Connection error" and the server's answer, which Copilot does not show, says which option lets it in. Janas from the release of 13 November 2026 and earlier still fails with the option: the browser's preliminary request (CORS) was allowed two headers only, and the JavaScript client Copilot uses sends more of its own. From the release of 15 November 2026 the server allows the headers such a page asks for. Asked "Name three Italian islands", Qwen3-4B answered through it in about 5 s.
 
 ## Zed
 

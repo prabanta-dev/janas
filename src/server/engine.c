@@ -12,6 +12,7 @@
  * several replies (n, best_of) runs them one after the other on the same
  * prompt, which is then read once where the model can go back over it.
  */
+#include "common/sysinfo.h"
 #include "server.h"
 #include "llm/nucleus.h"
 #include "fim.h"
@@ -20,6 +21,21 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+
+#define MAX_SLOTS 16
+
+/* A reply being written: its job, its choice, the chat it runs on, and
+   run_one's state between its pieces */
+struct slot {
+    struct srv_job *j;
+    int k;
+    janas_llm_chat *c;
+    int32_t rc;
+    size_t max_stop, nl;
+    int32_t seen;
+    struct timespec t0;
+    int begun; /* its job set up and its first reply begun */
+};
 
 struct srv_engine {
     janas_llm *llm;
@@ -32,6 +48,12 @@ struct srv_engine {
     pthread_cond_t cv;
     struct srv_job *head, *tail;
     struct srv_job *running; /* the job being run, or NULL */
+    /* several replies at once (janas_llm_chats_step): n_slots places,
+       place 0 on chat (with the conversations kept), the others on
+       parallel chats made when first needed; the jobs they run */
+    int n_slots;
+    janas_llm_chat *par[MAX_SLOTS];
+    struct srv_job *in_slot[MAX_SLOTS];
     uint32_t queued, max_queue;
     int stop;
     int closing; /* the server is stopping: no client's request taken */
@@ -284,9 +306,8 @@ static int take_tokens(janas_llm *llm, janas_llm_chat *c, struct srv_job *j,
 }
 
 /* What the request says about tools, the answer's form and the bias. */
-static int32_t setup(struct srv_engine *e, struct srv_job *j)
+static int32_t setup(janas_llm_chat *c, struct srv_job *j)
 {
-    janas_llm_chat *c = e->chat;
     int32_t rc = janas_llm_chat_tools(c, j->tools, (int32_t)j->n_tools);
     if (rc == JANAS_LLM_OK)
         rc = janas_llm_chat_tool_choice(
@@ -341,8 +362,8 @@ static int32_t count_tokens(void *ctx, const char *s, size_t n)
 
 /* The prompt of a request with a suffix: the window around the cursor
    (fim.c), so that the next keystroke finds it computed. */
-static int32_t load_infill(struct srv_engine *e, struct srv_job *j,
-                           const struct srv_prompt *pp)
+static int32_t load_infill(struct srv_engine *e, janas_llm_chat *c,
+                           struct srv_job *j, const struct srv_prompt *pp)
 {
     size_t off = 0, sl = j->n_suffix;
     const char *how = "";
@@ -354,15 +375,14 @@ static int32_t load_infill(struct srv_engine *e, struct srv_job *j,
                 "janas-server: fill in the middle: prefix from byte %zu of "
                 "%zu%s%s, suffix %zu of %zu bytes\n",
                 off, pp->n, *how ? ", " : "", how, sl, j->n_suffix);
-    return janas_llm_chat_infill(e->chat, pp->text + off,
-                                 (int32_t)(pp->n - off), j->suffix,
-                                 (int32_t)sl);
+    return janas_llm_chat_infill(c, pp->text + off, (int32_t)(pp->n - off),
+                                 j->suffix, (int32_t)sl);
 }
 
 /* The request's prompt for reply k. */
-static int32_t load(struct srv_engine *e, struct srv_job *j, int k)
+static int32_t load(struct srv_engine *e, janas_llm_chat *c, struct srv_job *j,
+                    int k)
 {
-    janas_llm_chat *c = e->chat;
     if (j->kind == JOB_TEXT) {
         struct srv_prompt *pp = &j->prompts[k / (j->n_choices / j->n_prompts)];
         if (pp->ids && !pp->text) {
@@ -370,7 +390,7 @@ static int32_t load(struct srv_engine *e, struct srv_job *j, int k)
             if (rc != JANAS_LLM_OK)
                 return rc;
         }
-        return j->suffix ? load_infill(e, j, pp)
+        return j->suffix ? load_infill(e, c, j, pp)
                          : janas_llm_chat_prompt(c, pp->text, (int32_t)pp->n);
     }
     int32_t rc = janas_llm_chat_begin(c);
@@ -420,10 +440,12 @@ static int indent_cut(struct srv_choice *ch, int n_indent, size_t *nl)
 }
 
 /* One reply, into choice k. Returns the library's code. */
-static int32_t run_one(struct srv_engine *e, struct srv_job *j, int k)
+/* A reply begins on s->c: its parameters, its prompt. s->rc. */
+static void one_begin(struct srv_engine *e, struct slot *s)
 {
-    janas_llm_chat *c = e->chat;
-    struct srv_choice *ch = &j->ch[k];
+    janas_llm_chat *c = s->c;
+    struct srv_job *j = s->j;
+    int k = s->k;
     struct janas_llm_chat_params p = j->p;
     if (j->seeded)
         p.seed += (uint64_t)k;
@@ -431,63 +453,81 @@ static int32_t run_one(struct srv_engine *e, struct srv_job *j, int k)
     if (j->suffix && e->fim_max &&
         (p.max_reply <= 0 || p.max_reply > (int32_t)e->fim_max))
         p.max_reply = (int32_t)e->fim_max;
-    int32_t rc = janas_llm_chat_set_params(c, &p);
-    if (rc == JANAS_LLM_OK)
-        rc = load(e, j, k);
-    size_t max_stop = 0;
+    s->rc = janas_llm_chat_set_params(c, &p);
+    if (s->rc == JANAS_LLM_OK)
+        s->rc = load(e, c, j, k);
+    s->max_stop = 0;
     for (int i = 0; i < j->n_stop; i++)
-        if (strlen(j->stop[i]) > max_stop)
-            max_stop = strlen(j->stop[i]);
-    int32_t seen = 0;
-    size_t nl = 0;            /* n_indent: where the last line started */
-    struct timespec t0 = {0}; /* t_max_predict_ms: the first token */
-    while (rc == JANAS_LLM_OK) {
-        char buf[512];
-        int32_t len = 0;
-        rc = janas_llm_chat_next(c, buf, sizeof(buf), &len);
-        if (rc != JANAS_LLM_OK && rc != JANAS_LLM_DONE)
-            break;
-        int think = janas_llm_chat_thinking(c);
-        pthread_mutex_lock(&j->mu);
-        int bad =
-            take_calls(c, ch) != 0 || take_tokens(e->llm, c, j, ch, &seen) != 0;
-        if (len > 0 && think)
-            bad |= grow(&ch->think, &ch->n_think, &ch->cap_think, buf,
-                        (size_t)len);
-        else if (len > 0) {
-            size_t from = ch->n_text > max_stop ? ch->n_text - max_stop : 0;
-            bad |=
-                grow(&ch->text, &ch->n_text, &ch->cap_text, buf, (size_t)len);
-            long at = bad || !j->n_stop ? -1 : find_stop(j, ch, from);
-            if (at >= 0) {
-                ch->n_text = (size_t)at;
-                ch->text[at] = 0;
-                ch->by_stop = 1;
-            }
-            if (!bad && j->n_indent > 0 && indent_cut(ch, j->n_indent, &nl))
-                ch->by_stop = 1;
-            if (!bad && j->t_max_predict_ms > 0) {
-                struct timespec now;
-                clock_gettime(CLOCK_MONOTONIC, &now);
-                if (!t0.tv_sec && !t0.tv_nsec)
-                    t0 = now;
-                double ms = (double)(now.tv_sec - t0.tv_sec) * 1e3 +
-                            (double)(now.tv_nsec - t0.tv_nsec) / 1e6;
-                if (ms > j->t_max_predict_ms &&
-                    memchr(ch->text, '\n', ch->n_text))
-                    ch->by_stop = 1;
-            }
-        }
-        int quit = stopped(j) || ch->by_stop || bad || rc == JANAS_LLM_DONE;
-        pthread_cond_broadcast(&j->cv);
-        pthread_mutex_unlock(&j->mu);
-        if (bad) {
-            rc = JANAS_LLM_ENOMEM;
-            break;
-        }
-        if (quit)
-            break;
+        if (strlen(j->stop[i]) > s->max_stop)
+            s->max_stop = strlen(j->stop[i]);
+    s->seen = 0;
+    s->nl = 0;                    /* n_indent: where the last line started */
+    s->t0 = (struct timespec){0}; /* t_max_predict_ms: the first token */
+}
+
+/* A piece of the reply: 1 while it goes on, 0 when it is over (s->rc) */
+static int one_piece(struct srv_engine *e, struct slot *s)
+{
+    janas_llm_chat *c = s->c;
+    struct srv_job *j = s->j;
+    struct srv_choice *ch = &j->ch[s->k];
+    if (s->rc != JANAS_LLM_OK)
+        return 0;
+    char buf[512];
+    int32_t len = 0;
+    int32_t rc = janas_llm_chat_next(c, buf, sizeof(buf), &len);
+    if (rc != JANAS_LLM_OK && rc != JANAS_LLM_DONE) {
+        s->rc = rc;
+        return 0;
     }
+    int think = janas_llm_chat_thinking(c);
+    pthread_mutex_lock(&j->mu);
+    int bad =
+        take_calls(c, ch) != 0 || take_tokens(e->llm, c, j, ch, &s->seen) != 0;
+    if (len > 0 && think)
+        bad |= grow(&ch->think, &ch->n_think, &ch->cap_think, buf, (size_t)len);
+    else if (len > 0) {
+        size_t from = ch->n_text > s->max_stop ? ch->n_text - s->max_stop : 0;
+        bad |= grow(&ch->text, &ch->n_text, &ch->cap_text, buf, (size_t)len);
+        long at = bad || !j->n_stop ? -1 : find_stop(j, ch, from);
+        if (at >= 0) {
+            ch->n_text = (size_t)at;
+            ch->text[at] = 0;
+            ch->by_stop = 1;
+        }
+        if (!bad && j->n_indent > 0 && indent_cut(ch, j->n_indent, &s->nl))
+            ch->by_stop = 1;
+        if (!bad && j->t_max_predict_ms > 0) {
+            struct timespec now;
+            clock_gettime(CLOCK_MONOTONIC, &now);
+            if (!s->t0.tv_sec && !s->t0.tv_nsec)
+                s->t0 = now;
+            double ms = (double)(now.tv_sec - s->t0.tv_sec) * 1e3 +
+                        (double)(now.tv_nsec - s->t0.tv_nsec) / 1e6;
+            if (ms > j->t_max_predict_ms && memchr(ch->text, '\n', ch->n_text))
+                ch->by_stop = 1;
+        }
+    }
+    int quit = stopped(j) || ch->by_stop || bad || rc == JANAS_LLM_DONE;
+    pthread_cond_broadcast(&j->cv);
+    pthread_mutex_unlock(&j->mu);
+    if (bad) {
+        s->rc = JANAS_LLM_ENOMEM;
+        return 0;
+    }
+    if (rc == JANAS_LLM_DONE)
+        s->rc = JANAS_LLM_DONE;
+    return !quit;
+}
+
+/* The reply's end: its statistics, its choice done. */
+static int32_t one_end(struct srv_engine *e, struct slot *s)
+{
+    janas_llm_chat *c = s->c;
+    struct srv_job *j = s->j;
+    int k = s->k;
+    struct srv_choice *ch = &j->ch[k];
+    int32_t rc = s->rc;
     struct janas_llm_chat_stats st = {.size = sizeof(st)};
     janas_llm_chat_stats(c, &st);
     if (e->nucleus || e->verbose) /* the reply's times; in Nucleus mode who
@@ -529,6 +569,15 @@ static int32_t run_one(struct srv_engine *e, struct srv_job *j, int k)
     pthread_cond_broadcast(&j->cv);
     pthread_mutex_unlock(&j->mu);
     return rc == JANAS_LLM_DONE ? JANAS_LLM_OK : rc;
+}
+
+static int32_t run_one(struct srv_engine *e, struct srv_job *j, int k)
+{
+    struct slot s = {.j = j, .k = k, .c = e->chat};
+    one_begin(e, &s);
+    while (one_piece(e, &s))
+        ;
+    return one_end(e, &s);
 }
 
 /* How many tokens the messages would be, with the tools: nothing run. */
@@ -613,7 +662,7 @@ static int32_t embed(struct srv_engine *e, struct srv_job *j)
 
 static void run(struct srv_engine *e, struct srv_job *j)
 {
-    int32_t rc = setup(e, j);
+    int32_t rc = setup(e->chat, j);
     int k = 0;
     if (rc == JANAS_LLM_OK && j->kind == JOB_COUNT) {
         rc = count(e, j);
@@ -672,9 +721,190 @@ static void number_queue(struct srv_engine *e)
     }
 }
 
+/* the job's end, as run() ends it: its error, its choices done, its
+   statistics; then it is released */
+static void job_end(struct srv_engine *e, struct srv_job *j, int32_t rc, int k)
+{
+    pthread_mutex_lock(&j->mu);
+    if (rc < 0) {
+        j->err = rc;
+        if (!j->errmsg[0])
+            snprintf(j->errmsg, sizeof(j->errmsg), "%s",
+                     janas_llm_last_error());
+    }
+    for (int i = 0; i < j->n_choices; i++)
+        j->ch[i].done = 1;
+    int cancelled = j->cancel;
+    j->done = 1;
+    pthread_cond_broadcast(&j->cv);
+    pthread_mutex_unlock(&j->mu);
+    if (e->verbose)
+        fprintf(stderr,
+                "janas-server: %u prompt tokens (%u already computed), %u "
+                "generated in %d replies%s, beside other requests\n",
+                j->st.prompt_tokens, j->st.cached_tokens, j->completion_tokens,
+                k, cancelled ? ", cancelled" : "");
+    srv_job_release(j);
+}
+
+/* A job a place can take: a reply of text or of chat, without pictures
+   (a sequence of several does not take them yet) */
+static int slot_job(const struct srv_job *j)
+{
+    if (j->kind != JOB_TEXT && j->kind != JOB_CHAT)
+        return 0;
+    for (int32_t i = 0; i < j->n_msg; i++)
+        if (j->msg[i].n_imgs)
+            return 0;
+    return 1;
+}
+
+/* The next choice of the job in s, or its end. 1 when s goes on. */
+static int slot_next(struct srv_engine *e, struct slot *s, int slot)
+{
+    struct srv_job *j = s->j;
+    int32_t rc = one_end(e, s);
+    int k = s->k + 1;
+    pthread_mutex_lock(&j->mu);
+    int cancel = stopped(j);
+    if (k < j->n_choices && rc == JANAS_LLM_OK && !cancel)
+        j->cur = k;
+    pthread_mutex_unlock(&j->mu);
+    if (k < j->n_choices && rc == JANAS_LLM_OK && !cancel) {
+        s->k = k;
+        one_begin(e, s);
+        return 1;
+    }
+    job_end(e, j, rc, k);
+    pthread_mutex_lock(&e->mu);
+    e->in_slot[slot] = NULL;
+    pthread_mutex_unlock(&e->mu);
+    s->j = NULL;
+    return 0;
+}
+
+/* Several replies at once: the jobs waiting take the free places (place 0
+   first: its chat keeps the conversations), each place writes a piece of
+   its reply a round, the passes of all of them in one step. Jobs a place
+   does not take run as before, when no place is busy. */
+static void slots_main(struct srv_engine *e)
+{
+    struct slot sl[MAX_SLOTS] = {{0}};
+    for (;;) {
+        pthread_mutex_lock(&e->mu);
+        int busy = 0;
+        for (int i = 0; i < e->n_slots; i++)
+            busy += sl[i].j != NULL;
+        while (!busy && !e->head && !e->stop)
+            pthread_cond_wait(&e->cv, &e->mu);
+        if (e->stop) {
+            pthread_mutex_unlock(&e->mu);
+            break;
+        }
+        /* a job no place takes waits for all of them to be free, then runs
+           alone, as before */
+        struct srv_job *solo = NULL;
+        while (e->head) {
+            struct srv_job *j = e->head;
+            int free_at = -1;
+            for (int i = 0; i < e->n_slots && free_at < 0; i++)
+                if (!sl[i].j)
+                    free_at = i;
+            if (!slot_job(j)) {
+                if (!busy) {
+                    solo = j;
+                    e->head = j->next;
+                    if (!e->head)
+                        e->tail = NULL;
+                    e->queued--;
+                    e->running = j;
+                }
+                break;
+            }
+            if (free_at < 0)
+                break;
+            if (free_at > 0 && !e->par[free_at] &&
+                janas_llm_chat_create_parallel(
+                    e->llm, NULL, &e->par[free_at]) != JANAS_LLM_OK) {
+                break; /* no memory for another: it waits */
+            }
+            e->head = j->next;
+            if (!e->head)
+                e->tail = NULL;
+            e->queued--;
+            e->in_slot[free_at] = j;
+            sl[free_at] = (struct slot){
+                .j = j, .k = 0, .c = free_at ? e->par[free_at] : e->chat};
+            busy++;
+        }
+        number_queue(e);
+        pthread_mutex_unlock(&e->mu);
+        if (solo) {
+            pthread_mutex_lock(&solo->mu);
+            solo->started = 1;
+            solo->queue_pos = 0;
+            pthread_mutex_unlock(&solo->mu);
+            run(e, solo);
+            pthread_mutex_lock(&e->mu);
+            e->running = NULL;
+            pthread_mutex_unlock(&e->mu);
+            srv_job_release(solo);
+            continue;
+        }
+        /* the places just taken begin their first reply */
+        for (int i = 0; i < e->n_slots; i++) {
+            struct slot *s = &sl[i];
+            if (!s->j || s->begun)
+                continue;
+            struct srv_job *j = s->j;
+            s->begun = 1;
+            pthread_mutex_lock(&j->mu);
+            j->started = 1;
+            j->queue_pos = 0;
+            int skip = stopped(j);
+            pthread_mutex_unlock(&j->mu);
+            s->rc = skip ? JANAS_LLM_EFAIL : setup(s->c, j);
+            if (s->rc == JANAS_LLM_OK)
+                one_begin(e, s);
+            if (s->rc != JANAS_LLM_OK) {
+                job_end(e, j, skip ? JANAS_LLM_OK : s->rc, 0);
+                pthread_mutex_lock(&e->mu);
+                e->in_slot[i] = NULL;
+                pthread_mutex_unlock(&e->mu);
+                *s = (struct slot){0};
+            }
+        }
+        /* one step for all, then a piece each */
+        janas_llm_chat *act[MAX_SLOTS];
+        int na = 0;
+        for (int i = 0; i < e->n_slots; i++)
+            if (sl[i].j && sl[i].rc == JANAS_LLM_OK)
+                act[na++] = sl[i].c;
+        if (na > 1)
+            janas_llm_chats_step(act, na); /* failed: each runs alone */
+        for (int i = 0; i < e->n_slots; i++) {
+            struct slot *s = &sl[i];
+            if (!s->j)
+                continue;
+            if (!one_piece(e, s) && !slot_next(e, s, i))
+                *s = (struct slot){0};
+        }
+    }
+    /* the server stops: the replies under way end as they are */
+    for (int i = 0; i < e->n_slots; i++)
+        if (sl[i].j) {
+            sl[i].rc = JANAS_LLM_EFAIL;
+            job_end(e, sl[i].j, JANAS_LLM_EFAIL, sl[i].k);
+        }
+}
+
 static void *engine_main(void *arg)
 {
     struct srv_engine *e = arg;
+    if (e->n_slots > 1) {
+        slots_main(e);
+        return NULL;
+    }
     for (;;) {
         pthread_mutex_lock(&e->mu);
         while (!e->head && !e->stop)
@@ -864,6 +1094,28 @@ struct srv_engine *srv_engine_start(const struct srv_config *cfg, char *err,
     model_info(e);
     e->fim = srv_fim_new(cfg->fim_prefix, cfg->fim_suffix);
     e->fim_max = cfg->fim_max;
+    /* replies at once: as asked, or as many as half the memory free now
+       holds of a conversation's keys, values and state (the context as
+       asked, never cut), up to 8 */
+    e->n_slots = 1;
+    if (janas_llm_parallel_ok(e->llm) && !e->nucleus && cfg->parallel != 1) {
+        int64_t per = janas_llm_parallel_bytes(e->llm);
+        uint64_t avail = janas_mem_available();
+        int fit = per > 0 ? 1 + (int)(avail / 2 / (uint64_t)per) : 1;
+        int want = cfg->parallel > 0 ? cfg->parallel : 8;
+        e->n_slots = fit < want ? fit : want;
+        if (e->n_slots > MAX_SLOTS)
+            e->n_slots = MAX_SLOTS;
+        if (e->n_slots < 1)
+            e->n_slots = 1;
+        fprintf(stderr,
+                "janas-server: %d replies at once (%.2f GiB a conversation, "
+                "%.1f GiB free%s)\n",
+                e->n_slots, (double)per / (1 << 30), (double)avail / (1 << 30),
+                cfg->parallel > 0 && e->n_slots < cfg->parallel
+                    ? "; fewer than asked: the memory"
+                    : "");
+    }
     if (pthread_create(&e->th, NULL, engine_main, e) != 0) {
         snprintf(err, err_len, "cannot start the engine's thread");
         srv_fim_free(e->fim);
@@ -896,6 +1148,9 @@ void srv_engine_cancel_clients(struct srv_engine *e)
     e->closing = 1;
     if (e->running && !e->running->low)
         cancel_job(e->running);
+    for (int i = 0; i < e->n_slots; i++)
+        if (e->in_slot[i] && !e->in_slot[i]->low)
+            cancel_job(e->in_slot[i]);
     for (struct srv_job *j = e->head; j; j = j->next)
         if (!j->low)
             cancel_job(j);
@@ -924,6 +1179,8 @@ void srv_engine_stop(struct srv_engine *e)
         srv_job_release(j);
         j = nx;
     }
+    for (int i = 1; i < MAX_SLOTS; i++)
+        janas_llm_chat_destroy(e->par[i]);
     janas_llm_chat_destroy(e->chat);
     janas_llm_close(e->llm);
     janas_llm_close(e->spec); /* after the model: its chat holds one here */
@@ -968,6 +1225,8 @@ int srv_engine_queued(struct srv_engine *e)
 {
     pthread_mutex_lock(&e->mu);
     int n = (int)e->queued + (e->running ? 1 : 0);
+    for (int i = 0; i < e->n_slots; i++)
+        n += e->in_slot[i] != NULL;
     pthread_mutex_unlock(&e->mu);
     return n;
 }

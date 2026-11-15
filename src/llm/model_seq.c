@@ -22,6 +22,29 @@ int janas_llm_model_parts_ok(const struct janas_llm_model *m)
     return !m->hc_n && !m->ix_heads;
 }
 
+void janas_llm_model_set_seq(struct janas_llm_model *m, struct janas_seq *s)
+{
+    m->cur = s ? s : &m->seq0;
+}
+
+size_t janas_llm_model_seq_bytes(const struct janas_llm_model *m)
+{
+    size_t b = 2 * (m->kv_bytes ? m->kv_bytes : 4096) +
+               2 * (m->ks_bytes ? m->ks_bytes : 4096);
+    if (m->a->rec)
+        b += 2 * (size_t)m->n_rec * m->ssm_per * sizeof(uint16_t) +
+             2 * (size_t)m->n_rec * m->conv_ch * (m->d_conv - 1) *
+                 sizeof(float) +
+             (size_t)m->n_rec * JANAS_LLM_MAX_BLOCK *
+                 (m->conv_ch + 2 * (size_t)m->n_vh) * sizeof(float);
+    return b;
+}
+
+struct janas_seq *janas_llm_model_seq_own(struct janas_llm_model *m)
+{
+    return &m->seq0;
+}
+
 struct janas_seq *janas_llm_model_seq_new(struct janas_llm_model *m)
 {
     struct janas_seq *s = calloc(1, sizeof(*s));
@@ -66,9 +89,13 @@ struct janas_seq *janas_llm_model_seq_new(struct janas_llm_model *m)
 
 void janas_llm_model_seq_free(struct janas_llm_model *m, struct janas_seq *s)
 {
-    (void)m;
     if (!s)
         return;
+    if (m->cur == s) /* the single calls go back to the model's own */
+        m->cur = &m->seq0;
+    for (uint32_t i = 0; i < s->n_media; i++)
+        free(s->media[i].embd);
+    free(s->media);
     janas_aligned_free(s->kcache);
     janas_aligned_free(s->vcache);
     janas_aligned_free(s->kscale);

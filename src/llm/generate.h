@@ -139,6 +139,30 @@ int janas_llm_session_prefill_step(struct janas_llm_session *s);
  */
 int janas_llm_session_next(struct janas_llm_session *s, int32_t *token);
 
+/*
+ * Several conversations on one model (A1): a session runs on a sequence of
+ * its own (janas_llm_model_seq_new; NULL, the default: the model's own),
+ * and janas_llm_sessions_step moves n sessions on together, every weight
+ * read once for all of them: each one's next block of prompt or its next
+ * token in one pass (janas_llm_model_forward_parts), each token drawn by
+ * its own sampler. tokens[i] and status[i] are as janas_llm_session_next
+ * gives them, but status 2: the session read part of its prompt and has no
+ * token yet. The tokens are those each session would write alone; without
+ * drafts, and a session that went through such a step drafts with its MTP
+ * block no more until it starts again (its block's rows were not run).
+ * Returns 0, or -1 (the model takes no several sequences, an error).
+ */
+void janas_llm_session_set_seq(struct janas_llm_session *s,
+                               struct janas_seq *seq);
+int janas_llm_sessions_step(struct janas_llm_session **ss, int n,
+                            int32_t *tokens, int *status);
+/* The same, the tokens left where janas_llm_session_next hands them back
+   (and a block of prompt read where janas_llm_session_prefill_step counts
+   it): for the chats (api_reply.c), which then take each one's piece as
+   they would alone. status[i] 0: a token waits, 1, 2, -1 as above. */
+int janas_llm_sessions_advance(struct janas_llm_session **ss, int n,
+                               int *status);
+
 /* Tokens of the sequence the model has computed. */
 uint32_t janas_llm_session_computed(const struct janas_llm_session *s);
 

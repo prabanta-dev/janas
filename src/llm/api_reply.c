@@ -455,3 +455,53 @@ int32_t janas_llm_chat_stats(const janas_llm_chat *c,
     s->size = size;
     return JANAS_LLM_OK;
 }
+
+/* a chat whose next janas_llm_chat_next would run a pass of the model: in
+   its prompt, or writing with nothing to give yet - not in Nucleus mode,
+   nor at a limit, nor with tokens forced in */
+static int wants_pass(const janas_llm_chat *c)
+{
+    if (!c->replying || c->nuc_chat || c->nuc_pending)
+        return 0;
+    if (c->stats.stage == JANAS_LLM_STAGE_INPUT)
+        return 1;
+    if (c->ended || c->npend >= 4 || c->i_forced < c->n_forced)
+        return 0;
+    return !(
+        (c->p.max_reply > 0 && c->reply_tokens >= (uint32_t)c->p.max_reply) ||
+        (c->p.max_answer > 0 && c->answer_tokens >= (uint32_t)c->p.max_answer));
+}
+
+int32_t janas_llm_chats_step(janas_llm_chat **chats, int32_t n)
+{
+    if (!chats || n < 1)
+        return janas_api_fail(JANAS_LLM_EINVAL, "no chats");
+    struct janas_llm_session *stack[64], **ss = stack;
+    int st[64], *sp = st;
+    if (n > 64) {
+        ss = malloc((size_t)n * sizeof(*ss));
+        sp = malloc((size_t)n * sizeof(int));
+        if (!ss || !sp) {
+            free(ss);
+            free(sp);
+            return janas_api_fail(JANAS_LLM_ENOMEM, "out of memory");
+        }
+    }
+    int k = 0;
+    for (int32_t i = 0; i < n; i++) {
+        if (!chats[i] || chats[i]->llm != chats[0]->llm)
+            continue;
+        if (wants_pass(chats[i]))
+            ss[k++] = chats[i]->s;
+    }
+    int r = k > 0 && janas_llm_parallel_ok(chats[0]->llm)
+                ? janas_llm_sessions_advance(ss, k, sp)
+                : 0;
+    if (ss != stack) {
+        free(ss);
+        free(sp);
+    }
+    /* a failed step leaves each chat to run its pass by itself */
+    return r == 0 ? JANAS_LLM_OK
+                  : janas_api_fail(JANAS_LLM_EFAIL, "the step failed");
+}

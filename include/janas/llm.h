@@ -372,6 +372,29 @@ janas_llm_chat_create(janas_llm *llm, const struct janas_llm_chat_params *p,
                       janas_llm_chat **out);
 JANAS_LLM_API void janas_llm_chat_destroy(janas_llm_chat *c);
 
+/*
+ * Several conversations at once on one model, each with its own keys,
+ * values and recurrent state: janas_llm_chat_create_parallel makes another
+ * one beside the model's (the one janas_llm_chat_create makes), and
+ * janas_llm_chats_step moves the n chats given on together - each one's
+ * next block of prompt or its next token in one pass, every weight read
+ * once for all of them - after which janas_llm_chat_next gives each its
+ * piece as it would alone; a chat that needs a pass the step did not give
+ * it runs one by itself. The replies are those each would write alone (no
+ * drafts in such steps, and a chat that went through them drafts no more
+ * from its MTP block until it starts again). janas_llm_parallel_ok: 1 when
+ * the model takes several conversations (not Qwen3.8-Flash-Next yet, nor
+ * in Nucleus mode). JANAS_LLM_EMODEL otherwise.
+ */
+JANAS_LLM_API int32_t janas_llm_parallel_ok(const janas_llm *llm);
+/* The memory a parallel chat takes, in bytes: its keys and values for the
+   whole context and its recurrent state. */
+JANAS_LLM_API int64_t janas_llm_parallel_bytes(const janas_llm *llm);
+JANAS_LLM_API int32_t janas_llm_chat_create_parallel(
+    janas_llm *llm, const struct janas_llm_chat_params *p,
+    janas_llm_chat **out);
+JANAS_LLM_API int32_t janas_llm_chats_step(janas_llm_chat **chats, int32_t n);
+
 /* New parameters, from the next reply on. */
 JANAS_LLM_API int32_t janas_llm_chat_set_params(
     janas_llm_chat *c, const struct janas_llm_chat_params *p);

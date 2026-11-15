@@ -106,6 +106,7 @@ struct janas_llm {
 struct janas_llm_chat {
     janas_llm *llm;
     struct janas_llm_session *s;
+    struct janas_seq *seq; /* a parallel chat's own; NULL: the model's */
     struct janas_llm_chat_params p;
     char *system;
     int replying;   /* a reply is being read */
