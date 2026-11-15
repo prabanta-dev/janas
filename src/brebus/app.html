@@ -76,6 +76,20 @@ button.act[disabled] { opacity: .5; cursor: default; }
 #talk { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 #bar { display: flex; gap: 10px; align-items: center; margin-bottom: 10px;
        color: var(--dim); font-size: 13px; }
+.row-acts { white-space: nowrap; }
+.setf { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; font-size: 13px;
+        color: var(--dim); }
+.setf input, .setf select { margin-left: 6px; padding: 4px 6px; border-radius: 6px;
+        border: 1px solid var(--line); background: var(--panel); color: var(--fg); font: inherit; }
+.setf input { width: 130px; }
+#bar .tools { margin-left: auto; display: flex; gap: 6px; }
+.msg pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
+           padding: 8px 10px; overflow-x: auto; white-space: pre; }
+.msg code { font-family: ui-monospace, monospace; font-size: 13px; }
+.msg h4 { margin: 8px 0 4px; }
+.msg ul, .msg ol { margin: 4px 0; padding-left: 22px; }
+.msg.assistant { white-space: normal; }
+.msg.assistant details { white-space: pre-wrap; }
 #log { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: 12px;
        padding: 4px 2px 12px; }
 .msg { max-width: 80ch; padding: 10px 14px; border-radius: 12px; white-space: pre-wrap;
@@ -113,7 +127,11 @@ button.act[disabled] { opacity: .5; cursor: default; }
   <section id="chat">
     <div id="convs"><button class="act quiet" id="newc">New chat</button></div>
     <div id="talk">
-      <div id="bar"><span id="loaded">No model loaded.</span></div>
+      <div id="bar"><span id="loaded">No model loaded.</span>
+        <span class="tools" hidden><button class="act quiet" id="sys">System</button>
+          <button class="act quiet" id="ren">Rename</button>
+          <button class="act quiet" id="exp">Export</button>
+          <button class="act quiet" id="del">Delete</button></span></div>
       <div id="log"></div>
       <form id="form"><textarea id="ask" placeholder="Ask the model. Enter sends, Shift+Enter a new line."></textarea>
         <button class="act" id="send">Send</button></form>
@@ -187,6 +205,7 @@ let catalog = null;
 async function mine() {
   const c = catalog = catalog || await ask("catalog");
   const my = await ask("models");
+  try { settings = await ask("settings"); } catch (e) { settings = {}; }
   const have = new Set(my.models.map((x) => x.path.split("/").pop()));
   $("#cat").innerHTML = c.models.filter((x) => !x.test_only).map((x) =>
     `<tr><td><b>${esc(x.name)}</b><br><span class="mono" style="color:var(--dim)">${esc(x.file)}</span></td>
@@ -203,10 +222,38 @@ async function mine() {
     `<tr><td><b>${esc(x.name)}</b></td>
      <td>${esc(x.arch)}${x.recurrent ? " · recurrent" : ""}${x.fim ? " · fills in the middle" : ""}</td>
      <td class="num">${gib(x.bytes)}</td><td class="num">${x.context ? x.context.toLocaleString() : "—"}</td>
-     <td><button class="act load" data-m="${esc(x.name)}">Load</button></td></tr>`
+     <td class="row-acts"><button class="act load" data-m="${esc(x.name)}">Load</button>
+       <button class="act quiet opts" data-m="${esc(x.name)}">Settings</button></td></tr>
+     <tr class="set" data-m="${esc(x.name)}" hidden><td colspan="5">${setForm(x)}</td></tr>`
   ).join("") || '<tr><td colspan="5" class="empty">None yet: get one in Discover, or with <code>janas-get</code>.</td></tr>';
   for (const b of document.querySelectorAll("button.load"))
     b.onclick = () => loadModel(b.dataset.m, b);
+  for (const b of document.querySelectorAll("button.opts"))
+    b.onclick = () => { const t = document.querySelector(`tr.set[data-m="${CSS.escape(b.dataset.m)}"]`); t.hidden = !t.hidden; };
+  for (const f of document.querySelectorAll("tr.set form"))
+    f.onchange = () => saveSettings(f);
+}
+
+/* each model's settings, kept by Brebus, used when it is loaded */
+let settings = {};
+function setForm(x) {
+  const v = settings[x.name] || {};
+  return `<form class="setf" data-m="${esc(x.name)}" onsubmit="return false">
+    <label>Context <input name="context" type="number" min="512" step="512" placeholder="the server's choice" value="${v.context || ""}"></label>
+    <label>Reasoning <select name="think">
+      <option value="">the model's</option><option value="on"${v.think === true ? " selected" : ""}>on</option>
+      <option value="off"${v.think === false ? " selected" : ""}>off</option></select></label>
+    <label>Conversations at once <input name="parallel" type="number" min="1" max="8" placeholder="from the memory" value="${v.parallel || ""}"></label>
+    <span class="note">used at the next Load</span></form>`;
+}
+async function saveSettings(f) {
+  const v = {};
+  const c = parseInt(f.context.value, 10), p = parseInt(f.parallel.value, 10);
+  if (c >= 512) v.context = c;
+  if (p >= 1 && p <= 8) v.parallel = p;
+  if (f.think.value) v.think = f.think.value === "on";
+  settings[f.dataset.m] = v;
+  await fetch("/brebus/settings", {method: "POST", body: JSON.stringify(settings)});
 }
 
 /* downloads, by janas-get: one at a time, followed every second */
@@ -257,7 +304,7 @@ async function status() {
 async function loadModel(name, btn) {
   btn.disabled = true; btn.textContent = "Loading…";
   const r = await fetch("/brebus/server/start", {method: "POST",
-    body: JSON.stringify({model: name})});
+    body: JSON.stringify({model: name, ...(settings[name] || {})})});
   const j = await r.json();
   btn.disabled = false;
   if (!r.ok) alert(j.error || "it did not start");
@@ -268,25 +315,100 @@ async function unload() {
   await status();
 }
 
-/* conversations, kept in this browser for now */
+/* conversations, a file each in Brebus's data folder */
 let convs = [], cur = null;
-try { convs = JSON.parse(localStorage.getItem("brebus.convs") || "[]"); } catch (e) {}
-const save = () => { try { localStorage.setItem("brebus.convs", JSON.stringify(convs)); } catch (e) {} };
+const newId = () => Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+async function saveConv(c) {
+  c.updated = Date.now();
+  await fetch("/brebus/chats/" + c.id, {method: "POST", body: JSON.stringify(c)});
+}
+async function readConvs() {
+  /* those the first Brebus kept in the browser, moved once */
+  let old = [];
+  try { old = JSON.parse(localStorage.getItem("brebus.convs") || "[]"); } catch (e) {}
+  if (old.length) {
+    for (const c of old) {
+      c.id = newId(); c.updated = Date.now();
+      await saveConv(c);
+    }
+    try { localStorage.removeItem("brebus.convs"); } catch (e) {}
+  }
+  convs = (await ask("chats")).chats;
+}
+async function openConv(id) {
+  const r = await fetch("/brebus/chats/" + id);
+  cur = r.ok ? await r.json() : null;
+  listConvs(); drawLog();
+}
 function listConvs() {
   const box = $("#convs");
   box.querySelectorAll(".c").forEach((x) => x.remove());
   for (const c of convs) {
     const d = document.createElement("div");
-    d.className = "c" + (c === cur ? " on" : "");
+    d.className = "c" + (cur && c.id === cur.id ? " on" : "");
     d.textContent = c.title || "New chat";
-    d.title = d.textContent;
-    d.onclick = () => { cur = c; listConvs(); drawLog(); };
+    d.title = d.textContent + (c.model ? " · " + c.model : "");
+    d.onclick = () => openConv(c.id);
     box.appendChild(d);
   }
+  $("#bar .tools").hidden = !cur;
 }
 function newConv() {
-  cur = {title: "", messages: []};
-  convs.unshift(cur); save(); listConvs(); drawLog();
+  cur = {id: newId(), title: "", model: "", system: "", messages: [], updated: Date.now()};
+  convs.unshift({id: cur.id, title: "", model: "", updated: cur.updated, messages: 0});
+  listConvs(); drawLog();
+}
+async function renameConv() {
+  const t = prompt("A title for this chat", cur.title || "");
+  if (t === null) return;
+  cur.title = t.trim();
+  await saveConv(cur);
+  const e = convs.find((c) => c.id === cur.id); if (e) e.title = cur.title;
+  listConvs();
+}
+async function deleteConv() {
+  if (!confirm(`Delete "${cur.title || "New chat"}"?`)) return;
+  await fetch("/brebus/chats/" + cur.id, {method: "DELETE"});
+  convs = convs.filter((c) => c.id !== cur.id);
+  cur = null;
+  if (convs.length) await openConv(convs[0].id); else { listConvs(); drawLog(); }
+}
+function exportConv() {
+  const md = [`# ${cur.title || "Chat"}`, ""];
+  for (const m of cur.messages)
+    md.push(`## ${m.role === "user" ? "You" : "Assistant"}`, "", m.content || "", "");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([md.join("\n")], {type: "text/markdown"}));
+  a.download = (cur.title || "chat").replace(/[^\w -]+/g, "").trim().slice(0, 60) + ".md";
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+/* Markdown of a reply: the text escaped first, then a few marks made into
+   HTML - code blocks, code, headings, lists, bold, italics, links */
+function md(text) {
+  const out = [];
+  const parts = String(text).split(/^```[^\n]*\n?/m);
+  for (let k = 0; k < parts.length; k++) {
+    if (k % 2) { out.push(`<pre><code>${esc(parts[k].replace(/\n$/, ""))}</code></pre>`); continue; }
+    let html = "", list = null;
+    for (const raw of parts[k].split("\n")) {
+      let line = esc(raw)
+        .replace(/`([^`]+)`/g, "<code>$1</code>")
+        .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+        .replace(/(^|[^*\w])\*([^*\s][^*]*)\*/g, "$1<i>$2</i>")
+        .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+      const h = line.match(/^(#{1,4}) (.*)$/), li = line.match(/^\s*(?:[-*]|\d+\.) (.*)$/);
+      const kind = li ? (/^\s*\d/.test(line) ? "ol" : "ul") : null;
+      if (list && kind !== list) { html += `</${list}>`; list = null; }
+      if (h) html += `<h4>${h[2]}</h4>`;
+      else if (kind) { if (!list) { html += `<${kind}>`; list = kind; } html += `<li>${li[1]}</li>`; }
+      else html += line ? line + "<br>" : "<br>";
+    }
+    if (list) html += `</${list}>`;
+    out.push(html.replace(/(<br>)+$/, ""));
+  }
+  return out.join("");
 }
 function bubble(m) {
   const d = document.createElement("div");
@@ -297,7 +419,10 @@ function bubble(m) {
     t.append(document.createTextNode(m.think));
     d.append(t);
   }
-  d.append(document.createTextNode(m.content || ""));
+  const body = document.createElement("div");
+  if (m.role === "assistant") body.innerHTML = md(m.content || "");
+  else body.textContent = m.content || "";
+  d.append(body);
   if (m.speed) {
     const s = document.createElement("div");
     s.className = "speed"; s.textContent = m.speed; d.append(s);
@@ -318,15 +443,19 @@ async function sendAsk(ev) {
   if (!cur) newConv();
   cur.messages.push({role: "user", content: text});
   if (!cur.title) cur.title = text.slice(0, 40);
+  cur.model = server.model;
+  const e = convs.find((c) => c.id === cur.id); if (e) e.title = cur.title;
   $("#ask").value = "";
   const reply = {role: "assistant", content: "", think: ""};
   cur.messages.push(reply); listConvs(); drawLog();
-  const t0 = performance.now(); let t1 = 0, n = 0;
+  const msgs = cur.messages.slice(0, -1).map((m) => ({role: m.role, content: m.content}));
+  if (cur.system) msgs.unshift({role: "system", content: cur.system});
+  const t0 = performance.now(); let t1 = 0, n = 0, tokens = 0;
   const r = await fetch("/v1/chat/completions", {method: "POST",
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify({model: server.model, stream: true,
-      messages: cur.messages.slice(0, -1).map((m) => ({role: m.role, content: m.content}))})});
-  if (!r.ok) { reply.content = "(" + r.status + ") " + await r.text(); drawLog(); save(); return; }
+      stream_options: {include_usage: true}, messages: msgs})});
+  if (!r.ok) { reply.content = "(" + r.status + ") " + await r.text(); drawLog(); await saveConv(cur); return; }
   const rd = r.body.getReader(), dec = new TextDecoder();
   let buf = "";
   for (;;) {
@@ -341,7 +470,9 @@ async function sendAsk(ev) {
         const data = line.slice(5).trim();
         if (data === "[DONE]") continue;
         try {
-          const d = JSON.parse(data).choices?.[0]?.delta || {};
+          const j = JSON.parse(data);
+          if (j.usage) tokens = j.usage.completion_tokens || 0;
+          const d = j.choices?.[0]?.delta || {};
           if (d.reasoning_content) reply.think += d.reasoning_content;
           if (d.content) reply.content += d.content;
           if (d.content || d.reasoning_content) { n++; if (!t1) t1 = performance.now(); }
@@ -353,15 +484,24 @@ async function sendAsk(ev) {
     }
   }
   const t2 = performance.now();
-  if (n > 1 && t1) reply.speed = `${(n / ((t2 - t1) / 1000)).toFixed(1)} pieces/s, first after ${((t1 - t0) / 1000).toFixed(2)} s`;
-  drawLog(); save();
+  if (tokens > 1 && t1)
+    reply.speed = `${tokens} tokens, ${((tokens - 1) / ((t2 - t1) / 1000)).toFixed(1)} tok/s, first after ${((t1 - t0) / 1000).toFixed(2)} s`;
+  drawLog(); await saveConv(cur);
 }
 $("#newc").onclick = newConv;
 $("#form").onsubmit = sendAsk;
 $("#ask").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendAsk(e); }
 });
-cur = convs[0] || null; listConvs(); drawLog();
+$("#ren").onclick = renameConv;
+$("#del").onclick = deleteConv;
+$("#exp").onclick = exportConv;
+$("#sys").onclick = async () => {
+  const t = prompt("A system message for this chat (empty: none)", cur.system || "");
+  if (t === null) return;
+  cur.system = t.trim(); await saveConv(cur);
+};
+readConvs().then(() => convs.length ? openConv(convs[0].id) : listConvs()).catch(() => {});
 status().catch(() => {});
 
 load().catch((e) => { document.body.insertAdjacentHTML("beforeend",

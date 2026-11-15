@@ -150,6 +150,42 @@ static enum MHD_Result handler(void *cls, struct MHD_Connection *conn,
         brebus_server_stop(b, &o);
         return json(conn, 200, &o);
     }
+    if (!strncmp(url, "/brebus/chats/", 14)) {
+        const char *id = url + 14;
+        int rc = -1;
+        if (get)
+            rc = brebus_chat_get(b, id, &o);
+        else if (post)
+            rc = brebus_chat_put(b, id, r->body.p, r->body.n);
+        else if (!strcmp(method, "DELETE"))
+            rc = brebus_chat_delete(b, id);
+        if (rc == 0) {
+            if (!get)
+                janas_buf_puts(&o, "{\"ok\": true}");
+            return json(conn, 200, &o);
+        }
+        janas_buf_free(&o);
+        static const char no[] =
+            "{\"error\": \"no such conversation, or not a JSON object\"}";
+        return reply(conn, get ? 404 : 400, "application/json", no,
+                     sizeof no - 1, 1);
+    }
+    if (get && !strcmp(url, "/brebus/chats")) {
+        brebus_chats_list(b, &o);
+        return json(conn, 200, &o);
+    }
+    if (!strcmp(url, "/brebus/settings") && (get || post)) {
+        if (get) {
+            brebus_settings_get(b, &o);
+            return json(conn, 200, &o);
+        }
+        if (brebus_settings_put(b, r->body.p, r->body.n) == 0) {
+            janas_buf_puts(&o, "{\"ok\": true}");
+            return json(conn, 200, &o);
+        }
+        static const char no[] = "{\"error\": \"not a JSON object\"}";
+        return reply(conn, 400, "application/json", no, sizeof no - 1, 1);
+    }
     if (post && !strcmp(url, "/brebus/get/start")) {
         int rc = brebus_get_start(b, r->body.p, r->body.n, &o);
         return json(conn, rc ? 400 : 200, &o);

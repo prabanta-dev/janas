@@ -5,7 +5,9 @@
  * model: brebus, the one beside this program, started on a free port with
  * an empty models' folder and a data folder of its own; its page, the
  * machine, the models (none) and the catalog; another site's page refused;
- * a model that is not there refused, to load or to download; /v1
+ * a model that is not there refused, to load or to download;
+ * conversations saved, listed, read and deleted, and the settings, with
+ * bad ids and what is not a JSON object refused; /v1
  * answered 503 while no model is loaded; and brebus ending on SIGTERM.
  * Linux only, as brebus.
  */
@@ -176,6 +178,49 @@ int main(void)
     st = ask("GET", "/brebus/get", NULL, NULL, &o);
     CHECK(st == 200 && strstr(o.p, "\"running\": false"), "get: %d %s", st,
           o.p);
+    /* conversations and settings, on disk */
+    st = ask("POST", "/brebus/chats/a-1",
+             "{\"title\": \"one\", \"updated\": 1, \"messages\": []}", own, &o);
+    CHECK(st == 200, "a conversation saved: %d %s", st, o.p);
+    st = ask("POST", "/brebus/chats/b_2",
+             "{\"title\": \"two\", \"updated\": 2, \"model\": \"m\", "
+             "\"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+             own, &o);
+    CHECK(st == 200, "another saved: %d", st);
+    st = ask("GET", "/brebus/chats", NULL, NULL, &o);
+    CHECK(st == 200 && strstr(o.p, "\"id\": \"b_2\"") &&
+              strstr(o.p, "\"messages\": 1") &&
+              strstr(o.p, "b_2") < strstr(o.p, "a-1"),
+          "the list, newest first: %d %s", st, o.p);
+    st = ask("GET", "/brebus/chats/a-1", NULL, NULL, &o);
+    CHECK(st == 200 && strstr(o.p, "\"title\": \"one\""), "one read: %d %s", st,
+          o.p);
+    st = ask("POST", "/brebus/chats/a-1", "[1, 2]", own, &o);
+    CHECK(st == 400, "an array taken for a conversation: %d", st);
+    st = ask("POST", "/brebus/chats/a-1", "{\"title\": ", own, &o);
+    CHECK(st == 400, "broken JSON taken: %d", st);
+    st = ask("GET", "/brebus/chats/a-1", NULL, NULL, &o);
+    CHECK(st == 200 && strstr(o.p, "\"title\": \"one\""),
+          "a refused save touched the file: %s", o.p);
+    static const char *const bad[] = {"/brebus/chats/..%2fx",
+                                      "/brebus/chats/a.b", "/brebus/chats/",
+                                      "/brebus/chats/a%00"};
+    for (size_t i = 0; i < sizeof bad / sizeof *bad; i++) {
+        st = ask("POST", bad[i], "{}", own, &o);
+        CHECK(st == 400, "%s taken: %d", bad[i], st);
+    }
+    st = ask("DELETE", "/brebus/chats/a-1", NULL, own, &o);
+    CHECK(st == 200, "a conversation deleted: %d", st);
+    st = ask("GET", "/brebus/chats/a-1", NULL, NULL, &o);
+    CHECK(st == 404, "a deleted conversation read: %d", st);
+    st = ask("DELETE", "/brebus/chats/b_2", NULL, "https://evil.example", &o);
+    CHECK(st == 403, "another site's page deleted one: %d", st);
+    st = ask("GET", "/brebus/settings", NULL, NULL, &o);
+    CHECK(st == 200 && !strcmp(o.p, "{}"), "no settings yet: %s", o.p);
+    st = ask("POST", "/brebus/settings", "{\"m\": {\"context\": 8192}}", own,
+             &o);
+    st = ask("GET", "/brebus/settings", NULL, NULL, &o);
+    CHECK(st == 200 && strstr(o.p, "8192"), "settings kept: %s", o.p);
     st = ask("POST", "/v1/chat/completions", "{\"messages\": []}", own, &o);
     CHECK(st == 503, "/v1 with no model: %d", st);
     st = ask("GET", "/api/tags", NULL, NULL, &o);
@@ -191,14 +236,20 @@ int main(void)
     CHECK(ended == 1 && code == 0, "brebus did not end well: %d %d", ended,
           code);
     janas_buf_free(&o);
-    char rm[4300];
-    snprintf(rm, sizeof rm, "%s/data/janas/brebus", dir);
-    rmdir(rm);
-    snprintf(rm, sizeof rm, "%s/data/janas", dir);
-    rmdir(rm);
-    remove(supp);
-    rmdir(data);
-    rmdir(models);
+    /* what it wrote, then the folders, deepest first */
+    static const char *const left[] = {"data/janas/brebus/chats/b_2.json",
+                                       "data/janas/brebus/chats",
+                                       "data/janas/brebus/settings.json",
+                                       "data/janas/brebus",
+                                       "data/janas",
+                                       "data",
+                                       "models",
+                                       "tsan.supp"};
+    for (size_t i = 0; i < sizeof left / sizeof *left; i++) {
+        char f[4400];
+        snprintf(f, sizeof f, "%s/%s", dir, left[i]);
+        remove(f);
+    }
     rmdir(dir);
     if (!failures)
         printf("test_brebus: ok\n");

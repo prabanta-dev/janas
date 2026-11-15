@@ -74,6 +74,17 @@ int brebus_get_start(struct brebus *b, const char *body, size_t n,
 void brebus_get_stop(struct brebus *b);
 void brebus_get_status(struct brebus *b, struct janas_buf *out);
 
+/* store.c: the conversations (a JSON object each, by an id of letters,
+   digits, - and _), listed newest first as JSON into out, one read, saved,
+   deleted; and the models' settings, one JSON object. 0, or -1 */
+void brebus_chats_list(struct brebus *b, struct janas_buf *out);
+int brebus_chat_get(struct brebus *b, const char *id, struct janas_buf *out);
+int brebus_chat_put(struct brebus *b, const char *id, const char *body,
+                    size_t n);
+int brebus_chat_delete(struct brebus *b, const char *id);
+void brebus_settings_get(struct brebus *b, struct janas_buf *out);
+int brebus_settings_put(struct brebus *b, const char *body, size_t n);
+
 /* proxy.c: a request to the model's API passed on: 0 with the response to
    queue and its status, -1 when no server runs or it cannot be reached */
 struct MHD_Connection;
