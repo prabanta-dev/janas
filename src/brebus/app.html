@@ -1,0 +1,328 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later
+     Copyright (C) 2026 Maurizio Cammalleri
+     Brebus: the page of Janas's app, served by brebus on 127.0.0.1. It
+     loads nothing from anywhere else and talks only to brebus. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Brebus</title>
+<style>
+:root {
+  --bg: #f6f5f2; --panel: #ffffff; --side: #ecebe6; --line: #dcd9d0;
+  --fg: #23221f; --dim: #6d6a62; --accent: #b0602a; --ok: #3f7a4a;
+  --warn: #a2632a;
+  --sans: system-ui, -apple-system, "Segoe UI", "Noto Sans", sans-serif;
+  --mono: ui-monospace, "DejaVu Sans Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #17171a; --panel: #1f1f23; --side: #131316; --line: #2e2e34;
+    --fg: #e4e2dc; --dim: #9a978f; --accent: #e08a4c; --ok: #79b386;
+    --warn: #d89a5c;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
+             font: 15px/1.5 var(--sans); }
+body { display: flex; }
+nav { width: 210px; flex: none; background: var(--side);
+      border-right: 1px solid var(--line); padding: 18px 10px;
+      display: flex; flex-direction: column; gap: 4px; }
+nav h1 { font-size: 20px; margin: 0 10px 14px; letter-spacing: .02em; }
+nav h1 span { color: var(--accent); }
+nav button { all: unset; cursor: pointer; padding: 8px 12px; border-radius: 8px;
+             color: var(--dim); }
+nav button:hover { background: var(--line); color: var(--fg); }
+nav button[aria-current="page"] { background: var(--panel); color: var(--fg);
+                                   box-shadow: inset 3px 0 var(--accent); }
+nav .foot { margin-top: auto; padding: 0 12px; color: var(--dim);
+            font-size: 12px; }
+main { flex: 1; overflow: auto; padding: 28px 32px; }
+main h2 { margin: 0 0 4px; font-size: 22px; }
+main p.lead { margin: 0 0 20px; color: var(--dim); }
+section { display: none; } section.on { display: block; }
+table { width: 100%; border-collapse: collapse; background: var(--panel);
+        border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line);
+         vertical-align: top; }
+th { font-size: 12px; text-transform: uppercase; letter-spacing: .05em;
+     color: var(--dim); font-weight: 600; }
+tr:last-child td { border-bottom: 0; }
+td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+code, .mono { font-family: var(--mono); font-size: 13px; }
+.badge { display: inline-block; padding: 1px 8px; border-radius: 999px;
+         font-size: 12px; border: 1px solid currentColor; white-space: nowrap; }
+.fits { color: var(--ok); } .big { color: var(--warn); }
+.card { background: var(--panel); border: 1px solid var(--line);
+        border-radius: 10px; padding: 16px 18px; max-width: 760px; }
+.card dl { display: grid; grid-template-columns: 180px 1fr; gap: 8px 16px; margin: 0; }
+.card dt { color: var(--dim); }
+.card dd { margin: 0; }
+.empty { color: var(--dim); padding: 20px 0; }
+button.act { all: unset; cursor: pointer; padding: 5px 12px; border-radius: 8px;
+             background: var(--accent); color: #fff; font-size: 13px; }
+button.act.quiet { background: transparent; color: var(--accent);
+                   border: 1px solid var(--accent); }
+button.act[disabled] { opacity: .5; cursor: default; }
+#chat.on { display: flex; gap: 16px; height: calc(100vh - 56px); }
+#convs { width: 200px; flex: none; display: flex; flex-direction: column; gap: 4px;
+         overflow: auto; }
+#convs .c { padding: 6px 10px; border-radius: 8px; cursor: pointer; color: var(--dim);
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#convs .c.on { background: var(--panel); color: var(--fg); }
+#talk { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+#bar { display: flex; gap: 10px; align-items: center; margin-bottom: 10px;
+       color: var(--dim); font-size: 13px; }
+#log { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: 12px;
+       padding: 4px 2px 12px; }
+.msg { max-width: 80ch; padding: 10px 14px; border-radius: 12px; white-space: pre-wrap;
+       word-wrap: break-word; }
+.msg.user { align-self: flex-end; background: var(--accent); color: #fff; }
+.msg.assistant { align-self: flex-start; background: var(--panel);
+                 border: 1px solid var(--line); }
+.msg details { color: var(--dim); font-size: 13px; margin-bottom: 6px; }
+.msg .speed { color: var(--dim); font-size: 12px; margin-top: 6px; }
+#form { display: flex; gap: 8px; }
+#form textarea { flex: 1; resize: vertical; min-height: 44px; max-height: 40vh;
+                 padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line);
+                 background: var(--panel); color: var(--fg); font: inherit; }
+@media (max-width: 700px) {
+  body { flex-direction: column; }
+  nav { width: auto; flex-direction: row; flex-wrap: wrap; padding: 10px; }
+  nav h1 { width: 100%; margin-bottom: 6px; }
+  nav .foot { display: none; }
+  main { padding: 18px 16px; }
+  .card dl { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<nav>
+  <h1><span>●</span> Brebus</h1>
+  <button data-s="chat">Chat</button>
+  <button data-s="discover">Discover</button>
+  <button data-s="models">My models</button>
+  <button data-s="server">Server</button>
+  <button data-s="machine">Machine</button>
+  <div class="foot" id="ver"></div>
+</nav>
+<main>
+  <section id="chat">
+    <div id="convs"><button class="act quiet" id="newc">New chat</button></div>
+    <div id="talk">
+      <div id="bar"><span id="loaded">No model loaded.</span></div>
+      <div id="log"></div>
+      <form id="form"><textarea id="ask" placeholder="Ask the model. Enter sends, Shift+Enter a new line."></textarea>
+        <button class="act" id="send">Send</button></form>
+    </div>
+  </section>
+  <section id="discover">
+    <h2>Discover</h2>
+    <p class="lead">The models Janas knows, converted and checked. <span id="mem"></span></p>
+    <table><thead><tr><th>Model</th><th></th><th class="num">Download</th>
+      <th class="num">Memory it is meant for</th><th>Here</th></tr></thead>
+      <tbody id="cat"><tr><td colspan="5" class="empty">Reading…</td></tr></tbody></table>
+  </section>
+  <section id="models">
+    <h2>My models</h2>
+    <p class="lead">The models installed in <code id="dir"></code>.</p>
+    <table><thead><tr><th>Model</th><th>Kind</th><th class="num">Size</th>
+      <th class="num">Context</th><th></th></tr></thead>
+      <tbody id="mine"><tr><td colspan="5" class="empty">Reading…</td></tr></tbody></table>
+  </section>
+  <section id="server">
+    <h2>Server</h2>
+    <p class="lead">A model for other programs too: OpenAI's, Ollama's and Anthropic's APIs.</p>
+    <div class="card"><dl id="srv"></dl></div>
+  </section>
+  <section id="machine">
+    <h2>Machine</h2>
+    <p class="lead">What Janas sees of this computer.</p>
+    <div class="card"><dl id="mach"></dl></div>
+  </section>
+</main>
+<script>
+"use strict";
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
+  ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"})[c]);
+const gib = (b) => (b / 2 ** 30).toFixed(1) + " GiB";
+async function ask(what) {
+  const r = await fetch("/brebus/" + what);
+  if (!r.ok) throw new Error(what + ": " + r.status);
+  return r.json();
+}
+function show(id) {
+  for (const s of document.querySelectorAll("section"))
+    s.classList.toggle("on", s.id === id);
+  for (const b of document.querySelectorAll("nav button"))
+    b.setAttribute("aria-current", b.dataset.s === id ? "page" : "false");
+  try { localStorage.setItem("brebus.section", id); } catch (e) {}
+}
+for (const b of document.querySelectorAll("nav button"))
+  b.addEventListener("click", () => show(b.dataset.s));
+let first = "discover";
+try { first = localStorage.getItem("brebus.section") || first; } catch (e) {}
+show(document.getElementById(first) ? first : "discover");
+
+async function load() {
+  const m = await ask("machine");
+  $("#ver").textContent = "Janas " + m.version;
+  $("#mem").textContent = "This computer: " + gib(m.memory_total) + ".";
+  $("#mach").innerHTML = [
+    ["Processor", m.cpu || "unknown"],
+    ["Instructions", m.features || "none known"],
+    ["Memory", gib(m.memory_total) + ", " + gib(m.memory_available) + " available"],
+    ["Power", m.mains === 1 ? "mains" : m.mains === 0 ? "battery" : "unknown"],
+  ].map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("");
+  const c = await ask("catalog");
+  $("#cat").innerHTML = c.models.filter((x) => !x.test_only).map((x) =>
+    `<tr><td><b>${esc(x.name)}</b><br><span class="mono" style="color:var(--dim)">${esc(x.file)}</span></td>
+     <td>${esc(x.what)}</td><td class="num">${x.download_gb.toFixed(1)} GB</td>
+     <td class="num">${x.ram_gb} GB</td>
+     <td>${x.fits ? '<span class="badge fits">fits</span>' : '<span class="badge big">needs more</span>'}</td></tr>`
+  ).join("") || '<tr><td colspan="5" class="empty">None.</td></tr>';
+  const my = await ask("models");
+  $("#dir").textContent = my.dir;
+  $("#mine").innerHTML = my.models.map((x) =>
+    `<tr><td><b>${esc(x.name)}</b></td>
+     <td>${esc(x.arch)}${x.recurrent ? " · recurrent" : ""}${x.fim ? " · fills in the middle" : ""}</td>
+     <td class="num">${gib(x.bytes)}</td><td class="num">${x.context ? x.context.toLocaleString() : "—"}</td>
+     <td><button class="act load" data-m="${esc(x.name)}">Load</button></td></tr>`
+  ).join("") || '<tr><td colspan="5" class="empty">None yet: get one in Discover, or with <code>janas-get</code>.</td></tr>';
+  for (const b of document.querySelectorAll("button.load"))
+    b.onclick = () => loadModel(b.dataset.m, b);
+  await status();
+}
+let server = {running: false};
+async function status() {
+  server = await ask("server");
+  $("#loaded").innerHTML = server.running
+    ? `Model: <b>${esc(server.model)}</b> <button class="act quiet" id="unload">Unload</button>`
+    : "No model loaded: choose one in My models.";
+  if (server.running) $("#unload").onclick = unload;
+  $("#srv").innerHTML = server.running
+    ? `<dt>Model</dt><dd>${esc(server.model)}</dd>
+       <dt>For other programs</dt><dd><code>${esc(server.url)}</code> (OpenAI), <code>${esc(server.url.replace(/\/v1$/, ""))}</code> (Ollama, Anthropic)</dd>`
+    : `<dt>State</dt><dd>off${server.error ? " - " + esc(server.error) : ""}</dd>
+       <dt>To start it</dt><dd>load a model in My models</dd>`;
+  for (const b of document.querySelectorAll("button.load"))
+    b.textContent = server.running && b.dataset.m === server.model ? "Loaded" : "Load";
+}
+async function loadModel(name, btn) {
+  btn.disabled = true; btn.textContent = "Loading…";
+  const r = await fetch("/brebus/server/start", {method: "POST",
+    body: JSON.stringify({model: name})});
+  const j = await r.json();
+  btn.disabled = false;
+  if (!r.ok) alert(j.error || "it did not start");
+  await status();
+}
+async function unload() {
+  await fetch("/brebus/server/stop", {method: "POST", body: "{}"});
+  await status();
+}
+
+/* conversations, kept in this browser for now */
+let convs = [], cur = null;
+try { convs = JSON.parse(localStorage.getItem("brebus.convs") || "[]"); } catch (e) {}
+const save = () => { try { localStorage.setItem("brebus.convs", JSON.stringify(convs)); } catch (e) {} };
+function listConvs() {
+  const box = $("#convs");
+  box.querySelectorAll(".c").forEach((x) => x.remove());
+  for (const c of convs) {
+    const d = document.createElement("div");
+    d.className = "c" + (c === cur ? " on" : "");
+    d.textContent = c.title || "New chat";
+    d.title = d.textContent;
+    d.onclick = () => { cur = c; listConvs(); drawLog(); };
+    box.appendChild(d);
+  }
+}
+function newConv() {
+  cur = {title: "", messages: []};
+  convs.unshift(cur); save(); listConvs(); drawLog();
+}
+function bubble(m) {
+  const d = document.createElement("div");
+  d.className = "msg " + m.role;
+  if (m.think) {
+    const t = document.createElement("details");
+    t.innerHTML = "<summary>Reasoning</summary>";
+    t.append(document.createTextNode(m.think));
+    d.append(t);
+  }
+  d.append(document.createTextNode(m.content || ""));
+  if (m.speed) {
+    const s = document.createElement("div");
+    s.className = "speed"; s.textContent = m.speed; d.append(s);
+  }
+  return d;
+}
+function drawLog() {
+  const log = $("#log");
+  log.innerHTML = "";
+  for (const m of (cur ? cur.messages : [])) log.append(bubble(m));
+  log.scrollTop = log.scrollHeight;
+}
+async function sendAsk(ev) {
+  ev.preventDefault();
+  const text = $("#ask").value.trim();
+  if (!text) return;
+  if (!server.running) { alert("Load a model first, in My models."); return; }
+  if (!cur) newConv();
+  cur.messages.push({role: "user", content: text});
+  if (!cur.title) cur.title = text.slice(0, 40);
+  $("#ask").value = "";
+  const reply = {role: "assistant", content: "", think: ""};
+  cur.messages.push(reply); listConvs(); drawLog();
+  const t0 = performance.now(); let t1 = 0, n = 0;
+  const r = await fetch("/v1/chat/completions", {method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({model: server.model, stream: true,
+      messages: cur.messages.slice(0, -1).map((m) => ({role: m.role, content: m.content}))})});
+  if (!r.ok) { reply.content = "(" + r.status + ") " + await r.text(); drawLog(); save(); return; }
+  const rd = r.body.getReader(), dec = new TextDecoder();
+  let buf = "";
+  for (;;) {
+    const {done, value} = await rd.read();
+    if (done) break;
+    buf += dec.decode(value, {stream: true});
+    let i;
+    while ((i = buf.indexOf("\n\n")) >= 0) {
+      const ev2 = buf.slice(0, i); buf = buf.slice(i + 2);
+      for (const line of ev2.split("\n")) {
+        if (!line.startsWith("data:")) continue;
+        const data = line.slice(5).trim();
+        if (data === "[DONE]") continue;
+        try {
+          const d = JSON.parse(data).choices?.[0]?.delta || {};
+          if (d.reasoning_content) reply.think += d.reasoning_content;
+          if (d.content) reply.content += d.content;
+          if (d.content || d.reasoning_content) { n++; if (!t1) t1 = performance.now(); }
+        } catch (e) {}
+      }
+      const last = $("#log").lastElementChild;
+      if (last) last.replaceWith(bubble(reply));
+      $("#log").scrollTop = $("#log").scrollHeight;
+    }
+  }
+  const t2 = performance.now();
+  if (n > 1 && t1) reply.speed = `${(n / ((t2 - t1) / 1000)).toFixed(1)} pieces/s, first after ${((t1 - t0) / 1000).toFixed(2)} s`;
+  drawLog(); save();
+}
+$("#newc").onclick = newConv;
+$("#form").onsubmit = sendAsk;
+$("#ask").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendAsk(e); }
+});
+cur = convs[0] || null; listConvs(); drawLog();
+status().catch(() => {});
+
+load().catch((e) => { document.body.insertAdjacentHTML("beforeend",
+  `<p style="position:fixed;bottom:8px;right:16px;color:var(--warn)">${esc(e.message)}</p>`); });
+</script>
+</body>
+</html>

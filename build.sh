@@ -684,13 +684,15 @@ for src in tests/*.c tools/*.c src/*/main.c src/services/*/main.c; do
     # private folders): not on Windows yet, where a path is another thing
     [ "$OS" = windows ] && case "$src" in
     src/services/files/main.c | tests/test_files.c | \
-        src/services/docs/main.c | tests/test_docs.c) continue ;;
+        src/services/docs/main.c | tests/test_docs.c | src/brebus/main.c) continue ;;
     esac
     exe="$BIN/$(basename "${src%.c}")$SUFFIX$EXE"
     own=()
     if [ "$(basename "$src")" = main.c ]; then
         dir=$(dirname "$src")
         exe="$BIN/janas-$(basename "$dir")$SUFFIX$EXE"
+        # Brebus, the app, has a name of its own
+        [ "$dir" = src/brebus ] && exe="$BIN/brebus$SUFFIX$EXE"
         own_list=$(sources may-be-empty "$dir" \
             find "$dir" -maxdepth 1 -name '*.c' ! -name main.c) || exit 2
         while IFS= read -r c; do

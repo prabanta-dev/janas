@@ -221,6 +221,7 @@ sudo pacman -S vulkan-headers glslang vulkan-tools           # the same, Arch
 - [docs/library.md](docs/library.md) — using it from a program, in C, in FreeBASIC and BASIC MODERN, or in Node.js and TypeScript, and MCP servers from a program
 - [examples/node-chat](examples/node-chat/README.md) — a chat in TypeScript on the module for Node.js: the model inside the server's process, its replies streamed to the browser
 - [examples/fb-chat](examples/fb-chat/README.md) — a chat in FreeBASIC, procedure by procedure and with Janas's classes
+- [docs/brebus.md](docs/brebus.md) — Brebus, Janas's app in the browser (at its beginning, on `develop`): the models of this machine, a chat with them, the server for other programs
 - [docs/serving.md](docs/serving.md) — the model as tools for Claude Code, editors and other MCP clients (`janas-mcp`), and over HTTP, an API that follows OpenAI's, Ollama's and Anthropic's (Claude Code), with a chat page to try it from a browser (`janas-server`)
 - [docs/monitor.md](docs/monitor.md) — the engine at work: a page in the browser (`janas-server --monitor`) and in the terminal (`/monitor` in `janas-chat`), and the counters for a program
 - [docs/compatibility.md](docs/compatibility.md) — the programs tried with Janas, their versions and what was done with them: AnythingLLM, Obsidian, Zed, Continue, Cline, Roo Code, Claude Code, aider, Open WebUI
