@@ -61,6 +61,7 @@ code, .mono { font-family: var(--mono); font-size: 13px; }
 .card dt { color: var(--dim); }
 .card dd { margin: 0; }
 .empty { color: var(--dim); padding: 20px 0; }
+#dl { margin-bottom: 16px; }
 button.act { all: unset; cursor: pointer; padding: 5px 12px; border-radius: 8px;
              background: var(--accent); color: #fff; font-size: 13px; }
 button.act.quiet { background: transparent; color: var(--accent);
@@ -121,9 +122,10 @@ button.act[disabled] { opacity: .5; cursor: default; }
   <section id="discover">
     <h2>Discover</h2>
     <p class="lead">The models Janas knows, converted and checked. <span id="mem"></span></p>
+    <div class="card" id="dl" hidden></div>
     <table><thead><tr><th>Model</th><th></th><th class="num">Download</th>
-      <th class="num">Memory it is meant for</th><th>Here</th></tr></thead>
-      <tbody id="cat"><tr><td colspan="5" class="empty">Reading…</td></tr></tbody></table>
+      <th class="num">Memory it is meant for</th><th>Here</th><th></th></tr></thead>
+      <tbody id="cat"><tr><td colspan="6" class="empty">Reading…</td></tr></tbody></table>
   </section>
   <section id="models">
     <h2>My models</h2>
@@ -177,14 +179,25 @@ async function load() {
     ["Memory", gib(m.memory_total) + ", " + gib(m.memory_available) + " available"],
     ["Power", m.mains === 1 ? "mains" : m.mains === 0 ? "battery" : "unknown"],
   ].map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("");
-  const c = await ask("catalog");
+  await mine();
+  await status();
+  await getStatus();
+}
+let catalog = null;
+async function mine() {
+  const c = catalog = catalog || await ask("catalog");
+  const my = await ask("models");
+  const have = new Set(my.models.map((x) => x.path.split("/").pop()));
   $("#cat").innerHTML = c.models.filter((x) => !x.test_only).map((x) =>
     `<tr><td><b>${esc(x.name)}</b><br><span class="mono" style="color:var(--dim)">${esc(x.file)}</span></td>
      <td>${esc(x.what)}</td><td class="num">${x.download_gb.toFixed(1)} GB</td>
      <td class="num">${x.ram_gb} GB</td>
-     <td>${x.fits ? '<span class="badge fits">fits</span>' : '<span class="badge big">needs more</span>'}</td></tr>`
-  ).join("") || '<tr><td colspan="5" class="empty">None.</td></tr>';
-  const my = await ask("models");
+     <td>${x.fits ? '<span class="badge fits">fits</span>' : '<span class="badge big">needs more</span>'}</td>
+     <td>${have.has(x.file) ? '<span class="badge">installed</span>'
+       : `<button class="act quiet get" data-m="${esc(x.name)}">Get</button>`}</td></tr>`
+  ).join("") || '<tr><td colspan="6" class="empty">None.</td></tr>';
+  for (const b of document.querySelectorAll("button.get"))
+    b.onclick = () => getModel(b.dataset.m);
   $("#dir").textContent = my.dir;
   $("#mine").innerHTML = my.models.map((x) =>
     `<tr><td><b>${esc(x.name)}</b></td>
@@ -194,7 +207,37 @@ async function load() {
   ).join("") || '<tr><td colspan="5" class="empty">None yet: get one in Discover, or with <code>janas-get</code>.</td></tr>';
   for (const b of document.querySelectorAll("button.load"))
     b.onclick = () => loadModel(b.dataset.m, b);
-  await status();
+}
+
+/* downloads, by janas-get: one at a time, followed every second */
+let getting = false;
+async function getModel(name) {
+  const r = await fetch("/brebus/get/start", {method: "POST", body: JSON.stringify({model: name})});
+  const j = await r.json();
+  if (!r.ok) { alert(j.error || "it did not start"); return; }
+  getStatus();
+}
+async function getStatus() {
+  const g = await ask("get");
+  const box = $("#dl");
+  if (!g.model) { box.hidden = true; return; }
+  box.hidden = false;
+  if (g.running) {
+    const bar = g.total_gb ? `${g.done_gb.toFixed(2)} of ${g.total_gb.toFixed(2)} GB (${g.percent}%), ${g.mb_s} MB/s` : "";
+    const step = g.step.startsWith(g.model + ": ") ? g.step.slice(g.model.length + 2) : g.step;
+    box.innerHTML = `<b>${esc(g.model)}</b>: ${esc(step || "starting")}<br>
+      <progress max="100" value="${g.percent}" style="width:100%"></progress><br>
+      <span class="mono">${esc(bar)}</span> <button class="act quiet" id="dlstop">Stop</button>`;
+    $("#dlstop").onclick = async () => { await fetch("/brebus/get/stop", {method: "POST", body: "{}"}); getStatus(); };
+    for (const b of document.querySelectorAll("button.get")) b.disabled = true;
+    getting = true;
+    setTimeout(() => getStatus().catch(() => {}), 1000);
+    return;
+  }
+  box.innerHTML = g.code === 0 ? `<b>${esc(g.model)}</b> is ready: load it in My models.`
+    : g.code === -2 ? `<b>${esc(g.model)}</b>: stopped. Get it again to go on from where it was.`
+    : `<b>${esc(g.model)}</b> did not download: ${esc(g.said || "janas-get ended with " + g.code)}`;
+  if (getting) { getting = false; await mine(); await status(); }
 }
 let server = {running: false};
 async function status() {

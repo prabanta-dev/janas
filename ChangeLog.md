@@ -4,7 +4,7 @@
 
 ## [Unreleased]
 
-- **Brebus, Janas's app, its beginning** (`docs/brebus.md`, Linux): `brebus` serves a page on `127.0.0.1` with the models of this machine (*My models*), the catalog of `janas-get` with what each model asks of the memory (*Discover*), a chat with the reply streamed and the reasoning folded above it (*Chat*), the server's addresses for other programs (*Server*) and the machine (*Machine*). *Load* starts a `janas-server` beside it for the model, and the page's chat goes through Brebus to it; one model at a time. Other sites' pages are refused. Tried in Chromium with Qwen3-0.6B (a model loaded, two turns, unloaded); `tests/test_brebus` checks it without a model.
+- **Brebus, Janas's app, its beginning** (`docs/brebus.md`, Linux): `brebus` serves a page on `127.0.0.1` with the models of this machine (*My models*), the catalog of `janas-get` with what each model asks of the memory, downloaded from the page with how far it is, stopped and taken up (*Discover*), a chat with the reply streamed and the reasoning folded above it (*Chat*), the server's addresses for other programs (*Server*) and the machine (*Machine*). *Load* starts a `janas-server` beside it for the model, and the page's chat goes through Brebus to it; one model at a time. Other sites' pages are refused. Tried in Chromium with Qwen3-0.6B (a model loaded, two turns, unloaded); `tests/test_brebus` checks it without a model.
 
 ## [2026-11-15] - Several users at once, your own documents, Nemotron in the catalog
 

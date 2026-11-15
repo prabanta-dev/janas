@@ -150,6 +150,19 @@ static enum MHD_Result handler(void *cls, struct MHD_Connection *conn,
         brebus_server_stop(b, &o);
         return json(conn, 200, &o);
     }
+    if (post && !strcmp(url, "/brebus/get/start")) {
+        int rc = brebus_get_start(b, r->body.p, r->body.n, &o);
+        return json(conn, rc ? 400 : 200, &o);
+    }
+    if (post && !strcmp(url, "/brebus/get/stop")) {
+        brebus_get_stop(b);
+        brebus_get_status(b, &o);
+        return json(conn, 200, &o);
+    }
+    if (get && !strcmp(url, "/brebus/get")) {
+        brebus_get_status(b, &o);
+        return json(conn, 200, &o);
+    }
     if (get && !strcmp(url, "/brebus/server")) {
         brebus_server_status(b, &o);
         return json(conn, 200, &o);

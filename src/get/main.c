@@ -310,6 +310,8 @@ static int from_hf(const char *spec, const char *dir, int keep)
 int main(int argc, char **argv)
 {
     janas_env_check("janas-get");
+    /* a line at a time through a pipe too: Brebus follows the steps */
+    setvbuf(stdout, NULL, _IOLBF, 0);
     if (argc < 2) {
         usage();
         return 2;

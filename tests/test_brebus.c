@@ -5,8 +5,9 @@
  * model: brebus, the one beside this program, started on a free port with
  * an empty models' folder and a data folder of its own; its page, the
  * machine, the models (none) and the catalog; another site's page refused;
- * a model that is not there refused; /v1 answered 503 while no model is
- * loaded; and brebus ending on SIGTERM. Linux only, as brebus.
+ * a model that is not there refused, to load or to download; /v1
+ * answered 503 while no model is loaded; and brebus ending on SIGTERM.
+ * Linux only, as brebus.
  */
 #ifndef __linux__
 #include <stdio.h>
@@ -111,10 +112,21 @@ int main(void)
     janas_mkdirs(data);
     snprintf(env_m, sizeof env_m, "JANAS_MODELS=%s", models);
     snprintf(env_d, sizeof env_d, "XDG_DATA_HOME=%s", data);
+    /* under ThreadSanitizer: the races libmicrohttpd has of its own (its
+       daemon stopped while its thread polls, as with janas-server) are not
+       Brebus's; any other one still fails */
+    char supp[4300], env_t[4400];
+    snprintf(supp, sizeof supp, "%s/tsan.supp", dir);
+    FILE *sf = fopen(supp, "w");
+    if (sf) {
+        fputs("race:src/third_party/libmicrohttpd/\n", sf);
+        fclose(sf);
+    }
+    snprintf(env_t, sizeof env_t, "TSAN_OPTIONS=suppressions=%s", supp);
     port = free_port();
     snprintf(port_s, sizeof port_s, "%d", port);
     const char *argv[] = {brebus, "--no-open", "--port", port_s, NULL};
-    const char *env[] = {env_m, env_d, NULL};
+    const char *env[] = {env_m, env_d, env_t, NULL};
     int quiet = janas_null_fd(1);
     struct janas_proc p;
     char err[256];
@@ -158,6 +170,12 @@ int main(void)
     st = ask("GET", "/brebus/server", NULL, NULL, &o);
     CHECK(st == 200 && strstr(o.p, "\"running\": false"), "server: %d %s", st,
           o.p);
+    st = ask("POST", "/brebus/get/start", "{\"model\": \"x\"}", own, &o);
+    CHECK(st == 400 && strstr(o.p, "no such model"),
+          "a download of a model not in the catalog: %d %s", st, o.p);
+    st = ask("GET", "/brebus/get", NULL, NULL, &o);
+    CHECK(st == 200 && strstr(o.p, "\"running\": false"), "get: %d %s", st,
+          o.p);
     st = ask("POST", "/v1/chat/completions", "{\"messages\": []}", own, &o);
     CHECK(st == 503, "/v1 with no model: %d", st);
     st = ask("GET", "/api/tags", NULL, NULL, &o);
@@ -178,6 +196,7 @@ int main(void)
     rmdir(rm);
     snprintf(rm, sizeof rm, "%s/data/janas", dir);
     rmdir(rm);
+    remove(supp);
     rmdir(data);
     rmdir(models);
     rmdir(dir);

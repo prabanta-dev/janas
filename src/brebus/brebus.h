@@ -18,6 +18,18 @@
 
 #include "common/proc.h"
 
+/* get.c: a download of janas-get, and how far it is */
+struct brebus_get {
+    pthread_mutex_t mu;
+    struct janas_proc proc;
+    pthread_t th; /* reads its output */
+    int joinable, running, stopped, code, fd;
+    char model[128];
+    char step[256]; /* its last "== ..." line */
+    char said[512]; /* its last other line */
+    double done_gb, total_gb, pct, mbs;
+};
+
 struct brebus {
     unsigned short port; /* where it listens, on 127.0.0.1 */
     void *mhd;           /* the HTTP daemon */
@@ -33,6 +45,7 @@ struct brebus {
     unsigned short srv_port;
     char srv_model[256];
     char srv_err[512];
+    struct brebus_get get;
 };
 
 /* http.c: the daemon on 127.0.0.1:port; 0, or -1 with the reason */
@@ -52,6 +65,14 @@ int brebus_server_stop(struct brebus *b, struct janas_buf *out);
 void brebus_server_status(struct brebus *b, struct janas_buf *out);
 /* the port of the model's server, 0 when none runs */
 unsigned short brebus_server_port(struct brebus *b);
+
+/* get.c: a model of the catalog downloaded (body: {"model": name}),
+   stopped (its .part kept, to go on from), and how far it is, as JSON
+   into out; the start 0, or -1 with the reason in out */
+int brebus_get_start(struct brebus *b, const char *body, size_t n,
+                     struct janas_buf *out);
+void brebus_get_stop(struct brebus *b);
+void brebus_get_status(struct brebus *b, struct janas_buf *out);
 
 /* proxy.c: a request to the model's API passed on: 0 with the response to
    queue and its status, -1 when no server runs or it cannot be reached */

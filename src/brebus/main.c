@@ -88,6 +88,7 @@ int main(int argc, char **argv)
                  home ? home : ".");
     janas_mkdirs(b.data_dir);
     pthread_mutex_init(&b.mu, NULL);
+    pthread_mutex_init(&b.get.mu, NULL);
     char why[256];
     if (brebus_http_start(&b, why, sizeof why) != 0) {
         fprintf(stderr, "brebus: %s\n", why);
@@ -105,6 +106,7 @@ int main(int argc, char **argv)
     brebus_http_stop(&b);
     struct janas_buf o = {0};
     brebus_server_stop(&b, &o); /* the model's server goes with it */
+    brebus_get_stop(&b);        /* a download too, to go on next time */
     janas_buf_free(&o);
     return 0;
 }
