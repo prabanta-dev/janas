@@ -15,6 +15,7 @@
 #include "llm/json.h"
 
 #include <pthread.h>
+#include <signal.h>
 
 #include "common/proc.h"
 
@@ -84,6 +85,35 @@ int brebus_chat_put(struct brebus *b, const char *id, const char *body,
 int brebus_chat_delete(struct brebus *b, const char *id);
 void brebus_settings_get(struct brebus *b, struct janas_buf *out);
 int brebus_settings_put(struct brebus *b, const char *body, size_t n);
+/* a text saved in the downloads folder (body: {"name", "text"}), under a
+   name of its own, never over a file: {"path"} into out, 0; or -1 with the
+   reason */
+int brebus_export(struct brebus *b, const char *body, size_t n,
+                  struct janas_buf *out);
+
+/* window.c: the page at url in a window of its own, until it is closed
+   or *quit is set: 0 then, or -1 at once, with the reason, where there
+   can be no window (no WebKitGTK, no display) */
+int brebus_window(const char *url, volatile sig_atomic_t *quit, char *why,
+                  size_t wn);
+
+/* desktop.c: brebus.desktop and its icons written for the desktop's menu
+   (quiet: as the window opens, saying nothing, an entry already there
+   kept); the exit status */
+int brebus_install_desktop(int quiet);
+
+/* icons.c: the Prabanta logo as a PNG of each size (16, 22, 24, 32, 48,
+   64, 128, 256, 512; the list ends with size 0) and as SVG */
+struct brebus_icon {
+    int size;
+    const unsigned char *png;
+    unsigned len;
+};
+extern const struct brebus_icon brebus_icons[];
+extern const unsigned char *const brebus_icon_svg;
+extern const unsigned brebus_icon_svg_len;
+/* the one of that size, or NULL */
+const struct brebus_icon *brebus_icon(int size);
 
 /* proxy.c: a request to the model's API passed on: 0 with the response to
    queue and its status, -1 when no server runs or it cannot be reached */

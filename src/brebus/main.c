@@ -1,8 +1,9 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
    Copyright (C) 2026 Maurizio Cammalleri */
 /*
- * main.c - brebus: serves its page on 127.0.0.1 and opens it in the
- * browser, until Ctrl+C.
+ * main.c - brebus: serves its page on 127.0.0.1 and shows it in a window
+ * of its own (window.c), or in the browser where there cannot be one,
+ * until the window is closed or Ctrl+C.
  */
 #include <signal.h>
 #include <stdio.h>
@@ -30,10 +31,14 @@ static void on_signal(int s)
 static void usage(void)
 {
     fprintf(stderr,
-            "usage: brebus [--port N] [--no-open]\n"
+            "usage: brebus [--port N] [--browser | --no-open]\n"
+            "       brebus --install-desktop\n"
             "Brebus, Janas's app for the models of this computer: its page\n"
-            "on http://127.0.0.1:41414 (--port), opened in the browser\n"
-            "unless --no-open. Only this computer reaches it.\n");
+            "on http://127.0.0.1:41414 (--port), in a window of its own, or\n"
+            "in the browser with --browser or where there is no WebKitGTK;\n"
+            "--no-open: neither. Only this computer reaches it.\n"
+            "--install-desktop puts Brebus in the desktop's menu, with its\n"
+            "icon (~/.local/share/applications).\n");
 }
 
 static void open_browser(const char *url)
@@ -50,7 +55,7 @@ static void open_browser(const char *url)
 int main(int argc, char **argv)
 {
     struct brebus b = {.port = 41414};
-    int open = 1;
+    int open = 1, browser = 0;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--port") && i + 1 < argc) {
             int p = atoi(argv[++i]);
@@ -61,6 +66,10 @@ int main(int argc, char **argv)
             b.port = (unsigned short)p;
         } else if (!strcmp(argv[i], "--no-open")) {
             open = 0;
+        } else if (!strcmp(argv[i], "--install-desktop")) {
+            return brebus_install_desktop(0);
+        } else if (!strcmp(argv[i], "--browser")) {
+            browser = 1;
         } else {
             usage();
             return !strcmp(argv[i], "-h") || !strcmp(argv[i], "--help") ? 0 : 2;
@@ -99,8 +108,13 @@ int main(int argc, char **argv)
     fprintf(stderr, "brebus %s: %s (Ctrl+C ends it)\n", JANAS_VERSION, url);
     signal(SIGINT, on_signal);
     signal(SIGTERM, on_signal);
-    if (open)
+    if (open && !browser && brebus_window(url, &quit, why, sizeof why) == 0)
+        quit = 1; /* the window closed */
+    else if (open) {
+        if (!browser)
+            fprintf(stderr, "brebus: %s; in the browser instead\n", why);
         open_browser(url);
+    }
     while (!quit)
         pause();
     brebus_http_stop(&b);

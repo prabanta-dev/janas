@@ -31,7 +31,8 @@ nav { width: 210px; flex: none; background: var(--side);
       border-right: 1px solid var(--line); padding: 18px 10px;
       display: flex; flex-direction: column; gap: 4px; }
 nav h1 { font-size: 20px; margin: 0 10px 14px; letter-spacing: .02em; }
-nav h1 span { color: var(--accent); }
+nav h1 { display: flex; align-items: center; gap: 10px; }
+nav h1 img { border-radius: 6px; }
 nav button { all: unset; cursor: pointer; padding: 8px 12px; border-radius: 8px;
              color: var(--dim); }
 nav button:hover { background: var(--line); color: var(--fg); }
@@ -115,7 +116,7 @@ button.act[disabled] { opacity: .5; cursor: default; }
 </head>
 <body>
 <nav>
-  <h1><span>●</span> Brebus</h1>
+  <h1><img src="/prabanta.png" alt="Prabanta" width="28" height="28"> Brebus</h1>
   <button data-s="chat">Chat</button>
   <button data-s="discover">Discover</button>
   <button data-s="models">My models</button>
@@ -373,15 +374,15 @@ async function deleteConv() {
   cur = null;
   if (convs.length) await openConv(convs[0].id); else { listConvs(); drawLog(); }
 }
-function exportConv() {
+async function exportConv() {
   const md = [`# ${cur.title || "Chat"}`, ""];
   for (const m of cur.messages)
     md.push(`## ${m.role === "user" ? "You" : "Assistant"}`, "", m.content || "", "");
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([md.join("\n")], {type: "text/markdown"}));
-  a.download = (cur.title || "chat").replace(/[^\w -]+/g, "").trim().slice(0, 60) + ".md";
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  /* saved by Brebus in the downloads folder: a window has no downloads */
+  const r = await fetch("/brebus/export", {method: "POST",
+    body: JSON.stringify({name: cur.title || "chat", text: md.join("\n")})});
+  const j = await r.json();
+  alert(r.ok ? "Saved: " + j.path : j.error || "not saved");
 }
 
 /* Markdown of a reply: the text escaped first, then a few marks made into

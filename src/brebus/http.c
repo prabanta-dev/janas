@@ -127,6 +127,10 @@ static enum MHD_Result handler(void *cls, struct MHD_Connection *conn,
         return reply(conn, 200, "text/html; charset=utf-8",
                      janas_brebus_app_html, sizeof janas_brebus_app_html - 1,
                      1);
+    if (get && !strcmp(url, "/prabanta.png")) {
+        const struct brebus_icon *i = brebus_icon(64);
+        return reply(conn, 200, "image/png", (const char *)i->png, i->len, 1);
+    }
     if (!strncmp(url, "/v1/", 4) || !strncmp(url, "/api/", 5)) {
         struct MHD_Response *resp = NULL;
         unsigned status = 0;
@@ -169,6 +173,10 @@ static enum MHD_Result handler(void *cls, struct MHD_Connection *conn,
             "{\"error\": \"no such conversation, or not a JSON object\"}";
         return reply(conn, get ? 404 : 400, "application/json", no,
                      sizeof no - 1, 1);
+    }
+    if (post && !strcmp(url, "/brebus/export")) {
+        int rc = brebus_export(b, r->body.p, r->body.n, &o);
+        return json(conn, rc ? 400 : 200, &o);
     }
     if (get && !strcmp(url, "/brebus/chats")) {
         brebus_chats_list(b, &o);

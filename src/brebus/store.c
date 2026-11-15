@@ -6,12 +6,17 @@
  * the conversation, letters, digits, - and _ only), and the settings of
  * each model in settings.json. Brebus checks that what it is given is a
  * JSON object, and writes it aside first, then renames it: a file is
- * never left half written.
+ * never left half written. A conversation exported goes to the downloads
+ * folder (XDG_DOWNLOAD_DIR of user-dirs.dirs, else ~/Downloads).
  */
 #include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include "brebus.h"
 #include "common/catalog.h"
@@ -205,4 +210,101 @@ int brebus_settings_put(struct brebus *b, const char *body, size_t n)
     char p[4200];
     snprintf(p, sizeof p, "%s/settings.json", b->data_dir);
     return put(p, body, n);
+}
+
+/* the downloads folder: user-dirs.dirs's, ~/Downloads, or the home */
+static void downloads(char *dir, size_t n)
+{
+    const char *home = getenv("HOME"), *xc = getenv("XDG_CONFIG_HOME");
+    char conf[4200], line[4200];
+    if (!home)
+        home = ".";
+    if (xc && *xc == '/')
+        snprintf(conf, sizeof conf, "%s/user-dirs.dirs", xc);
+    else
+        snprintf(conf, sizeof conf, "%s/.config/user-dirs.dirs", home);
+    dir[0] = 0;
+    FILE *f = fopen(conf, "r");
+    while (f && fgets(line, sizeof line, f)) {
+        static const char key[] = "XDG_DOWNLOAD_DIR=\"";
+        if (strncmp(line, key, sizeof key - 1))
+            continue;
+        char *v = line + sizeof key - 1, *q = strchr(v, '"');
+        if (!q)
+            break;
+        *q = 0;
+        if (!strncmp(v, "$HOME/", 6))
+            snprintf(dir, n, "%s/%s", home, v + 6);
+        else if (*v == '/')
+            snprintf(dir, n, "%s", v);
+        break;
+    }
+    if (f)
+        fclose(f);
+    struct stat st;
+    if (dir[0] && stat(dir, &st) == 0 && S_ISDIR(st.st_mode))
+        return;
+    snprintf(dir, n, "%s/Downloads", home);
+    if (stat(dir, &st) == 0 && S_ISDIR(st.st_mode))
+        return;
+    snprintf(dir, n, "%s", home);
+}
+
+int brebus_export(struct brebus *b, const char *body, size_t n,
+                  struct janas_buf *out)
+{
+    (void)b;
+    char err[160], name[96], dir[4200], path[4400];
+    struct janas_json_doc *d =
+        body && n ? janas_json_parse(body, n, err, sizeof err) : NULL;
+    const struct janas_json *o = d ? janas_json_root(d) : NULL;
+    const char *nm = o ? janas_json_str(janas_json_get(o, "name")) : NULL;
+    const struct janas_json *text = o ? janas_json_get(o, "text") : NULL;
+    if (!text || text->type != JANAS_JSON_STRING) {
+        janas_json_free(d);
+        janas_buf_puts(out, "{\"error\": \"nothing to save\"}");
+        return -1;
+    }
+    /* letters, digits, spaces, - and _ of the name (bytes past ASCII too,
+       for names in other scripts), never a path */
+    size_t k = 0;
+    for (const unsigned char *c = (const unsigned char *)(nm ? nm : "");
+         *c && k + 1 < 64; c++)
+        if ((*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z') ||
+            (*c >= '0' && *c <= '9') || *c == ' ' || *c == '-' || *c == '_' ||
+            *c >= 0x80)
+            name[k++] = (char)*c;
+    while (k && name[k - 1] == ' ')
+        k--;
+    name[k] = 0;
+    if (!k)
+        snprintf(name, sizeof name, "chat");
+    downloads(dir, sizeof dir);
+    int fd = -1;
+    for (int i = 1; i < 100 && fd < 0; i++) {
+        if (i == 1)
+            snprintf(path, sizeof path, "%s/%s.md", dir, name);
+        else
+            snprintf(path, sizeof path, "%s/%s (%d).md", dir, name, i);
+        fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0644);
+        if (fd < 0 && errno != EEXIST)
+            break;
+    }
+    int bad = fd < 0;
+    if (!bad) {
+        bad = write(fd, text->s, text->n) != (ssize_t)text->n;
+        bad |= close(fd) != 0;
+        if (bad)
+            remove(path);
+    }
+    janas_json_free(d);
+    if (bad) {
+        janas_buf_puts(out, "{\"error\": \"cannot write in ");
+        janas_buf_puts(out, "the downloads folder\"}");
+        return -1;
+    }
+    janas_buf_puts(out, "{\"path\": ");
+    str(out, path);
+    janas_buf_puts(out, "}");
+    return 0;
 }

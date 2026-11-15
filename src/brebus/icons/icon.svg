@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   width="500"
+   height="500"
+   viewBox="0 0 132.29166 132.29167"
+   version="1.1"
+   id="svg1"
+   inkscape:version="1.4 (e7c3feb100, 2024-10-09)"
+   sodipodi:docname="logo_prabanta.svg"
+   inkscape:export-filename="logo_prabanta.png"
+   inkscape:export-xdpi="96"
+   inkscape:export-ydpi="96"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:document-units="mm"
+     inkscape:zoom="0.78127806"
+     inkscape:cx="396.78575"
+     inkscape:cy="407.66536"
+     inkscape:window-width="1920"
+     inkscape:window-height="1128"
+     inkscape:window-x="0"
+     inkscape:window-y="0"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="layer1" />
+  <defs
+     id="defs1" />
+  <g
+     inkscape:label="Livello 1"
+     inkscape:groupmode="layer"
+     id="layer1">
+    <g
+       id="g1"
+       transform="matrix(1.9999999,0,0,1.9999999,-113.77083,-129.64582)">
+      <rect
+         width="66.145836"
+         height="66.145836"
+         rx="4.2333331"
+         fill="#b87935"
+         id="rect6"
+         x="56.885418"
+         y="64.822914"
+         style="fill:#b27333;fill-opacity:1;stroke-width:0.264583" />
+      <g
+         id="g19"
+         transform="matrix(0.24048643,0,0,0.24048643,-18.260562,62.021913)">
+        <polyline
+           points="-38,-80 0,-22 38,-80"
+           id="polyline6"
+           style="fill:none;stroke:#17191b;stroke-width:9.6;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none"
+           transform="matrix(1.2428013,0,0,1.2428013,450,149.14325)" />
+        <polyline
+           points="-38,-80 0,-22 38,-80"
+           id="polyline18"
+           style="fill:none;stroke:#17191b;stroke-width:9.6;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none"
+           transform="matrix(0.38404672,1.1819743,-1.1819743,0.38404672,450.00001,149.14326)" />
+        <polyline
+           points="-38,-80 0,-22 38,-80"
+           id="polyline17"
+           style="fill:none;stroke:#17191b;stroke-width:9.6;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none"
+           transform="matrix(-1.0054474,0.73050028,-0.73050028,-1.0054474,450,149.14325)" />
+        <polyline
+           points="-38,-80 0,-22 38,-80"
+           id="polyline16"
+           style="fill:none;stroke:#17191b;stroke-width:9.6;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none"
+           transform="matrix(-1.0054474,-0.73050028,0.73050028,-1.0054474,450,149.14325)" />
+        <g
+           id="g18"
+           transform="matrix(1.1610901,0,0,1.1610901,-72.490531,-22.68726)">
+          <circle
+             cx="450"
+             cy="62.14716"
+             r="12.428013"
+             fill="#17191b"
+             stroke="none"
+             id="circle6"
+             style="stroke-width:11.9309;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none" />
+          <circle
+             cx="280.90131"
+             cy="-468.88373"
+             r="12.428013"
+             fill="#17191b"
+             stroke="none"
+             id="circle18"
+             style="stroke-width:11.9309;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none"
+             transform="rotate(72)" />
+          <circle
+             cx="-276.39346"
+             cy="-472.15887"
+             r="12.428013"
+             fill="#17191b"
+             stroke="none"
+             id="circle17"
+             style="stroke-width:11.9309;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none"
+             transform="rotate(144)" />
+          <circle
+             cx="-451.72186"
+             cy="56.847843"
+             r="12.428013"
+             fill="#17191b"
+             stroke="none"
+             id="circle16"
+             style="stroke-width:11.9309;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none"
+             transform="rotate(-144)" />
+          <circle
+             cx="-2.7860162"
+             cy="387.06714"
+             r="12.428013"
+             fill="#17191b"
+             stroke="none"
+             id="circle15"
+             style="stroke-width:11.9309;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none"
+             transform="rotate(-72)" />
+        </g>
+        <polyline
+           points="-38,-80 0,-22 38,-80"
+           id="polyline15"
+           style="fill:none;stroke:#17191b;stroke-width:9.6;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none"
+           transform="matrix(0.38404672,-1.1819743,1.1819743,0.38404672,450,149.14325)" />
+      </g>
+    </g>
+  </g>
+</svg>

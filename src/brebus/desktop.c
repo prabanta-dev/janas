@@ -1,0 +1,123 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+   Copyright (C) 2026 Maurizio Cammalleri */
+/*
+ * desktop.c - Brebus in the desktop's menu: the Prabanta logo as its icon,
+ * a PNG of each size in ~/.local/share/icons/hicolor/<size>/apps and the SVG
+ * in hicolor/scalable/apps, and brebus.desktop in
+ * ~/.local/share/applications, starting this brebus by its full path, with
+ * the JANAS_MODELS given when it was written. The desktop matches the
+ * window to it by the name window.c gives GTK ("brebus"): on Wayland the
+ * icon in the task bar comes from there. Written by --install-desktop, and
+ * each time Brebus opens its window: the icons where one is missing or
+ * differs, the entry where there is none.
+ */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "brebus.h"
+#include "common/catalog.h"
+#include "common/sysinfo.h"
+
+/* path written with p, unless it holds those bytes already: 0, or -1 */
+static int write_file(const char *path, const void *p, size_t n)
+{
+    FILE *f = fopen(path, "rb");
+    if (f) {
+        char buf[65536];
+        size_t got = fread(buf, 1, sizeof buf, f);
+        int same =
+            got == n && n < sizeof buf && fgetc(f) == EOF && !memcmp(buf, p, n);
+        fclose(f);
+        if (same)
+            return 0;
+    }
+    char tmp[4400];
+    snprintf(tmp, sizeof tmp, "%s.new", path);
+    f = fopen(tmp, "wb");
+    if (!f)
+        return -1;
+    int bad = fwrite(p, 1, n, f) != n;
+    bad |= fclose(f) != 0;
+    if (bad || rename(tmp, path) != 0) {
+        remove(tmp);
+        return -1;
+    }
+    return 0;
+}
+
+static int icon(const char *share, const char *size, const char *name,
+                const void *p, size_t n)
+{
+    char dir[4300], path[4400];
+    snprintf(dir, sizeof dir, "%s/icons/hicolor/%s/apps", share, size);
+    snprintf(path, sizeof path, "%s/%s", dir, name);
+    if (janas_mkdirs(dir) != 0 || write_file(path, p, n) != 0) {
+        fprintf(stderr, "brebus: cannot write %s\n", path);
+        return -1;
+    }
+    return 0;
+}
+
+int brebus_install_desktop(int quiet)
+{
+    const char *home = getenv("HOME"), *xd = getenv("XDG_DATA_HOME");
+    char share[4096], dir[4200], entry[4300], exe[4096], size[16];
+    if (xd && *xd == '/')
+        snprintf(share, sizeof share, "%s", xd);
+    else if (home)
+        snprintf(share, sizeof share, "%s/.local/share", home);
+    else {
+        fprintf(stderr, "brebus: no home\n");
+        return 1;
+    }
+    if (janas_exe_path(exe, sizeof exe) <= 0) {
+        fprintf(stderr, "brebus: where is brebus?\n");
+        return 1;
+    }
+    for (const struct brebus_icon *i = brebus_icons; i->size; i++) {
+        snprintf(size, sizeof size, "%dx%d", i->size, i->size);
+        if (icon(share, size, "brebus.png", i->png, i->len) != 0)
+            return 1;
+    }
+    if (icon(share, "scalable", "brebus.svg", brebus_icon_svg,
+             brebus_icon_svg_len) != 0)
+        return 1;
+    snprintf(dir, sizeof dir, "%s/applications", share);
+    snprintf(entry, sizeof entry, "%s/brebus.desktop", dir);
+    /* opening the window, an entry there already is kept as it is: its
+       JANAS_MODELS is the one --install-desktop was given */
+    FILE *had = quiet ? fopen(entry, "r") : NULL;
+    if (had) {
+        fclose(had);
+        return 0;
+    }
+    /* the models' folder given now, kept for the menu's start, which has
+       no shell to set it */
+    const char *jm = getenv("JANAS_MODELS");
+    char env[4200] = "";
+    if (jm && *jm == '/' && !strpbrk(jm, "\"\\`$ \n"))
+        snprintf(env, sizeof env, "env JANAS_MODELS=%s ", jm);
+    char text[8192];
+    int n = snprintf(text, sizeof text,
+                     "[Desktop Entry]\n"
+                     "Type=Application\n"
+                     "Name=Brebus\n"
+                     "Comment=Janas's app for the models of this computer\n"
+                     "Exec=%s\"%s\"\n"
+                     "Icon=brebus\n"
+                     "Terminal=false\n"
+                     "Categories=Utility;\n"
+                     "StartupWMClass=brebus\n",
+                     env, exe);
+    if (n < 0 || (size_t)n >= sizeof text || janas_mkdirs(dir) != 0 ||
+        write_file(entry, text, (size_t)n) != 0) {
+        fprintf(stderr, "brebus: cannot write %s\n", entry);
+        return 1;
+    }
+    if (!quiet)
+        printf("Brebus is in the desktop's menu: %s, its icons in "
+               "%s/icons/hicolor\n",
+               entry, share);
+    return 0;
+}

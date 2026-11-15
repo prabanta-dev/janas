@@ -7,9 +7,9 @@
  * machine, the models (none) and the catalog; another site's page refused;
  * a model that is not there refused, to load or to download;
  * conversations saved, listed, read and deleted, and the settings, with
- * bad ids and what is not a JSON object refused; /v1
- * answered 503 while no model is loaded; and brebus ending on SIGTERM.
- * Linux only, as brebus.
+ * bad ids and what is not a JSON object refused; exports, never over a
+ * file; the logo; /v1 answered 503 while no model is loaded; and brebus
+ * ending on SIGTERM. Linux only, as brebus.
  */
 #ifndef __linux__
 #include <stdio.h>
@@ -117,7 +117,11 @@ int main(void)
     /* under ThreadSanitizer: the races libmicrohttpd has of its own (its
        daemon stopped while its thread polls, as with janas-server) are not
        Brebus's; any other one still fails */
-    char supp[4300], env_t[4400];
+    char supp[4300], env_t[4400], env_h[4300], env_c[4300];
+    /* a home of its own: an export goes to its home, which has no
+       Downloads folder, and not to the user's */
+    snprintf(env_h, sizeof env_h, "HOME=%s", dir);
+    snprintf(env_c, sizeof env_c, "XDG_CONFIG_HOME=%s/none", dir);
     snprintf(supp, sizeof supp, "%s/tsan.supp", dir);
     FILE *sf = fopen(supp, "w");
     if (sf) {
@@ -128,7 +132,7 @@ int main(void)
     port = free_port();
     snprintf(port_s, sizeof port_s, "%d", port);
     const char *argv[] = {brebus, "--no-open", "--port", port_s, NULL};
-    const char *env[] = {env_m, env_d, env_t, NULL};
+    const char *env[] = {env_m, env_d, env_t, env_h, env_c, NULL};
     int quiet = janas_null_fd(1);
     struct janas_proc p;
     char err[256];
@@ -221,6 +225,21 @@ int main(void)
              &o);
     st = ask("GET", "/brebus/settings", NULL, NULL, &o);
     CHECK(st == 200 && strstr(o.p, "8192"), "settings kept: %s", o.p);
+    /* an export: a name of its own, never over a file */
+    char want[4400];
+    st = ask("POST", "/brebus/export",
+             "{\"name\": \"../a/b..x\", \"text\": \"# hi\"}", own, &o);
+    snprintf(want, sizeof want, "\"path\": \"%s/abx.md\"", dir);
+    CHECK(st == 200 && strstr(o.p, want), "an export: %d %s", st, o.p);
+    st = ask("POST", "/brebus/export", "{\"name\": \"abx\", \"text\": \"2\"}",
+             own, &o);
+    snprintf(want, sizeof want, "\"path\": \"%s/abx (2).md\"", dir);
+    CHECK(st == 200 && strstr(o.p, want), "a second export: %d %s", st, o.p);
+    st = ask("POST", "/brebus/export", "{\"name\": \"x\"}", own, &o);
+    CHECK(st == 400, "an export of nothing: %d", st);
+    st = ask("GET", "/prabanta.png", NULL, NULL, &o);
+    CHECK(st == 200 && o.n > 8 && !memcmp(o.p, "\x89PNG", 4), "the logo: %d",
+          st);
     st = ask("POST", "/v1/chat/completions", "{\"messages\": []}", own, &o);
     CHECK(st == 503, "/v1 with no model: %d", st);
     st = ask("GET", "/api/tags", NULL, NULL, &o);
@@ -244,7 +263,9 @@ int main(void)
                                        "data/janas",
                                        "data",
                                        "models",
-                                       "tsan.supp"};
+                                       "tsan.supp",
+                                       "abx.md",
+                                       "abx (2).md"};
     for (size_t i = 0; i < sizeof left / sizeof *left; i++) {
         char f[4400];
         snprintf(f, sizeof f, "%s/%s", dir, left[i]);
