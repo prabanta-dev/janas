@@ -18,7 +18,7 @@ Its icon is the Prabanta logo, drawn for each size and system ([src/brebus/icons
 
 | Section | |
 |---|---|
-| Chat | conversations on the left, a file each in `~/.local/share/janas/brebus/chats`, renamed, deleted or exported in Markdown to the downloads folder; a system message of each one's own; the reply as it is written, in Markdown, the model's reasoning folded above it, its tokens and how fast they came |
+| Chat | conversations on the left, a file each in `~/.local/share/janas/brebus/chats`, renamed, deleted or exported in Markdown to the downloads folder; a system message of each one's own; the reply as it is written, in Markdown, the model's reasoning folded above it, its tokens and how fast they came; Enter sends, Shift+Enter starts a new line, and while a reply comes the button in the field stops it, as Esc does |
 | Discover | the models of `janas-get`, how much each one downloads and asks of the memory, and whether it is meant for a machine of this memory; *Get* downloads one, with how far it is, and *Stop* keeps what came so far for the next *Get* |
 | My models | the models in Janas's models folder (`janas-get`'s, `$JANAS_MODELS`), with their size and context; *Settings* keeps for each one its context, reasoning on or off and how many conversations at once, and *Load* starts the model's server with them |
 | Server | the model loaded, and its addresses for other programs: OpenAI's API at `/v1`, Ollama's and Anthropic's beside it |
