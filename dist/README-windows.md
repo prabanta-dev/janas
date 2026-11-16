@@ -57,12 +57,15 @@ In a terminal (Windows Terminal, PowerShell or the Command Prompt), in the folde
 
 The first says which models it knows, their size and the memory they want; the second downloads one, checked, into `%LOCALAPPDATA%\janas\models`; the third talks to it; the fourth measures how fast this machine runs it and writes a report to send back.
 
+Or all of it in a window: double-click `brebus.exe` - the models, a chat that works in a folder of yours with its documents, and the server for other programs (`docs\brebus.md`).
+
 `.\janas-chat` with no model shows the list and downloads the one you choose, after asking. The models come already converted from Hugging Face ([prabanta-dev](https://huggingface.co/prabanta-dev)), each file checked against the fingerprints of `MODELS.md`.
 
 ## What is here
 
 | | |
 |---|---|
+| `brebus.exe` | Janas's app, in a window of WebView2 (`WebView2Loader.dll` beside it; the browser where WebView2 is missing): the catalog and Hugging Face searched and downloaded, the models loaded with their settings, a chat working in a folder of yours (its documents searched before each question, files attached, the services and your MCP servers, artifacts beside the chat, regenerate and edit, presets and JSON answers), the server for other programs. See `docs\brebus.md` |
 | `janas-chat` | a chat in the terminal: line editor, history, the reasoning shown apart, a context that slides instead of ending, conversations saved as they go and taken up (`--continue`, `--resume`, `/export`, `/import`), the tools of MCP servers and of Janas's own services |
 | `janas-server` | the model served over HTTP with an API that follows OpenAI's: chat completions (tools, JSON schemas), completions, responses, embeddings, and llama.cpp's route for filling in code in editors |
 | `janas-get` | downloads a model of the catalog, checked; `--from-gguf` converts the original GGUF here instead |

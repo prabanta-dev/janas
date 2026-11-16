@@ -1,6 +1,6 @@
 # Brebus
 
-Brebus is Janas's app: the models of this machine, a chat with them and the server for other programs, in a window of its own. *Brebus*, in Sardinian, are the magic words of the *janas*. It is on Linux; on Windows and macOS it is not yet. In the binary package it is `./brebus`, beside `janas-chat`.
+Brebus is Janas's app: the models of this machine, a chat with them and the server for other programs, in a window of its own. *Brebus*, in Sardinian, are the magic words of the *janas*. It is on Linux and Windows; on macOS it is not yet. In the binary packages it is `./brebus` (Linux) and `brebus.exe` (Windows), beside `janas-chat`.
 
 ```sh
 bin/x86_64-linux/brebus                    # its window
@@ -10,7 +10,7 @@ bin/x86_64-linux/brebus --no-open          # neither: http://127.0.0.1:41414/
 bin/x86_64-linux/brebus --port 41500
 ```
 
-The window is WebKitGTK's (`libwebkit2gtk-4.1`, on Debian and Ubuntu the package `libwebkit2gtk-4.1-0`), loaded when Brebus starts: nothing is needed to build it, and where it is missing, or there is no display, Brebus opens its page in the browser. Links to other sites open in the browser. Brebus ends when its window is closed (or with Ctrl+C), and the model's server ends with it.
+On Linux the window is WebKitGTK's (`libwebkit2gtk-4.1`, on Debian and Ubuntu the package `libwebkit2gtk-4.1-0`), loaded when Brebus starts: nothing is needed to build it, and where it is missing, or there is no display, Brebus opens its page in the browser. On Windows it is WebView2, the engine of Edge that Windows 10 and 11 carry, through `WebView2Loader.dll` beside `brebus.exe` (Microsoft's, under its BSD licence, `LICENSE-WebView2.txt`); started from Explorer or the Start menu, Brebus asks for its folder instead of taking the program's, keeps its data in `%LOCALAPPDATA%\janas\brebus`, and starts at login, when asked, through the user's Run key. The Python sandbox is Linux's only. Links to other sites open in the browser. Brebus ends when its window is closed (or with Ctrl+C), and the model's server ends with it.
 
 Its icon is the Prabanta logo, drawn for each size and system ([src/brebus/icons](../src/brebus/icons/README.md)). When the window opens, Brebus writes its icons in `~/.local/share/icons/hicolor` and, where there is none, `brebus.desktop` in `~/.local/share/applications`: the desktop's menu has Brebus, and the task bar shows its logo (on Wayland it comes from there only). `--install-desktop` writes them without opening it, and the `JANAS_MODELS` given then is kept for the menu's start.
 
