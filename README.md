@@ -33,7 +33,7 @@ Janas is a family of tools for artificial intelligence, written in C with no dep
 
 ### Janas-LLM, the engine
 
-Runs large language models, mixtures of experts above all, on ordinary computers: the weights stay on disk, the experts each token needs are read from the NVMe SSD and the ones that keep coming back stay in memory; the GPU and the NPU read the prompts where they are faster. On the development laptop (Intel Core Ultra 9 185H, 32 GB, [below](#the-machine-it-grew-on)), against llama.cpp under the same conditions wherever possible:
+Runs large language models, mixtures of experts above all, on whatever machine it finds, from a modest laptop to a workstation: it measures the memory, the CPU, the GPU and the NPU when it opens a model, and chooses how to run it. When the model fits in memory it is loaded whole; when it does not - a mixture of experts larger than the RAM - the experts each token needs are read from the NVMe SSD and the ones that keep coming back stay in memory. A GPU and Intel's NPU are used where they are faster: a GPU with memory of its own can run a mixture's whole pass for each token, an integrated one reads the prompts, the NPU those of the smaller dense models; what it measured is kept for the next start. On the development laptop (Intel Core Ultra 9 185H, 32 GB, [below](#the-machine-it-grew-on)), against llama.cpp under the same conditions wherever possible:
 
 | | Janas-LLM | llama.cpp |
 |---|---:|---:|
