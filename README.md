@@ -37,7 +37,7 @@ Runs large language models, mixtures of experts above all, on whatever machine i
 
 | | Janas-LLM | llama.cpp |
 |---|---:|---:|
-| **Qwen3-Next-80B-A3B**, 48 GB on 32 GB of memory: writing a reply | **26.4 tok/s** | 3.0 tok/s |
+| **Qwen3-Next-80B-A3B** Q4_K_M, 48 GB on 32 GB of memory: writing a reply | **26.4 tok/s** | 3.0 tok/s |
 | the same, reading a prompt of 1,024 tokens | **68.4 tok/s** | 17.7 tok/s |
 | **Qwen3.6-35B-A3B**: writing / reading | **28.0 / 136 tok/s** | 12.1 / 81.8 tok/s |
 | **Qwen3-4B** with 8,192 tokens of context: writing / reading | **18.2 / 74 tok/s** | 4.9 / 20 tok/s |
@@ -145,7 +145,7 @@ sudo pacman -S vulkan-headers glslang vulkan-tools           # the same, Arch
 
 ### Against llama.cpp
 
-On the development laptop, every model compared, 21 October 2026 - the same laptop, the same files, the same day, each engine in its best configuration:
+On the development laptop, every model compared, 21 October 2026 - the same laptop, the same files, the same day, each engine in its best configuration. The files are the catalog's, Q4_K_M unless a row says otherwise: Qwen's own GGUF for Qwen3-Next-80B-A3B, Qwen3-Coder-Next, Qwen3-30B-A3B and Qwen3-4B; bartowski's (with an importance matrix) for Qwen3.6-35B-A3B; unsloth's for the others, UD-Q4_K_M for Gemma-4-26B-A4B and UD-Q4_K_XL for Qwen3.8-27B; ISTA-DASLab's two-bit Q2_0 for Qwen3.8-Flash-Next. Each file and its SHA-256: [MODELS.md](MODELS.md).
 
 | Model | reading 1,024 tokens: Janas-LLM | how | llama.cpp | writing: Janas-LLM | how | llama.cpp |
 |---|---:|---|---:|---:|---|---:|
