@@ -1,6 +1,6 @@
 # Janas
 
-[![Status: experimental](https://img.shields.io/badge/status-experimental-orange.svg)]() [![Platform: Linux | Windows x86-64](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20x86--64-lightgrey.svg)]() [![LinkedIn](https://img.shields.io/badge/LinkedIn-Maurizio%20Cammalleri-0077B5?logo=linkedin)](https://www.linkedin.com/in/maurizio-cammalleri-80a89a11/) [![Substack](https://img.shields.io/badge/Substack-Maurizio%20Cammalleri-FF6719?logo=substack)](https://cammalleri.substack.com/)
+[![Platform: Linux | Windows x86-64](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20x86--64-lightgrey.svg)]() [![LinkedIn](https://img.shields.io/badge/LinkedIn-Maurizio%20Cammalleri-0077B5?logo=linkedin)](https://www.linkedin.com/in/maurizio-cammalleri-80a89a11/) [![Substack](https://img.shields.io/badge/Substack-Maurizio%20Cammalleri-FF6719?logo=substack)](https://cammalleri.substack.com/)
 
 ```
   ▄███████████▄    
@@ -72,16 +72,17 @@ A research tool: a word's explication in the Natural Semantic Metalanguage, Godd
 
 *Brebus with Qwen3-30B-A3B on the development laptop: the workspace's documents searched before the question, the answer from a spreadsheet in it, its source named.*
 
-## ⚠️ Read this first
+## Read this first
 
-**This is an experiment, not a product.**
+Janas has proved fairly stable in our use, but it has run on a limited range of hardware: the development laptop (below) and the 19 testers' machines whose figures are in [docs/reports.md](docs/reports.md), 14 on Linux and 5 on Windows - AMD Ryzen from the 4000 to the 9000 series and an EPYC, Intel from the 11th generation to Core Ultra, GPUs of NVIDIA, AMD and Intel.
 
 | | |
 |---|---|
-| **Stage** | Early development. The public API and the command line **change without notice**, and have changed several times a week. The models' files are the exception: the `.jns` files published on Hugging Face (format version 2) will be read by every later version of Janas-LLM. |
-| **Stability** | **Not verified.** The engine is deliberately hard on the machine: it fills the free memory with its expert cache and reads the disk at full speed with `O_DIRECT`. On a machine with less headroom than it reckons, the desktop can be pushed into swap and become slow or unresponsive. Using a GPU has, once, caused a driver reset that took the desktop with it. |
+| **Stage** | Young: new versions come out several times a week. The C API and the command line still change, now mostly by additions; what changes is in [ChangeLog.md](ChangeLog.md). The models' files will not: the `.jns` files published on Hugging Face (format version 2) will be read by every later version of Janas-LLM. |
+| **What testers found** | On the CPU: builds that failed (#4, #22, #50), the Windows console's encoding (#44), a converted model and an MTP block that would not load (#18, #6), and once, in September, a wrong answer from Q8_0 embeddings read as another type (#1); all fixed. On the GPU, some drivers gave wrong results: on NVIDIA's Turing and AMD's Radeon 890M, fixed (#17, #46); on Intel's Arc B580 under Windows and AMD's Vega with RADV, still open (#43, #48) - `JANAS_GPU=0` keeps the GPU out, and `gpu_check` tells whether a GPU computes what the CPU does. |
+| **Hard on the machine** | The engine is deliberately hard on the machine: it fills the free memory with its expert cache and reads the disk at full speed with `O_DIRECT`. On a machine with less headroom than it reckons, the desktop can be pushed into swap and become slow or unresponsive. |
 | **Data** | It writes only in `~/.cache/janas` (what it learns about your machine, and the system messages it has read, so as not to read them again) and where you tell it to put a converted model. It does not touch the model files it reads. |
-| **Hardware** | Developed on **one** machine (below); testers have run it on others ([docs/reports.md](docs/reports.md)). On yours it may be slower, it may refuse the model, it may misbehave. |
+| **Hardware** | On a machine unlike those above it may be slower, it may refuse the model, it may misbehave: the report of `janas-bench` is the most useful thing to send back. |
 
 If something goes wrong, `Ctrl-C` stops a reply and `Ctrl-D` leaves the chat; `--cache <GiB>` puts a hard limit on the memory it takes, and `JANAS_GPU=0` and `JANAS_NPU=0` keep it off the GPU and off the NPU entirely.
 

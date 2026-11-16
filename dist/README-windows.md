@@ -85,7 +85,7 @@ The first says which models it knows, their size and the memory they want; the s
 
 What Janas keeps goes to `%LOCALAPPDATA%\janas` (the models, what it learns about the machine) and `%APPDATA%\janas` (the settings, the MCP servers); the variables `JANAS_MODELS` and `XDG_DATA_HOME`, `XDG_CACHE_HOME`, `XDG_CONFIG_HOME` move them elsewhere.
 
-It is an experiment, developed and measured on one Linux machine: an Intel CPU with AVX2 and AVX-VNNI. The Windows build is new and has run on that one machine only; the report of `janas-bench` is the most useful thing to send back (<https://github.com/prabanta-dev/janas/issues>).
+It has proved fairly stable in our use, but on a limited range of hardware: developed and measured on one Linux machine (an Intel CPU with AVX2 and AVX-VNNI); the Windows build has been run by testers on 5 machines (<https://github.com/prabanta-dev/janas/blob/main/docs/reports.md>). On a machine unlike those, the report of `janas-bench` is the most useful thing to send back (<https://github.com/prabanta-dev/janas/issues>).
 
 ## Licence
 

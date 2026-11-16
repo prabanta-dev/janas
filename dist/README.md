@@ -81,7 +81,7 @@ Janas-LLM, the inference engine of Janas, runs large language models on ordinary
 - A GPU is optional: an integrated one with a Vulkan driver reads the prompts faster (measured on Intel's Arc; others untested).
 - An NPU is optional too: the NPU of Intel's Core Ultra reads the prompts of the smaller dense models faster (measured on the first generation's, Meteor Lake), with Intel's NPU driver (linux-npu-driver), a Level Zero loader and the user in the `render` group.
 
-It is an experiment, developed and measured on one machine: an Intel CPU with AVX2 and AVX-VNNI. On other processors, GPUs and disks it is untested; the report of `janas-bench` is the most useful thing to send back (<https://github.com/prabanta-dev/janas/issues>).
+It has proved fairly stable in our use, but on a limited range of hardware: developed and measured on one machine (an Intel CPU with AVX2 and AVX-VNNI), run by testers on 19 others (<https://github.com/prabanta-dev/janas/blob/main/docs/reports.md>). On a machine unlike those, the report of `janas-bench` is the most useful thing to send back (<https://github.com/prabanta-dev/janas/issues>).
 
 ## Licence
 

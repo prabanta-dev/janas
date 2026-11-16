@@ -1,10 +1,10 @@
 # Contributing to Janas
 
-Janas is an experiment in early development: formats, interfaces and the command line change without notice. Before writing code, it is worth asking in an issue whether the thing you have in mind is already being changed underneath.
+Janas is young: the C API and the command line still change, now mostly by additions (the models' `.jns` format does not). Before writing code, it is worth asking in an issue whether the thing you have in mind is already being changed underneath.
 
 ## What helps most
 
-**A measurement from a machine nobody here owns.** Everything in the engine is decided from what it measures, and it has only ever measured one machine (a Core Ultra 9 185H with 32 GB of RAM and an NVMe disk, on Debian 13). Run:
+**A measurement from a machine nobody here owns.** Everything in the engine is decided from what it measures, and it has been measured here on one machine (a Core Ultra 9 185H with 32 GB of RAM and an NVMe disk, on Debian 13), by testers on 19 others ([docs/reports.md](docs/reports.md)). Run:
 
 ```sh
 bin/x86_64-linux/janas-bench <model.jns>
