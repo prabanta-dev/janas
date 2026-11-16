@@ -97,6 +97,15 @@ int janas_remove(const char *path);
    and "C:/Users" too */
 int janas_mkdir(const char *path);
 #define mkdir(path, mode) janas_mkdir(path)
+/* no symbolic links to follow: lstat is stat, and nothing is one */
+#define lstat stat
+#ifndef S_ISLNK
+#define S_ISLNK(m) 0
+#endif
+/* a file's data written out (msvcrt's _commit); modes are POSIX's only */
+int janas_fsync(int fd);
+#define fsync janas_fsync
+#define fchmod(fd, mode) ((void)(fd), (void)(mode), 0)
 
 /* advisory locks on a whole file */
 #define LOCK_SH 1

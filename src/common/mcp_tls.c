@@ -61,6 +61,52 @@ static int load_system_roots(void)
     CertCloseStore(st, 0);
     return n > 0;
 }
+
+/* The chain the server sent, judged by Windows as its own programs judge
+   it (curl's schannel, Edge): Windows keeps a root in its store only once
+   something asked for it, fetching the missing ones as it builds a chain,
+   so the store read above may lack the root a site needs - jsdelivr's
+   GlobalSign Root R46 on a new Windows 11 (16 Nov 2026), "not correctly
+   signed by the trusted CA" where curl.exe connected. 1: trusted for a
+   server of that name. */
+static int windows_trusts(const mbedtls_x509_crt *chain, const char *host)
+{
+    HCERTSTORE mem = CertOpenStore(CERT_STORE_PROV_MEMORY, 0, 0, 0, NULL);
+    if (!mem)
+        return 0;
+    PCCERT_CONTEXT leaf = NULL;
+    for (const mbedtls_x509_crt *c = chain; c; c = c->next)
+        CertAddEncodedCertificateToStore(
+            mem, X509_ASN_ENCODING, c->raw.p, (DWORD)c->raw.len,
+            CERT_STORE_ADD_ALWAYS, c == chain ? &leaf : NULL);
+    int ok = 0;
+    WCHAR wh[256];
+    LPSTR usage[] = {(LPSTR)szOID_PKIX_KP_SERVER_AUTH};
+    CERT_CHAIN_PARA cp = {.cbSize = sizeof cp};
+    cp.RequestedUsage.dwType = USAGE_MATCH_TYPE_AND;
+    cp.RequestedUsage.Usage.cUsageIdentifier = 1;
+    cp.RequestedUsage.Usage.rgpszUsageIdentifier = usage;
+    PCCERT_CHAIN_CONTEXT ch = NULL;
+    if (leaf &&
+        MultiByteToWideChar(CP_UTF8, 0, host, -1, wh,
+                            (int)(sizeof wh / sizeof *wh)) > 0 &&
+        CertGetCertificateChain(NULL, leaf, NULL, mem, &cp, 0, NULL, &ch)) {
+        SSL_EXTRA_CERT_CHAIN_POLICY_PARA ssl = {.cbSize = sizeof ssl,
+                                                .dwAuthType = AUTHTYPE_SERVER,
+                                                .pwszServerName = wh};
+        CERT_CHAIN_POLICY_PARA pp = {.cbSize = sizeof pp,
+                                     .pvExtraPolicyPara = &ssl};
+        CERT_CHAIN_POLICY_STATUS ps = {.cbSize = sizeof ps};
+        ok = CertVerifyCertificateChainPolicy(CERT_CHAIN_POLICY_SSL, ch, &pp,
+                                              &ps) &&
+             ps.dwError == 0;
+        CertFreeCertificateChain(ch);
+    }
+    if (leaf)
+        CertFreeCertificateContext(leaf);
+    CertCloseStore(mem, 0);
+    return ok;
+}
 #endif
 
 /* Once: the crypto library, the authorities, the configuration shared by
@@ -104,7 +150,13 @@ static int set_up(void)
         snprintf(ready_err, sizeof(ready_err), "TLS would not configure");
         return ready;
     }
+#ifdef _WIN32
+    /* the chain judged after the handshake, by Windows where Mbed TLS
+       cannot link it to a root of the store (windows_trusts) */
+    mbedtls_ssl_conf_authmode(&conf, MBEDTLS_SSL_VERIFY_OPTIONAL);
+#else
     mbedtls_ssl_conf_authmode(&conf, MBEDTLS_SSL_VERIFY_REQUIRED);
+#endif
     mbedtls_ssl_conf_ca_chain(&conf, &authorities, NULL);
     ready = 1;
     return ready;
@@ -175,6 +227,12 @@ struct janas_tls *janas_tls_open(int fd, const char *host, int timeout_ms,
         }
         rc = 0;
     }
+#ifdef _WIN32
+    /* optional only so far: a chain neither trusts is refused here */
+    if (rc == 0 && mbedtls_ssl_get_verify_result(&t->ssl) != 0 &&
+        !windows_trusts(mbedtls_ssl_get_peer_cert(&t->ssl), host))
+        rc = MBEDTLS_ERR_X509_CERT_VERIFY_FAILED;
+#endif
     if (rc != 0) {
         uint32_t flags = mbedtls_ssl_get_verify_result(&t->ssl);
         char why[160] = "";

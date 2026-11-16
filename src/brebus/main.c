@@ -9,8 +9,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/wait.h>
 #include <unistd.h>
+#ifdef _WIN32
+#include <windows.h>
+#include <shellapi.h>
+#else
+#include <sys/wait.h>
+#endif
 
 #include "brebus.h"
 #include "common/catalog.h"
@@ -48,6 +53,10 @@ static void usage(void)
 
 static void open_browser(const char *url)
 {
+#ifdef _WIN32
+    /* the default browser, as a link clicked */
+    ShellExecuteA(NULL, "open", url, NULL, NULL, SW_SHOWNORMAL);
+#else
     pid_t pid = fork();
     if (pid == 0) {
         execlp("xdg-open", "xdg-open", url, (char *)NULL);
@@ -55,6 +64,7 @@ static void open_browser(const char *url)
     }
     if (pid > 0)
         waitpid(pid, NULL, 0);
+#endif
 }
 
 int main(int argc, char **argv)
@@ -95,15 +105,22 @@ int main(int argc, char **argv)
             const char *dash = strchr(slash + 1, '-');
             if (dash && strlen(dash) < sizeof b.suffix)
                 snprintf(b.suffix, sizeof b.suffix, "%s", dash);
+#ifdef _WIN32
+            /* "brebus.exe": the programs beside it are "janas-x.exe" */
+            if (!dash)
+                snprintf(b.suffix, sizeof b.suffix, ".exe");
+#endif
             *slash = 0;
         }
     }
     const char *xd = getenv("XDG_DATA_HOME"), *home = getenv("HOME");
-    if (xd && *xd == '/')
+    /* (on Windows XDG_DATA_HOME is %LOCALAPPDATA%: src/common/win_compat.c) */
+    if (xd && janas_path_abs(xd))
         snprintf(b.data_dir, sizeof b.data_dir, "%s/janas/brebus", xd);
     else
         snprintf(b.data_dir, sizeof b.data_dir, "%s/.local/share/janas/brebus",
                  home ? home : ".");
+    janas_path_slashes(b.data_dir);
     janas_mkdirs(b.data_dir);
     pthread_mutex_init(&b.mu, NULL);
     pthread_mutex_init(&b.get.mu, NULL);
@@ -114,7 +131,7 @@ int main(int argc, char **argv)
     char cwd[4096];
     if (workspace) {
         char abs[4200];
-        if (*workspace != '/' && getcwd(cwd, sizeof cwd))
+        if (!janas_path_abs(workspace) && getcwd(cwd, sizeof cwd))
             snprintf(abs, sizeof abs, "%s/%s", cwd, workspace);
         else
             snprintf(abs, sizeof abs, "%s", workspace);
@@ -122,9 +139,15 @@ int main(int argc, char **argv)
             fprintf(stderr, "brebus: %s\n", why);
             return 1;
         }
-    } else if (isatty(STDIN_FILENO) && getcwd(cwd, sizeof cwd) &&
-               brebus_ws_open(&b, cwd, 0, why, sizeof why) != 0)
+    }
+#ifndef _WIN32
+    /* (not on Windows: started from Explorer or the Start menu, its
+       current folder is the program's own, which means nothing; tried on
+       Windows 11 on 16 Nov 2026) */
+    else if (isatty(STDIN_FILENO) && getcwd(cwd, sizeof cwd) &&
+             brebus_ws_open(&b, cwd, 0, why, sizeof why) != 0)
         fprintf(stderr, "brebus: %s; the page will ask for a folder\n", why);
+#endif
     /* the models' folder chosen in the page, where JANAS_MODELS says none */
     {
         struct janas_buf f = {0};
@@ -179,7 +202,7 @@ int main(int argc, char **argv)
         open_browser(url);
     }
     while (!quit)
-        pause();
+        sleep(1);
     brebus_http_stop(&b);
     struct janas_buf o = {0};
     brebus_server_stop(&b, &o); /* the model's server goes with it */

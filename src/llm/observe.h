@@ -4,7 +4,8 @@
  * observe.h - observers of a model's forward pass, layer by layer: the
  * entrance gate (model_gate.c), the doubt probe (model_doubt.c), and
  * whatever else wants to see the states the CPU's layer loop computes
- * (a monitor of the engine at work). None is attached by default, and then
+ * (a monitor of the engine at work); one hook, layer_edit, may change the
+ * residual (steering a model, a test). None is attached by default, and then
  * each hook point costs one test. A forward done whole on a GPU or an NPU
  * does not pass through these points (yet).
  *
@@ -40,6 +41,10 @@ struct janas_observer {
        stops after this layer (no logits then) */
     int (*layer_out)(void *ctx, struct janas_llm_model *m, uint32_t l,
                      const float *x, uint32_t n, uint32_t d);
+    /* the residual after layer l, n rows of d floats, to change in place
+       before any layer_out sees it (a direction added: steering) */
+    void (*layer_edit)(void *ctx, struct janas_llm_model *m, uint32_t l,
+                       float *x, uint32_t n, uint32_t d);
     /* a routed expert of layer l as the expert cache gave it: found in
        memory (1), or read from the file for this pass (0) */
     void (*route)(void *ctx, struct janas_llm_model *m, uint32_t l,

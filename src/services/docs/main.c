@@ -12,6 +12,7 @@
 #include <sys/resource.h>
 #include <sys/stat.h>
 
+#include "common/paths.h"
 #include "common/mcp_server.h"
 #include "docs.h"
 #include "services/common/conf.h"
@@ -63,7 +64,9 @@ static void usage(void)
 
 static void mkdirs(char *p)
 {
-    for (char *s = p + 1; *s; s++)
+    /* from the first folder: "C:/" is a drive's, there already */
+    char *s = p + (p[0] && p[1] == ':' && p[2] ? 3 : 1);
+    for (; *s; s++)
         if (*s == '/') {
             *s = 0;
             if (mkdir(p, 0700) != 0 && errno != EEXIST)
@@ -121,7 +124,7 @@ int main(int argc, char **argv)
     char conf[PATH_MAX + 64], cs[1024], ck[512], cm[PATH_MAX], why[256];
     static char cm_home[2 * PATH_MAX];
     const char *own_conf = getenv("JANAS_DOCS_CONF"); /* an app's own */
-    if (own_conf && *own_conf == '/')
+    if (own_conf && janas_path_abs(own_conf))
         snprintf(conf, sizeof conf, "%s", own_conf);
     else
         snprintf(conf, sizeof conf, "%s/.config/janas/docs.conf", c.roots.home);
@@ -163,11 +166,13 @@ int main(int argc, char **argv)
     x->emb = &c.emb;
     char path[PATH_MAX + 64];
     const char *data = getenv("XDG_DATA_HOME");
-    if (data && *data == '/')
+    /* (on Windows XDG_DATA_HOME is %LOCALAPPDATA%: common/win_compat.c) */
+    if (data && janas_path_abs(data))
         snprintf(path, sizeof path, "%s/janas/docs/index.bin", data);
     else
         snprintf(path, sizeof path, "%s/.local/share/janas/docs/index.bin",
                  c.roots.home);
+    janas_path_slashes(path);
     mkdirs(path);
     if (dz_index_load(x, path, err, sizeof err) != 0)
         fprintf(stderr, "janas-docs: %s\n", err);

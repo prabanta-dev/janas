@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "common/paths.h"
 #include "common/mcp_server.h"
 #include "docs.h"
 #include "services/common/private.h"
@@ -101,7 +102,7 @@ int dz_tool_search(struct dz_ctx *c, const char *query, const char *folder,
             snprintf(p, sizeof p, "%s%s", home, folder + 1);
         else
             snprintf(p, sizeof p, "%s", folder);
-        if (!realpath(p, dir)) {
+        if (!janas_path_real(p, dir)) {
             janas_buf_printf(o, "%s: %s", folder, strerror(errno));
             return -1;
         }
@@ -233,7 +234,7 @@ int dz_tool_status(struct dz_ctx *c, struct janas_buf *o)
         }
         /* the list an app gave (JANAS_DOCS_DIRS), or the user's */
         const char *own = getenv("JANAS_DOCS_DIRS");
-        if (x->roots->listed && own && *own == '/')
+        if (x->roots->listed && own && janas_path_abs(own))
             janas_buf_printf(o, " (from %s).\n", own);
         else
             janas_buf_printf(o, " (%s).\n",

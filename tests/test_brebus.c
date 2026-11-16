@@ -9,13 +9,14 @@
  * conversations saved, listed, read and deleted, and the settings, with
  * bad ids and what is not a JSON object refused; exports, never over a
  * file; the logo; /v1 answered 503 while no model is loaded; and brebus
- * ending on SIGTERM. Linux only, as brebus.
+ * ending on SIGTERM. Linux only: its folders, links and signals are
+ * POSIX's (Brebus on Windows is tried by hand).
  */
 #ifndef __linux__
 #include <stdio.h>
 int main(void)
 {
-    printf("test_brebus: skipped, Brebus is built on Linux only\n");
+    printf("test_brebus: skipped, written for Linux\n");
     return 0;
 }
 #else

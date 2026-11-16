@@ -596,8 +596,13 @@ int janas_llm_model_forward(struct janas_llm_model *m, const int32_t *tokens,
        the results */
     int cls = janas_tune_class(n), cand = janas_tuner_pick(&m->tuner, cls);
     janas_m_apply_candidate(m, cand, n);
-    /* measured without the time spent waiting for experts read from disk:
-       it depends on the cache, not on the configuration */
+    /* a token measured without the time spent waiting for experts read
+       from disk: it depends on the cache, not on the configuration. Not a
+       block: there the side chosen - a card's whole pass or the CPU's - is
+       what reads, and how much (gpu_token_moe.c); without its wait the
+       whole pass was timed at 0.9 ms a token where it took 3.7, and kept
+       a prompt at 245-269 tokens/s on an RTX 5060 Ti that the CPU alone
+       read at 385-400 (issue #50, 16 Nov 2026) */
     struct janas_expert_cache_stats c0, c1;
     janas_expert_cache_stats(m->cache, &c0);
     double k0 = janas_llm_model_npu_compile_seconds(m), t0 = now();
@@ -612,7 +617,8 @@ int janas_llm_model_forward(struct janas_llm_model *m, const int32_t *tokens,
     double dt = now() - t0;
     janas_m_npu_pass_end(m);
     janas_expert_cache_stats(m->cache, &c1);
-    dt -= c1.wait_seconds - c0.wait_seconds;
+    if (n == 1)
+        dt -= c1.wait_seconds - c0.wait_seconds;
     /* nor the NPU's first compilation of a matrix: once a session */
     dt -= janas_llm_model_npu_compile_seconds(m) - k0;
     m->last_pass_s = dt > 0 && !m->tuner.trying ? dt : 0;

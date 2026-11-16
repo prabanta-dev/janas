@@ -277,6 +277,10 @@ void janas_cpu_name(char *buf, size_t len)
     char *p = s;
     while (*p == ' ')
         p++;
+    /* AMD's is padded at its end with spaces ("...16-Core Processor    ") */
+    size_t n = strlen(p);
+    while (n && (p[n - 1] == ' ' || p[n - 1] == 0))
+        p[--n] = 0;
     snprintf(buf, len, "%s", p);
 }
 

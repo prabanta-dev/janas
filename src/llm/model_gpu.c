@@ -433,13 +433,17 @@ static void gtok_read_ahead(void *ctx, uint32_t layer, const uint32_t *ids,
     janas_expert_cache_prefetch(m->cache, layer, ids, n, m->pf_max);
 }
 
-static void gtok_prefetch(void *ctx, uint32_t layer)
+static void gtok_prefetch(void *ctx, uint32_t layer, const uint32_t *want,
+                          uint32_t n)
 {
     struct janas_llm_model *m = ctx;
     uint32_t ids[4096]; /* n_expert <= 4096, checked at load */
-    for (uint32_t e = 0; e < m->n_expert; e++)
-        ids[e] = e;
-    janas_expert_cache_prefetch(m->cache, layer, ids, m->n_expert, m->n_expert);
+    if (!want) {
+        for (uint32_t e = 0; e < m->n_expert; e++)
+            ids[e] = e;
+        want = ids, n = m->n_expert;
+    }
+    janas_expert_cache_prefetch(m->cache, layer, want, n, n);
 }
 
 /* qwen4exp's streams for the GPU: the mixes, the n-gram layer (its ring
@@ -935,9 +939,12 @@ static int build(struct janas_llm_model *m, char *err, size_t len)
         .fetch = moe ? gtok_fetch : NULL,
         .demote = moe && demote_on() ? gtok_demote : NULL,
         .routed = moe ? gtok_routed : NULL,
-        .prefetch = moe && janas_expert_cache_can_prefetch(m->cache)
-                        ? gtok_prefetch
-                        : NULL,
+        /* JANAS_PREFETCH_PREFILL=0 keeps a block's reads ahead off here
+           too, as on the CPU's path */
+        .prefetch =
+            moe && m->pfb_mode && janas_expert_cache_can_prefetch(m->cache)
+                ? gtok_prefetch
+                : NULL,
         /* JANAS_PREFETCH=0 keeps reads ahead off here too */
         .rank_ahead = moe && m->pf_mode && m->pf_rank &&
                               janas_expert_cache_can_prefetch(m->cache)
@@ -1060,8 +1067,12 @@ int janas_m_gpu_token(struct janas_llm_model *m, uint32_t pos, uint32_t n,
        bus between them gone (an Arc B580 read a prompt at 15.8 tokens/s
        with the products shared with the CPU, issue #43); JANAS_GPU_WHOLE=0
        as on an integrated GPU */
+    /* --prompt-on cpu (prompts_off_gpu) keeps a prompt's blocks off it
+       too: it kept only the fast prompt off, and a card's whole pass went
+       on taking them (issue #50) */
     int whole = janas_m_gpu_whole() && m->gpu &&
-                !janas_gpu_shares_host(m->gpu) && !m->lp_cpu;
+                !janas_gpu_shares_host(m->gpu) && !m->lp_cpu &&
+                !(n > 1 && m->prompts_off_gpu);
     if (!prompt && !short_pass && !whole && !(tok && (n == 1 || blocks > 0)))
         return -1;
     /* a recurrent model: the GPU replays first what forward() asks (the

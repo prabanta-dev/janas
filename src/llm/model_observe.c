@@ -71,10 +71,13 @@ void janas_m_obs_route(struct janas_llm_model *m, uint32_t l, uint32_t e,
             m->obs[i].route(m->obs[i].ctx, m, l, e, in_memory);
 }
 
-int janas_m_obs_layer_out(struct janas_llm_model *m, uint32_t l, const float *x,
+int janas_m_obs_layer_out(struct janas_llm_model *m, uint32_t l, float *x,
                           uint32_t n, uint32_t d)
 {
     int stop = 0;
+    for (uint32_t i = 0; i < m->n_obs; i++)
+        if (m->obs[i].layer_edit)
+            m->obs[i].layer_edit(m->obs[i].ctx, m, l, x, n, d);
     for (uint32_t i = 0; i < m->n_obs; i++)
         if (m->obs[i].layer_out)
             stop |= m->obs[i].layer_out(m->obs[i].ctx, m, l, x, n, d) != 0;

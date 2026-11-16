@@ -1724,6 +1724,10 @@ async function pick(file, title) {
 }
 function wsShow(open) {
   for (const b of document.querySelectorAll("button.browse")) b.hidden = !ws.window;
+  /* paths as this system writes them */
+  if (ws.windows)
+    for (const i of document.querySelectorAll('input[name="path"]'))
+      i.placeholder = i.placeholder.replace("/home/you/", "C:\\Users\\you\\").replaceAll("/", "\\");
   $("#wsbtn").textContent = ws.path ? "📁 " + ws.name : "Choose a folder";
   $("#wsbtn").title = ws.path || "The folder Brebus works in";
   $("#wsrecent").innerHTML = ws.recent.length

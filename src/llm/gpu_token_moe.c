@@ -376,10 +376,10 @@ int janas_gt_tier_fill(struct janas_gpu *g, struct janas_gpu_tok *t,
     const uint8_t *src[UP_SLOTS], *keep[UP_SLOTS];
     int32_t dst[UP_SLOTS];
     if (md->prefetch)
-        md->prefetch(md->ctx, 0);
+        md->prefetch(md->ctx, 0, NULL, 0);
     for (uint32_t l = 0; l < nl; l++) {
         if (md->prefetch && l + 1 < nl)
-            md->prefetch(md->ctx, l + 1);
+            md->prefetch(md->ctx, l + 1, NULL, 0);
         for (uint32_t e0 = 0; e0 < ne; e0 += UP_SLOTS) {
             uint32_t c = ne - e0 < UP_SLOTS ? ne - e0 : UP_SLOTS, m = 0;
             for (uint32_t i = 0; i < c; i++)
@@ -813,8 +813,19 @@ int janas_gt_run_segments(struct janas_gpu *g, struct janas_gpu_tok *t,
            layer's reads, and on Qwen3.6-35B, whose experts do not all fit,
            the cache found 79% of them instead of 87% and the prompt was
            no faster (10 Oct 2026) */
-        if (ahead && s + 1 < t->n_seg)
-            md->prefetch(md->ctx, s);
+        if (ahead && s + 1 < t->n_seg) {
+            /* those the card's tier does not hold: the ones it holds were
+               read again from the disk into slots of the cache in memory,
+               giving up others that the next block read again in turn -
+               on an RTX 5060 Ti a prompt went at 245-269 tokens/s, where
+               the CPU alone read it at 385-400 (issue #50, 16 Nov 2026) */
+            uint32_t want[4096], nw = 0; /* n_expert <= 4096, checked */
+            for (uint32_t e = 0; e < md->n_expert; e++)
+                if (!t->slot_of || t->slot_of[(size_t)s * md->n_expert + e] < 0)
+                    want[nw++] = e;
+            if (nw)
+                md->prefetch(md->ctx, s, want, nw);
+        }
         /* past the first: the segment's products of the experts, then the
            rest - the CPU computing its experts between the two
            submissions, the GPU its own (qwen4exp's streams whole) */

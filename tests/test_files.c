@@ -8,6 +8,16 @@
  * and that a file replaced or edited is kept first, a dangling link
  * replaced rather than followed, a folder listed in files-dirs.txt reached.
  */
+#ifdef _WIN32
+/* written for Linux: links, modes and times of POSIX's (janas-docs and
+   janas-files on Windows are tried by hand) */
+#include <stdio.h>
+int main(void)
+{
+    printf("test_files: skipped, written for Linux\n");
+    return 0;
+}
+#else
 #include <ftw.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -374,3 +384,4 @@ int main(void)
     printf("test_files: ok\n");
     return 0;
 }
+#endif

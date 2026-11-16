@@ -61,6 +61,62 @@ static int icon(const char *share, const char *size, const char *name,
     return 0;
 }
 
+#ifdef _WIN32
+/* Windows: the Start menu's entry is the installer's (or the zip's user
+   makes one); the icon is in brebus.exe (brebus.rc); Brebus at login is
+   the user's Run key, its server without a window */
+#include <windows.h>
+
+#define RUN_KEY "Software\\Microsoft\\Windows\\CurrentVersion\\Run"
+
+int brebus_install_desktop(int quiet)
+{
+    (void)write_file, (void)icon;
+    if (!quiet)
+        printf("brebus: on Windows the Start menu's entry comes with the "
+               "installer\n");
+    return 0;
+}
+
+int brebus_autostart_on(void)
+{
+    HKEY k;
+    if (RegOpenKeyExA(HKEY_CURRENT_USER, RUN_KEY, 0, KEY_READ, &k) != 0)
+        return 0;
+    int on = RegQueryValueExA(k, "Brebus", NULL, NULL, NULL, NULL) == 0;
+    RegCloseKey(k);
+    return on;
+}
+
+int brebus_autostart(int on)
+{
+    HKEY k;
+    if (RegCreateKeyExA(HKEY_CURRENT_USER, RUN_KEY, 0, NULL, 0, KEY_SET_VALUE,
+                        NULL, &k, NULL) != 0)
+        return -1;
+    int rc;
+    if (!on) {
+        LONG r = RegDeleteValueA(k, "Brebus");
+        rc = r == 0 || r == ERROR_FILE_NOT_FOUND ? 0 : -1;
+    } else {
+        char exe[4096], cmd[4200];
+        rc = -1;
+        if (janas_exe_path(exe, sizeof exe) > 0) {
+            for (char *c = exe; *c; c++)
+                if (*c == '/')
+                    *c = '\\';
+            int n = snprintf(cmd, sizeof cmd, "\"%s\" --no-open", exe);
+            rc = n > 0 && (size_t)n < sizeof cmd &&
+                         RegSetValueExA(k, "Brebus", 0, REG_SZ,
+                                        (const BYTE *)cmd, (DWORD)n + 1) == 0
+                     ? 0
+                     : -1;
+        }
+    }
+    RegCloseKey(k);
+    return rc;
+}
+#else
 int brebus_install_desktop(int quiet)
 {
     const char *home = getenv("HOME"), *xd = getenv("XDG_DATA_HOME");
@@ -172,3 +228,4 @@ int brebus_autostart(int on)
                ? 0
                : -1;
 }
+#endif

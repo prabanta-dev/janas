@@ -334,7 +334,8 @@ static void usage(void)
         "  --no-save        save no conversation (by default each is saved\n"
         "                   as it goes in ~/.local/share/janas/chats)\n"
         "  --tune           measure again how this model runs fastest on\n"
-        "                   this machine (asked once, on its first start)\n"
+        "                   this machine, the engine's saved choices for it\n"
+        "                   too (asked once, on its first start)\n"
         "  --no-tune        neither ask nor use that measure\n"
         "  --mtp <file>     multi-token prediction file: an MTP block or\n"
         "                   Gemma 4's assistant (faster replies); without\n"
@@ -2113,6 +2114,10 @@ int main(int argc, char **argv)
        it that fits (--no-mtp: none) */
     /* the measure of this model on this machine: a layer of its own over
        the catalog's, for the levers the user left alone */
+    /* --tune: the engine's own saved choices for the model measured again
+       too (JANAS_RETUNE, read when it opens) */
+    if (tune == 1)
+        setenv("JANAS_RETUNE", "1", 1);
     struct chat_tune_dims dims = {
         .spec = !spec_user,
         .head = profile && cm.entry && cm.entry->fast &&

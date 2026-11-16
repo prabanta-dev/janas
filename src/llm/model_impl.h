@@ -701,7 +701,7 @@ void janas_m_obs_ffn_pair(struct janas_llm_model *m, size_t g,
 void janas_m_obs_ffn_done(struct janas_llm_model *m, uint32_t n_rows);
 void janas_m_obs_route(struct janas_llm_model *m, uint32_t l, uint32_t e,
                        int in_memory);
-int janas_m_obs_layer_out(struct janas_llm_model *m, uint32_t l, const float *x,
+int janas_m_obs_layer_out(struct janas_llm_model *m, uint32_t l, float *x,
                           uint32_t n, uint32_t d);
 void janas_m_ana_lowmark(struct janas_llm_model *m, uint32_t n);
 void janas_m_ana_grade(struct janas_llm_model *m, const uint8_t *down,

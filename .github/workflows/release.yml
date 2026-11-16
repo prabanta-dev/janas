@@ -245,9 +245,20 @@ jobs:
           P="$WPACKAGE/janas"
           mkdir -p "$P/services" "$P/lib" "$P/include/janas" "$P/docs"
           for f in janas-chat janas-server janas-get janas-setup janas-bench janas-mcp \
-                   gguf2jns jns_planes hf2jns_mtp jns_check vkcheck gpu_check; do
+                   brebus gguf2jns jns_planes hf2jns_mtp jns_check vkcheck gpu_check; do
             install -m 755 "$B/$f.exe" "$P/"
           done
+          # Brebus's window: WebView2's loader beside brebus.exe, from
+          # Microsoft's SDK (src/third_party/webview2/README.md), checked
+          curl -sfL -o wv2.nupkg \
+            https://www.nuget.org/api/v2/package/Microsoft.Web.WebView2/1.0.4314.35
+          echo "90778deb1b77e36292828b4b5833c9255c27533f40e0ddd55891ae718944edc4  wv2.nupkg" |
+            sha256sum -c -
+          unzip -q -j wv2.nupkg build/native/x64/WebView2Loader.dll -d "$P/"
+          echo "d3fce90bdeecb08596e377dea6a316354dd8949e32ff09b89d51be00c14e21b6  $P/WebView2Loader.dll" |
+            sha256sum -c -
+          install -m 644 src/third_party/webview2/LICENSE.txt "$P/LICENSE-WebView2.txt"
+          rm -f wv2.nupkg
           for s in src/services/*/; do
             s=$(basename "$s")
             [ "$s" = common ] && continue

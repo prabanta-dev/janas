@@ -27,7 +27,8 @@ static int make_dirs(const char *path)
 {
     char p[PATH_MAX];
     snprintf(p, sizeof p, "%s", path);
-    for (char *s = p + 1; *s; s++)
+    /* from the first folder: "C:/" is a drive's, there already */
+    for (char *s = p + (p[0] && p[1] == ':' && p[2] ? 3 : 1); *s; s++)
         if (*s == '/') {
             *s = 0;
             if (mkdir(p, 0755) != 0 && errno != EEXIST)
@@ -51,9 +52,20 @@ static int keep_copy(const struct fl_roots *r, const char *path, char *out,
     localtime_r(&now, &tm);
     char stamp[32];
     strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", &tm);
+    /* its place under the home, or its whole path (a drive's ':' out of
+       it on Windows: "C:/x" kept as "C/x") */
     size_t h = strlen(r->home);
-    const char *rel =
-        !strncmp(path, r->home, h) && path[h] == '/' ? path + h + 1 : path + 1;
+    char rel[PATH_MAX];
+    if (!strncmp(path, r->home, h) && path[h] == '/')
+        snprintf(rel, sizeof rel, "%s", path + h + 1);
+    else {
+        size_t k = 0;
+        for (const char *c = path + (path[0] == '/'); *c && k + 1 < sizeof rel;
+             c++)
+            if (*c != ':')
+                rel[k++] = *c;
+        rel[k] = 0;
+    }
     if ((size_t)snprintf(out, cap, "%s/.local/share/janas/files-backup/%s/%s",
                          r->home, stamp, rel) >= cap) {
         close(in);
@@ -130,7 +142,8 @@ static int make_parent(const struct fl_roots *r, const char *in, char *why,
         return 0;
     *slash = 0;
     /* each missing part, from the first, judged before it is made */
-    for (char *s = full + 1;; s++) {
+    for (char *s = full + (full[0] && full[1] == ':' && full[2] ? 3 : 1);;
+         s++) {
         int end = *s == 0;
         if (*s == '/' || end) {
             *s = 0;

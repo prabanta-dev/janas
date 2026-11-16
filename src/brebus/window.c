@@ -9,6 +9,7 @@
  * opens the page in the browser instead. Links to other sites open in
  * the browser; the window closed, Brebus ends.
  */
+#ifndef _WIN32 /* window_win.c there */
 #include <dlfcn.h>
 #include <pthread.h>
 #include <locale.h>
@@ -314,3 +315,5 @@ int brebus_window(const char *url, volatile sig_atomic_t *quit, char *why,
     pthread_mutex_unlock(&pick_mu);
     return 0;
 }
+
+#endif

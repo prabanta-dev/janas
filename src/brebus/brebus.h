@@ -12,6 +12,7 @@
 
 #include <stddef.h>
 
+#include "common/paths.h"
 #include "llm/json.h"
 
 #include <pthread.h>
@@ -226,6 +227,17 @@ int brebus_models_dir_set(struct brebus *b, const char *path, int save);
    (~/.config/autostart/brebus.desktop), on or off; whether it is */
 int brebus_autostart(int on);
 int brebus_autostart_on(void);
+
+/* The programs Brebus starts (janas-server, janas-get, a document's
+   extraction) have no console of their own on Windows: Brebus is a
+   window's program, and each would get a new console, a window of its own
+   - and janas-server's output did not reach server.log (Windows 11, 16 Nov
+   2026). Nothing elsewhere. */
+#ifdef _WIN32
+#define BREBUS_NO_CONSOLE JANAS_PROC_DETACHED
+#else
+#define BREBUS_NO_CONSOLE 0
+#endif
 
 /* tools.c: where janas-<name> is, into out: in services/ beside brebus (the
    binary package), else beside it */

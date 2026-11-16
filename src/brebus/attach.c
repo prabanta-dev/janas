@@ -103,8 +103,8 @@ static int text_of(struct brebus *b, const char *path, struct janas_buf *t,
     const char *argv[] = {exe, "--text", path, NULL};
     struct janas_proc p;
     int in = janas_null_fd(0);
-    int rc =
-        janas_proc_start(&p, argv, NULL, NULL, in, fd[1], err[1], 0, why, wn);
+    int rc = janas_proc_start(&p, argv, NULL, NULL, in, fd[1], err[1],
+                              BREBUS_NO_CONSOLE, why, wn);
     if (in >= 0)
         close(in);
     close(fd[1]);
@@ -360,19 +360,17 @@ int brebus_attach(struct brebus *b, const char *body, size_t n,
     }
     char real[4096];
     struct stat st;
-    if (source[0] != '/' || !realpath(source, real) || stat(real, &st) != 0 ||
+    if (!janas_path_real(source, real) || stat(real, &st) != 0 ||
         !S_ISREG(st.st_mode))
         return fail(out, "a file of this computer by its full path, or a "
                          "web address");
     if (info) { /* its size, for the page to ask copy or read in place */
-        janas_buf_printf(
-            out, "{\"bytes\": %lld, \"inside\": %s}", (long long)st.st_size,
-            !strncmp(real, ws, strlen(ws)) && real[strlen(ws)] == '/'
-                ? "true"
-                : "false");
+        janas_buf_printf(out, "{\"bytes\": %lld, \"inside\": %s}",
+                         (long long)st.st_size,
+                         janas_path_in(real, ws) ? "true" : "false");
         return 0;
     }
-    if (!strncmp(real, ws, strlen(ws)) && real[strlen(ws)] == '/') {
+    if (janas_path_in(real, ws)) {
         answer(b, real, out); /* in the workspace already */
         return 0;
     }

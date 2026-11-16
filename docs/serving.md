@@ -19,7 +19,7 @@ What has been run: a probe script speaking each era to it with Qwen3-0.6B and Qw
 bin/x86_64-linux/janas-server qwen3-next.jns
 ```
 
-`janas-server` puts the model behind an HTTP API that follows [OpenAI's](https://github.com/openai/openai-openapi), on `http://127.0.0.1:8080/v1`, so that a client written for that API can use a model running on this machine. It takes the model options `janas-chat` takes (`--ctx`, `--cache`, `--reserve`, `--mtp`, `--draft`, `--mode`, `--no-gpu`, `--prompt-on`, `--drafts-on`, `--reply-on`, `--npu-int8`) and these:
+`janas-server` puts the model behind an HTTP API that follows [OpenAI's](https://github.com/openai/openai-openapi), on `http://127.0.0.1:8080/v1`, so that a client written for that API can use a model running on this machine. It takes the model options `janas-chat` takes (`--ctx`, `--cache`, `--reserve`, `--mtp`, `--draft`, `--mode`, `--no-gpu`, `--prompt-on`, `--drafts-on`, `--reply-on`, `--npu-int8`), `--retune` (the engine's saved choices for the model left aside and measured again, as `janas-chat --tune` does) and these:
 
 | Option | |
 |---|---|

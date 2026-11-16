@@ -61,6 +61,8 @@ static void usage(FILE *f)
         "                    in memory left out, medium four bits only,\n"
         "                    high nothing lowered\n"
         "  --no-gpu          never give the GPU work\n"
+        "  --retune          measure again how this model runs fastest\n"
+        "                    here, the choices saved for it left aside\n"
         "  --prompt-on DEV   what reads the prompts: auto (default: what\n"
         "                    measures fastest here), cpu, gpu, npu, npu+gpu\n"
         "                    (both in each pass), or a list apart by commas\n"
@@ -198,6 +200,7 @@ static const char *const OPTIONS[] = {"--help",
                                       "--reasoning-budget",
                                       "--no-mtp",
                                       "--no-gpu",
+                                      "--retune",
                                       "--keep",
                                       "--keep-memory",
                                       "--keep-disk",
@@ -376,6 +379,8 @@ int main(int argc, char **argv)
             c->no_mtp = 1;
         } else if (!strcmp(a, "--no-gpu")) {
             c->no_gpu = 1;
+        } else if (!strcmp(a, "--retune")) {
+            setenv("JANAS_RETUNE", "1", 1); /* read when the model opens */
         } else if (!strcmp(a, "--npu-int8")) {
             setenv("JANAS_NPU_A8", "1", 1); /* read when the model opens */
         } else if (!strcmp(a, "--keep")) {

@@ -43,6 +43,8 @@ static void documents(char *dir, size_t n)
 {
     const char *home = getenv("HOME"), *xc = getenv("XDG_CONFIG_HOME");
     char conf[4200], line[1024];
+    if (janas_known_dir(0, dir, n) == 0)
+        return;
     if (!home)
         home = ".";
     if (xc && *xc == '/')
@@ -74,10 +76,10 @@ static void documents(char *dir, size_t n)
 /* a folder too wide to be one: the home, / */
 static int too_wide(const char *real)
 {
-    char home[PATH_MAX];
+    char home[4096];
     const char *h = getenv("HOME");
-    return !strcmp(real, "/") ||
-           (h && realpath(h, home) && !strcmp(real, home));
+    return janas_path_root(real) ||
+           (h && janas_path_real(h, home) && !strcmp(real, home));
 }
 
 static void recent_file(const struct brebus *b, char *p, size_t n)
@@ -159,9 +161,15 @@ static void move_old_chats(struct brebus *b, const char *ws)
 int brebus_ws_open(struct brebus *b, const char *path, int create, char *why,
                    size_t wn)
 {
-    char real[PATH_MAX], sub[PATH_MAX + 32];
-    if (!path || *path != '/') {
-        snprintf(why, wn, "a folder by its full path, as /home/...");
+    char real[4096], sub[4096 + 32];
+    if (!janas_path_abs(path)) {
+        snprintf(why, wn, "a folder by its full path, as %s",
+#ifdef _WIN32
+                 "C:/Users/..."
+#else
+                 "/home/..."
+#endif
+        );
         return -1;
     }
     if (create && janas_mkdirs(path) != 0) {
@@ -169,7 +177,8 @@ int brebus_ws_open(struct brebus *b, const char *path, int create, char *why,
         return -1;
     }
     struct stat st;
-    if (!realpath(path, real) || stat(real, &st) != 0 || !S_ISDIR(st.st_mode)) {
+    if (!janas_path_real(path, real) || stat(real, &st) != 0 ||
+        !S_ISDIR(st.st_mode)) {
         snprintf(why, wn, "%s is not a folder", path);
         return -1;
     }
@@ -227,8 +236,14 @@ void brebus_ws_status(struct brebus *b, struct janas_buf *out)
     janas_buf_puts(out, ", \"new_in\": ");
     snprintf(rp, sizeof rp, "%s/Brebus", docs);
     str(out, rp);
-    janas_buf_printf(out, ", \"window\": %s",
-                     brebus_window_on() ? "true" : "false");
+    janas_buf_printf(out, ", \"window\": %s, \"windows\": %s",
+                     brebus_window_on() ? "true" : "false",
+#ifdef _WIN32
+                     "true"
+#else
+                     "false"
+#endif
+    );
     janas_buf_puts(out, ", \"recent\": [");
     recent_file(b, rp, sizeof rp);
     struct janas_buf f = {0};

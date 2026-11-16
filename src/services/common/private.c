@@ -9,6 +9,14 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
+
+/* Windows's paths are the same whatever the case of their letters */
+#ifdef _WIN32
+#define same_n strncasecmp
+#else
+#define same_n strncmp
+#endif
 
 /* Private, under the home: these folders and files and all they hold. */
 static const char *const PRIVATE[] = {
@@ -49,6 +57,11 @@ static const char *const PRIVATE[] = {
     ".lesshst",
     ".local/share/fish/fish_history",
     ".local/share/recently-used.xbel",
+#ifdef _WIN32
+    /* the applications' data: browsers' profiles, keys, credentials */
+    "AppData",
+    "NTUSER.DAT",
+#endif
 };
 
 /* Private by their name, anywhere: environment files, private keys. */
@@ -68,7 +81,7 @@ int janas_path_under(const char *path, const char *root)
     size_t n = strlen(root);
     if (n > 1 && root[n - 1] == '/')
         n--;
-    return strncmp(path, root, n) == 0 && (path[n] == 0 || path[n] == '/');
+    return same_n(path, root, n) == 0 && (path[n] == 0 || path[n] == '/');
 }
 
 /* s matches pattern p, whose '*' stand for any run of characters */
@@ -96,7 +109,7 @@ int janas_private_path(const char *home, const char *path)
         const char *rel = path + hn + (path[hn] == '/');
         for (size_t i = 0; i < sizeof PRIVATE / sizeof PRIVATE[0]; i++) {
             size_t n = strlen(PRIVATE[i]);
-            if (!strncmp(rel, PRIVATE[i], n) && (!rel[n] || rel[n] == '/'))
+            if (!same_n(rel, PRIVATE[i], n) && (!rel[n] || rel[n] == '/'))
                 return 1;
         }
     }

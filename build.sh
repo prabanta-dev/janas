@@ -204,7 +204,7 @@ LDLIBS=(-lm)
 # Windows: the system's sockets, random numbers, network interfaces and
 # processes; the C runtime and the threads of MinGW linked in, so that a
 # program needs no DLL beyond Windows's own
-WIN_LIBS=(-lws2_32 -lbcrypt -liphlpapi -lpsapi -lshell32 -lole32 -lwevtapi
+WIN_LIBS=(-lws2_32 -lbcrypt -liphlpapi -lpsapi -lshell32 -lole32 -luuid -lwevtapi
     -lwlanapi -ladvapi32 -lpowrprof -lcrypt32 -lsetupapi)
 [ "$OS" = windows ] && LDLIBS+=("${WIN_LIBS[@]}")
 # Extra flags, for trying a compiler out: JANAS_CFLAGS="-O3 -flto" ./build.sh.
@@ -562,8 +562,10 @@ tp_objs=()
 tp_libs=0
 for d in src/third_party/*/; do
     [ -d "$d" ] || continue
-    tp_libs=$((tp_libs + 1))
     lib=$(basename "$d")
+    # WebView2's is a header only, read by Brebus's window on Windows
+    [ "$lib" = webview2 ] && continue
+    tp_libs=$((tp_libs + 1))
     flags=$(tp_flags "$lib") || exit 2
     # shellcheck disable=SC2206
     extra=($flags)
@@ -695,20 +697,29 @@ THIRD=()
 START=()
 if [ "$OS" = windows ]; then
     compile src/common/win_start.c "$OBJ/win_start.o" "${CFLAGS[@]}"
+    # MSYS2's MINGW64 has windres unprefixed only (binutils 2.47:
+    # windres.exe alone, issue #64), a Linux cross toolchain prefixed
+    wr=${WINDRES:-x86_64-w64-mingw32-windres}
+    if ! command -v "$wr" >/dev/null 2>&1 && [ -z "${WINDRES:-}" ] &&
+        command -v windres >/dev/null 2>&1; then
+        wr=windres
+    fi
     res="$OBJ/janas_res.o"
     if [ ! -f "$res" ] || [ src/common/win/janas.manifest -nt "$res" ] ||
         [ src/common/win/janas.rc -nt "$res" ]; then
         echo "RC  src/common/win/janas.rc"
-        # MSYS2's MINGW64 has it unprefixed only (binutils 2.47: windres.exe
-        # alone, issue #64), a Linux cross toolchain prefixed
-        wr=${WINDRES:-x86_64-w64-mingw32-windres}
-        if ! command -v "$wr" >/dev/null 2>&1 && [ -z "${WINDRES:-}" ] &&
-            command -v windres >/dev/null 2>&1; then
-            wr=windres
-        fi
         "$wr" -i src/common/win/janas.rc -I src/common/win -O coff -o "$res"
     fi
     START=("$OBJ/win_start.o" "$res")
+    # brebus.exe: its own icon beside the manifest (src/brebus/brebus.rc)
+    bres="$OBJ/brebus_res.o"
+    if [ ! -f "$bres" ] || [ src/brebus/brebus.rc -nt "$bres" ] ||
+        [ src/brebus/icons/brebus.ico -nt "$bres" ] ||
+        [ src/common/win/janas.manifest -nt "$bres" ]; then
+        echo "RC  src/brebus/brebus.rc"
+        "$wr" -i src/brebus/brebus.rc -I src/brebus -I src/common/win \
+            -O coff -o "$bres"
+    fi
 fi
 
 # test and benchmark programs, and the C tools
@@ -718,12 +729,6 @@ for src in tests/*.c tools/*.c src/*/main.c src/services/*/main.c; do
         echo "build.sh: no sources match $src" >&2
         exit 2
     fi
-    # janas-files and janas-docs read POSIX paths (links, the home's
-    # private folders): not on Windows yet, where a path is another thing
-    [ "$OS" = windows ] && case "$src" in
-    src/services/files/main.c | tests/test_files.c | \
-        src/services/docs/main.c | tests/test_docs.c | src/brebus/main.c) continue ;;
-    esac
     exe="$BIN/$(basename "${src%.c}")$SUFFIX$EXE"
     own=()
     if [ "$(basename "$src")" = main.c ]; then
@@ -741,11 +746,19 @@ for src in tests/*.c tools/*.c src/*/main.c src/services/*/main.c; do
             extra=()
             [ "$c" = src/server/tls.c ] &&
                 extra=("${MBEDTLS_INC[@]/#-I/-isystem}")
+            # Brebus's window on Windows reads WebView2's header, as the
+            # system's (src/third_party/webview2)
+            [ "$c" = src/brebus/window_win.c ] &&
+                extra=(-isystem src/third_party/webview2)
             compile "$c" "$obj" "${CFLAGS[@]}" "${TP_INC[@]}" "${extra[@]}"
         done < <(sort <<<"$own_list")
     fi
     echo "LD  $exe"
-    "$CC" "${CFLAGS[@]}" "${TP_INC[@]}" "$src" "${own[@]}" "${START[@]}" \
+    start=("${START[@]}")
+    # brebus.exe on Windows: a window's program, no console; its own icon
+    [ "$OS" = windows ] && [ "$src" = src/brebus/main.c ] &&
+        start=("$OBJ/win_start.o" "$OBJ/brebus_res.o" -mwindows)
+    "$CC" "${CFLAGS[@]}" "${TP_INC[@]}" "$src" "${own[@]}" "${start[@]}" \
         "$OBJ/libjanas.a" "${THIRD[@]}" "${LDSTATIC[@]}" "${LDLIBS[@]}" -o "$exe"
 done
 

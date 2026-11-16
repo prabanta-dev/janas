@@ -22,6 +22,10 @@
 #include <unistd.h>
 
 #include "brebus.h"
+#ifdef _WIN32
+#include <windows.h>
+#include <shellapi.h>
+#endif
 #include "common/catalog.h"
 #include "common/mcp_services.h"
 #include "janas/mcp.h"
@@ -75,8 +79,9 @@ static int read_only(const char *ws, char dirs[][4096], int max)
          e && n < max; e = e->next) {
         const char *s = janas_json_str(e);
         struct stat st;
-        if (s && *s == '/' && strlen(s) < 4096 && !strchr(s, ':') &&
-            !strchr(s, '\n') && stat(s, &st) == 0)
+        if (s && janas_path_abs(s) && strlen(s) < 4096 &&
+            !strchr(s, JANAS_PATH_LIST_SEP) && !strchr(s, '\n') &&
+            stat(s, &st) == 0)
             snprintf(dirs[n++], 4096, "%s", s);
     }
     janas_json_free(d);
@@ -209,8 +214,8 @@ int brebus_tools_start(struct brebus *b)
     static char roj[MAX_RO * 4097 + 64];
     size_t k = (size_t)snprintf(roj, sizeof roj, "JANAS_FILES_READ_ONLY=");
     for (int i = 0; i < n && k < sizeof roj; i++)
-        k += (size_t)snprintf(roj + k, sizeof roj - k, "%s%s", i ? ":" : "",
-                              ro[i]);
+        k += (size_t)snprintf(roj + k, sizeof roj - k, "%s%s",
+                              i ? JANAS_PATH_LIST_SEP_S : "", ro[i]);
     char e_ws[4200];
     snprintf(e_ws, sizeof e_ws, "JANAS_FILES_WORKSPACE=%s", ws);
     const char *fenv[] = {e_ws, roj};
@@ -427,8 +432,8 @@ int brebus_folders_set(struct brebus *b, const char *body, size_t n,
         struct stat st;
         /* a folder or a file there is, by its full path, outside the
            workspace (which is reached already) */
-        if (!s || *s != '/' || !realpath(s, real) || stat(real, &st) != 0 ||
-            strchr(real, ':') || !strcmp(real, "/")) {
+        if (!janas_path_real(s, real) || stat(real, &st) != 0 ||
+            strchr(real, JANAS_PATH_LIST_SEP) || janas_path_root(real)) {
             bad = 1;
             continue;
         }
@@ -468,20 +473,15 @@ int brebus_file(struct brebus *b, const char *path, struct janas_buf *out,
     char ws[4096], real[4096];
     static char ro[MAX_RO][4096];
     struct stat st;
-    if (!path || *path != '/' || brebus_ws_path(b, ws, sizeof ws) != 0 ||
-        !realpath(path, real) || stat(real, &st) != 0 || !S_ISREG(st.st_mode) ||
-        st.st_size > (32 << 20))
+    if (brebus_ws_path(b, ws, sizeof ws) != 0 || !janas_path_real(path, real) ||
+        stat(real, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size > (32 << 20))
         return -1;
     /* under the workspace (not its .brebus/), or one of its folders */
     size_t wl = strlen(ws);
-    int in = !strncmp(real, ws, wl) && real[wl] == '/' &&
-             strncmp(real + wl, "/.brebus/", 9);
+    int in = janas_path_in(real, ws) && strncmp(real + wl, "/.brebus/", 9);
     int n = read_only(ws, ro, MAX_RO);
-    for (int i = 0; i < n && !in; i++) {
-        size_t l = strlen(ro[i]);
-        in = !strcmp(real, ro[i]) ||
-             (!strncmp(real, ro[i], l) && real[l] == '/');
-    }
+    for (int i = 0; i < n && !in; i++)
+        in = !strcmp(real, ro[i]) || janas_path_in(real, ro[i]);
     if (!in)
         return -1;
     FILE *f = fopen(real, "rb");
@@ -502,15 +502,19 @@ int brebus_file(struct brebus *b, const char *path, struct janas_buf *out,
 int brebus_open_path(struct brebus *b, const char *path)
 {
     char ws[4096], real[4096];
-    if (!path || *path != '/' || brebus_ws_path(b, ws, sizeof ws) != 0 ||
-        !realpath(path, real))
+    if (brebus_ws_path(b, ws, sizeof ws) != 0 || !janas_path_real(path, real))
         return -1;
     size_t wl = strlen(ws);
-    if (strncmp(real, ws, wl) || real[wl] != '/' ||
-        !strncmp(real + wl, "/.brebus/", 9))
+    if (!janas_path_in(real, ws) || !strncmp(real + wl, "/.brebus/", 9))
         return -1;
     /* the system's own program for it: a page as a file of its own, never
        with Brebus's origin */
+#ifdef _WIN32
+    return (INT_PTR)ShellExecuteA(NULL, "open", real, NULL, NULL,
+                                  SW_SHOWNORMAL) > 32
+               ? 0
+               : -1;
+#endif
     const char *argv[] = {"xdg-open", real, NULL};
     struct janas_proc p;
     char why[200];

@@ -376,7 +376,12 @@ static int tuning_path(char *path, size_t len, int create)
 void janas_tuner_load(struct janas_tuner *t, const char *key)
 {
     char path[1024], line[1024];
-    if (t->fixed || tuning_path(path, sizeof(path), 0) != 0)
+    /* JANAS_RETUNE=1 (janas-chat --tune, janas-server and janas-bench
+       --retune): this model's saved choices left aside, measured again,
+       and saved over them */
+    const char *re = getenv("JANAS_RETUNE");
+    if (t->fixed || (re && atoi(re) == 1) ||
+        tuning_path(path, sizeof(path), 0) != 0)
         return;
     FILE *f = fopen(path, "r");
     if (!f)

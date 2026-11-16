@@ -163,8 +163,9 @@ int brebus_get_start(struct brebus *b, const char *body, size_t n,
         return fail(out, "no pipe for janas-get");
     }
     int in = janas_null_fd(0);
-    int rc = janas_proc_start(&g->proc, argv, NULL, NULL, in, fd[1], fd[1],
-                              JANAS_PROC_GROUP, err, sizeof err);
+    int rc =
+        janas_proc_start(&g->proc, argv, NULL, NULL, in, fd[1], fd[1],
+                         JANAS_PROC_GROUP | BREBUS_NO_CONSOLE, err, sizeof err);
     if (in >= 0)
         close(in);
     close(fd[1]);

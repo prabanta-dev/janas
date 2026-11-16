@@ -3,22 +3,101 @@
 /*
  * win_posix.c - the functions behind the headers of src/common/win/, which
  * stand in for POSIX's on Windows: statvfs, getrusage, uname, getrandom,
- * dlopen, and poll over sockets, pipes and the console. Nothing on other
+ * dlopen, setpriority, fnmatch, fsync, and poll over sockets, pipes and
+ * the console. Nothing on other
  * systems.
  */
 #ifdef _WIN32
 #include "win/dlfcn.h"
+#include "win/fnmatch.h"
 #include "win/sys/random.h"
 #include "win/sys/resource.h"
 #include "win/sys/statvfs.h"
 #include "win/sys/utsname.h"
 #include "win/win_sockets.h"
 
+#include <ctype.h>
+#include <io.h>
 #include <windows.h>
 #include <bcrypt.h>
 #include <psapi.h>
 
 #undef poll
+
+int setpriority(int which, int who, int nice)
+{
+    (void)which, (void)who;
+    DWORD c = nice > 10  ? IDLE_PRIORITY_CLASS
+              : nice > 0 ? BELOW_NORMAL_PRIORITY_CLASS
+                         : NORMAL_PRIORITY_CLASS;
+    return SetPriorityClass(GetCurrentProcess(), c) ? 0 : -1;
+}
+
+int janas_fsync(int fd)
+{
+    return _commit(fd);
+}
+
+static int fold(int c, int flags)
+{
+    return flags & FNM_CASEFOLD ? tolower((unsigned char)c) : c;
+}
+
+int fnmatch(const char *p, const char *s, int flags)
+{
+    for (;; p++, s++) {
+        switch (*p) {
+        case 0:
+            return *s ? FNM_NOMATCH : 0;
+        case '?':
+            if (!*s)
+                return FNM_NOMATCH;
+            break;
+        case '*':
+            while (*p == '*')
+                p++;
+            if (!*p)
+                return 0;
+            for (; *s; s++)
+                if (fnmatch(p, s, flags) == 0)
+                    return 0;
+            return FNM_NOMATCH;
+        case '[': {
+            if (!*s)
+                return FNM_NOMATCH;
+            const char *q = p + 1;
+            int neg = *q == '!' || *q == '^', hit = 0;
+            if (neg)
+                q++;
+            /* a ']' first is one of the set */
+            for (int first = 1; *q && (*q != ']' || first); q++, first = 0) {
+                if (q[1] == '-' && q[2] && q[2] != ']') {
+                    hit |= fold(*s, flags) >= fold(*q, flags) &&
+                           fold(*s, flags) <= fold(q[2], flags);
+                    q += 2;
+                } else
+                    hit |= fold(*q, flags) == fold(*s, flags);
+            }
+            if (!*q) { /* no closing ']': the '[' as itself */
+                if (*s != '[')
+                    return FNM_NOMATCH;
+                break;
+            }
+            if (hit == neg)
+                return FNM_NOMATCH;
+            p = q;
+            break;
+        }
+        case '\\':
+            if (!(flags & FNM_NOESCAPE) && p[1])
+                p++;
+            /* fall through */
+        default:
+            if (fold(*p, flags) != fold(*s, flags))
+                return FNM_NOMATCH;
+        }
+    }
+}
 
 static int volume_room(const char *path, struct statvfs *s)
 {

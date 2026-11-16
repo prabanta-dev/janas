@@ -237,12 +237,14 @@ void janas_m_init_tuner(struct janas_llm_model *m)
     janas_tuner_allow(&m->tuner, 0, on[2]);
     /* the saved choices of this machine and model; "1g" in the key when
        the GPU may take replies, so that choices saved without it do not
-       stand in for the tries */
+       stand in for the tries; "v3" since blocks are timed with their
+       waits for the disk (model.c), which choices timed without are not
+       comparable to */
     char cpu[128], name[128] = "";
     janas_cpu_name(cpu, sizeof(cpu));
     janas_jns_meta_str(&m->j, "general.name", name, sizeof(name));
     int w =
-        snprintf(m->tune_key, sizeof(m->tune_key), "v2|%s|%d/%d/%d|%s%s%s|%s|",
+        snprintf(m->tune_key, sizeof(m->tune_key), "v3|%s|%d/%d/%d|%s%s%s|%s|",
                  cpu, m->p_cores, m->p_threads, m->all_threads,
                  m->gpu && !m->gpu_off ? janas_gpu_name(m->gpu) : "no GPU",
                  one ? " 1g" : "", fast ? " f" : "", name);

@@ -12,6 +12,16 @@
  * the test's own, whose vectors make the search by meaning, and whose
  * model, changed, makes the vectors again.
  */
+#ifdef _WIN32
+/* written for Linux: links, modes and times of POSIX's (janas-docs and
+   janas-files on Windows are tried by hand) */
+#include <stdio.h>
+int main(void)
+{
+    printf("test_docs: skipped, written for Linux\n");
+    return 0;
+}
+#else
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <ftw.h>
@@ -1106,3 +1116,4 @@ int main(void)
     printf("test_docs: %s\n", failures ? "FAILED" : "ok");
     return failures != 0;
 }
+#endif

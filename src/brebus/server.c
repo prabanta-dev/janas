@@ -22,9 +22,15 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <fcntl.h>
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <iphlpapi.h>
+#else
 #include <ifaddrs.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#endif
 
 #include "brebus.h"
 #include "common/mcp_http.h"
@@ -107,6 +113,37 @@ static void server_settings(struct brebus *b, int *lan, char *key, size_t kn,
 static void lan_address(char *ip, size_t n)
 {
     ip[0] = 0;
+#ifdef _WIN32
+    /* the adapters that are up, their unicast IPv4 addresses */
+    ULONG sz = 16384;
+    IP_ADAPTER_ADDRESSES *all = malloc(sz);
+    if (all &&
+        GetAdaptersAddresses(AF_INET,
+                             GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST |
+                                 GAA_FLAG_SKIP_DNS_SERVER,
+                             NULL, all, &sz) == ERROR_BUFFER_OVERFLOW) {
+        free(all);
+        all = malloc(sz);
+    }
+    if (all &&
+        GetAdaptersAddresses(AF_INET,
+                             GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST |
+                                 GAA_FLAG_SKIP_DNS_SERVER,
+                             NULL, all, &sz) == NO_ERROR)
+        for (IP_ADAPTER_ADDRESSES *a = all; a && !ip[0]; a = a->Next) {
+            if (a->OperStatus != IfOperStatusUp ||
+                a->IfType == IF_TYPE_SOFTWARE_LOOPBACK)
+                continue;
+            for (IP_ADAPTER_UNICAST_ADDRESS *u = a->FirstUnicastAddress;
+                 u && !ip[0]; u = u->Next) {
+                struct sockaddr_in *s =
+                    (struct sockaddr_in *)u->Address.lpSockaddr;
+                if (s->sin_family == AF_INET)
+                    inet_ntop(AF_INET, &s->sin_addr, ip, (socklen_t)n);
+            }
+        }
+    free(all);
+#else
     struct ifaddrs *all, *i;
     if (getifaddrs(&all) != 0)
         return;
@@ -119,6 +156,7 @@ static void lan_address(char *ip, size_t n)
         inet_ntop(AF_INET, &a, ip, (socklen_t)n);
     }
     freeifaddrs(all);
+#endif
 }
 
 static void stop_locked(struct brebus *b)
@@ -222,8 +260,9 @@ int brebus_server_start(struct brebus *b, const char *body, size_t n,
     /* the key in its environment, or none: not one Brebus was started with */
     snprintf(env_key, sizeof env_key, "JANAS_API_KEY=%s", b->srv_key);
     const char *env[] = {env_key, NULL};
-    int rc = janas_proc_start(&b->srv, argv, env, NULL, -1, fd, fd,
-                              JANAS_PROC_GROUP, err, sizeof err);
+    int rc =
+        janas_proc_start(&b->srv, argv, env, NULL, -1, fd, fd,
+                         JANAS_PROC_GROUP | BREBUS_NO_CONSOLE, err, sizeof err);
     if (fd >= 0)
         close(fd);
     if (rc != 0) {
@@ -359,9 +398,8 @@ int brebus_models_dir_set(struct brebus *b, const char *path, int save)
 {
     char real[4096];
     struct stat st;
-    if (!path || *path != '/' || !realpath(path, real) ||
-        stat(real, &st) != 0 || !S_ISDIR(st.st_mode) ||
-        strlen(real) >= sizeof b->models_dir)
+    if (!janas_path_real(path, real) || stat(real, &st) != 0 ||
+        !S_ISDIR(st.st_mode) || strlen(real) >= sizeof b->models_dir)
         return -1;
     pthread_mutex_lock(&b->mu);
     snprintf(b->models_dir, sizeof b->models_dir, "%s", real);

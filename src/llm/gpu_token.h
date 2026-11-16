@@ -154,10 +154,12 @@ struct janas_gpu_tok_model {
     /* the experts just copied into the card's tier, which the cache may
        give up first (or NULL): the card's memory added to the machine's */
     void (*demote)(void *ctx, uint32_t layer, const uint32_t *ids, size_t n);
-    /* reads every expert of the layer that is not in the cache, while the
-       caller goes on (or NULL): a block of many tokens chooses nearly all
-       of them, so none is read for nothing */
-    void (*prefetch)(void *ctx, uint32_t layer);
+    /* reads the experts of the layer in ids (NULL: every one) that are not
+       in the cache, while the caller goes on (or NULL): a block of many
+       tokens chooses nearly all of them, so none is read for nothing - but
+       those the card's tier holds are not asked (gpu_token_moe.c) */
+    void (*prefetch)(void *ctx, uint32_t layer, const uint32_t *ids,
+                     uint32_t n);
     /* a single token's next layer read ahead (or NULL), as the CPU's path
        does (model_ffn.c janas_m_prefetch): rank_ahead puts in ids the k
        experts layer + 1's router likes best from layer's normalized input

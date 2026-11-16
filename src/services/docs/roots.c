@@ -14,6 +14,7 @@
 #include <string.h>
 #include <sys/stat.h>
 
+#include "common/paths.h"
 #include "docs.h"
 #include "services/common/private.h"
 
@@ -27,15 +28,19 @@ static int expand(const struct dz_roots *r, const char *in, char *out,
         n = snprintf(out, cap, "%s%s", r->home, in + 5);
     else
         n = snprintf(out, cap, "%s", in);
-    return n < 0 || (size_t)n >= cap || out[0] != '/' ? -1 : 0;
+    if (n < 0 || (size_t)n >= cap)
+        return -1;
+    janas_path_slashes(out);
+    return janas_path_abs(out) ? 0 : -1;
 }
 
 static void add_root(struct dz_roots *r, const char *dir)
 {
     char real[PATH_MAX];
     struct stat st;
-    if (r->n_root < DZ_ROOTS && realpath(dir, real) && !stat(real, &st) &&
-        S_ISDIR(st.st_mode) && !janas_private_path(r->home, real))
+    if (r->n_root < DZ_ROOTS && janas_path_real(dir, real) &&
+        !stat(real, &st) && S_ISDIR(st.st_mode) &&
+        !janas_private_path(r->home, real))
         snprintf(r->root[r->n_root++], PATH_MAX, "%s", real);
 }
 
@@ -43,6 +48,8 @@ static void add_root(struct dz_roots *r, const char *dir)
 static int xdg_documents(const struct dz_roots *r, char *out, size_t cap)
 {
     char p[PATH_MAX + 64], line[PATH_MAX];
+    if (janas_known_dir(0, out, cap) == 0) /* Windows's Documents */
+        return 1;
     const char *cfg = getenv("XDG_CONFIG_HOME");
     if (cfg && *cfg == '/')
         snprintf(p, sizeof p, "%s/user-dirs.dirs", cfg);
@@ -68,12 +75,12 @@ int dz_roots_load(struct dz_roots *r)
 {
     memset(r, 0, sizeof *r);
     const char *h = getenv("HOME");
-    if (!h || !*h || !realpath(h, r->home))
+    if (!h || !*h || !janas_path_real(h, r->home))
         return -1;
     char list[PATH_MAX + 64];
     /* an app's own list (Brebus's, for its workspace), else the user's */
     const char *own = getenv("JANAS_DOCS_DIRS");
-    if (own && *own == '/')
+    if (own && janas_path_abs(own))
         snprintf(list, sizeof list, "%s", own);
     else
         snprintf(list, sizeof list, "%s/.config/janas/docs-dirs.txt", r->home);
@@ -109,7 +116,7 @@ int dz_roots_load(struct dz_roots *r)
 
 void dz_short(const struct dz_roots *r, const char *path, char *out, size_t cap)
 {
-    if (janas_path_under(path, r->home) && strcmp(r->home, "/"))
+    if (janas_path_under(path, r->home) && !janas_path_root(r->home))
         snprintf(out, cap, "~%s", path + strlen(r->home));
     else
         snprintf(out, cap, "%s", path);
@@ -128,7 +135,7 @@ int dz_resolve(const struct dz_roots *r, const char *in, char *out, size_t cap,
                  "%s: give the path from the search, ~/... or absolute", in);
         return -1;
     }
-    if (!realpath(path, real)) {
+    if (!janas_path_real(path, real)) {
         snprintf(why, wn, "%s: %s", in, strerror(errno));
         return -1;
     }

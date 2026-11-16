@@ -1,0 +1,7 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (C) 2026 Maurizio Cammalleri
+// brebus.exe's own: the Prabanta logo as its icon (the first, Explorer's
+// and the window's, window_win.c), and the manifest every program of
+// Janas carries (src/common/win/janas.manifest).
+1 ICON "icons/brebus.ico"
+1 24 "janas.manifest"

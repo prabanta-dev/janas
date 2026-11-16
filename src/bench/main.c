@@ -219,11 +219,13 @@ int main(int argc, char **argv)
                 "[--reserve <GiB>] [--rounds <n>] [--settle <seconds>] "
                 "[--no-npu] [--prompt-on <devices>] [--drafts-on <devices>] "
                 "[--reply-on <devices>] [--npu-int8] [--gpu-profile] "
-                "[--share]\n"
+                "[--retune] [--share]\n"
                 "<model>: a .jns file, or a name of the models Janas knows "
                 "(downloaded if it is not there yet); none: the list\n"
                 "<devices>: auto (default), cpu, gpu, npu, npu+gpu (both in "
                 "each pass), or a list apart by commas to choose from\n"
+                "--retune: the choices saved for this model left aside, "
+                "measured again\n"
                 "--share: then the address of a new issue with the report, "
                 "for the project's list of machines (nothing is sent: you "
                 "send it, or not)\n");
@@ -243,7 +245,7 @@ int main(int argc, char **argv)
         "--gen",       "--ctx",      "--rounds",   "--cache",
         "--reserve",   "--settle",   "--no-npu",   "--prompt-on",
         "--drafts-on", "--reply-on", "--npu-int8", "--gpu-profile",
-        "--share"};
+        "--retune",    "--share"};
     for (int i = 1; i < argc; i += 2) {
         const char *a = argv[i], *v = i + 1 < argc ? argv[i + 1] : NULL;
         char why[200] = "";
@@ -256,6 +258,11 @@ int main(int argc, char **argv)
         }
         if (strcmp(a, "--no-mtp") == 0) {
             no_mtp = 1;
+            i--;
+            continue;
+        }
+        if (strcmp(a, "--retune") == 0) {
+            setenv("JANAS_RETUNE", "1", 1); /* read when the model opens */
             i--;
             continue;
         }

@@ -234,6 +234,8 @@ static void downloads(char *dir, size_t n)
 {
     const char *home = getenv("HOME"), *xc = getenv("XDG_CONFIG_HOME");
     char conf[4200], line[4200];
+    if (janas_known_dir(1, dir, n) == 0)
+        return;
     if (!home)
         home = ".";
     if (xc && *xc == '/')
