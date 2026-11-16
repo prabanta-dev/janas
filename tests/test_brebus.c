@@ -329,6 +329,17 @@ int main(void)
         st = ask("POST", bad[i], "{}", own, &o);
         CHECK(st == 400, "%s taken: %d", bad[i], st);
     }
+    /* searched, in every workspace: by title, by a message, any case */
+    st = ask("GET", "/brebus/chats/search?q=TWO", NULL, NULL, &o);
+    CHECK(st == 200 && strstr(o.p, "\"id\": \"b_2\"") &&
+              !strstr(o.p, "\"id\": \"a-1\""),
+          "searched by title: %d %s", st, o.p);
+    st = ask("GET", "/brebus/chats/search?q=hi", NULL, NULL, &o);
+    CHECK(st == 200 && strstr(o.p, "\"snippet\": \"hi\"") &&
+              strstr(o.p, "\"workspace_name\": \"work\""),
+          "searched by a message: %d %s", st, o.p);
+    st = ask("GET", "/brebus/chats/search?q=nowhere-at-all", NULL, NULL, &o);
+    CHECK(st == 200 && strstr(o.p, "\"chats\": []"), "nothing found: %s", o.p);
     st = ask("DELETE", "/brebus/chats/a-1", NULL, own, &o);
     CHECK(st == 200, "a conversation deleted: %d", st);
     st = ask("GET", "/brebus/chats/a-1", NULL, NULL, &o);

@@ -10,6 +10,7 @@
  * the browser; the window closed, Brebus ends.
  */
 #include <dlfcn.h>
+#include <pthread.h>
 #include <locale.h>
 #include <signal.h>
 #include <stdio.h>
@@ -42,6 +43,13 @@ static struct {
     int (*gdk_pixbuf_loader_close)(P, P *);
     P (*gdk_pixbuf_loader_get_pixbuf)(P);
     P (*webkit_web_view_new)(void);
+    P (*gtk_file_chooser_native_new)(const char *, P, int, const char *,
+                                     const char *);
+    int (*gtk_native_dialog_run)(P);
+    char *(*gtk_file_chooser_get_filename)(P);
+    void (*g_free)(P);
+    void (*g_object_unref)(P);
+    unsigned (*g_idle_add)(source_fn, P);
     P (*webkit_web_view_new_with_related_view)(P);
     void (*gtk_widget_destroy)(P);
     void (*webkit_web_view_load_uri)(P, const char *);
@@ -84,7 +92,75 @@ static int decide(P view, P decision, int type, P data)
     return 1;
 }
 
-static P app_icon;
+static P app_icon, main_win;
+
+/* The system's dialog to choose a folder or a file (GTK's native one: the
+   desktop portal's on KDE and GNOME), for the page: asked from a request's
+   thread, run on GTK's, the answer waited for. */
+static pthread_mutex_t pick_mu = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t pick_cv = PTHREAD_COND_INITIALIZER;
+static int pick_kind, pick_done, pick_busy, window_on;
+static char pick_title[200], pick_path[4096];
+
+static int pick_run(P data)
+{
+    (void)data;
+    /* GTK_FILE_CHOOSER_ACTION_OPEN 0, SELECT_FOLDER 2; ACCEPT -3 */
+    P d = w.gtk_file_chooser_native_new(pick_title, main_win, pick_kind ? 0 : 2,
+                                        "Choose", "Cancel");
+    char path[4096] = "";
+    if (d) {
+        if (w.gtk_native_dialog_run(d) == -3) {
+            char *f = w.gtk_file_chooser_get_filename(d);
+            if (f) {
+                snprintf(path, sizeof path, "%s", f);
+                w.g_free(f);
+            }
+        }
+        w.g_object_unref(d);
+    }
+    pthread_mutex_lock(&pick_mu);
+    snprintf(pick_path, sizeof pick_path, "%s", path);
+    pick_done = 1;
+    pthread_cond_broadcast(&pick_cv);
+    pthread_mutex_unlock(&pick_mu);
+    return 0; /* once */
+}
+
+int brebus_window_on(void)
+{
+    pthread_mutex_lock(&pick_mu);
+    int on = window_on;
+    pthread_mutex_unlock(&pick_mu);
+    return on;
+}
+
+int brebus_pick(int file, const char *title, char *out, size_t n)
+{
+    pthread_mutex_lock(&pick_mu);
+    if (!window_on) {
+        pthread_mutex_unlock(&pick_mu);
+        return -1; /* no window: the browser, where the page asks a path */
+    }
+    while (pick_busy && window_on) /* one dialog at a time */
+        pthread_cond_wait(&pick_cv, &pick_mu);
+    if (!window_on) {
+        pthread_mutex_unlock(&pick_mu);
+        return -1;
+    }
+    pick_busy = 1;
+    pick_kind = file ? 1 : 0;
+    snprintf(pick_title, sizeof pick_title, "%s", title);
+    pick_done = 0;
+    w.g_idle_add(pick_run, NULL);
+    while (!pick_done && window_on)
+        pthread_cond_wait(&pick_cv, &pick_mu);
+    snprintf(out, n, "%s", pick_done ? pick_path : "");
+    pick_busy = 0;
+    pthread_cond_broadcast(&pick_cv);
+    pthread_mutex_unlock(&pick_mu);
+    return 0;
+}
 
 /* a page of Brebus's own opened apart (its engine monitor): a second
    window, closed with its page; another site's goes to the browser */
@@ -179,6 +255,12 @@ int brebus_window(const char *url, volatile sig_atomic_t *quit, char *why,
     SYM(gdk_pixbuf_loader_close)
     SYM(gdk_pixbuf_loader_get_pixbuf)
     SYM(webkit_web_view_new)
+    SYM(gtk_file_chooser_native_new)
+    SYM(gtk_native_dialog_run)
+    SYM(gtk_file_chooser_get_filename)
+    SYM(g_free)
+    SYM(g_object_unref)
+    SYM(g_idle_add)
     SYM(webkit_web_view_new_with_related_view)
     SYM(gtk_widget_destroy)
     SYM(webkit_web_view_load_uri)
@@ -221,6 +303,14 @@ int brebus_window(const char *url, volatile sig_atomic_t *quit, char *why,
     w.webkit_web_view_load_uri(view, url);
     w.gtk_widget_show_all(win);
     w.g_timeout_add(200, watch, NULL);
+    main_win = win;
+    pthread_mutex_lock(&pick_mu);
+    window_on = 1;
+    pthread_mutex_unlock(&pick_mu);
     w.gtk_main();
+    pthread_mutex_lock(&pick_mu);
+    window_on = 0; /* a request waiting on a dialog is let go */
+    pthread_cond_broadcast(&pick_cv);
+    pthread_mutex_unlock(&pick_mu);
     return 0;
 }

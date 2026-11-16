@@ -1,0 +1,28 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later
+   Copyright (C) 2026 Maurizio Cammalleri */
+/* markdown.css - the looks of markdown.js's blocks, inside an element of
+   class "text"; the page sets the --md-* colours. */
+.text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.text pre { background: var(--md-pre-bg); color: var(--md-code); padding: 8px;
+            overflow-x: auto; white-space: pre; border-radius: 4px;
+            margin: 6px 0; }
+.text .b { font-weight: bold; }
+.text .s { text-decoration: line-through; }
+.text a.link { color: var(--md-code); text-decoration: underline;
+               cursor: pointer; }
+.text .quote { border-left: 3px solid var(--md-line); padding-left: 10px;
+               margin: 8px 0; color: var(--md-dim); }
+.text .table { overflow-x: auto; margin: 8px 0; }
+.text table { border-collapse: collapse; white-space: normal; }
+.text th, .text td { border: 1px solid var(--md-line); padding: 3px 8px;
+                     text-align: left; vertical-align: top; }
+.text th { font-weight: bold; }
+.text .h1 { font-weight: bold; font-size: 1.5em; color: var(--md-accent); }
+.text .h2 { font-weight: bold; font-size: 1.3em; }
+.text .h3 { font-weight: bold; font-size: 1.15em; }
+.text .h4 { font-weight: bold; }
+.text .h5 { font-weight: bold; font-style: italic; }
+.text .h6 { font-weight: bold; color: var(--md-dim); }
+.text .i { font-style: italic; }
+.text .m { color: var(--md-code); background: var(--md-code-bg);
+           padding: 0 4px; border-radius: 3px; }

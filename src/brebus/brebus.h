@@ -106,6 +106,12 @@ int brebus_export(struct brebus *b, const char *body, size_t n,
    can be no window (no WebKitGTK, no display) */
 int brebus_window(const char *url, volatile sig_atomic_t *quit, char *why,
                   size_t wn);
+/* The system's dialog to choose a folder (file 0) or a file (1), in the
+   window: 0 with the path chosen in out ("" when cancelled), -1 when there
+   is no window (the browser: the page asks for a path). */
+int brebus_pick(int file, const char *title, char *out, size_t n);
+/* 1 while Brebus shows its page in its own window */
+int brebus_window_on(void);
 
 /* desktop.c: brebus.desktop and its icons written for the desktop's menu
    (quiet: as the window opens, saying nothing, an entry already there
@@ -134,6 +140,10 @@ int brebus_ws_open(struct brebus *b, const char *path, int create, char *why,
                    size_t wn);
 int brebus_ws_new(struct brebus *b, char *why, size_t wn);
 void brebus_ws_status(struct brebus *b, struct janas_buf *out);
+/* the conversations of every recent workspace whose title or messages hold
+   query (any case; "" all), newest first, at most 50, as JSON into out */
+void brebus_chats_search(struct brebus *b, const char *query,
+                         struct janas_buf *out);
 
 /* tools.c: janas-docs and janas-files for the workspace open, started
    (again: its folders changed) and stopped; their tools as OpenAI's

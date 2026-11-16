@@ -156,6 +156,12 @@ static enum MHD_Result handler(void *cls, struct MHD_Connection *conn,
         brebus_server_stop(b, &o);
         return json(conn, 200, &o);
     }
+    if (get && !strcmp(url, "/brebus/chats/search")) {
+        brebus_chats_search(
+            b, MHD_lookup_connection_value(conn, MHD_GET_ARGUMENT_KIND, "q"),
+            &o);
+        return json(conn, 200, &o);
+    }
     if (!strncmp(url, "/brebus/chats/", 14)) {
         const char *id = url + 14;
         int rc = -1;
@@ -193,6 +199,27 @@ static enum MHD_Result handler(void *cls, struct MHD_Connection *conn,
         static const char no[] =
             "{\"error\": \"not a file of the workspace or of its folders\"}";
         return reply(conn, 404, "application/json", no, sizeof no - 1, 1);
+    }
+    if (post && !strcmp(url, "/brebus/pick")) {
+        /* {"file": true|false, "title"} - the window's dialog */
+        char err[160], path[4096];
+        struct janas_json_doc *d =
+            r->body.n ? janas_json_parse(r->body.p, r->body.n, err, sizeof err)
+                      : NULL;
+        const struct janas_json *v = d ? janas_json_root(d) : NULL;
+        const struct janas_json *f = v ? janas_json_get(v, "file") : NULL;
+        const char *t = v ? janas_json_str(janas_json_get(v, "title")) : NULL;
+        int rc = brebus_pick(f && f->type == JANAS_JSON_TRUE, t ? t : "Brebus",
+                             path, sizeof path);
+        janas_json_free(d);
+        if (rc != 0) {
+            static const char no[] = "{\"error\": \"no window\"}";
+            return reply(conn, 501, "application/json", no, sizeof no - 1, 1);
+        }
+        janas_buf_puts(&o, "{\"path\": ");
+        janas_json_write_str(&o, path, strlen(path));
+        janas_buf_puts(&o, "}");
+        return json(conn, 200, &o);
     }
     if (get && !strcmp(url, "/brebus/tools")) {
         brebus_tools_list(b, &o);

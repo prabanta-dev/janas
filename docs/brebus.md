@@ -16,7 +16,9 @@ Its icon is the Prabanta logo, drawn for each size and system ([src/brebus/icons
 
 ## The workspace
 
-Brebus works in a folder, as Claude Code does: started from a terminal, the folder it is started in, or the one given with `--workspace DIR`; started from the desktop's menu, the page asks for one: a recent one, a path, or a new one, `Documents/Brebus/<date>` (then `<date> (2)`…). The home itself and `/` are refused, too wide for a model's files. The button under the logo shows it and changes it.
+Brebus works in a folder, as Claude Code does: started from a terminal, the folder it is started in, or the one given with `--workspace DIR`; started from the desktop's menu, the page asks for one: a recent one, a path, or a new one, `Documents/Brebus/<date>` (then `<date> (2)`…). The home itself and `/` are refused, too wide for a model's files. The button under the logo shows it and changes it; in Brebus's window, *Browse…* opens the system's own dialog to choose a folder (GTK's, the desktop portal's on KDE and GNOME), there and to add a folder read only or attach a file; in the browser, the path is typed.
+
+The box over the conversations searches those of every recent workspace, by their titles and their messages: each found with its workspace and the words around what was found; one of another workspace opens it.
 
 | In the workspace | |
 |---|---|

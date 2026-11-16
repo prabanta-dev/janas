@@ -80,6 +80,12 @@ button.act[disabled] { opacity: .5; cursor: default; }
 #convs .c { padding: 6px 10px; border-radius: 8px; cursor: pointer; color: var(--dim);
             white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #convs .c.on { background: var(--panel); color: var(--fg); }
+#csearch { margin: 4px 0 6px; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line);
+           background: var(--panel); color: var(--fg); font: 12px inherit; }
+#convs .hit { padding: 6px 10px; border-radius: 8px; cursor: pointer; font-size: 13px; }
+#convs .hit:hover { background: var(--panel); }
+#convs .hit small { display: block; color: var(--dim); font-size: 11px; white-space: nowrap;
+                    overflow: hidden; text-overflow: ellipsis; }
 #talk { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 #bar { display: flex; gap: 10px; align-items: center; margin-bottom: 10px;
        color: var(--dim); font-size: 13px; }
@@ -132,11 +138,6 @@ main h3 { font-size: 15px; margin: 24px 0 10px; }
 .srvset textarea { resize: vertical; }
 #bar .tools[hidden] { display: none; }
 #bar .tools { margin-left: auto; display: flex; gap: 6px; }
-.msg pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
-           padding: 8px 10px; overflow-x: auto; white-space: pre; }
-.msg code { font-family: ui-monospace, monospace; font-size: 13px; }
-.msg h4 { margin: 8px 0 4px; }
-.msg ul, .msg ol { margin: 4px 0; padding-left: 22px; }
 .msg.assistant { white-space: normal; }
 .msg.assistant details { white-space: pre-wrap; }
 #log { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: 12px;
@@ -149,7 +150,9 @@ main h3 { font-size: 15px; margin: 24px 0 10px; }
 .msg details { color: var(--dim); font-size: 13px; margin-bottom: 6px; }
 .msg .speed { color: var(--dim); font-size: 12px; margin-top: 6px; }
 #form { position: relative; width: 100%; max-width: 820px; margin: 0 auto; }
-.tog { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer; }
+.tog { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer;
+       white-space: nowrap; }
+#bar { flex-wrap: wrap; row-gap: 6px; }
 #chips { width: 100%; max-width: 820px; margin: 0 auto 6px; display: flex; flex-wrap: wrap; gap: 6px; }
 #chips span { font-size: 12px; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--line);
               background: var(--panel); display: inline-flex; gap: 6px; align-items: center; }
@@ -162,6 +165,7 @@ main h3 { font-size: 15px; margin: 24px 0 10px; }
             border: 1px dashed var(--line); background: transparent; max-width: 80ch; }
 .msg.tool pre { white-space: pre-wrap; max-height: 260px; overflow: auto; }
 .msg .att { font-size: 12px; opacity: .85; margin-top: 4px; }
+.msg.user .att, .msg.user .att summary { color: inherit; }
 #rolist div { display: flex; gap: 8px; align-items: center; font: 13px var(--mono); padding: 3px 0; }
 #rolist button { all: unset; cursor: pointer; color: var(--warn); font-size: 12px; }
 #form textarea { display: block; width: 100%; box-sizing: border-box; resize: none;
@@ -183,6 +187,11 @@ main h3 { font-size: 15px; margin: 24px 0 10px; }
   main { padding: 18px 16px; }
   .card dl { grid-template-columns: 1fr; }
 }
+<!--#include web/markdown.css-->
+:root { --md-accent: var(--accent); --md-code: var(--fg); --md-code-bg: var(--bg);
+        --md-dim: var(--dim); --md-line: var(--line); --md-pre-bg: var(--bg); }
+.msg .text pre { border: 1px solid var(--line); }
+.msg .text pre, .msg .text .m { font-family: var(--mono); font-size: 13px; }
 </style>
 </head>
 <body>
@@ -198,7 +207,8 @@ main h3 { font-size: 15px; margin: 24px 0 10px; }
 </nav>
 <main>
   <section id="chat">
-    <div id="convs"><button class="act quiet" id="newc">New chat</button></div>
+    <div id="convs"><button class="act quiet" id="newc">New chat</button>
+      <input id="csearch" type="search" placeholder="Search every workspace's chats" spellcheck="false"></div>
     <div id="talk">
       <div id="bar"><span id="loaded">No model loaded.</span>
         <label class="tog" title="Before each question, Brebus searches the workspace's documents and gives the model the passages found"><input type="checkbox" id="usedocs"> Search documents</label>
@@ -266,6 +276,7 @@ main h3 { font-size: 15px; margin: 24px 0 10px; }
   <div id="wsrecent"></div>
   <form id="wsform" class="hfget" onsubmit="return false">
     <input name="path" spellcheck="false" placeholder="/home/you/Projects/something">
+    <button class="act quiet browse" type="button" id="wsbrowse">Browse…</button>
     <button class="act quiet" type="submit">Open</button>
   </form>
   <p><button class="act" id="wsnew">New folder</button> <span class="note" id="wsnewin"></span></p>
@@ -277,10 +288,14 @@ main h3 { font-size: 15px; margin: 24px 0 10px; }
     <div id="rolist"></div>
     <form id="roform" class="hfget" onsubmit="return false">
       <input name="path" spellcheck="false" placeholder="/home/you/Documents/contracts">
+      <button class="act quiet browse" type="button" id="robrowse">Browse…</button>
       <button class="act quiet" type="submit">Add</button>
     </form></div>
   <p class="right"><button class="act quiet" id="wsclose">Cancel</button></p>
 </div></div>
+<script>
+<!--#include web/markdown.js-->
+</script>
 <script>
 "use strict";
 const $ = (s) => document.querySelector(s);
@@ -324,6 +339,7 @@ function dialog(o) {
     (field || box.querySelector("button.act:not(.quiet)") || box.querySelector("button"))?.focus();
   });
 }
+window.markdownAsk = (text) => yes(text, "A link the model wrote", "Open it");
 const say = (text, title) => dialog({title, text, buttons: [{label: "OK", value: "ok", primary: true}]});
 const yes = async (text, title, ok = "OK") => (await dialog({title, text,
   buttons: [{label: ok, value: "yes", primary: true}, {label: "Cancel", value: "no"}]})).button === "yes";
@@ -558,9 +574,42 @@ async function openConv(id) {
   cur = r.ok ? await r.json() : null;
   listConvs(); drawLog();
 }
+/* the chats of every recent workspace, searched as the user types */
+let searchTimer = null;
+async function searchChats() {
+  const q = $("#csearch").value.trim();
+  const box = $("#convs");
+  box.querySelectorAll(".hit, .hitnote").forEach((x) => x.remove());
+  if (!q) { listConvs(); return; }
+  const j = await ask("chats/search?q=" + encodeURIComponent(q));
+  box.querySelectorAll(".c").forEach((x) => x.remove());
+  if (!j.chats.length) {
+    const n = document.createElement("div"); n.className = "hitnote note"; n.textContent = "Nothing found.";
+    box.appendChild(n); return;
+  }
+  for (const h of j.chats) {
+    const d = document.createElement("div");
+    d.className = "hit";
+    d.innerHTML = `${esc(h.title || "New chat")}<small>📁 ${esc(h.workspace_name)}${h.snippet ? " · " + esc(h.snippet) : ""}</small>`;
+    d.title = h.workspace;
+    d.onclick = async () => {
+      if (h.workspace !== ws.path) await wsOpen(h.workspace, false);
+      $("#csearch").value = ""; searchChats();
+      await openConv(h.id);
+    };
+    box.appendChild(d);
+  }
+  if (j.more) {
+    const n = document.createElement("div"); n.className = "hitnote note";
+    n.textContent = `and ${j.more} more: say more words`; box.appendChild(n);
+  }
+}
+$("#csearch").addEventListener("input", () => {
+  clearTimeout(searchTimer); searchTimer = setTimeout(() => searchChats().catch(() => {}), 250);
+});
 function listConvs() {
   const box = $("#convs");
-  box.querySelectorAll(".c").forEach((x) => x.remove());
+  box.querySelectorAll(".c, .hit, .hitnote").forEach((x) => x.remove());
   for (const c of convs) {
     const d = document.createElement("div");
     d.className = "c" + (cur && c.id === cur.id ? " on" : "");
@@ -602,32 +651,6 @@ async function exportConv() {
   say(r.ok ? j.path : j.error || "not saved", r.ok ? "Exported" : "Not exported");
 }
 
-/* Markdown of a reply: the text escaped first, then a few marks made into
-   HTML - code blocks, code, headings, lists, bold, italics, links */
-function md(text) {
-  const out = [];
-  const parts = String(text).split(/^```[^\n]*\n?/m);
-  for (let k = 0; k < parts.length; k++) {
-    if (k % 2) { out.push(`<pre><code>${esc(parts[k].replace(/\n$/, ""))}</code></pre>`); continue; }
-    let html = "", list = null;
-    for (const raw of parts[k].split("\n")) {
-      let line = esc(raw)
-        .replace(/`([^`]+)`/g, "<code>$1</code>")
-        .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
-        .replace(/(^|[^*\w])\*([^*\s][^*]*)\*/g, "$1<i>$2</i>")
-        .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
-      const h = line.match(/^(#{1,4}) (.*)$/), li = line.match(/^\s*(?:[-*]|\d+\.) (.*)$/);
-      const kind = li ? (/^\s*\d/.test(line) ? "ol" : "ul") : null;
-      if (list && kind !== list) { html += `</${list}>`; list = null; }
-      if (h) html += `<h4>${h[2]}</h4>`;
-      else if (kind) { if (!list) { html += `<${kind}>`; list = kind; } html += `<li>${li[1]}</li>`; }
-      else html += line ? line + "<br>" : "<br>";
-    }
-    if (list) html += `</${list}>`;
-    out.push(html.replace(/(<br>)+$/, ""));
-  }
-  return out.join("");
-}
 function bubble(m) {
   const d = document.createElement("div");
   d.className = "msg " + m.role;
@@ -646,9 +669,11 @@ function bubble(m) {
     return d;
   }
   const body = document.createElement("div");
-  if (m.role === "assistant") body.innerHTML = md(m.content || "") ||
-    (m.tool_calls ? "<i>…</i>" : "");
-  else body.textContent = m.content || "";
+  if (m.role === "assistant") {
+    body.className = "text";
+    if (m.content) render(body, m.content);
+    else if (m.tool_calls) body.textContent = "…";
+  } else body.textContent = m.content || "";
   d.append(body);
   if (m.attached && m.attached.length) {
     const a = document.createElement("div");
@@ -740,7 +765,15 @@ function drawChips() {
 const kb = (n) => n < 1e6 ? (n / 1024).toFixed(0) + " KB" : (n / 1048576).toFixed(1) + " MB";
 async function attach() {
   if (!ws.path) { wsShow(true); return; }
-  const src = ((await input("Attach", "", "A file of this computer, by its full path, or a web address (downloaded into the workspace's sources/).")) || "").trim();
+  let src;
+  if (ws.window) {
+    const d = await dialog({title: "Attach", text: "A file of this computer, by its full path, or a web address (downloaded into the workspace's sources/).",
+      input: "", buttons: [{label: "OK", value: "ok", primary: true}, {label: "Browse…", value: "browse"}, {label: "Cancel", value: "no"}]});
+    if (d.button === "no") return;
+    src = d.button === "browse" ? await pick(true, "Attach a file") : d.value;
+  } else
+    src = await input("Attach", "", "A file of this computer, by its full path, or a web address (downloaded into the workspace's sources/).");
+  src = (src || "").trim();
   if (!src) return;
   let mode = "copy";
   if (!/^https?:\/\//.test(src)) {
@@ -1003,6 +1036,16 @@ $("#embsel").onchange = async () => {
   await fetch("/brebus/tools/restart", {method: "POST", body: "{}"});
   await readTools();
 };
+$("#wsbrowse").onclick = async () => {
+  const p = await pick(false, "The folder Brebus works in");
+  if (p) wsOpen(p, false);
+};
+$("#robrowse").onclick = async () => {
+  const p = await pick(false, "A folder to read only, beside the workspace");
+  if (!p) return;
+  const f = await ask("folders");
+  await setFolders([...f.read_only, p]);
+};
 $("#roform").onsubmit = async () => {
   const p = $("#roform").path.value.trim();
   if (!p) return false;
@@ -1036,7 +1079,15 @@ $("#sys").onclick = async () => {
 };
 /* the workspace: chosen before the conversations, which live in it */
 let ws = {path: ""};
+/* the system's dialog, in Brebus's window: the path, "" cancelled, null
+   where there is none (the browser) */
+async function pick(file, title) {
+  const r = await fetch("/brebus/pick", {method: "POST", body: JSON.stringify({file, title})});
+  if (!r.ok) return null;
+  return (await r.json()).path;
+}
 function wsShow(open) {
+  for (const b of document.querySelectorAll("button.browse")) b.hidden = !ws.window;
   $("#wsbtn").textContent = ws.path ? "📁 " + ws.name : "Choose a folder";
   $("#wsbtn").title = ws.path || "The folder Brebus works in";
   $("#wsrecent").innerHTML = ws.recent.length
