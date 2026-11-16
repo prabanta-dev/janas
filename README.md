@@ -145,28 +145,28 @@ sudo pacman -S vulkan-headers glslang vulkan-tools           # the same, Arch
 
 ### Against llama.cpp
 
-On the development laptop, every model compared, 21 October 2026 - the same laptop, the same files, the same day, each engine in its best configuration. The files are the catalog's, Q4_K_M unless a row says otherwise: Qwen's own GGUF for Qwen3-Next-80B-A3B, Qwen3-Coder-Next, Qwen3-30B-A3B and Qwen3-4B; bartowski's (with an importance matrix) for Qwen3.6-35B-A3B; unsloth's for the others, UD-Q4_K_M for Gemma-4-26B-A4B and UD-Q4_K_XL for Qwen3.8-27B; ISTA-DASLab's two-bit Q2_0 for Qwen3.8-Flash-Next. Each file and its SHA-256: [MODELS.md](MODELS.md).
+On the development laptop, every model compared, 21 October 2026 - the same laptop, the same files, the same day, each engine in its best configuration. Each row names its file's quantization and who made it; each file and its SHA-256: [MODELS.md](MODELS.md).
 
 | Model | reading 1,024 tokens: Janas-LLM | how | llama.cpp | writing: Janas-LLM | how | llama.cpp |
 |---|---:|---|---:|---:|---|---:|
-| Qwen3.8-Flash-Next (66.5 GB, 177B, more than the memory) | 33.0 tok/s | GPU, 12 threads | 4.82 tok/s‡ | 10.95 tok/s | CPU, 12 threads | 3.12 tok/s‡ |
-| Qwen3-Next-80B-A3B (48.4 GB, more than the memory) | 68.4 tok/s | GPU, 20 threads | 17.7 tok/s | 26.4 tok/s | CPU, 20 threads | 3.0 tok/s |
-| Qwen3-Coder-Next (48.4 GB, more than the memory) | 71.4 tok/s | GPU, 12 threads | 14.0 tok/s | 26.5 tok/s | CPU, 20 threads | 2.9 tok/s |
-| Qwen3.6-35B-A3B | 136 tok/s | GPU, 12 threads | 81.8 tok/s | 28.0 tok/s | CPU, 20 threads | 12.1 tok/s |
-| Qwen3-30B-A3B | 133 tok/s | GPU, 6 threads | 122 tok/s† | 33.3 tok/s | CPU, 20 threads | 15.0 tok/s† |
+| Qwen3.8-Flash-Next, ISTA-DASLab's Q2_0 (66.5 GB, 177B, more than the memory) | 33.0 tok/s | GPU, 12 threads | 4.82 tok/s‡ | 10.95 tok/s | CPU, 12 threads | 3.12 tok/s‡ |
+| Qwen3-Next-80B-A3B, Qwen's Q4_K_M (48.4 GB, more than the memory) | 68.4 tok/s | GPU, 20 threads | 17.7 tok/s | 26.4 tok/s | CPU, 20 threads | 3.0 tok/s |
+| Qwen3-Coder-Next, Qwen's Q4_K_M (48.4 GB, more than the memory) | 71.4 tok/s | GPU, 12 threads | 14.0 tok/s | 26.5 tok/s | CPU, 20 threads | 2.9 tok/s |
+| Qwen3.6-35B-A3B, bartowski's Q4_K_M (importance matrix) | 136 tok/s | GPU, 12 threads | 81.8 tok/s | 28.0 tok/s | CPU, 20 threads | 12.1 tok/s |
+| Qwen3-30B-A3B, Qwen's Q4_K_M | 133 tok/s | GPU, 6 threads | 122 tok/s† | 33.3 tok/s | CPU, 20 threads | 15.0 tok/s† |
 | Qwen3-30B-A3B, bartowski's Q4_K_M (importance matrix) | 132 tok/s | GPU, 6 threads | 125 tok/s | 32.3 tok/s | CPU, 20 threads | 15.9 tok/s |
 | Qwen3-30B-A3B, unsloth's UD-Q3_K_XL (3 bits) | 120 tok/s | GPU, 12 threads | 114 tok/s | 35.4 tok/s | CPU, 20 threads | 11.3 tok/s |
-| Gemma-4-26B-A4B-it | 85.0 tok/s | GPU, 6 threads | 78.0 tok/s | 18.9 tok/s | CPU, 20 threads | 12.6 tok/s |
-| Qwen3.8-27B (dense, 17.6 GB) | 31.4 tok/s | GPU, 6 threads | 25.5 tok/s | 4.4 tok/s | CPU, 20 threads | 2.1 tok/s |
-| Gemma-4-12B-it | 65.7 tok/s | GPU, 12 threads | 47.6 tok/s | 10.0 tok/s | CPU, 20 threads | 7.4 tok/s |
-| Qwen3.5-9B | 122 tok/s | GPU, 6 threads | 80.3 tok/s | 14.5 tok/s | CPU, 20 threads | 8.7 tok/s |
-| Gemma-4-E4B-it | 245 tok/s | NPU, 6 threads | 110 tok/s | 19.8 tok/s | CPU, 12 threads | 15.3 tok/s |
-| Qwen3-4B | 333 tok/s | NPU, 6 threads | 172 tok/s | 27.9 tok/s | CPU, 20 threads | 17.9 tok/s |
+| Gemma-4-26B-A4B-it, unsloth's UD-Q4_K_M | 85.0 tok/s | GPU, 6 threads | 78.0 tok/s | 18.9 tok/s | CPU, 20 threads | 12.6 tok/s |
+| Qwen3.8-27B, unsloth's UD-Q4_K_XL (dense, 17.6 GB) | 31.4 tok/s | GPU, 6 threads | 25.5 tok/s | 4.4 tok/s | CPU, 20 threads | 2.1 tok/s |
+| Gemma-4-12B-it, unsloth's Q4_K_M | 65.7 tok/s | GPU, 12 threads | 47.6 tok/s | 10.0 tok/s | CPU, 20 threads | 7.4 tok/s |
+| Qwen3.5-9B, unsloth's Q4_K_M | 122 tok/s | GPU, 6 threads | 80.3 tok/s | 14.5 tok/s | CPU, 20 threads | 8.7 tok/s |
+| Gemma-4-E4B-it, unsloth's Q4_K_M | 245 tok/s | NPU, 6 threads | 110 tok/s | 19.8 tok/s | CPU, 12 threads | 15.3 tok/s |
+| Qwen3-4B, Qwen's Q4_K_M | 333 tok/s | NPU, 6 threads | 172 tok/s | 27.9 tok/s | CPU, 20 threads | 17.9 tok/s |
 | Qwen3-4B, bartowski's Q4_K_M (importance matrix) | 333 tok/s | NPU, 6 threads | 173 tok/s | 27.8 tok/s | CPU, 20 threads | 18.2 tok/s |
-| Gemma-4-E2B-it | 508 tok/s | NPU, 6 threads | 150 tok/s | 37.0 tok/s | CPU, 12 threads | 18.9 tok/s |
-| Qwen3.5-2B | 729 tok/s | NPU, 6 threads | 314 tok/s | 53.3 tok/s | CPU, 20 threads | 27.5 tok/s |
-| Qwen3.5-0.8B | 1,403 tok/s | NPU, 6 threads | 514 tok/s | 110 tok/s | CPU, 12 threads | 31.1 tok/s |
-| Qwen3-0.6B | 1,421 tok/s | NPU, 6 threads | 710 tok/s | 133 tok/s | CPU, 20 threads | 46.0 tok/s |
+| Gemma-4-E2B-it, unsloth's Q4_K_M | 508 tok/s | NPU, 6 threads | 150 tok/s | 37.0 tok/s | CPU, 12 threads | 18.9 tok/s |
+| Qwen3.5-2B, unsloth's Q4_K_M | 729 tok/s | NPU, 6 threads | 314 tok/s | 53.3 tok/s | CPU, 20 threads | 27.5 tok/s |
+| Qwen3.5-0.8B, unsloth's Q4_K_M | 1,403 tok/s | NPU, 6 threads | 514 tok/s | 110 tok/s | CPU, 12 threads | 31.1 tok/s |
+| Qwen3-0.6B, unsloth's Q4_K_M | 1,421 tok/s | NPU, 6 threads | 710 tok/s | 133 tok/s | CPU, 20 threads | 46.0 tok/s |
 
 Janas-LLM's figures are the best of the configurations `janas-bench` measures, and "how" names it: the CPU's threads, with the GPU reading a prompt's blocks (its fast prompt) or the NPU reading them; a reply is written by the CPU. The configuration the engine chose by itself, as a chat runs, was within 1.5% of the best reading and within 2.6% writing, on every model. llama.cpp ran with its Vulkan backend on the same GPU, the API Janas-LLM uses, for reading and for writing; on the two models larger than the memory it wrote with its CPU backend, faster there than with the GPU, as Janas-LLM writes. Where the conditions could not be the same, the table says so: Janas-LLM writes the other models' replies on the CPU, where llama.cpp's writing on the CPU was not measured; and where Janas-LLM reads on the NPU, llama.cpp's figure is from the GPU, its OpenVINO backend, the one that uses the NPU, having stopped on Gemma 4, on the Qwen3.5 models and on every prompt of 768 tokens and more (the two compared on the same NPU: [Intel's NPU](#intels-npu)). Its SYCL backend, Intel's own for Arc GPUs, was not used: Janas-LLM reaches every GPU through Vulkan. † llama.cpp's figures of 11 October: the file it read is no longer on this machine. ‡ Qwen3.8-Flash-Next, 23 October: llama.cpp on its CPU backend, the faster way it has here - its Vulkan backend cannot run the file on 32 GB (it copies 35.9 GB of weights into pinned host buffers; with `no_host`, 63 GB into ordinary memory) - and Janas-LLM through `tests/bench_long`, not `janas-bench`: the same 1,024 tokens of Italian prose and 200 written, 12 threads on CPUs 0-11, a 12 GiB expert cache; one run of llama.cpp, the median of three of Janas-LLM reading with the GPU and the mean of two writing. The drafts, which bring a reply sooner (37 tok/s from Qwen3-Next-80B-A3B in `janas-bench` on 10 October, the expert cache warm; 31-35 in the chat on 21 October), and how every figure was taken: [How the figures were measured](#how-the-figures-were-measured). On another machine they will be other ones: `janas-bench` measures yours.
 
