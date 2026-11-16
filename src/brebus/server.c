@@ -233,6 +233,8 @@ int brebus_server_start(struct brebus *b, const char *body, size_t n,
     }
     b->srv_on = 1;
     snprintf(b->srv_model, sizeof b->srv_model, "%s", m[at].name);
+    b->srv_used = time(NULL);
+    b->srv_last[0] = 0;
     b->srv_err[0] = 0;
     pthread_mutex_unlock(&b->mu);
     /* ready when it answers; a large model takes a while to open */
@@ -292,6 +294,8 @@ void brebus_server_status(struct brebus *b, struct janas_buf *out)
     str(out, lan_url);
     janas_buf_puts(out, ", \"api_key\": ");
     str(out, on ? b->srv_key : "");
+    janas_buf_puts(out, ", \"last\": ");
+    str(out, on ? "" : b->srv_last);
     janas_buf_puts(out, ", \"error\": ");
     str(out, b->srv_err);
     janas_buf_puts(out, "}");
@@ -304,4 +308,89 @@ unsigned short brebus_server_port(struct brebus *b)
     unsigned short p = b->srv_on ? b->srv_port : 0;
     pthread_mutex_unlock(&b->mu);
     return p;
+}
+
+/* settings.json's _server.ttl, minutes */
+static long ttl_minutes(struct brebus *b)
+{
+    struct janas_buf f = {0};
+    char err[160];
+    brebus_settings_get(b, &f);
+    struct janas_json_doc *d =
+        f.n ? janas_json_parse(f.p, f.n, err, sizeof err) : NULL;
+    const struct janas_json *sv =
+        d ? janas_json_get(janas_json_root(d), "_server") : NULL;
+    long t = sv ? (long)janas_json_num(janas_json_get(sv, "ttl"), 0) : 0;
+    janas_json_free(d);
+    janas_buf_free(&f);
+    return t > 0 ? t : 0;
+}
+
+static void *idle(void *arg)
+{
+    struct brebus *b = arg;
+    for (;;) {
+        sleep(30);
+        long ttl = ttl_minutes(b);
+        if (!ttl)
+            continue;
+        pthread_mutex_lock(&b->mu);
+        if (b->srv_on && time(NULL) - b->srv_used > ttl * 60) {
+            snprintf(b->srv_last, sizeof b->srv_last, "%s", b->srv_model);
+            stop_locked(b);
+            snprintf(b->srv_err, sizeof b->srv_err,
+                     "unloaded after %ld minutes without a request: loaded "
+                     "again at the next message",
+                     ttl);
+        }
+        pthread_mutex_unlock(&b->mu);
+    }
+    return NULL;
+}
+
+void brebus_idle_start(struct brebus *b)
+{
+    pthread_t t;
+    if (pthread_create(&t, NULL, idle, b) == 0)
+        pthread_detach(t);
+}
+
+int brebus_models_dir_set(struct brebus *b, const char *path, int save)
+{
+    char real[4096];
+    struct stat st;
+    if (!path || *path != '/' || !realpath(path, real) ||
+        stat(real, &st) != 0 || !S_ISDIR(st.st_mode) ||
+        strlen(real) >= sizeof b->models_dir)
+        return -1;
+    pthread_mutex_lock(&b->mu);
+    snprintf(b->models_dir, sizeof b->models_dir, "%s", real);
+    pthread_mutex_unlock(&b->mu);
+    if (!save)
+        return 0;
+    /* kept in settings.json, beside what the page keeps there */
+    struct janas_buf f = {0}, o = {0};
+    char err[160];
+    brebus_settings_get(b, &f);
+    struct janas_json_doc *d =
+        f.n ? janas_json_parse(f.p, f.n, err, sizeof err) : NULL;
+    const struct janas_json *root = d ? janas_json_root(d) : NULL;
+    janas_buf_puts(&o, "{\"_models_dir\": ");
+    str(&o, real);
+    for (const struct janas_json *e =
+             root && root->type == JANAS_JSON_OBJECT ? root->child : NULL;
+         e; e = e->next) {
+        if (e->key_n == 11 && !memcmp(e->key, "_models_dir", 11))
+            continue;
+        janas_buf_puts(&o, ", ");
+        janas_json_write_str(&o, e->key, e->key_n);
+        janas_buf_puts(&o, ": ");
+        janas_json_write(&o, e);
+    }
+    janas_buf_puts(&o, "}");
+    int rc = o.oom ? -1 : brebus_settings_put(b, o.p, o.n);
+    janas_json_free(d);
+    janas_buf_free(&f);
+    janas_buf_free(&o);
+    return rc;
 }

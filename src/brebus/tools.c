@@ -23,7 +23,25 @@
 
 #include "brebus.h"
 #include "common/catalog.h"
+#include "common/mcp_services.h"
 #include "janas/mcp.h"
+
+struct janas_buf;
+static void svc_scan(struct brebus *b);
+static void svc_tools(struct janas_buf *out, int *first, struct janas_buf *cat);
+static void svc_read_only(struct janas_buf *out, int *k);
+static int svc_call(struct brebus *b, const char *name, const char *args,
+                    size_t an, struct janas_buf *out);
+
+void brebus_service_exe(const struct brebus *b, const char *name, char *out,
+                        size_t n)
+{
+    /* in services/ beside brebus (the binary package, as janas-chat finds
+       them), else beside it (a build) */
+    snprintf(out, n, "%s/services/janas-%s%s", b->bin_dir, name, b->suffix);
+    if (access(out, X_OK) != 0)
+        snprintf(out, n, "%s/janas-%s%s", b->bin_dir, name, b->suffix);
+}
 
 #define MAX_RO 16
 #define BIG (1 << 20)
@@ -120,6 +138,7 @@ static void embedder_chosen(struct brebus *b, char *out, size_t cap)
 
 static void stop_locked(struct brebus *b)
 {
+    svc_scan(b);          /* closes those started, finds them again */
     brebus_python_stop(); /* its folders may change */
     if (b->docs)
         janas_mcp_close(b->docs);
@@ -178,7 +197,7 @@ int brebus_tools_start(struct brebus *b)
     snprintf(e_conf, sizeof e_conf, "JANAS_DOCS_CONF=%s/docs.conf", cfg);
     snprintf(e_data, sizeof e_data, "XDG_DATA_HOME=%s", data);
     const char *denv[] = {e_dirs, e_conf, e_data};
-    snprintf(exe, sizeof exe, "%s/janas-docs%s", b->bin_dir, b->suffix);
+    brebus_service_exe(b, "docs", exe, sizeof exe);
     const char *dargv[] = {exe};
     if (access(exe, X_OK) == 0 &&
         janas_mcp_open_command("brebus-docs", 1, dargv, 3, denv, 30,
@@ -195,7 +214,7 @@ int brebus_tools_start(struct brebus *b)
     char e_ws[4200];
     snprintf(e_ws, sizeof e_ws, "JANAS_FILES_WORKSPACE=%s", ws);
     const char *fenv[] = {e_ws, roj};
-    snprintf(exe, sizeof exe, "%s/janas-files%s", b->bin_dir, b->suffix);
+    brebus_service_exe(b, "files", exe, sizeof exe);
     const char *fargv[] = {exe};
     if (access(exe, X_OK) == 0 &&
         janas_mcp_open_command("brebus-files", 1, fargv, 2, fenv, 30,
@@ -243,6 +262,8 @@ void brebus_tools_list(struct brebus *b, struct janas_buf *out)
         janas_buf_put(out, py.p, py.n);
     }
     janas_buf_free(&py);
+    struct janas_buf cat = {0};
+    svc_tools(out, &first, &cat);
     janas_buf_puts(out, "], \"read_only\": [");
     /* the tools that say they only read, run without asking */
     janas_mcp *ms[] = {b->docs, b->files};
@@ -262,7 +283,11 @@ void brebus_tools_list(struct brebus *b, struct janas_buf *out)
                 str(out, t);
             }
     }
-    janas_buf_printf(out, "], \"docs\": %s, \"files\": %s, \"embedding\": ",
+    svc_read_only(out, &k);
+    janas_buf_puts(out, "], \"catalog\": ");
+    janas_json_write_str(out, cat.p ? cat.p : "", cat.n);
+    janas_buf_free(&cat);
+    janas_buf_printf(out, ", \"docs\": %s, \"files\": %s, \"embedding\": ",
                      b->docs ? "true" : "false", b->files ? "true" : "false");
     str(out, b->embedding);
     janas_buf_puts(out, ", \"embedding_models\": [");
@@ -329,6 +354,12 @@ int brebus_tools_call(struct brebus *b, const char *body, size_t n,
             janas_buf_puts(out, "{\"result\": \"python needs its code\", "
                                 "\"is_error\": true}");
         janas_json_free(pd);
+        pthread_mutex_unlock(&b->tools_mu);
+        janas_buf_free(&a);
+        janas_json_free(d);
+        return 0;
+    }
+    if (name && svc_call(b, name, a.p, a.n, out)) {
         pthread_mutex_unlock(&b->tools_mu);
         janas_buf_free(&a);
         janas_json_free(d);
@@ -466,4 +497,287 @@ int brebus_file(struct brebus *b, const char *path, struct janas_buf *out,
     if (!*mime)
         *mime = "application/octet-stream";
     return out->oom ? -1 : 0;
+}
+
+int brebus_open_path(struct brebus *b, const char *path)
+{
+    char ws[4096], real[4096];
+    if (!path || *path != '/' || brebus_ws_path(b, ws, sizeof ws) != 0 ||
+        !realpath(path, real))
+        return -1;
+    size_t wl = strlen(ws);
+    if (strncmp(real, ws, wl) || real[wl] != '/' ||
+        !strncmp(real + wl, "/.brebus/", 9))
+        return -1;
+    /* the system's own program for it: a page as a file of its own, never
+       with Brebus's origin */
+    const char *argv[] = {"xdg-open", real, NULL};
+    struct janas_proc p;
+    char why[200];
+    int null = janas_null_fd(1);
+    int rc = janas_proc_start(&p, argv, NULL, NULL, -1, null, null,
+                              JANAS_PROC_DETACHED, why, sizeof why);
+    if (null >= 0)
+        close(null);
+    if (rc == 0)
+        janas_proc_wait(&p, 5000, NULL); /* xdg-open hands it on and ends */
+    return rc;
+}
+
+/* ---- Janas's services and the user's MCP servers, opened when the model
+   asks (janas__open_service), as janas-chat does (common/mcp_services) ---- */
+
+#define MAX_SVC 48
+
+struct svc {
+    char name[64], prefix[72];
+    int user;     /* a server of the user's mcp.json */
+    int on;       /* offered to the model */
+    janas_mcp *m; /* started when opened */
+};
+static struct svc svcs[MAX_SVC];
+static int n_svc;
+
+/* the names turned off, from settings.json's _services.off */
+static int svc_off(struct brebus *b, const char *name)
+{
+    struct janas_buf f = {0};
+    char err[160];
+    brebus_settings_get(b, &f);
+    struct janas_json_doc *d =
+        f.n ? janas_json_parse(f.p, f.n, err, sizeof err) : NULL;
+    const struct janas_json *s =
+        d ? janas_json_get(janas_json_root(d), "_services") : NULL;
+    const struct janas_json *off = s ? janas_json_get(s, "off") : NULL;
+    int yes = 0;
+    for (const struct janas_json *e =
+             off && off->type == JANAS_JSON_ARRAY ? off->child : NULL;
+         e && !yes; e = e->next)
+        yes = janas_json_is(e, name);
+    janas_json_free(d);
+    janas_buf_free(&f);
+    return yes;
+}
+
+/* tools_mu held: the services there are, none started */
+static void svc_scan(struct brebus *b)
+{
+    for (int i = 0; i < n_svc; i++)
+        if (svcs[i].m)
+            janas_mcp_close(svcs[i].m);
+    n_svc = 0;
+    char exe[4400];
+    for (size_t k = 0; k < JANAS_N_SERVICES && n_svc < MAX_SVC; k++) {
+        const char *n = JANAS_SERVICES[k].name;
+        if (!strcmp(n, "docs") || !strcmp(n, "files"))
+            continue; /* the workspace's own, always (above) */
+        brebus_service_exe(b, n, exe, sizeof exe);
+        if (access(exe, X_OK) != 0)
+            continue;
+        struct svc *s = &svcs[n_svc++];
+        memset(s, 0, sizeof *s);
+        snprintf(s->name, sizeof s->name, "%s", n);
+    }
+    /* the user's servers, by the names their file gives them */
+    static char names[16384];
+    int32_t len = 0;
+    if (janas_mcp_config_servers(NULL, names, sizeof names - 1, &len) ==
+        JANAS_MCP_OK) {
+        names[len] = 0;
+        char *sv = NULL;
+        for (char *t = strtok_r(names, "\n", &sv); t && n_svc < MAX_SVC;
+             t = strtok_r(NULL, "\n", &sv)) {
+            if (strstr(t, " (disabled)"))
+                continue;
+            char *sp = strstr(t, " (http)");
+            if (sp)
+                *sp = 0;
+            struct svc *s = &svcs[n_svc++];
+            memset(s, 0, sizeof *s);
+            snprintf(s->name, sizeof s->name, "%s", t);
+            s->user = 1;
+        }
+    }
+    for (int i = 0; i < n_svc; i++) {
+        struct svc *s = &svcs[i];
+        s->on = !svc_off(b, s->name);
+        /* name__, with what a tool's name cannot hold made _ */
+        size_t k = 0;
+        for (const char *c = s->name; *c && k + 3 < sizeof s->prefix; c++)
+            s->prefix[k++] =
+                (char)((*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z') ||
+                               (*c >= '0' && *c <= '9') || *c == '_'
+                           ? *c
+                           : '_');
+        s->prefix[k++] = '_';
+        s->prefix[k++] = '_';
+        s->prefix[k] = 0;
+    }
+}
+
+/* tools_mu held: the service started (when not already) */
+static int svc_start(struct brebus *b, struct svc *s)
+{
+    if (s->m)
+        return 0;
+    if (s->user)
+        return janas_mcp_open(NULL, s->name, 60, &s->m) == JANAS_MCP_OK ? 0
+                                                                        : -1;
+    char exe[4400];
+    brebus_service_exe(b, s->name, exe, sizeof exe);
+    const char *argv[] = {exe};
+    return janas_mcp_open_command(s->name, 1, argv, 0, NULL, 30, &s->m) ==
+                   JANAS_MCP_OK
+               ? 0
+               : -1;
+}
+
+/* the list for the page: the services, on or off, opened or not */
+void brebus_services_get(struct brebus *b, struct janas_buf *out)
+{
+    pthread_mutex_lock(&b->tools_mu);
+    if (!n_svc)
+        svc_scan(b);
+    janas_buf_puts(out, "{\"services\": [");
+    for (int i = 0; i < n_svc; i++) {
+        janas_buf_puts(out, i ? ", {\"name\": " : "{\"name\": ");
+        str(out, svcs[i].name);
+        janas_buf_puts(out, ", \"about\": ");
+        str(out, svcs[i].user ? "a server of yours (mcp.json)"
+                              : janas_service_about(svcs[i].name));
+        janas_buf_printf(out, ", \"user\": %s, \"on\": %s, \"open\": %s}",
+                         svcs[i].user ? "true" : "false",
+                         svcs[i].on ? "true" : "false",
+                         svcs[i].m ? "true" : "false");
+    }
+    char cfg[4096];
+    int32_t cl = 0;
+    janas_mcp_config_path(cfg, sizeof cfg, &cl);
+    janas_buf_puts(out, "], \"config\": ");
+    str(out, cfg);
+    janas_buf_puts(out, "}");
+    pthread_mutex_unlock(&b->tools_mu);
+}
+
+/* tools_mu held: the catalog, the open tool and the opened ones' tools,
+   appended to a tools list being written (first: none written yet) */
+static void svc_tools(struct janas_buf *out, int *first, struct janas_buf *cat)
+{
+    const char *names[MAX_SVC], *abouts[MAX_SVC];
+    int n = 0;
+    for (int i = 0; i < n_svc; i++)
+        if (svcs[i].on) {
+            names[n] = svcs[i].name;
+            abouts[n++] = svcs[i].user ? "a server of the user's"
+                                       : janas_service_about(svcs[i].name);
+        }
+    if (!n)
+        return;
+    janas_services_catalog(cat, names, abouts, (size_t)n);
+    janas_buf_puts(out, *first ? "" : ", ");
+    janas_services_open_tool(out, names, (size_t)n);
+    *first = 0;
+    for (int i = 0; i < n_svc; i++) {
+        if (!svcs[i].on || !svcs[i].m)
+            continue;
+        static char buf[1 << 20];
+        int32_t len = 0;
+        if (janas_mcp_tools(svcs[i].m, svcs[i].prefix, -1, buf, sizeof buf,
+                            &len) != JANAS_MCP_OK ||
+            len < 3)
+            continue;
+        char *a = memchr(buf, '[', (size_t)len), *z = buf + len - 1;
+        while (z > a && *z != ']')
+            z--;
+        if (!a || z <= a + 1)
+            continue;
+        janas_buf_puts(out, ", ");
+        janas_buf_put(out, a + 1, (size_t)(z - a - 1));
+    }
+}
+
+/* tools_mu held: the read-only tools of the opened services */
+static void svc_read_only(struct janas_buf *out, int *k)
+{
+    for (int i = 0; i < n_svc; i++) {
+        if (!svcs[i].on || !svcs[i].m)
+            continue;
+        static char names[65536];
+        int32_t len = 0;
+        if (janas_mcp_tool_names(svcs[i].m, names, sizeof names - 1, &len) !=
+            JANAS_MCP_OK)
+            continue;
+        names[len] = 0;
+        char *sv = NULL;
+        for (char *t = strtok_r(names, "\n", &sv); t;
+             t = strtok_r(NULL, "\n", &sv)) {
+            /* Janas's own: asked only for those that say they change
+               something (janas-chat's rule); a server of the user's: run
+               without asking only those that say they only read */
+            int ro = janas_mcp_tool_read_only(svcs[i].m, t, (int32_t)strlen(t));
+            if (svcs[i].user ? ro == 1 : ro != 0) {
+                char full[256];
+                snprintf(full, sizeof full, "%s%s", svcs[i].prefix, t);
+                janas_buf_puts(out, (*k)++ ? ", " : "");
+                str(out, full);
+            }
+        }
+    }
+}
+
+/* tools_mu held: a call to the services: 1 when it was one (out filled),
+   0 when not theirs */
+static int svc_call(struct brebus *b, const char *name, const char *args,
+                    size_t an, struct janas_buf *out)
+{
+    if (!strcmp(name, JANAS_OPEN_SERVICE)) {
+        char err[160];
+        struct janas_json_doc *d = janas_json_parse(args, an, err, sizeof err);
+        const char *want =
+            d ? janas_json_str(janas_json_get(janas_json_root(d), "service"))
+              : NULL;
+        struct svc *s = NULL;
+        for (int i = 0; want && i < n_svc && !s; i++)
+            if (svcs[i].on && !strcmp(svcs[i].name, want))
+                s = &svcs[i];
+        struct janas_buf t = {0};
+        if (!s)
+            janas_buf_printf(&t, "There is no service \"%s\".",
+                             want ? want : "");
+        else if (svc_start(b, s) != 0)
+            janas_buf_printf(&t, "The service %s did not start: %s", s->name,
+                             janas_mcp_last_error());
+        else
+            janas_service_opened(&t, s->m, s->name, s->prefix);
+        janas_buf_puts(out, "{\"result\": ");
+        janas_json_write_str(out, t.p ? t.p : "", t.n);
+        janas_buf_printf(out, ", \"is_error\": %s, \"opened\": %s}",
+                         s && s->m ? "false" : "true",
+                         s && s->m ? "true" : "false");
+        janas_buf_free(&t);
+        janas_json_free(d);
+        return 1;
+    }
+    for (int i = 0; i < n_svc; i++) {
+        size_t pl = strlen(svcs[i].prefix);
+        if (!svcs[i].on || !svcs[i].m || strncmp(name, svcs[i].prefix, pl))
+            continue;
+        const char *tool = name + pl;
+        if (janas_mcp_call(svcs[i].m, tool, (int32_t)strlen(tool), args,
+                           (int32_t)an, 120) != JANAS_MCP_OK) {
+            janas_buf_puts(out, "{\"result\": ");
+            str(out, janas_mcp_last_error());
+            janas_buf_puts(out, ", \"is_error\": true}");
+            return 1;
+        }
+        static char res[1 << 20];
+        int32_t len = 0;
+        janas_mcp_result(svcs[i].m, res, sizeof res, &len);
+        janas_buf_puts(out, "{\"result\": ");
+        janas_json_write_str(out, res, (size_t)len);
+        janas_buf_printf(out, ", \"is_error\": %s}",
+                         janas_mcp_result_error(svcs[i].m) ? "true" : "false");
+        return 1;
+    }
+    return 0;
 }

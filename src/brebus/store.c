@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -153,6 +154,9 @@ void brebus_chats_list(struct brebus *b, struct janas_buf *out)
         str(&o, title ? title : "");
         janas_buf_puts(&o, ", \"model\": ");
         str(&o, model ? model : "");
+        const char *folder = janas_json_str(janas_json_get(r, "folder"));
+        janas_buf_puts(&o, ", \"folder\": ");
+        str(&o, folder ? folder : "");
         janas_buf_printf(&o, ", \"updated\": %.0f, \"messages\": %zu}",
                          e[n].updated,
                          msgs && msgs->type == JANAS_JSON_ARRAY ? msgs->n : 0);
@@ -324,5 +328,101 @@ int brebus_export(struct brebus *b, const char *body, size_t n,
     janas_buf_puts(out, "{\"path\": ");
     str(out, path);
     janas_buf_puts(out, "}");
+    return 0;
+}
+
+/* ---- artifacts: what the model makes to keep, in the workspace ---- */
+
+int brebus_artifact_save(struct brebus *b, const char *body, size_t n,
+                         struct janas_buf *out)
+{
+    char ws[4096], err[160], dir[4400], path[4700];
+    if (brebus_ws_path(b, ws, sizeof ws) != 0) {
+        janas_buf_puts(out, "{\"error\": \"no workspace\"}");
+        return -1;
+    }
+    struct janas_json_doc *d =
+        body && n ? janas_json_parse(body, n, err, sizeof err) : NULL;
+    const struct janas_json *o = d ? janas_json_root(d) : NULL;
+    const char *title = o ? janas_json_str(janas_json_get(o, "title")) : NULL;
+    const char *type = o ? janas_json_str(janas_json_get(o, "type")) : NULL;
+    const char *lang = o ? janas_json_str(janas_json_get(o, "lang")) : NULL;
+    const struct janas_json *c = o ? janas_json_get(o, "content") : NULL;
+    if (!c || c->type != JANAS_JSON_STRING || c->n > (16u << 20)) {
+        janas_json_free(d);
+        janas_buf_puts(out, "{\"error\": \"no content\"}");
+        return -1;
+    }
+    /* its folder by its title, made safe; the extension by its type */
+    char name[96];
+    size_t k = 0;
+    for (const unsigned char *p = (const unsigned char *)(title ? title : "");
+         *p && k + 1 < 64; p++)
+        if ((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+            (*p >= '0' && *p <= '9') || *p == ' ' || *p == '-' || *p == '_' ||
+            *p >= 0x80)
+            name[k++] = (char)*p;
+    while (k && name[k - 1] == ' ')
+        k--;
+    name[k] = 0;
+    if (!k)
+        snprintf(name, sizeof name, "artifact");
+    static const struct {
+        const char *what, *ext;
+    } EXT[] = {{"html", "html"}, {"svg", "svg"},       {"markdown", "md"},
+               {"python", "py"}, {"javascript", "js"}, {"js", "js"},
+               {"c", "c"},       {"cpp", "cpp"},       {"bash", "sh"},
+               {"sh", "sh"},     {"json", "json"},     {"css", "css"},
+               {"sql", "sql"},   {"rust", "rs"},       {"go", "go"},
+               {"java", "java"}, {"typescript", "ts"}, {"csv", "csv"}};
+    const char *ext = "txt";
+    const char *what = type && strcmp(type, "code") ? type : lang;
+    for (size_t i = 0; what && i < sizeof EXT / sizeof *EXT; i++)
+        if (!strcasecmp(what, EXT[i].what))
+            ext = EXT[i].ext;
+    snprintf(dir, sizeof dir, "%s/artifact/%s", ws, name);
+    if (janas_mkdirs(dir) != 0) {
+        janas_json_free(d);
+        janas_buf_puts(out, "{\"error\": \"cannot make artifact/\"}");
+        return -1;
+    }
+    /* the next version; the same content as the last one is not saved
+       again */
+    int v = 1;
+    for (;; v++) {
+        snprintf(path, sizeof path, "%s/v%d.%s", dir, v, ext);
+        if (access(path, F_OK) != 0)
+            break;
+    }
+    if (v > 1) {
+        char last[4700];
+        snprintf(last, sizeof last, "%s/v%d.%s", dir, v - 1, ext);
+        struct janas_buf old = {0};
+        if (slurp(last, &old) == 0 && old.n == c->n &&
+            !memcmp(old.p, c->s, c->n)) {
+            janas_buf_free(&old);
+            janas_json_free(d);
+            janas_buf_puts(out, "{\"path\": ");
+            str(out, last);
+            janas_buf_printf(out, ", \"version\": %d, \"same\": true}", v - 1);
+            return 0;
+        }
+        janas_buf_free(&old);
+    }
+    int fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0644);
+    int bad = fd < 0;
+    if (!bad) {
+        bad = write(fd, c->s, c->n) != (ssize_t)c->n;
+        bad |= close(fd) != 0;
+    }
+    janas_json_free(d);
+    if (bad) {
+        remove(path);
+        janas_buf_puts(out, "{\"error\": \"cannot write the artifact\"}");
+        return -1;
+    }
+    janas_buf_puts(out, "{\"path\": ");
+    str(out, path);
+    janas_buf_printf(out, ", \"version\": %d}", v);
     return 0;
 }

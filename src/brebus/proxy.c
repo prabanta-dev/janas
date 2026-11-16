@@ -113,6 +113,9 @@ int brebus_proxy(struct brebus *b, struct MHD_Connection *conn,
     unsigned short port = brebus_server_port(b);
     if (!port)
         return -1;
+    pthread_mutex_lock(&b->mu);
+    b->srv_used = time(NULL); /* for the unloading after a quiet while */
+    pthread_mutex_unlock(&b->mu);
     char to[4200], err[160], qs[2048] = "";
     struct query q = {.p = qs, .cap = sizeof qs};
     MHD_get_connection_values(conn, MHD_GET_ARGUMENT_KIND, q_arg, &q);

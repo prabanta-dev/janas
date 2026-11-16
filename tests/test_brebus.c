@@ -294,6 +294,41 @@ int main(void)
               "python writing where it may only read: %d %s", st, o.p);
     } else
         printf("test_brebus: no cage here, python not tried\n");
+    /* artifacts: saved with their versions, the same one not twice */
+    static const char *const arts[] = {
+        "{\"title\": \"My page!\", \"type\": \"html\", \"content\": \"<p>1</p>\"}",
+        "{\"title\": \"My page!\", \"type\": \"html\", \"content\": \"<p>1</p>\"}",
+        "{\"title\": \"My page!\", \"type\": \"html\", \"content\": \"<p>2</p>\"}",
+        "{\"title\": \"../x\", \"type\": \"code\", \"lang\": \"python\", "
+        "\"content\": \"print(1)\"}"};
+    static const char *const wants[] = {
+        "artifact/My page/v1.html\", \"version\": 1",
+        "artifact/My page/v1.html\", \"version\": 1, \"same\": true",
+        "artifact/My page/v2.html\", \"version\": 2", "artifact/x/v1.py\""};
+    for (int i = 0; i < 4; i++) {
+        st = ask("POST", "/brebus/artifacts", arts[i], own, &o);
+        CHECK(st == 200 && strstr(o.p, wants[i]), "artifact %d: %d %s", i, st,
+              o.p);
+    }
+    st = ask("POST", "/brebus/open", "{\"path\": \"/etc/passwd\"}", own, &o);
+    CHECK(st == 400, "a file outside the workspace opened: %d", st);
+    /* the models' folder changed, one that is not there refused; Brebus
+       started at login, then not (in the test's own configuration) */
+    snprintf(body, sizeof body, "{\"path\": \"%s\"}", ro);
+    st = ask("POST", "/brebus/models-dir", body, own, &o);
+    CHECK(st == 200, "the models' folder changed: %d %s", st, o.p);
+    st = ask("GET", "/brebus/models", NULL, NULL, &o);
+    snprintf(want, sizeof want, "\"dir\": \"%s\"", ro);
+    CHECK(st == 200 && strstr(o.p, want), "the models' folder: %s", o.p);
+    st = ask("POST", "/brebus/models-dir", "{\"path\": \"/nowhere\"}", own, &o);
+    CHECK(st == 400, "a folder not there taken for the models: %d", st);
+    st = ask("POST", "/brebus/autostart", "{\"on\": true}", own, &o);
+    snprintf(want, sizeof want, "%s/none/autostart/brebus.desktop", dir);
+    CHECK(st == 200 && strstr(o.p, "\"autostart\": true") &&
+              access(want, F_OK) == 0,
+          "started at login: %d %s", st, o.p);
+    st = ask("POST", "/brebus/autostart", "{\"on\": false}", own, &o);
+    CHECK(st == 200 && access(want, F_OK) != 0, "not started at login: %d", st);
     st = ask("POST", "/brebus/attach", "{\"source\": \"relative.txt\"}", own,
              &o);
     CHECK(st == 400, "a relative path attached: %d", st);
@@ -347,7 +382,7 @@ int main(void)
     st = ask("DELETE", "/brebus/chats/b_2", NULL, "https://evil.example", &o);
     CHECK(st == 403, "another site's page deleted one: %d", st);
     st = ask("GET", "/brebus/settings", NULL, NULL, &o);
-    CHECK(st == 200 && !strcmp(o.p, "{}"), "no settings yet: %s", o.p);
+    CHECK(st == 200 && !strstr(o.p, "\"m\""), "no settings yet: %s", o.p);
     st = ask("POST", "/brebus/settings", "{\"m\": {\"context\": 8192}}", own,
              &o);
     st = ask("GET", "/brebus/settings", NULL, NULL, &o);

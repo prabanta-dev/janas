@@ -110,17 +110,38 @@ static int read_doc(const struct found *d, struct dz_file *f, char *why,
         janas_buf_free(&t);
         return rc ? 1 : 0;
     }
+    /* each piece headed by its document's name and kind: a question
+       about "my spreadsheet" finds the sheet's rows, by their words and by
+       their meaning, and the model reading a piece knows where it is from */
+    static const char *const KIND[] = {
+        [DZ_TEXT] = "a text",        [DZ_DOCX] = "a document",
+        [DZ_ODT] = "a document",     [DZ_PDF] = "a PDF document",
+        [DZ_ODS] = "a spreadsheet",  [DZ_ODP] = "a presentation",
+        [DZ_XLSX] = "a spreadsheet", [DZ_PPTX] = "a presentation",
+        [DZ_HTML] = "a web page",    [DZ_EPUB] = "a book",
+        [DZ_RTF] = "a document"};
+    int kind = dz_kind(d->path);
+    const char *base = strrchr(d->path, '/');
+    char head[300];
+    int hn = snprintf(
+        head, sizeof head, "[%.200s, %s]\n", base ? base + 1 : d->path,
+        kind > 0 && kind < (int)(sizeof KIND / sizeof *KIND) && KIND[kind]
+            ? KIND[kind]
+            : "a document");
+    if (hn < 0 || hn >= (int)sizeof head)
+        hn = 0;
     struct dz_piece *pc;
     long n = dz_cut(t.p, t.n, DZ_CHUNK, DZ_OVERLAP, &pc);
     f->c = n > 0 ? calloc((size_t)n, sizeof(*f->c)) : NULL;
     for (long k = 0; f->c && k < n; k++) {
         struct dz_chunk *c = &f->c[f->n_chunk];
-        c->text = malloc(pc[k].n + 1);
+        c->text = malloc((size_t)hn + pc[k].n + 1);
         if (!c->text)
             break;
-        memcpy(c->text, t.p + pc[k].at, pc[k].n);
-        c->text[pc[k].n] = 0;
-        c->n = (uint32_t)pc[k].n;
+        memcpy(c->text, head, (size_t)hn);
+        memcpy(c->text + hn, t.p + pc[k].at, pc[k].n);
+        c->text[hn + pc[k].n] = 0;
+        c->n = (uint32_t)(hn + pc[k].n);
         f->n_chunk++;
     }
     free(pc);

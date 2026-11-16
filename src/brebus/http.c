@@ -221,6 +221,39 @@ static enum MHD_Result handler(void *cls, struct MHD_Connection *conn,
         janas_buf_puts(&o, "}");
         return json(conn, 200, &o);
     }
+    if (get && (!strcmp(url, "/brebus/hf/search") ||
+                !strcmp(url, "/brebus/hf/files"))) {
+        const char *q = MHD_lookup_connection_value(
+            conn, MHD_GET_ARGUMENT_KIND, url[11] == 's' ? "q" : "repo");
+        int rc = url[11] == 's' ? brebus_hf_search(b, q, &o)
+                                : brebus_hf_files(b, q, &o);
+        return json(conn, rc ? 400 : 200, &o);
+    }
+    if (post && (!strcmp(url, "/brebus/models-dir") ||
+                 !strcmp(url, "/brebus/autostart"))) {
+        char err[160];
+        struct janas_json_doc *d =
+            r->body.n ? janas_json_parse(r->body.p, r->body.n, err, sizeof err)
+                      : NULL;
+        const struct janas_json *v = d ? janas_json_root(d) : NULL;
+        int rc;
+        if (url[8] == 'm')
+            rc = brebus_models_dir_set(
+                b, v ? janas_json_str(janas_json_get(v, "path")) : NULL, 1);
+        else {
+            const struct janas_json *on = v ? janas_json_get(v, "on") : NULL;
+            rc = brebus_autostart(on && on->type == JANAS_JSON_TRUE);
+        }
+        janas_json_free(d);
+        janas_buf_printf(&o, "{\"ok\": %s, \"autostart\": %s}",
+                         rc ? "false" : "true",
+                         brebus_autostart_on() ? "true" : "false");
+        return json(conn, rc ? 400 : 200, &o);
+    }
+    if (get && !strcmp(url, "/brebus/services")) {
+        brebus_services_get(b, &o);
+        return json(conn, 200, &o);
+    }
     if (get && !strcmp(url, "/brebus/tools")) {
         brebus_tools_list(b, &o);
         return json(conn, 200, &o);
@@ -273,6 +306,24 @@ static enum MHD_Result handler(void *cls, struct MHD_Connection *conn,
         }
         brebus_ws_status(b, &o);
         return json(conn, 200, &o);
+    }
+    if (post && !strcmp(url, "/brebus/open")) {
+        char err[160];
+        struct janas_json_doc *d =
+            r->body.n ? janas_json_parse(r->body.p, r->body.n, err, sizeof err)
+                      : NULL;
+        const char *path =
+            d ? janas_json_str(janas_json_get(janas_json_root(d), "path"))
+              : NULL;
+        int rc = brebus_open_path(b, path);
+        janas_json_free(d);
+        janas_buf_puts(&o, rc ? "{\"error\": \"not a file of the workspace\"}"
+                              : "{\"ok\": true}");
+        return json(conn, rc ? 400 : 200, &o);
+    }
+    if (post && !strcmp(url, "/brebus/artifacts")) {
+        int rc = brebus_artifact_save(b, r->body.p, r->body.n, &o);
+        return json(conn, rc ? 400 : 200, &o);
     }
     if (post && !strcmp(url, "/brebus/export")) {
         int rc = brebus_export(b, r->body.p, r->body.n, &o);

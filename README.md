@@ -46,7 +46,7 @@ Measured on 21 October 2026 (the first two) and 26-27 October (the context of 8,
 
 ### Brebus, the app
 
-The models of your computer in a window of their own: the catalog and any model of Hugging Face downloaded, a chat that works in a folder of yours - your documents (PDF, Word, Excel, PowerPoint, LibreOffice, web pages, EPUB) searched before each question and given to the model with their names, files and web pages attached, pictures for the models that see them, recordings transcribed, the model's tools and Python in a cage asking you first - and the server for other programs. On Linux, on `develop` for now: [docs/brebus.md](docs/brebus.md).
+The models of your computer in a window of their own: the catalog and any model of Hugging Face downloaded, a chat that works in a folder of yours - your documents (PDF, Word, Excel, PowerPoint, LibreOffice, web pages, EPUB) searched before each question and given to the model with their names, files and web pages attached, pictures for the models that see them, recordings transcribed, the model's tools and Python in a cage asking you first - and the server for other programs. On Linux (Windows and macOS later): [docs/brebus.md](docs/brebus.md).
 
 ### janas-chat
 
@@ -127,7 +127,7 @@ sudo pacman -S vulkan-headers glslang vulkan-tools           # the same, Arch
 - [docs/library.md](docs/library.md) — using it from a program, in C, in FreeBASIC and BASIC MODERN, or in Node.js and TypeScript, and MCP servers from a program
 - [examples/node-chat](examples/node-chat/README.md) — a chat in TypeScript on the module for Node.js: the model inside the server's process, its replies streamed to the browser
 - [examples/fb-chat](examples/fb-chat/README.md) — a chat in FreeBASIC, procedure by procedure and with Janas's classes
-- [docs/brebus.md](docs/brebus.md) — Brebus, Janas's app in the browser (at its beginning, on `develop`): the models of this machine, a chat with them, the server for other programs
+- [docs/brebus.md](docs/brebus.md) — Brebus, Janas's app, on Linux: the models of this machine, a chat in a folder of yours with its documents, tools, artifacts and Python, the server for other programs
 - [docs/serving.md](docs/serving.md) — the model as tools for Claude Code, editors and other MCP clients (`janas-mcp`), and over HTTP, an API that follows OpenAI's, Ollama's and Anthropic's (Claude Code), with a chat page to try it from a browser (`janas-server`)
 - [docs/monitor.md](docs/monitor.md) — the engine at work: a page in the browser (`janas-server --monitor`) and in the terminal (`/monitor` in `janas-chat`), and the counters for a program
 - [docs/compatibility.md](docs/compatibility.md) — the programs tried with Janas, their versions and what was done with them: AnythingLLM, Obsidian, Zed, Continue, Cline, Roo Code, Claude Code, aider, Open WebUI

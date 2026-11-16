@@ -87,7 +87,7 @@ static int text_of(struct brebus *b, const char *path, struct janas_buf *t,
                    char *why, size_t wn)
 {
     char exe[4300];
-    snprintf(exe, sizeof exe, "%s/janas-docs%s", b->bin_dir, b->suffix);
+    brebus_service_exe(b, "docs", exe, sizeof exe);
     int fd[2];
     if (janas_pipe(fd) != 0) {
         snprintf(why, wn, "no pipe");

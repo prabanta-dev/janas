@@ -15,6 +15,7 @@
 #include "llm/json.h"
 
 #include <pthread.h>
+#include <time.h>
 #include <signal.h>
 
 #include "common/proc.h"
@@ -50,8 +51,11 @@ struct brebus {
     unsigned short srv_port;
     char srv_model[256];
     char srv_err[512];
-    char srv_key[256]; /* the key its clients send, or "" */
-    int srv_lan;       /* reachable from the local network */
+    char srv_last[256]; /* the model unloaded after a quiet while: loaded
+                           again by the page at the next message */
+    time_t srv_used;    /* when the page last asked the model */
+    char srv_key[256];  /* the key its clients send, or "" */
+    int srv_lan;        /* reachable from the local network */
     struct brebus_get get;
     /* tools.c: the chat's tools, MCP servers of the workspace's own */
     pthread_mutex_t tools_mu;
@@ -95,6 +99,12 @@ int brebus_chat_put(struct brebus *b, const char *id, const char *body,
 int brebus_chat_delete(struct brebus *b, const char *id);
 void brebus_settings_get(struct brebus *b, struct janas_buf *out);
 int brebus_settings_put(struct brebus *b, const char *body, size_t n);
+/* an artifact ({"title", "type": html, svg, markdown or code, "lang",
+   "content"}) saved in the workspace's artifact/<title>/v<N>.<ext>, the
+   next version (the same content as the last one not saved again): its
+   {"path", "version"} into out, 0; or -1 with the reason */
+int brebus_artifact_save(struct brebus *b, const char *body, size_t n,
+                         struct janas_buf *out);
 /* a text saved in the downloads folder (body: {"name", "text"}), under a
    name of its own, never over a file: {"path"} into out, 0; or -1 with the
    reason */
@@ -155,6 +165,10 @@ void brebus_tools_stop(struct brebus *b);
 void brebus_tools_list(struct brebus *b, struct janas_buf *out);
 int brebus_tools_call(struct brebus *b, const char *body, size_t n,
                       struct janas_buf *out);
+/* Janas's services and the user's MCP servers, on or off, opened or not,
+   as JSON into out (settings.json's _services.off turns them off; the
+   tools list gives the model their catalog and janas__open_service) */
+void brebus_services_get(struct brebus *b, struct janas_buf *out);
 void brebus_folders_get(struct brebus *b, struct janas_buf *out);
 int brebus_folders_set(struct brebus *b, const char *body, size_t n,
                        struct janas_buf *out);
@@ -173,6 +187,9 @@ const char *brebus_media_type(const char *path, int *audio);
    with its bytes and type, -1 when it is outside them or not there */
 int brebus_file(struct brebus *b, const char *path, struct janas_buf *out,
                 const char **mime);
+/* a file of the workspace opened by the system's own program (xdg-open):
+   0, or -1 when it is not the workspace's */
+int brebus_open_path(struct brebus *b, const char *path);
 
 /* python.c: the python tool in the cage, the workspace its /mnt/data:
    whether there can be one (1, or 0 with why); its definition as an
@@ -184,6 +201,28 @@ void brebus_python_tool(struct brebus *b, struct janas_buf *o);
 int brebus_python_run(struct brebus *b, const char *code,
                       struct janas_buf *out);
 void brebus_python_stop(void);
+
+/* hf.c: Hugging Face's models with GGUF files whose names hold q, the
+   most downloaded first; the GGUF and JNS files of one (owner/name), their
+   sizes: JSON into out, 0, or -1 with the reason */
+int brebus_hf_search(struct brebus *b, const char *q, struct janas_buf *out);
+int brebus_hf_files(struct brebus *b, const char *repo, struct janas_buf *out);
+
+/* server.c: the model unloaded after ttl minutes without a request through
+   Brebus (settings.json's _server.ttl; 0: never), checked by a thread of
+   its own; the folder of the models changed (settings.json's _models_dir,
+   a folder there is): 0, or -1 */
+void brebus_idle_start(struct brebus *b);
+int brebus_models_dir_set(struct brebus *b, const char *path, int save);
+/* desktop.c: Brebus started at login, its server without a window
+   (~/.config/autostart/brebus.desktop), on or off; whether it is */
+int brebus_autostart(int on);
+int brebus_autostart_on(void);
+
+/* tools.c: where janas-<name> is, into out: in services/ beside brebus (the
+   binary package), else beside it */
+void brebus_service_exe(const struct brebus *b, const char *name, char *out,
+                        size_t n);
 
 /* proxy.c: a request to the model's API passed on: 0 with the response to
    queue and its status, -1 when no server runs or it cannot be reached */

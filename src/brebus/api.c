@@ -37,10 +37,11 @@ static void machine(struct janas_buf *o)
     str(o, feat);
     janas_buf_printf(o,
                      ", \"memory_total\": %llu, \"memory_available\": %llu, "
-                     "\"mains\": %d}",
+                     "\"mains\": %d, \"autostart\": %s}",
                      (unsigned long long)janas_mem_total(),
                      (unsigned long long)janas_mem_available(),
-                     janas_on_mains());
+                     janas_on_mains(),
+                     brebus_autostart_on() ? "true" : "false");
 }
 
 /* whether a model sees pictures: a .vision.jns beside it whose name is a

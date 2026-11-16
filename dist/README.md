@@ -49,6 +49,7 @@ Janas-LLM, the inference engine of Janas, runs large language models on ordinary
 ./janas-get qwen3-4b             # downloads it, checked, into ~/.local/share/janas/models
 ./janas-chat qwen3-4b            # and talk to it
 ./janas-bench qwen3-4b           # how fast this machine runs it: a report to send back
+./brebus                         # or all of it in a window: models, a chat, the server
 ```
 
 `./janas-chat` with no model shows the list and downloads the one you choose, after asking. The models come already converted from Hugging Face ([prabanta-dev](https://huggingface.co/prabanta-dev)), each file checked against the fingerprints of `MODELS.md`.
@@ -57,6 +58,7 @@ Janas-LLM, the inference engine of Janas, runs large language models on ordinary
 
 | | |
 |---|---|
+| `brebus` | Janas's app, in a window of its own (WebKitGTK, `libwebkit2gtk-4.1-0`; else the browser): the catalog and Hugging Face searched and downloaded, the models loaded with their settings, a chat working in a folder of yours (its documents searched before each question, files and pictures attached, the services and your MCP servers, Python in a cage, artifacts beside the chat, regenerate and edit, presets and JSON answers), the server for other programs; `./brebus --install-desktop` puts it in the desktop's menu. See `docs/brebus.md` |
 | `janas-chat` | a chat in the terminal: line editor, history, the reasoning shown apart, a context that slides instead of ending, conversations saved as they go and taken up (`--continue`, `--resume`, `/export`, `/import`), the tools of MCP servers and of Janas's own services |
 | `janas-server` | the model served over HTTP with an API that follows OpenAI's: chat completions (tools, JSON schemas), completions, responses, embeddings, and llama.cpp's route for filling in code in editors |
 | `janas-get` | downloads a model of the catalog, checked; `--from-gguf` converts the original GGUF here instead |

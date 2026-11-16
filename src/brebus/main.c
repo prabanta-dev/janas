@@ -14,6 +14,7 @@
 
 #include "brebus.h"
 #include "common/catalog.h"
+#include "common/mcp_http.h"
 #include "common/sandbox.h"
 #include "common/sysinfo.h"
 
@@ -124,10 +125,47 @@ int main(int argc, char **argv)
     } else if (isatty(STDIN_FILENO) && getcwd(cwd, sizeof cwd) &&
                brebus_ws_open(&b, cwd, 0, why, sizeof why) != 0)
         fprintf(stderr, "brebus: %s; the page will ask for a folder\n", why);
+    /* the models' folder chosen in the page, where JANAS_MODELS says none */
+    {
+        struct janas_buf f = {0};
+        char err[160];
+        brebus_settings_get(&b, &f);
+        struct janas_json_doc *d =
+            f.n ? janas_json_parse(f.p, f.n, err, sizeof err) : NULL;
+        const char *md = d ? janas_json_str(janas_json_get(janas_json_root(d),
+                                                           "_models_dir"))
+                           : NULL;
+        const char *env = getenv("JANAS_MODELS");
+        if (md && !(env && *env))
+            brebus_models_dir_set(&b, md, 0);
+        janas_json_free(d);
+        janas_buf_free(&f);
+    }
     if (brebus_http_start(&b, why, sizeof why) != 0) {
+        /* a Brebus there already (started at login, or from the menu
+           before): its window onto it, this one ends with it */
+        char url0[64];
+        snprintf(url0, sizeof url0, "http://127.0.0.1:%u/", b.port);
+        struct janas_url u;
+        struct janas_http h;
+        char e2[160], probe[96];
+        snprintf(probe, sizeof probe, "%sbrebus/workspace", url0);
+        int there = janas_url_parse(probe, &u, e2, sizeof e2) == 0 &&
+                    janas_http_request(&h, &u, "GET", NULL, 0, NULL, 0, 2000,
+                                       NULL, e2, sizeof e2) == 0;
+        if (there) {
+            there = h.head.status == 200;
+            janas_http_close(&h);
+        }
+        if (there && open) {
+            if (browser || brebus_window(url0, &quit, why, sizeof why) != 0)
+                open_browser(url0);
+            return 0;
+        }
         fprintf(stderr, "brebus: %s\n", why);
         return 1;
     }
+    brebus_idle_start(&b);
     char url[64];
     snprintf(url, sizeof url, "http://127.0.0.1:%u/", b.port);
     fprintf(stderr, "brebus %s: %s (Ctrl+C ends it)\n", JANAS_VERSION, url);

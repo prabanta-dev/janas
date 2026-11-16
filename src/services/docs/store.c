@@ -22,7 +22,8 @@
 
 #include "docs.h"
 
-static const char MAGIC[8] = {'J', 'D', 'O', 'C', 'I', 'D', 'X', '1'};
+/* 2: each piece headed by its document's name and kind */
+static const char MAGIC[8] = {'J', 'D', 'O', 'C', 'I', 'D', 'X', '2'};
 
 struct rd {
     const uint8_t *p;

@@ -11,9 +11,11 @@
  * each time Brebus opens its window: the icons where one is missing or
  * differs, the entry where there is none.
  */
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "brebus.h"
 #include "common/catalog.h"
@@ -120,4 +122,53 @@ int brebus_install_desktop(int quiet)
                "%s/icons/hicolor\n",
                entry, share);
     return 0;
+}
+
+static void autostart_path(char *p, size_t n)
+{
+    const char *xc = getenv("XDG_CONFIG_HOME"), *home = getenv("HOME");
+    if (xc && *xc == '/')
+        snprintf(p, n, "%s/autostart/brebus.desktop", xc);
+    else
+        snprintf(p, n, "%s/.config/autostart/brebus.desktop",
+                 home ? home : ".");
+}
+
+int brebus_autostart_on(void)
+{
+    char p[4200];
+    autostart_path(p, sizeof p);
+    return access(p, F_OK) == 0;
+}
+
+int brebus_autostart(int on)
+{
+    char p[4200], dir[4200], exe[4096];
+    autostart_path(p, sizeof p);
+    if (!on)
+        return remove(p) == 0 || errno == ENOENT ? 0 : -1;
+    if (janas_exe_path(exe, sizeof exe) <= 0)
+        return -1;
+    snprintf(dir, sizeof dir, "%s", p);
+    *strrchr(dir, '/') = 0;
+    /* its server only: the window opens from the menu, onto it */
+    const char *jm = getenv("JANAS_MODELS");
+    char env[4200] = "";
+    if (jm && *jm == '/' && !strpbrk(jm, "\"\\`$ \n"))
+        snprintf(env, sizeof env, "env JANAS_MODELS=%s ", jm);
+    char text[8800];
+    int n = snprintf(text, sizeof text,
+                     "[Desktop Entry]\n"
+                     "Type=Application\n"
+                     "Name=Brebus\n"
+                     "Comment=Janas's app, its server started at login\n"
+                     "Exec=%s\"%s\" --no-open\n"
+                     "Icon=brebus\n"
+                     "Terminal=false\n"
+                     "X-GNOME-Autostart-enabled=true\n",
+                     env, exe);
+    return n > 0 && (size_t)n < sizeof text && janas_mkdirs(dir) == 0 &&
+                   write_file(p, text, (size_t)n) == 0
+               ? 0
+               : -1;
 }
