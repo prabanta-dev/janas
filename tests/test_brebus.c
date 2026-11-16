@@ -310,6 +310,44 @@ int main(void)
         CHECK(st == 200 && strstr(o.p, wants[i]), "artifact %d: %d %s", i, st,
               o.p);
     }
+    /* an artifact's storage: set, read, listed, deleted */
+    static const char *const store[][2] = {
+        {"{\"title\": \"My page!\", \"act\": \"set\", \"key\": \"n\", "
+         "\"value\": 41}",
+         "{\"key\": \"n\", \"value\": 41}"},
+        {"{\"title\": \"My page!\", \"act\": \"set\", \"key\": \"s\", "
+         "\"value\": \"x\"}",
+         "\"value\": \"x\""},
+        {"{\"title\": \"My page!\", \"act\": \"get\", \"key\": \"n\"}",
+         "{\"key\": \"n\", \"value\": 41}"},
+        {"{\"title\": \"My page!\", \"act\": \"list\"}",
+         "{\"keys\": [\"n\", \"s\"]}"},
+        {"{\"title\": \"My page!\", \"act\": \"delete\", \"key\": "
+         "\"n\"}",
+         "\"deleted\": true"},
+        {"{\"title\": \"My page!\", \"act\": \"get\", \"key\": \"n\"}",
+         "null"}};
+    for (int i = 0; i < 6; i++) {
+        st = ask("POST", "/brebus/artifact-store", store[i][0], own, &o);
+        CHECK(st == 200 && strstr(o.p, store[i][1]), "storage %d: %d %s", i, st,
+              o.p);
+    }
+    snprintf(want, sizeof want, "%s/work/artifact/My page/storage.json", dir);
+    CHECK(access(want, F_OK) == 0, "the storage not in artifact/: %s", want);
+    st = ask("POST", "/brebus/artifact-store",
+             "{\"title\": \"x\", \"act\": \"drop\", \"key\": \"n\"}", own, &o);
+    CHECK(st == 400, "a storage act not known taken: %d", st);
+    /* the artifact's frame, and the libraries: anyone's to ask, an
+       Origin: null too, but only those of the list */
+    st = ask("GET", "/brebus/frame", NULL, NULL, &o);
+    CHECK(st == 200 && strstr(o.p, "janasArtifact"), "the frame: %d", st);
+    st = ask("GET", "/brebus/lib/../../etc/passwd", NULL, "null", &o);
+    CHECK(st == 404, "a path not a library served: %d", st);
+    st = ask("GET", "/brebus/lib/evil@1.0.0/x.js", NULL, "null", &o);
+    CHECK(st == 404 && strstr(o.p, "not a library"),
+          "a library not in the list: %d %s", st, o.p);
+    st = ask("GET", "/brebus/models", NULL, "null", &o);
+    CHECK(st == 403, "Origin: null let in beyond the libraries: %d", st);
     st = ask("POST", "/brebus/open", "{\"path\": \"/etc/passwd\"}", own, &o);
     CHECK(st == 400, "a file outside the workspace opened: %d", st);
     /* the models' folder changed, one that is not there refused; Brebus

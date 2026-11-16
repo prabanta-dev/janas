@@ -50,7 +50,22 @@ The recent ones are listed in `~/.local/share/janas/brebus/workspaces.json`; the
 
 ## Artifacts
 
-With *Artifacts* on (by default), the model is asked to put a self-contained document - a web page, an SVG drawing, a long Markdown document, a program - between `<artifact type="..." title="...">` and `</artifact>`; a whole HTML or SVG document in a fenced block is taken as one too. The reply shows a card in its place, and the artifact opens in a pane beside the chat: a page or a drawing in a frame of its own, which can run its scripts but has no network and no access to Brebus or to the page around it; Markdown as the replies are; code as it is. Each is saved in `artifact/<title>/`, a version a file, the versions paged through in the pane; *Open* hands it to the system's own program (a page to the browser, as a file), never to Brebus's origin.
+With *Artifacts* on (by default), the model is asked to put what it makes to see or keep between `<artifact type="..." title="...">` and `</artifact>`, and the reply shows a card in its place; the artifact opens in a pane beside the chat, its left edge dragged to widen it, ⤢ to put it over the chat. Its kinds are those of Claude's artifacts:
+
+| Kind | Shown as |
+|---|---|
+| `html` | the page, its scripts run |
+| `react` | a React component exported as default, its JSX read by Babel, Tailwind's classes, the imports of `react`, `recharts`, `lucide-react`, `d3`, `lodash`, `mathjs`, `papaparse`, `xlsx`, `chart.js`, `three`, `tone`, and shadcn/ui's components from `@/components/ui/...` (written for Brebus with the same names and props) |
+| `mermaid` | the diagram |
+| `svg` | the drawing |
+| `markdown` | as the replies are, formulas between `$$` with KaTeX |
+| `code` | the program, its syntax in colours |
+
+*Preview* and *Code* switch between the artifact and its text; *Download* saves it as a file; *Open* hands the saved one to the system's program; the versions, each saved as `artifact/<title>/v1.html`, `v2.html`..., are paged through. An error of the artifact shows above it, with *Ask the model to fix it*, which sends the error to the model.
+
+An artifact runs in a frame with no origin of its own and no network: it cannot reach Brebus, the page around it, the computer or the Internet. The libraries it may use - React 18.3.1, Recharts 2.13.3, lucide-react 0.460.0, D3 7.9.0, lodash 4.17.21, Papa Parse 5.4.1, math.js 13.2.2, Chart.js 4.4.6, Three.js r128, Plotly 2.35.2, SheetJS 0.18.5, Mermaid 11.4.1, KaTeX 0.16.11, highlight.js 11.10.0, Tone.js 15.0.4, mammoth 1.8.0, Tailwind 4.1.10, Babel 7.26.4 - come from Brebus: each file is downloaded once from jsdelivr's copy of npm when first needed, checked against the SHA-256 Brebus carries, and kept in `~/.local/share/janas/brebus/lib`; a page that asks for one of them from jsdelivr, unpkg or cdnjs gets Brebus's copy. They are not part of Janas: each keeps its own licence (MIT, BSD, ISC or Apache 2.0). Other addresses stay out, and the pane says so.
+
+Inside a page or a component, as in Claude's: `await window.claude.complete(prompt)` asks the model loaded and gives its answer as a string; `window.storage.get(key)`, `set(key, value)`, `delete(key)` and `list(prefix)` keep the artifact's data between visits, in `artifact/<title>/storage.json` (20 MB at most); `window.fs.readFile(name)` reads a file attached to the conversation, `{encoding: "utf8"}` as text. Code and formulas in the replies are shown with the same libraries.
 
 ## Services and your MCP servers
 
@@ -60,7 +75,7 @@ Beside the workspace's documents and files, the model may use Janas's services f
 
 | Section | |
 |---|---|
-| Chat | the workspace's conversations on the left, in folders, searched with those of every recent workspace, renamed, deleted, exported in Markdown to `exports/` or as a PDF (the system's print dialog); each one's settings: a system message, temperature, top-p, an answer in JSON (any object, or by a schema), saved as presets; the reply as it is written, in Markdown, the model's reasoning folded above it, its tokens and how fast they came; *Regenerate* writes the last answer again, the earlier ones paged through; *Edit* changes a question and goes on from it; *New window* puts a chat in a window of its own, beside the other; Enter sends, Shift+Enter starts a new line, and while a reply comes the button in the field stops it, as Esc does |
+| Chat | the workspace's conversations in the side bar, under the sections (the bar hidden to a strip of icons with « or Ctrl+B, and by itself when an artifact opens on a narrow window), in folders, searched with those of every recent workspace, renamed, deleted, exported in Markdown to `exports/` or as a PDF (the system's print dialog); each one's settings: a system message, temperature, top-p, an answer in JSON (any object, or by a schema), saved as presets; the reply as it is written, in Markdown, the model's reasoning folded above it, its tokens and how fast they came; *Regenerate* writes the last answer again, the earlier ones paged through; *Edit* changes a question and goes on from it; *New window* puts a chat in a window of its own, beside the other; Enter sends, Shift+Enter starts a new line, and while a reply comes the button in the field stops it, as Esc does |
 | Discover | the models of `janas-get`, how much each one downloads and asks of the memory, and whether it is meant for a machine of this memory; *Get* downloads one, with how far it is, and *Stop* keeps what came so far for the next *Get*; Hugging Face searched by words (its models with GGUF files, the most downloaded first, each one's files with their sizes), or a file by its address or as `hf:owner/repo/file.gguf` (a GGUF converted here, a JNS as it is; a GGUF split in parts not yet) |
 | My models | the models in Janas's models folder (`janas-get`'s, `$JANAS_MODELS`, or the one chosen here), with their size and context, and whether they see pictures; *Settings* keeps for each one its context, reasoning on or off and how many conversations at once, and *Load* starts the model's server with them |
 | Server | the model loaded, and its addresses for other programs: OpenAI's API at `/v1`, Ollama's and Anthropic's beside it, on the local network too where it is open to it; the engine monitor in a window of its own; the settings: reachable from the local network, the key other programs must send (a new one made on request), the web pages of other sites allowed to call it, the model unloaded after a quiet while (loaded again at the next message; counted on Brebus's own chat) |

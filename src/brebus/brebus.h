@@ -103,6 +103,14 @@ int brebus_settings_put(struct brebus *b, const char *body, size_t n);
    "content"}) saved in the workspace's artifact/<title>/v<N>.<ext>, the
    next version (the same content as the last one not saved again): its
    {"path", "version"} into out, 0; or -1 with the reason */
+/* an artifact's window.storage (store.c): {"title", "act", "key",
+   "value", "prefix"} */
+int brebus_artifact_store(struct brebus *b, const char *body, size_t n,
+                          struct janas_buf *out);
+/* lib.c: a file of the libraries artifacts may use, by its path under
+   /brebus/lib/ (fetched and checked the first time): 0, or -1 with err */
+int brebus_lib(struct brebus *b, const char *rel, struct janas_buf *out,
+               const char **mime, char *err, size_t en);
 int brebus_artifact_save(struct brebus *b, const char *body, size_t n,
                          struct janas_buf *out);
 /* a text saved in the downloads folder (body: {"name", "text"}), under a

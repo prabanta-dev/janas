@@ -333,6 +333,23 @@ int brebus_export(struct brebus *b, const char *body, size_t n,
 
 /* ---- artifacts: what the model makes to keep, in the workspace ---- */
 
+/* an artifact's folder, by its title made safe */
+static void art_name(const char *title, char *name, size_t cap)
+{
+    size_t k = 0;
+    for (const unsigned char *p = (const unsigned char *)(title ? title : "");
+         *p && k + 1 < cap && k < 63; p++)
+        if ((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+            (*p >= '0' && *p <= '9') || *p == ' ' || *p == '-' || *p == '_' ||
+            *p >= 0x80)
+            name[k++] = (char)*p;
+    while (k && name[k - 1] == ' ')
+        k--;
+    name[k] = 0;
+    if (!k)
+        snprintf(name, cap, "artifact");
+}
+
 int brebus_artifact_save(struct brebus *b, const char *body, size_t n,
                          struct janas_buf *out)
 {
@@ -355,18 +372,7 @@ int brebus_artifact_save(struct brebus *b, const char *body, size_t n,
     }
     /* its folder by its title, made safe; the extension by its type */
     char name[96];
-    size_t k = 0;
-    for (const unsigned char *p = (const unsigned char *)(title ? title : "");
-         *p && k + 1 < 64; p++)
-        if ((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
-            (*p >= '0' && *p <= '9') || *p == ' ' || *p == '-' || *p == '_' ||
-            *p >= 0x80)
-            name[k++] = (char)*p;
-    while (k && name[k - 1] == ' ')
-        k--;
-    name[k] = 0;
-    if (!k)
-        snprintf(name, sizeof name, "artifact");
+    art_name(title, name, sizeof name);
     static const struct {
         const char *what, *ext;
     } EXT[] = {{"html", "html"}, {"svg", "svg"},       {"markdown", "md"},
@@ -374,7 +380,8 @@ int brebus_artifact_save(struct brebus *b, const char *body, size_t n,
                {"c", "c"},       {"cpp", "cpp"},       {"bash", "sh"},
                {"sh", "sh"},     {"json", "json"},     {"css", "css"},
                {"sql", "sql"},   {"rust", "rs"},       {"go", "go"},
-               {"java", "java"}, {"typescript", "ts"}, {"csv", "csv"}};
+               {"java", "java"}, {"typescript", "ts"}, {"csv", "csv"},
+               {"react", "jsx"}, {"mermaid", "mmd"}};
     const char *ext = "txt";
     const char *what = type && strcmp(type, "code") ? type : lang;
     for (size_t i = 0; what && i < sizeof EXT / sizeof *EXT; i++)
@@ -425,4 +432,127 @@ int brebus_artifact_save(struct brebus *b, const char *body, size_t n,
     str(out, path);
     janas_buf_printf(out, ", \"version\": %d}", v);
     return 0;
+}
+
+/* window.storage of an artifact: its data, a JSON object in
+   artifact/<title>/storage.json; {"title", "act": get, set, delete or
+   list, "key", "value", "prefix"}, answered as Claude's storage answers */
+#define STORE_MAX (20u << 20)
+int brebus_artifact_store(struct brebus *b, const char *body, size_t n,
+                          struct janas_buf *out)
+{
+    char ws[4096], err[160], name[96], dir[4400], path[4500];
+    if (brebus_ws_path(b, ws, sizeof ws) != 0) {
+        janas_buf_puts(out, "{\"error\": \"no workspace\"}");
+        return -1;
+    }
+    struct janas_json_doc *d =
+        body && n ? janas_json_parse(body, n, err, sizeof err) : NULL;
+    const struct janas_json *o = d ? janas_json_root(d) : NULL;
+    const char *title = o ? janas_json_str(janas_json_get(o, "title")) : NULL;
+    const char *act = o ? janas_json_str(janas_json_get(o, "act")) : NULL;
+    const char *key = o ? janas_json_str(janas_json_get(o, "key")) : NULL;
+    const char *prefix = o ? janas_json_str(janas_json_get(o, "prefix")) : NULL;
+    const struct janas_json *value = o ? janas_json_get(o, "value") : NULL;
+    int set = act && !strcmp(act, "set"), del = act && !strcmp(act, "delete");
+    int get = act && !strcmp(act, "get"), list = act && !strcmp(act, "list");
+    if (!title || !(set || del || get || list) ||
+        (!list && (!key || !*key || strlen(key) > 200)) || (set && !value)) {
+        janas_json_free(d);
+        janas_buf_puts(out, "{\"error\": \"title, act and key\"}");
+        return -1;
+    }
+    art_name(title, name, sizeof name);
+    snprintf(dir, sizeof dir, "%s/artifact/%s", ws, name);
+    snprintf(path, sizeof path, "%s/storage.json", dir);
+    struct janas_buf f = {0}, w = {0};
+    struct janas_json_doc *sd = NULL;
+    if (slurp(path, &f) == 0 && f.n)
+        sd = janas_json_parse(f.p, f.n, err, sizeof err);
+    const struct janas_json *root = sd ? janas_json_root(sd) : NULL;
+    if (root && root->type != JANAS_JSON_OBJECT)
+        root = NULL;
+    int rc = 0;
+    if (get || list) {
+        const struct janas_json *v = NULL;
+        if (list)
+            janas_buf_puts(out, "{\"keys\": [");
+        int k = 0;
+        for (const struct janas_json *e = root ? root->child : NULL; e;
+             e = e->next) {
+            if (get && e->key_n == strlen(key) &&
+                !memcmp(e->key, key, e->key_n))
+                v = e;
+            if (list &&
+                (!prefix || (e->key_n >= strlen(prefix) &&
+                             !memcmp(e->key, prefix, strlen(prefix))))) {
+                janas_buf_puts(out, k++ ? ", " : "");
+                janas_json_write_str(out, e->key, e->key_n);
+            }
+        }
+        if (list)
+            janas_buf_puts(out, "]}");
+        else if (!v)
+            janas_buf_puts(out, "null");
+        else {
+            janas_buf_puts(out, "{\"key\": ");
+            str(out, key);
+            janas_buf_puts(out, ", \"value\": ");
+            janas_json_write(out, v);
+            janas_buf_puts(out, "}");
+        }
+    } else {
+        /* the object written again, the key changed or left out */
+        janas_buf_puts(&w, "{");
+        int k = 0;
+        for (const struct janas_json *e = root ? root->child : NULL; e;
+             e = e->next) {
+            if (e->key_n == strlen(key) && !memcmp(e->key, key, e->key_n))
+                continue;
+            janas_buf_puts(&w, k++ ? ", " : "");
+            janas_json_write_str(&w, e->key, e->key_n);
+            janas_buf_puts(&w, ": ");
+            janas_json_write(&w, e);
+        }
+        if (set) {
+            janas_buf_puts(&w, k++ ? ", " : "");
+            str(&w, key);
+            janas_buf_puts(&w, ": ");
+            janas_json_write(&w, value);
+        }
+        janas_buf_puts(&w, "}");
+        if (w.oom || w.n > STORE_MAX) {
+            janas_buf_puts(out, "{\"error\": \"this artifact's storage is full "
+                                "(20 MB)\"}");
+            rc = -1;
+        } else {
+            char tmp[4600];
+            snprintf(tmp, sizeof tmp, "%s.part", path);
+            FILE *fp = janas_mkdirs(dir) == 0 ? fopen(tmp, "wb") : NULL;
+            int bad = !fp || fwrite(w.p, 1, w.n, fp) != w.n;
+            if (fp)
+                bad |= fclose(fp) != 0;
+            if (bad || rename(tmp, path) != 0) {
+                remove(tmp);
+                janas_buf_puts(out, "{\"error\": \"cannot write the "
+                                    "artifact's storage\"}");
+                rc = -1;
+            } else if (set) {
+                janas_buf_puts(out, "{\"key\": ");
+                str(out, key);
+                janas_buf_puts(out, ", \"value\": ");
+                janas_json_write(out, value);
+                janas_buf_puts(out, "}");
+            } else {
+                janas_buf_puts(out, "{\"key\": ");
+                str(out, key);
+                janas_buf_puts(out, ", \"deleted\": true}");
+            }
+        }
+    }
+    janas_json_free(sd);
+    janas_json_free(d);
+    janas_buf_free(&f);
+    janas_buf_free(&w);
+    return rc;
 }

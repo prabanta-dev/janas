@@ -100,7 +100,10 @@ function renderInline(el, text) {
       if (c === "\n") { bol = true; last = ""; return; }
     }
     if (c === "\n" && info) { info = false; bol = true; last = ""; return; }
-    if (info) return;
+    if (info) { /* the language named after the fence, kept for colours */
+      if (pre && /[\w+#.-]/.test(c)) pre.dataset.lang = (pre.dataset.lang || "") + c;
+      return;
+    }
     if (pend) {
       pend += c || "\u0000"; /* the end counts, as the 0 does in C */
       if (pend[0] === "~") { /* ~~struck~~, attached as the stars are */

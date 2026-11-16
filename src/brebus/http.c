@@ -16,12 +16,14 @@
 #include <netinet/in.h>
 
 #include "brebus.h"
-#include "brebus_app_html.h" /* made by build.sh from app.html */
+#include "brebus_app_html.h"   /* made by build.sh from app.html */
+#include "brebus_frame_html.h" /* and from frame.html */
 
 static const char CSP[] =
-    "default-src 'none'; script-src 'unsafe-inline'; style-src "
-    "'unsafe-inline'; img-src 'self' data:; connect-src 'self'; base-uri "
-    "'none'; form-action 'none'; frame-ancestors 'none'";
+    "default-src 'none'; script-src 'unsafe-inline' 'self'; style-src "
+    "'unsafe-inline' 'self'; font-src 'self'; img-src 'self' data:; "
+    "connect-src 'self'; frame-src 'self'; base-uri 'none'; form-action "
+    "'none'; frame-ancestors 'none'";
 
 /* "127.0.0.1:port" or "localhost:port" */
 static int ours(const struct brebus *b, const char *host)
@@ -98,8 +100,11 @@ static enum MHD_Result handler(void *cls, struct MHD_Connection *conn,
         char own[2][64];
         snprintf(own[0], sizeof own[0], "http://127.0.0.1:%u", b->port);
         snprintf(own[1], sizeof own[1], "http://localhost:%u", b->port);
-        if (!ours(b, host) ||
-            (origin && strcmp(origin, own[0]) && strcmp(origin, own[1]))) {
+        /* the libraries are anyone's: an artifact's frame, of no origin,
+           asks for them too (its fonts with an Origin: null) */
+        int lib = !strcmp(method, "GET") && !strncmp(url, "/brebus/lib/", 12);
+        if (!ours(b, host) || (!lib && origin && strcmp(origin, own[0]) &&
+                               strcmp(origin, own[1]))) {
             static const char no[] = "{\"error\": \"not this page's\"}";
             return reply(conn, 403, "application/json", no, sizeof no - 1, 1);
         }
@@ -127,6 +132,59 @@ static enum MHD_Result handler(void *cls, struct MHD_Connection *conn,
         return reply(conn, 200, "text/html; charset=utf-8",
                      janas_brebus_app_html, sizeof janas_brebus_app_html - 1,
                      1);
+    if (get && !strcmp(url, "/brebus/frame")) {
+        /* an artifact's frame: its own policy, no network, scripts inline
+           and from the libraries, the page of this Brebus its only parent */
+        const char *host =
+            MHD_lookup_connection_value(conn, MHD_HEADER_KIND, "Host");
+        char csp[1024];
+        snprintf(csp, sizeof csp,
+                 "default-src 'none'; script-src 'unsafe-inline' "
+                 "'unsafe-eval' http://%s/brebus/lib/; style-src "
+                 "'unsafe-inline' http://%s/brebus/lib/; font-src data: "
+                 "http://%s/brebus/lib/; img-src data: blob:; media-src data: "
+                 "blob:; worker-src blob:; connect-src 'none'; form-action "
+                 "'none'; base-uri 'none'; frame-ancestors http://%s",
+                 host, host, host, host);
+        struct MHD_Response *rs = MHD_create_response_from_buffer_static(
+            sizeof janas_brebus_frame_html - 1, janas_brebus_frame_html);
+        if (!rs)
+            return MHD_NO;
+        MHD_add_response_header(rs, "Content-Type", "text/html; charset=utf-8");
+        MHD_add_response_header(rs, "X-Content-Type-Options", "nosniff");
+        MHD_add_response_header(rs, "Cache-Control", "no-store");
+        MHD_add_response_header(rs, "Content-Security-Policy", csp);
+        enum MHD_Result ret = MHD_queue_response(conn, 200, rs);
+        MHD_destroy_response(rs);
+        return ret;
+    }
+    if (get && !strncmp(url, "/brebus/lib/", 12)) {
+        struct janas_buf o = {0};
+        const char *mime = NULL;
+        char err[400];
+        if (brebus_lib(b, url + 12, &o, &mime, err, sizeof err) != 0) {
+            janas_buf_free(&o);
+            struct janas_buf e = {0};
+            janas_buf_puts(&e, "{\"error\": ");
+            janas_json_write_str(&e, err, strlen(err));
+            janas_buf_puts(&e, "}");
+            return json(conn, 404, &e);
+        }
+        struct MHD_Response *rs =
+            MHD_create_response_from_buffer_copy(o.n, o.p);
+        janas_buf_free(&o);
+        if (!rs)
+            return MHD_NO;
+        MHD_add_response_header(rs, "Content-Type", mime);
+        MHD_add_response_header(rs, "X-Content-Type-Options", "nosniff");
+        /* the same file under the same path, always */
+        MHD_add_response_header(rs, "Cache-Control",
+                                "public, max-age=31536000, immutable");
+        MHD_add_response_header(rs, "Access-Control-Allow-Origin", "*");
+        enum MHD_Result ret = MHD_queue_response(conn, 200, rs);
+        MHD_destroy_response(rs);
+        return ret;
+    }
     if (get && !strcmp(url, "/prabanta.png")) {
         const struct brebus_icon *i = brebus_icon(64);
         return reply(conn, 200, "image/png", (const char *)i->png, i->len, 1);
@@ -319,6 +377,10 @@ static enum MHD_Result handler(void *cls, struct MHD_Connection *conn,
         janas_json_free(d);
         janas_buf_puts(&o, rc ? "{\"error\": \"not a file of the workspace\"}"
                               : "{\"ok\": true}");
+        return json(conn, rc ? 400 : 200, &o);
+    }
+    if (post && !strcmp(url, "/brebus/artifact-store")) {
+        int rc = brebus_artifact_store(b, r->body.p, r->body.n, &o);
         return json(conn, rc ? 400 : 200, &o);
     }
     if (post && !strcmp(url, "/brebus/artifacts")) {

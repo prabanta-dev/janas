@@ -319,6 +319,8 @@ int janas_m_nh_layers(struct janas_llm_model *m, uint32_t n, uint32_t pos0)
             fprintf(stderr, "l_out-%-3u norm %10.4f  %9.4f %9.4f %9.4f %9.4f\n",
                     l, sqrt(nn), v[0], v[1], v[2], v[3]);
         }
+        if (m->n_obs && janas_m_obs_layer_out(m, l, m->x, n, dm))
+            break; /* an observer stops the forward here */
     }
     return 0;
 }

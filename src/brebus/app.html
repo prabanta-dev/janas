@@ -27,10 +27,24 @@
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
              font: 15px/1.5 var(--sans); }
 body { display: flex; }
-nav { width: 210px; flex: none; background: var(--side);
-      border-right: 1px solid var(--line); padding: 18px 10px;
-      display: flex; flex-direction: column; gap: 4px; }
-nav h1 { font-size: 20px; margin: 0 10px 14px; letter-spacing: .02em; }
+nav { width: 250px; flex: none; background: var(--side);
+      border-right: 1px solid var(--line); padding: 14px 10px 12px;
+      display: flex; flex-direction: column; gap: 4px; min-height: 0; height: 100vh; }
+nav .top { display: flex; align-items: center; justify-content: space-between; margin: 0 0 10px; }
+nav h1 { font-size: 20px; margin: 0 6px; letter-spacing: .02em; white-space: nowrap; }
+nav #navtog { padding: 2px 9px; font-size: 16px; }
+nav .sects { display: flex; flex-direction: column; gap: 2px; }
+nav svg { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor;
+          stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+nav .sects button, nav #newc { display: flex; align-items: center; gap: 10px; padding: 6px 10px; }
+#convs { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 2px;
+         overflow: auto; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+/* the side bar hidden to a strip of icons */
+nav.mini { width: 56px; padding-left: 6px; padding-right: 6px; }
+nav.mini .lbl, nav.mini #wsbtn, nav.mini #csearch, nav.mini #convs .c, nav.mini #convs .fold,
+nav.mini #convs .hit, nav.mini #convs .hitnote { display: none; }
+nav.mini .top { flex-direction: column; gap: 8px; }
+nav.mini .sects button, nav.mini #newc { justify-content: center; padding: 8px 0; }
 nav h1 { display: flex; align-items: center; gap: 10px; }
 nav h1 img { border-radius: 6px; }
 nav button { all: unset; cursor: pointer; padding: 8px 12px; border-radius: 8px;
@@ -76,7 +90,13 @@ button.act.quiet { background: transparent; color: var(--accent);
 button.act[disabled] { opacity: .5; cursor: default; }
 #chat.on { display: flex; gap: 16px; height: calc(100vh - 56px); }
 #artpane { width: 46%; flex: none; display: flex; flex-direction: column; gap: 8px;
-           border-left: 1px solid var(--line); padding-left: 14px; min-width: 0; }
+           border-left: 1px solid var(--line); padding-left: 14px; min-width: 0;
+           position: relative; }
+/* its left edge, dragged to widen it or the chat */
+#artgrip { position: absolute; left: -5px; top: 0; bottom: 0; width: 9px; cursor: col-resize; z-index: 2; }
+#artgrip:hover, body.drag #artgrip { background: var(--accent); opacity: .35; }
+body.drag iframe { pointer-events: none; }
+body.drag { cursor: col-resize; user-select: none; }
 #artpane[hidden] { display: none; }
 .arthead { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .arthead b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -88,13 +108,23 @@ button.act[disabled] { opacity: .5; cursor: default; }
 #artbody iframe { width: 100%; height: 100%; border: 0; background: #fff; display: block; }
 #artbody pre { margin: 0; padding: 12px; font: 13px var(--mono); white-space: pre; }
 #artbody .text { padding: 12px 16px; }
+#artpane.full { position: fixed; inset: 12px; width: auto; z-index: 20; background: var(--bg);
+                border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button { all: unset; cursor: pointer; padding: 3px 10px; font-size: 13px; color: var(--dim); }
+.seg button.on { background: var(--panel); color: var(--fg); }
+#arterr { border: 1px solid #c55; border-radius: 10px; padding: 8px 10px; display: flex;
+          flex-direction: column; gap: 6px; }
+#arterr pre { margin: 0; max-height: 120px; overflow: auto; font: 12px var(--mono);
+              white-space: pre-wrap; color: #e77; }
+#arterr[hidden] { display: none; }
+#arterr span { display: flex; gap: 8px; }
+#artbody pre.hljs, .text pre.hljs { background: transparent; }
 .artcard { all: unset; cursor: pointer; display: flex; gap: 10px; align-items: center;
            margin: 6px 0; padding: 8px 12px; border: 1px solid var(--line);
            border-radius: 10px; background: var(--bg); }
 .artcard:hover { border-color: var(--accent); }
 .artcard small { color: var(--dim); }
-#convs { width: 200px; flex: none; display: flex; flex-direction: column; gap: 4px;
-         overflow: auto; }
 #convs .c { padding: 6px 10px; border-radius: 8px; cursor: pointer; color: var(--dim);
             white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #convs .c.on { background: var(--panel); color: var(--fg); }
@@ -121,8 +151,8 @@ button.act[disabled] { opacity: .5; cursor: default; }
                border: 1px solid var(--line); background: var(--panel); color: var(--fg);
                font: 13px var(--mono); }
 .hfget .note { flex-basis: 100%; }
-nav button.ws { margin: -6px 10px 14px; padding: 4px 8px; font-size: 12px; color: var(--dim);
-                white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 170px;
+nav button.ws { margin: 0 6px 10px; padding: 4px 8px; font-size: 12px; color: var(--dim);
+                white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 210px;
                 border: 1px dashed var(--line); }
 .dlg { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex;
        align-items: center; justify-content: center; z-index: 10; }
@@ -238,20 +268,23 @@ main h3 { font-size: 15px; margin: 24px 0 10px; }
 </style>
 </head>
 <body>
-<nav>
-  <h1><img src="/prabanta.png" alt="Prabanta" width="28" height="28"> Brebus</h1>
+<nav id="side">
+  <div class="top"><h1><img src="/prabanta.png" alt="Prabanta" width="28" height="28"> <span class="lbl">Brebus</span></h1>
+    <button id="navtog" title="Hide the side bar (Ctrl+B)" aria-label="Hide the side bar">«</button></div>
   <button id="wsbtn" class="ws" title="The folder Brebus works in">…</button>
-  <button data-s="chat">Chat</button>
-  <button data-s="discover">Discover</button>
-  <button data-s="models">My models</button>
-  <button data-s="server">Server</button>
-  <button data-s="machine">Machine</button>
-  <div class="foot" id="ver"></div>
+  <div class="sects">
+    <button data-s="chat" title="Chat"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H10l-5 4v-4H4z"/></svg><span class="lbl">Chat</span></button>
+    <button data-s="discover" title="Discover"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/></svg><span class="lbl">Discover</span></button>
+    <button data-s="models" title="My models"><svg viewBox="0 0 24 24"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/></svg><span class="lbl">My models</span></button>
+    <button data-s="server" title="Server"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="7" rx="1.5"/><rect x="4" y="13" width="16" height="7" rx="1.5"/><path d="M8 7.5h.01M8 16.5h.01"/></svg><span class="lbl">Server</span></button>
+    <button data-s="machine" title="Machine"><svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1.5"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg><span class="lbl">Machine</span></button>
+  </div>
+  <div id="convs"><button id="newc" title="New chat"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span class="lbl">New chat</span></button>
+    <input id="csearch" type="search" placeholder="Search every workspace's chats" spellcheck="false"></div>
+  <div class="foot lbl" id="ver"></div>
 </nav>
 <main>
   <section id="chat">
-    <div id="convs"><button class="act quiet" id="newc">New chat</button>
-      <input id="csearch" type="search" placeholder="Search every workspace's chats" spellcheck="false"></div>
     <div id="talk">
       <div id="bar"><span id="loaded">No model loaded.</span>
         <label class="tog" title="Before each question, Brebus searches the workspace's documents and gives the model the passages found"><input type="checkbox" id="usedocs"> Search documents</label>
@@ -269,12 +302,17 @@ main h3 { font-size: 15px; margin: 24px 0 10px; }
       <form id="form"><button type="button" id="attach" title="Attach a file of this computer or a web address" aria-label="Attach">+</button><textarea id="ask" rows="1" placeholder="Ask the model. Enter sends, Shift+Enter a new line."></textarea>
         <button type="submit" id="send" title="Send (Enter)" aria-label="Send" disabled></button></form>
     </div>
-    <aside id="artpane" hidden>
+    <aside id="artpane" hidden><div id="artgrip" title="Drag to widen"></div>
       <div class="arthead"><b id="arttitle"></b>
         <select id="artver" title="Its versions"></select>
-        <span class="artbtns"><button class="act quiet" id="artcopy">Copy</button>
+        <span class="artbtns"><span class="seg" id="artview"><button data-v="preview" class="on">Preview</button><button data-v="code">Code</button></span>
+          <button class="act quiet" id="artcopy">Copy</button>
+          <button class="act quiet" id="artdown" title="Save it as a file of its own">Download</button>
           <button class="act quiet" id="artopen">Open</button>
+          <button class="act quiet" id="artfull" title="Wide, over the chat">⤢</button>
           <button class="act quiet" id="artclose" title="Close">×</button></span></div>
+      <div id="arterr" hidden><pre></pre><span><button class="act" id="artfix">Ask the model to fix it</button>
+        <button class="act quiet" id="arterrx">Dismiss</button></span></div>
       <div id="artbody"></div>
       <div class="note" id="artpath"></div>
     </aside>
@@ -428,12 +466,28 @@ async function ask(what) {
 function show(id) {
   for (const s of document.querySelectorAll("section"))
     s.classList.toggle("on", s.id === id);
-  for (const b of document.querySelectorAll("nav button"))
+  for (const b of document.querySelectorAll("nav button[data-s]"))
     b.setAttribute("aria-current", b.dataset.s === id ? "page" : "false");
   try { localStorage.setItem("brebus.section", id); } catch (e) {}
 }
-for (const b of document.querySelectorAll("nav button"))
+for (const b of document.querySelectorAll("nav button[data-s]"))
   b.addEventListener("click", () => show(b.dataset.s));
+/* the side bar: whole, or a strip of icons (its button, Ctrl+B), as left */
+let navAuto = false; /* hidden by an artifact opened, shown again when it closes */
+function navMini(on, remember) {
+  $("#side").classList.toggle("mini", on);
+  $("#navtog").textContent = on ? "»" : "«";
+  $("#navtog").title = (on ? "Show" : "Hide") + " the side bar (Ctrl+B)";
+  if (remember) { navAuto = false; try { localStorage.setItem("brebus.mini", on ? "1" : ""); } catch (e) {} }
+}
+try { navMini(localStorage.getItem("brebus.mini") === "1", false); } catch (e) {}
+$("#navtog").onclick = () => navMini(!$("#side").classList.contains("mini"), true);
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "b") {
+    e.preventDefault();
+    navMini(!$("#side").classList.contains("mini"), true);
+  }
+});
 let first = "discover";
 try { first = localStorage.getItem("brebus.section") || first; } catch (e) {}
 const hashChat = (location.hash.match(/^#chat\/([\w-]+)$/) || [])[1];
@@ -700,6 +754,7 @@ async function searchChats() {
     d.innerHTML = `${esc(h.title || "New chat")}<small>📁 ${esc(h.workspace_name)}${h.snippet ? " · " + esc(h.snippet) : ""}</small>`;
     d.title = h.workspace;
     d.onclick = async () => {
+      show("chat");
       if (h.workspace !== ws.path) await wsOpen(h.workspace, false);
       $("#csearch").value = ""; searchChats();
       await openConv(h.id);
@@ -742,7 +797,7 @@ function listConvs() {
     d.className = "c" + (cur && c.id === cur.id ? " on" : "");
     d.textContent = c.title || "New chat";
     d.title = d.textContent + (c.model ? " · " + c.model : "");
-    d.onclick = () => openConv(c.id);
+    d.onclick = () => { show("chat"); openConv(c.id); };
     box.appendChild(d);
   }
   $("#bar .tools").hidden = !cur;
@@ -806,6 +861,7 @@ function bubble(m) {
       if (p.text !== undefined) {
         if (!p.text.trim()) continue;
         const t = document.createElement("div"); t.className = "text"; render(t, p.text); body.append(t);
+        if (!busy || m !== cur.messages.at(-1)) decorate(t);
       } else {
         const c = document.createElement("button");
         c.className = "artcard";
@@ -1010,7 +1066,7 @@ function userContent(m) {
   return c;
 }
 /* ---- artifacts: documents the model makes, beside the chat ---- */
-const ART_RULE = "When you write a self-contained document the user may want to see or keep - a web page, an SVG drawing, a long Markdown document, a program - put it whole between <artifact type=\"html\" title=\"A short title\"> and </artifact> (type is html, svg, markdown or code; for code add lang=\"python\" or the language). To change one you made, write it again whole with the same title. Outside the artifact, say in a sentence what it is. Short answers and short code stay in the text.";
+const ART_RULE = "When you write a self-contained document the user may want to see or keep - a web page, an interactive app, a chart, a diagram, an SVG drawing, a long Markdown document, a program - put it whole between <artifact type=\"html\" title=\"A short title\"> and </artifact>. Types: html (a whole page); react (one React component exported as default, needing no props, styled with Tailwind classes; it may import react, recharts, lucide-react, d3, lodash, mathjs, papaparse, xlsx, chart.js, three, tone, and shadcn/ui from @/components/ui/<name>); mermaid (a diagram); svg; markdown (math between $$ and $$); code (add lang=\"python\" or the language). There is no network: an html page may load from cdn.jsdelivr.net or cdnjs only chart.js, d3, three (r128), plotly, mathjs, lodash, papaparse, xlsx, tone, katex, mermaid, react, react-dom, @babel/standalone and tailwind; images only as data: URLs. In html and react, await window.claude.complete(prompt) asks the model and returns its answer as a plain string; await window.storage.set(key, value), get(key) (gives {key, value} or null), delete(key) and list(prefix) keep data between visits; await window.fs.readFile(name, {encoding: \"utf8\"}) reads a file the user attached. To change one you made, write it again whole with the same title. Outside the artifact, say in a sentence what it is. Short answers and short code stay in the text.";
 const attrsOf = (t) => {
   const a = {};
   for (const m of t.matchAll(/(\w+)\s*=\s*"([^"]*)"/g)) a[m[1]] = m[2];
@@ -1062,32 +1118,191 @@ function artShow(title, version) {
   const k = version === undefined ? vs.length - 1 : version;
   const a = vs[k];
   artShown = {title, k};
+  if ($("#artpane").hidden && innerWidth < 1500 && !$("#side").classList.contains("mini")) {
+    navMini(true, false); navAuto = true;
+  }
   $("#artpane").hidden = false;
   $("#arttitle").textContent = title;
   $("#artver").innerHTML = vs.map((v, i) => `<option value="${i}"${i === k ? " selected" : ""}>version ${i + 1}</option>`).join("");
   $("#artver").hidden = vs.length < 2;
   const body = $("#artbody");
   body.innerHTML = "";
-  if (a.type === "html" || a.type === "svg") {
-    /* in a frame of its own origin (opaque): no access to Brebus, and no
-       network by its own policy */
+  $("#arterr").hidden = true;
+  artFrame = null;
+  const live = ["html", "svg", "react", "mermaid"].includes(a.type);
+  $("#artview").hidden = a.type === "code";
+  for (const b of $("#artview").children) b.classList.toggle("on", b.dataset.v === artMode);
+  if (live && artMode === "preview") {
+    /* in Brebus's frame (frame.html): no origin of its own, so no access to
+       Brebus or to this page; no network, the libraries from Brebus */
     const f = document.createElement("iframe");
-    f.setAttribute("sandbox", "allow-scripts allow-popups-to-escape-sandbox");
-    const csp = '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'unsafe-inline\'; style-src \'unsafe-inline\'; img-src data: blob:; font-src data:; media-src data: blob:">';
-    f.srcdoc = a.type === "svg"
-      ? `<!doctype html><html><head>${csp}<style>body{margin:0;display:flex;justify-content:center;align-items:center;min-height:100vh}svg{max-width:100%;height:auto}</style></head><body>${a.content}</body></html>`
-      : (/<head[^>]*>/i.test(a.content) ? a.content.replace(/<head[^>]*>/i, (h) => h + csp) : csp + a.content);
+    f.setAttribute("sandbox", "allow-scripts allow-forms allow-modals allow-downloads");
+    f.src = "/brebus/frame";
+    artFrame = {win: null, title, art: a, el: f};
     body.append(f);
-  } else if (a.type === "markdown") {
+    artFrame.win = f.contentWindow;
+  } else if (a.type === "markdown" && artMode === "preview") {
     const d = document.createElement("div"); d.className = "text"; render(d, a.content); body.append(d);
+    decorate(d);
   } else {
     const p = document.createElement("pre"); p.textContent = a.content; body.append(p);
+    p.dataset.lang = a.type === "code" ? a.lang : a.type === "react" ? "jsx" : a.type === "svg" ? "xml" : a.type === "mermaid" ? "" : a.type;
+    highlight(p);
   }
   $("#artpath").textContent = a.path ? a.path : "";
   $("#artopen").hidden = !a.path;
 }
 $("#artver").onchange = () => artShow(artShown.title, +$("#artver").value);
-$("#artclose").onclick = () => { $("#artpane").hidden = true; artShown = null; };
+let artMode = "preview", artFrame = null;
+for (const b of $("#artview").children)
+  b.onclick = () => { artMode = b.dataset.v; if (artShown) artShow(artShown.title, artShown.k); };
+$("#artfull").onclick = () => $("#artpane").classList.toggle("full");
+$("#artdown").onclick = () => {
+  const a = artVersions(artShown.title)[artShown.k];
+  const ext = {html: "html", svg: "svg", markdown: "md", react: "jsx", mermaid: "mmd"}[a.type] ||
+    ({python: "py", javascript: "js", typescript: "ts", bash: "sh", rust: "rs"}[a.lang] || a.lang || "txt");
+  const u = URL.createObjectURL(new Blob([a.content], {type: "text/plain"}));
+  const l = document.createElement("a");
+  l.href = u; l.download = a.title.replace(/[\\/:*?"<>|]/g, "_") + "." + ext;
+  document.body.append(l); l.click(); l.remove();
+  setTimeout(() => URL.revokeObjectURL(u), 1000);
+};
+$("#arterrx").onclick = () => { $("#arterr").hidden = true; };
+$("#artfix").onclick = () => {
+  const t = $("#arterr pre").textContent;
+  $("#arterr").hidden = true;
+  $("#artpane").classList.remove("full");
+  const ask = $("#ask");
+  ask.value = `The artifact "${artShown.title}" gives this error:\n\n${t}\n\nFix it, and write it again whole with the same title.`;
+  ask.dispatchEvent(new Event("input"));
+  $("#send").click();
+};
+/* what an artifact's frame asks: only the frame shown, only these */
+window.addEventListener("message", async (e) => {
+  const f = artFrame;
+  if (!f || e.source !== f.el.contentWindow || !e.data) return;
+  const d = e.data;
+  if (d.janasReady) {
+    const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+    f.el.contentWindow.postMessage({janasArtifact: {type: f.art.type, content: f.art.content, title: f.art.title, dark}}, "*");
+  } else if (d.janasError) {
+    /* each error once, the first ones kept */
+    const pre = $("#arterr pre");
+    const was = $("#arterr").hidden ? "" : pre.textContent;
+    if (!was.includes(d.janasError) && was.length < 6000)
+      pre.textContent = was ? was + "\n\n" + d.janasError : d.janasError;
+    $("#arterr").hidden = false;
+  } else if (d.janasCall) {
+    const c = d.janasCall;
+    const answer = (ok, value, error) => f.el.contentWindow &&
+      f.el.contentWindow.postMessage({janasReply: {id: c.id, ok, value, error}}, "*");
+    try { answer(true, await artCall(f, c)); }
+    catch (err) { answer(false, undefined, String(err.message || err)); }
+  }
+});
+let artAsking = Promise.resolve();
+async function artCall(f, c) {
+  if (c.op === "complete") {
+    /* one question at a time, as Claude's: the model has one reply to write */
+    const run = async () => {
+      if (!await ensureModel()) throw new Error("no model is loaded");
+      const r = await fetch("/v1/chat/completions", {method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({model: server.model, stream: false, max_tokens: 4096,
+                              messages: [{role: "user", content: String(c.prompt).slice(0, 200000)}]})});
+      const j = await r.json();
+      if (!r.ok) throw new Error((j.error && j.error.message) || "the model answered " + r.status);
+      return (j.choices[0].message.content || "").replace(/<think>[\s\S]*?<\/think>\s*/g, "");
+    };
+    const p = artAsking.then(run, run);
+    artAsking = p.catch(() => {});
+    return p;
+  }
+  if (c.op === "storage") {
+    if (!ws.path) throw new Error("no workspace: storage needs one");
+    const r = await fetch("/brebus/artifact-store", {method: "POST",
+      body: JSON.stringify({title: f.title, act: c.act, key: c.key, value: c.value, prefix: c.prefix})});
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || "storage failed");
+    return j;
+  }
+  if (c.op === "file") {
+    /* the files attached to this conversation, by name or path */
+    const all = (cur ? cur.messages : []).flatMap((m) => m.attached || []);
+    const a = all.find((x) => x.name === c.name || x.path === c.name || x.path.endsWith("/" + c.name));
+    if (!a) throw new Error(`no file "${c.name}" is attached to this conversation; attached: ${all.map((x) => x.name).join(", ") || "none"}`);
+    const r = await fetch("/brebus/file?path=" + encodeURIComponent(a.path));
+    if (!r.ok) throw new Error("cannot read " + a.name);
+    return new Uint8Array(await r.arrayBuffer());
+  }
+  throw new Error("not a call an artifact can make");
+}
+/* code in colours and formulas, with the libraries Brebus serves (loaded
+   when first needed) */
+const libLoaded = new Map();
+function loadLib(js, css) {
+  const key = js + (css || "");
+  if (!libLoaded.has(key))
+    libLoaded.set(key, new Promise((ok, no) => {
+      if (css) for (const c of [].concat(css)) {
+        const l = document.createElement("link");
+        l.rel = "stylesheet"; l.href = "/brebus/lib/" + c; document.head.append(l);
+      }
+      const js1 = [].concat(js);
+      const next = (i) => {
+        if (i >= js1.length) return ok();
+        const s = document.createElement("script");
+        s.src = "/brebus/lib/" + js1[i]; s.onload = () => next(i + 1); s.onerror = () => no(new Error(js1[i]));
+        document.head.append(s);
+      };
+      next(0);
+    }));
+  return libLoaded.get(key);
+}
+async function highlight(pre) {
+  try {
+    await loadLib("@highlightjs/cdn-assets@11.10.0/highlight.min.js",
+      matchMedia("(prefers-color-scheme: dark)").matches ? "@highlightjs/cdn-assets@11.10.0/styles/github-dark.min.css"
+                                                         : "@highlightjs/cdn-assets@11.10.0/styles/github.min.css");
+    const lang = (pre.dataset.lang || "").toLowerCase();
+    const r = lang && hljs.getLanguage(lang) ? hljs.highlight(pre.textContent, {language: lang})
+                                             : hljs.highlightAuto(pre.textContent);
+    pre.innerHTML = r.value;
+    pre.classList.add("hljs");
+  } catch (e) { /* offline the first time: the code as it is */ }
+}
+async function decorate(el) {
+  for (const p of el.querySelectorAll("pre")) if (p.dataset.lang) highlight(p);
+  el.normalize(); /* the renderer writes text in runs: a formula in one piece */
+  if (!/\$\$|\\\(|\\\[/.test(el.textContent)) return;
+  try {
+    await loadLib(["katex@0.16.11/dist/katex.min.js", "katex@0.16.11/dist/contrib/auto-render.min.js"],
+                  "katex@0.16.11/dist/katex.min.css");
+    renderMathInElement(el, {throwOnError: false, ignoredTags: ["pre", "code"],
+      delimiters: [{left: "$$", right: "$$", display: true}, {left: "\\[", right: "\\]", display: true},
+                   {left: "\\(", right: "\\)", display: false}]});
+  } catch (e) {}
+}
+$("#artclose").onclick = () => {
+  $("#artpane").hidden = true; artShown = null;
+  $("#artpane").classList.remove("full");
+  if (navAuto) { navMini(false, false); navAuto = false; }
+};
+try { const w = +localStorage.getItem("brebus.artw"); if (w > 0) $("#artpane").style.width = w + "px"; } catch (e) {}
+$("#artgrip").addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  document.body.classList.add("drag");
+  const box = $("#chat").getBoundingClientRect();
+  const move = (ev) => {
+    const w = Math.max(320, Math.min(box.right - ev.clientX, box.width - 360));
+    $("#artpane").style.width = w + "px";
+  };
+  const up = () => {
+    document.body.classList.remove("drag");
+    removeEventListener("pointermove", move); removeEventListener("pointerup", up);
+    try { localStorage.setItem("brebus.artw", parseInt($("#artpane").style.width)); } catch (e) {}
+  };
+  addEventListener("pointermove", move); addEventListener("pointerup", up);
+});
 $("#artcopy").onclick = () => {
   const a = artVersions(artShown.title)[artShown.k];
   navigator.clipboard?.writeText(a.content).catch(() => {});
@@ -1422,7 +1637,7 @@ $("#roform").onsubmit = async () => {
   return false;
 };
 
-$("#newc").onclick = newConv;
+$("#newc").onclick = () => { show("chat"); newConv(); };
 $("#form").onsubmit = sendAsk;
 $("#ask").addEventListener("input", growAsk);
 /* Enter sends, Shift+Enter a new line; an IME's Enter composes */
