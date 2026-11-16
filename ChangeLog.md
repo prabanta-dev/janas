@@ -338,7 +338,7 @@
 - **The drafts in the chat as in `janas-bench`.** The planner that chooses how many of the MTP block's drafts to verify learned what a pass costs from every pass, and in a new conversation the tuner tries each configuration in turn on the passes of 2 to 16 tokens, those that verify drafts: from the slow ones it tried (279-357 ms a pass where its choice takes 50) the planner learned that the drafts did not pay, and drafted one pass in sixteen. It now learns only from the passes run on the tuner's choice, without what they waited for the disk, and learns the costs again at each turn. Qwen3-Next-80B-A3B in the chat, a reply of 64 tokens with the cache warm: 31.2 tok/s with 32 drafts, where it came at 24.7 with 4; the first reply of a session 19.3 against 16.0; over five seeds 30.9-35.3 tok/s, the median 31.4.
 - **The thread that keeps the NPU awake sleeps while it is not needed**: it woke every half millisecond for as long as the program ran, 2,000 times a second beside the cores writing a reply.
 - **`janas_aligned_alloc` asks for a size the alignment divides**, as C11 wants: ThreadSanitizer refused `test_aligned`'s one byte on eight.
-- **Two research probes, merged though not final**, both off unless their variables are set: Ana-Net (the experts' down matrices by neuron, `JANAS_Q6_K_PN` from `tools/jns_neurons.c`, each token's neurons read at 6, 4 or 2 bits or not at all, `JANAS_NEURON_LEVELS`; records for the predictor's tests, `JANAS_ANA_*`), and Janet's detectors in place of a model's feed-forward, layer by layer (`model_janet.c`, `JANAS_JANET_*`).
+- **A research probe, merged though not final**, off unless its variables are set: Ana-Net (the experts' down matrices by neuron, `JANAS_Q6_K_PN` from `tools/jns_neurons.c`, each token's neurons read at 6, 4 or 2 bits or not at all, `JANAS_NEURON_LEVELS`; records for the predictor's tests, `JANAS_ANA_*`).
 - **The README**: the banner back at the top; one table of the speeds, each engine at its best and the configuration that gave Janas-LLM its figure; the NPU, how it works, and llama.cpp's OpenVINO backend on it; the options that choose what runs where; the measurement notes of 21 October, and the conditions of the drafts' figures of 10 October beside the chat's of 21 October.
 
 ## [2026-10-18] - Qwen3.6-35B-A3B's expert cache holds what it has room for
@@ -358,9 +358,8 @@
 - **test_quant says whether it compared the scalar SiLU with the AVX2 one**: on a CPU without AVX2 and FMA it passed as if a million values had agreed, comparing none (issue #26, reported by phaedrus1992); it prints how many it compared, or that there was nothing to compare with.
 
 
-## [2026-10-14] - Construct's first step: models under one memory cap
+## [2026-10-14] - A model's memory, before it opens and while it is open
 
-- **Construct** (`include/janas/construct.h`, part of libjanas_llm): a program holds several models under one memory cap - the Nucleus, the model the user talks to, never closed to make room, and Specialists opened when asked and closed, the least recently used first, when another needs the memory; each new model's expert cache is what is left under the cap. A listing in JSON tells which models are in the catalog, on disk and open, and what each holds. The first step of the architecture in which a small general model calls on specialists; the services and the configurations come next. Checked with Qwen3-0.6B as the Nucleus and Qwen3-4B and Qwen3.5-2B taking turns: 100 openings and closings, always under the cap, nothing leaked under AddressSanitizer.
 - **A model's memory, before it opens and while it is open**: `janas_llm_estimate` gives what a model takes whatever its expert cache and what a cache holding all its experts takes, the reckoning `janas_llm_open` makes for its automatic cache; `janas_llm_memory` what an open model holds (resident weights, expert cache, keys and values).
 
 
