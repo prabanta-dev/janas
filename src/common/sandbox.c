@@ -580,7 +580,7 @@ int janas_sandbox_available(char *why, size_t n)
     return known;
 }
 
-#else /* not Linux */
+#elif !defined(_WIN32) /* not Linux, nor Windows (sandbox_win.c) */
 
 void janas_sandbox_main(int argc, char **argv)
 {
@@ -611,4 +611,11 @@ void janas_sandbox_kill(struct janas_sandbox *sb)
     (void)sb;
 }
 
+#endif
+
+#if !defined(_WIN32)
+void janas_sandbox_forget(void)
+{
+    /* the Linux cage is built anew each time and leaves nothing */
+}
 #endif

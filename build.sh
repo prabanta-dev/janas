@@ -77,6 +77,11 @@ Environment
                 The tests run under Wine when the build is not on Windows.
                 On Windows itself, in MSYS2's MINGW64 or UCRT64 shell, it is
                 set by itself, with that shell's gcc (build.bat starts it)
+  JANAS_CPU     aarch64: the same sources for Linux on 64-bit ARM, built
+                elsewhere (a cross compiler, aarch64-linux-gnu-gcc and -ar
+                by default, CC and AR otherwise), into bin/aarch64-linux/
+  JANAS_RUN     what runs a test of a build for another processor, as
+                qemu-aarch64 -L <its root>: "JANAS_RUN=arm64-run"
 
 Before a commit: ./build.sh release test and at least asan; tsan too
 when concurrent code was touched.
@@ -136,6 +141,21 @@ fi
 CC="${CC:-gcc}"
 
 CPU="$(uname -m)"
+# another processor's build, with a cross compiler: Linux on 64-bit ARM
+JANAS_CPU="${JANAS_CPU:-}"
+if [ -n "$JANAS_CPU" ] && [ "$JANAS_CPU" != "$CPU" ]; then
+    case "$JANAS_CPU" in
+    aarch64)
+        [ "$CC" = gcc ] && CC=aarch64-linux-gnu-gcc
+        AR="${AR:-aarch64-linux-gnu-ar}"
+        ;;
+    *)
+        echo "build.sh: unknown JANAS_CPU: $JANAS_CPU (aarch64 is known)" >&2
+        exit 2
+        ;;
+    esac
+    CPU="$JANAS_CPU"
+fi
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 [ "$JANAS_OS" = windows ] && OS=windows
 OBJ="lib/$CPU-$OS-$VARIANT"
@@ -391,8 +411,10 @@ fi
 GEN="$OBJ/gen"
 mkdir -p "$GEN"
 # A page may take in a file the pages share (src/web/: the Markdown of
-# the replies) where a line says <!--#include web/<file>-->.
-web_newest=$(find src/web -type f -printf '%T@\n' 2>/dev/null | sort -n | tail -1)
+# the replies), or a part of its own (src/<tool>/page/: Brebus's page, its
+# looks and its scripts), where a line says <!--#include web/<file>--> or
+# <!--#include <tool>/page/<file>-->.
+web_newest=$(find src/web src/*/page -type f -printf '%T@\n' 2>/dev/null | sort -n | tail -1)
 for html in src/*/*.html; do
     [ -f "$html" ] || continue
     d=$(basename "$(dirname "$html")")
@@ -767,9 +789,14 @@ if [ "$ACTION" = test ]; then
     # the variables of this script are not the engine's, which warns of
     # a JANAS_ it does not know; a Windows build made elsewhere runs its
     # tests under Wine
-    RUN=(env -u JANAS_OS -u JANAS_CFLAGS)
+    RUN=(env -u JANAS_OS -u JANAS_CFLAGS -u JANAS_CPU -u JANAS_RUN)
     if [ "$OS" = windows ] && [ "$(uname -s)" = Linux ]; then
         RUN+=(WINEDEBUG=-all wine)
+    fi
+    # another processor's: through what runs it (qemu-user)
+    if [ -n "${JANAS_RUN:-}" ]; then
+        # shellcheck disable=SC2206
+        RUN+=($JANAS_RUN)
     fi
     for t in "$BIN"/test_*"$SUFFIX$EXE"; do
         # in release, skip the sanitizer builds (test_x-asan and the like)

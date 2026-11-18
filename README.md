@@ -46,7 +46,7 @@ Measured on 21 October 2026 (the first two) and 26-27 October (the context of 8,
 
 ### Brebus, the app
 
-The models of your computer in a window of their own: the catalog and any model of Hugging Face downloaded, a chat that works in a folder of yours - your documents (PDF, Word, Excel, PowerPoint, LibreOffice, web pages, EPUB) searched before each question and given to the model with their names, files and web pages attached, pictures for the models that see them, recordings transcribed, the model's tools and Python in a cage asking you first - and the server for other programs. On Linux and Windows (macOS later): [docs/brebus.md](docs/brebus.md).
+The models of your computer in a window of their own, nothing sent anywhere: the catalog and any model of Hugging Face downloaded, each file of the Hub said how far it is from running here; chats, and projects that work in a folder of yours - your documents (PDF, Word, Excel, PowerPoint, LibreOffice, web pages, EPUB) searched before each question and given to the model with their names; artifacts beside the chat as Claude's; dictation by Whisper and replies read aloud; files, web pages and pictures attached; the model's tools and Python in a cage asking you first; and the server for other programs. On Linux and Windows (macOS later): [docs/brebus.md](docs/brebus.md), a complete guide.
 
 ### janas-chat
 
@@ -68,7 +68,7 @@ MCP servers of Janas's own, for `janas-chat`, Brebus and any MCP client: your do
 
 A research tool: a word's explication in the Natural Semantic Metalanguage, Goddard and Wierzbicka's sixty-odd semantic primes, asked of DeepNSM and counted as its paper does: [docs/tools.md](docs/tools.md#janas-nsm). DeepNSM-1B (Llama-3.2-1B with the adapter of [arXiv 2505.11764](https://arxiv.org/abs/2505.11764)) writes its answers at 57.8 tok/s on the laptop's CPU, where llama.cpp writes 37.9 to 39.8 on the same file.
 
-![Brebus in its window, dark: a question about a spreadsheet of the workspace answered by Qwen3-30B-A3B, which names the document it read](docs/img/brebus.png)
+![Brebus, dark: a chat with Qwen3-30B-A3B, which made a page with a doughnut chart of a monthly budget, open beside the chat as an artifact; the side bar with the chats and the pages](docs/img/brebus.png)
 
 *Brebus with Qwen3-30B-A3B on the development laptop: the workspace's documents searched before the question, the answer from a spreadsheet in it, its source named.*
 

@@ -13,7 +13,9 @@
 
 #include <stdio.h>
 
-#if defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__))
+/* Linux's cage (sandbox.c) and Windows's (sandbox_win.c) */
+#if (defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__))) ||   \
+    defined(_WIN32)
 
 #include <poll.h>
 #include <stdio.h>
@@ -28,7 +30,8 @@ const char JANAS_PY_DRIVER[] =
     "os.dup2(2, 1)\n"
     "_i = os.fdopen(0, 'rb', 0)\n"
     "_g = {'__name__': '__main__', '__builtins__': __builtins__}\n"
-    "os.makedirs('/tmp/mpl', exist_ok=True)\n"
+    "os.makedirs(os.environ.get('MPLCONFIGDIR', '/tmp/mpl'), "
+    "exist_ok=True)\n"
     "def _rd(n):\n"
     "    b = b''\n"
     "    while len(b) < n:\n"
@@ -42,10 +45,11 @@ const char JANAS_PY_DRIVER[] =
     "    while not b.endswith(bytes([10])):\n"
     "        b += _rd(1)\n"
     "    return int(b)\n"
+    "_D = os.environ.get('JANAS_PY_DATA', '/mnt/data')\n"
     "def _pngs():\n"
     "    try:\n"
-    "        return {n: os.stat('/mnt/data/' + n).st_mtime_ns for n in\n"
-    "                os.listdir('/mnt/data') if n.endswith('.png')}\n"
+    "        return {n: os.stat(os.path.join(_D, n)).st_mtime_ns for n in\n"
+    "                os.listdir(_D) if n.endswith('.png')}\n"
     "    except OSError:\n"
     "        return {}\n"
     "def _figs(before):\n"
@@ -58,9 +62,9 @@ const char JANAS_PY_DRIVER[] =
     "        return out\n"
     "    for num in m.get_fignums():\n"
     "        k = 1\n"
-    "        while os.path.exists('/mnt/data/figure_%d.png' % k):\n"
+    "        while os.path.exists(os.path.join(_D, 'figure_%d.png' % k)):\n"
     "            k += 1\n"
-    "        p = '/mnt/data/figure_%d.png' % k\n"
+    "        p = os.path.join(_D, 'figure_%d.png' % k)\n"
     "        try:\n"
     "            m.figure(num).savefig(p, format='png', dpi=100)\n"
     "            out.append(p)\n"
@@ -149,10 +153,22 @@ char *janas_py_exchange(struct janas_sandbox *sb, const char *code, int seconds,
             ssize_t got = read(i ? sb->err : sb->out, buf, sizeof buf);
             if (got <= 0) {
                 if (i == 0 || got < 0) {
+                    /* what it said on its way out, if anything: a
+                       traceback tells a broken start from the code */
+                    struct pollfd e = {sb->err, POLLIN, 0};
+                    while (poll(&e, 1, 300) > 0 && (e.revents & POLLIN)) {
+                        ssize_t k = read(sb->err, buf, sizeof buf);
+                        if (k <= 0)
+                            break;
+                        janas_buf_put(raw, buf, (size_t)k);
+                    }
+                    size_t t = raw->n > 600 ? raw->n - 600 : 0;
                     snprintf(why, n,
                              "The Python session ended (out of memory, or the "
                              "code ended it); it starts over at the next "
-                             "piece of code.");
+                             "piece of code.%s%.*s",
+                             raw->n ? " Its last words: " : "",
+                             (int)(raw->n - t), raw->n ? raw->p + t : "");
                     janas_buf_free(&out);
                     return NULL;
                 }

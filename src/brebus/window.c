@@ -58,7 +58,46 @@ static struct {
     P (*webkit_navigation_action_get_request)(P);
     const char *(*webkit_uri_request_get_uri)(P);
     void (*webkit_policy_decision_ignore)(P);
+    /* the microphone, for dictation: optional, looked up when there */
+    unsigned long (*webkit_user_media_permission_request_get_type)(void);
+    int (*g_type_check_instance_is_a)(P, unsigned long);
+    int (*webkit_user_media_permission_is_for_audio_device)(P);
+    int (*webkit_user_media_permission_is_for_video_device)(P);
+    void (*webkit_permission_request_allow)(P);
+    void (*webkit_permission_request_deny)(P);
+    /* the window's place and size: optional, looked up when there */
+    void (*gtk_window_maximize)(P);
+    int (*gtk_window_is_maximized)(P);
+    void (*gtk_window_get_size)(P, int *, int *);
+    void (*gtk_window_get_position)(P, int *, int *);
+    void (*gtk_window_move)(P, int, int);
+    void (*gtk_window_resize)(P, int, int);
 } w;
+
+/* where the window is, followed while it is open (a window being
+   destroyed has none to ask), written when it closes */
+static struct brebus_place place;
+static int placed;
+
+/* a permission the page asks for: the microphone alone, for dictation, and
+   only on Brebus's own page; anything else refused */
+static int permission(P view, P req, P data)
+{
+    (void)view, (void)data;
+    int mic = w.webkit_user_media_permission_request_get_type &&
+              w.g_type_check_instance_is_a &&
+              w.webkit_user_media_permission_is_for_audio_device &&
+              w.webkit_user_media_permission_is_for_video_device &&
+              w.g_type_check_instance_is_a(
+                  req, w.webkit_user_media_permission_request_get_type()) &&
+              w.webkit_user_media_permission_is_for_audio_device(req) &&
+              !w.webkit_user_media_permission_is_for_video_device(req);
+    if (mic && w.webkit_permission_request_allow)
+        w.webkit_permission_request_allow(req);
+    else if (w.webkit_permission_request_deny)
+        w.webkit_permission_request_deny(req);
+    return 1;
+}
 
 static const char *own; /* the page's address, "http://127.0.0.1:port/" */
 static volatile sig_atomic_t *stop;
@@ -211,7 +250,16 @@ static void closed(P widget, P data)
 /* Ctrl+C or SIGTERM, seen from GTK's loop */
 static int watch(P data)
 {
-    (void)data;
+    if (data && w.gtk_window_is_maximized && w.gtk_window_get_size &&
+        w.gtk_window_get_position) {
+        /* the normal size and place are kept while it is maximized */
+        place.max = w.gtk_window_is_maximized(data) != 0;
+        if (!place.max) {
+            w.gtk_window_get_size(data, &place.w, &place.h);
+            w.gtk_window_get_position(data, &place.x, &place.y);
+        }
+        placed = 1;
+    }
     if (*stop)
         w.gtk_main_quit();
     return 1;
@@ -269,6 +317,26 @@ int brebus_window(const char *url, volatile sig_atomic_t *quit, char *why,
     SYM(webkit_navigation_action_get_request)
     SYM(webkit_uri_request_get_uri)
     SYM(webkit_policy_decision_ignore)
+    *(void **)&w.webkit_user_media_permission_request_get_type =
+        dlsym(lib, "webkit_user_media_permission_request_get_type");
+    *(void **)&w.g_type_check_instance_is_a =
+        dlsym(lib, "g_type_check_instance_is_a");
+    *(void **)&w.webkit_user_media_permission_is_for_audio_device =
+        dlsym(lib, "webkit_user_media_permission_is_for_audio_device");
+    *(void **)&w.webkit_user_media_permission_is_for_video_device =
+        dlsym(lib, "webkit_user_media_permission_is_for_video_device");
+    *(void **)&w.webkit_permission_request_allow =
+        dlsym(lib, "webkit_permission_request_allow");
+    *(void **)&w.webkit_permission_request_deny =
+        dlsym(lib, "webkit_permission_request_deny");
+    *(void **)&w.gtk_window_maximize = dlsym(lib, "gtk_window_maximize");
+    *(void **)&w.gtk_window_is_maximized =
+        dlsym(lib, "gtk_window_is_maximized");
+    *(void **)&w.gtk_window_get_size = dlsym(lib, "gtk_window_get_size");
+    *(void **)&w.gtk_window_get_position =
+        dlsym(lib, "gtk_window_get_position");
+    *(void **)&w.gtk_window_move = dlsym(lib, "gtk_window_move");
+    *(void **)&w.gtk_window_resize = dlsym(lib, "gtk_window_resize");
     /* the name the desktop shows and matches brebus.desktop by, whose icons
        are written first where missing: the task bar's icon is the logo */
     brebus_install_desktop(1);
@@ -298,17 +366,33 @@ int brebus_window(const char *url, volatile sig_atomic_t *quit, char *why,
     }
     P view = w.webkit_web_view_new();
     w.g_signal_connect_data(view, "decide-policy", (P)decide, NULL, NULL, 0);
+    w.g_signal_connect_data(view, "permission-request", (P)permission, NULL,
+                            NULL, 0);
     w.g_signal_connect_data(view, "create", (P)create, NULL, NULL, 0);
     w.g_signal_connect_data(win, "destroy", (P)closed, NULL, NULL, 0);
     w.gtk_container_add(win, view);
     w.webkit_web_view_load_uri(view, url);
+    /* where it was when it closed, or maximized the first time (on Wayland
+       the compositor places it: only the size and the maximized state
+       hold there) */
+    struct brebus_place kept;
+    int have = brebus_place_read(&kept) == 0;
+    if (have && w.gtk_window_resize && w.gtk_window_move) {
+        w.gtk_window_resize(win, kept.w, kept.h);
+        w.gtk_window_move(win, kept.x, kept.y);
+        place = kept;
+    }
+    if ((!have || kept.max) && w.gtk_window_maximize)
+        w.gtk_window_maximize(win);
     w.gtk_widget_show_all(win);
-    w.g_timeout_add(200, watch, NULL);
+    w.g_timeout_add(200, watch, win);
     main_win = win;
     pthread_mutex_lock(&pick_mu);
     window_on = 1;
     pthread_mutex_unlock(&pick_mu);
     w.gtk_main();
+    if (placed)
+        brebus_place_write(&place);
     pthread_mutex_lock(&pick_mu);
     window_on = 0; /* a request waiting on a dialog is let go */
     pthread_cond_broadcast(&pick_cv);

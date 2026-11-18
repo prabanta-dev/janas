@@ -63,12 +63,35 @@ static int sees(const char *dir, const char *name)
     return yes;
 }
 
+/* the speech models (Whisper) in the models' folder: not chat models, so
+   not in the list, but the server's --speech-model */
+static void speech(const char *dir, struct janas_buf *o)
+{
+    DIR *d = opendir(dir);
+    struct dirent *e;
+    int k = 0;
+    janas_buf_puts(o, "[");
+    while (d && (e = readdir(d))) {
+        size_t n = strlen(e->d_name);
+        if (n > 11 && !strncmp(e->d_name, "whisper-", 8) &&
+            !strcmp(e->d_name + n - 4, ".jns")) {
+            janas_buf_puts(o, k++ ? ", " : "");
+            janas_json_write_str(o, e->d_name, n - 4);
+        }
+    }
+    if (d)
+        closedir(d);
+    janas_buf_puts(o, "]");
+}
+
 static void models(struct brebus *b, struct janas_buf *o)
 {
     static struct janas_model_file m[JANAS_MODELS_MAX];
     int n = janas_models_scan(b->models_dir, m, JANAS_MODELS_MAX);
     janas_buf_puts(o, "{\"dir\": ");
     str(o, b->models_dir);
+    janas_buf_puts(o, ", \"speech\": ");
+    speech(b->models_dir, o);
     janas_buf_puts(o, ", \"models\": [");
     for (int i = 0; i < n; i++) {
         janas_buf_puts(o, i ? ", {\"name\": " : "{\"name\": ");
@@ -87,6 +110,72 @@ static void models(struct brebus *b, struct janas_buf *o)
     janas_buf_puts(o, "]}");
 }
 
+/* a companion's own suffix: an MTP head's, a vision encoder's */
+static size_t companion(const char *f)
+{
+    static const char *const sfx[] = {"-mtp.jns", ".vision.jns"};
+    size_t n = strlen(f);
+    for (size_t i = 0; i < sizeof sfx / sizeof sfx[0]; i++) {
+        size_t k = strlen(sfx[i]);
+        if (n > k && !strcmp(f + n - k, sfx[i]))
+            return k;
+    }
+    return 0;
+}
+
+int brebus_model_remove(struct brebus *b, const char *name, char *why,
+                        size_t wn)
+{
+    static struct janas_model_file m[JANAS_MODELS_MAX];
+    int n = janas_models_scan(b->models_dir, m, JANAS_MODELS_MAX), at = -1;
+    for (int i = 0; name && i < n; i++)
+        if (!strcmp(m[i].name, name))
+            at = i;
+    /* a speech model (Whisper): its file alone */
+    if (at < 0 && name && !strncmp(name, "whisper-", 8) && !strchr(name, '/') &&
+        !strchr(name, '\\') && !strstr(name, "..")) {
+        char p[4400];
+        snprintf(p, sizeof p, "%s/%s.jns", b->models_dir, name);
+        if (remove(p) == 0)
+            return 0;
+    }
+    if (at < 0) {
+        snprintf(why, wn, "no model named so in %s", b->models_dir);
+        return -1;
+    }
+    pthread_mutex_lock(&b->mu);
+    int busy = b->srv_on && !strcmp(b->srv_model, name);
+    pthread_mutex_unlock(&b->mu);
+    if (busy) {
+        snprintf(why, wn, "%s is loaded: unload it first", name);
+        return -1;
+    }
+    if (remove(m[at].path) != 0) {
+        snprintf(why, wn, "%s could not be removed", m[at].path);
+        return -1;
+    }
+    /* its companions too, when no other model left needs them: an MTP
+       head or a vision encoder serves every model its name begins */
+    DIR *d = opendir(b->models_dir);
+    struct dirent *e;
+    while (d && (e = readdir(d))) {
+        size_t k = companion(e->d_name), stem = strlen(e->d_name) - k;
+        if (!k || strncmp(name, e->d_name, stem))
+            continue;
+        int needed = 0;
+        for (int i = 0; i < n && !needed; i++)
+            needed = i != at && !strncmp(m[i].name, e->d_name, stem);
+        if (!needed) {
+            char p[4400];
+            snprintf(p, sizeof p, "%s/%s", b->models_dir, e->d_name);
+            remove(p);
+        }
+    }
+    if (d)
+        closedir(d);
+    return 0;
+}
+
 static void catalog(struct janas_buf *o)
 {
     /* the catalog's memory is the machine's as sold, in GB: a 32 GB
@@ -103,9 +192,10 @@ static void catalog(struct janas_buf *o)
         str(o, e->out);
         janas_buf_printf(o,
                          ", \"download_gb\": %.2f, \"ram_gb\": %d, \"fits\": "
-                         "%d, \"chat\": %d, \"test_only\": %d}",
+                         "%d, \"chat\": %d, \"test_only\": %d, \"speech\": %d}",
                          e->jns_repo ? e->jns_gb : e->gguf_gb, e->ram_gb,
-                         gb + 1.0 >= e->ram_gb, !e->not_chat, e->test_only);
+                         gb + 1.0 >= e->ram_gb, !e->not_chat, e->test_only,
+                         e->speech);
     }
     janas_buf_puts(o, "]}");
 }

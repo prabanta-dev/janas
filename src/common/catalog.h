@@ -50,6 +50,9 @@ struct janas_model_entry {
     const char *extra_sha;
     int ram_gb;        /* the smallest machine it is meant for */
     int not_chat;      /* 1: not a chat model (embeddings) */
+    int speech;        /* 1: speech to text (Whisper), for the server's
+                          --speech-model; converted from safetensors, so
+                          only its JNS is downloaded */
     int test_only;     /* 1: for testing the engine, not for chatting: left
                           out of janas-chat's list, opened by name with a
                           word of warning */

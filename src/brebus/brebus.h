@@ -31,7 +31,11 @@ struct brebus_get {
     char step[256]; /* its last "== ..." line */
     char said[512]; /* its last other line */
     double done_gb, total_gb, pct, mbs;
+    double need_gb; /* what it will write, as known before it starts */
 };
+
+/* downloads going on at once */
+#define BREBUS_GETS 4
 
 struct janas_mcp;
 
@@ -57,7 +61,7 @@ struct brebus {
     time_t srv_used;    /* when the page last asked the model */
     char srv_key[256];  /* the key its clients send, or "" */
     int srv_lan;        /* reachable from the local network */
-    struct brebus_get get;
+    struct brebus_get get[BREBUS_GETS];
     /* tools.c: the chat's tools, MCP servers of the workspace's own */
     pthread_mutex_t tools_mu;
     struct janas_mcp *docs, *files;
@@ -82,18 +86,24 @@ void brebus_server_status(struct brebus *b, struct janas_buf *out);
 /* the port of the model's server, 0 when none runs */
 unsigned short brebus_server_port(struct brebus *b);
 
-/* get.c: a model of the catalog downloaded (body: {"model": name}),
-   stopped (its .part kept, to go on from), and how far it is, as JSON
-   into out; the start 0, or -1 with the reason in out */
+/* get.c: a model of the catalog downloaded (body: {"model": name,
+   "bytes": its size when the page knows it}), several at once; stopped,
+   one by its name or all (NULL), its .part kept to go on from; how far
+   each is, as JSON into out; the start 0, or -1 with the reason in out */
 int brebus_get_start(struct brebus *b, const char *body, size_t n,
                      struct janas_buf *out);
-void brebus_get_stop(struct brebus *b);
+void brebus_get_stop(struct brebus *b, const char *model);
 void brebus_get_status(struct brebus *b, struct janas_buf *out);
 
 /* store.c: the conversations (a JSON object each, by an id of letters,
    digits, - and _), listed newest first as JSON into out, one read, saved,
    deleted; and the models' settings, one JSON object. 0, or -1 */
 void brebus_chats_list(struct brebus *b, struct janas_buf *out);
+/* those of the workspace ws, as {"chats": [...]} (each with "archived") */
+void brebus_chats_list_in(const char *ws, struct janas_buf *out);
+/* a chat moved from one workspace's chats to another's: 0, or -1 (one of
+   that id there already) */
+int brebus_chat_move(const char *id, const char *from, const char *to);
 int brebus_chat_get(struct brebus *b, const char *id, struct janas_buf *out);
 int brebus_chat_put(struct brebus *b, const char *id, const char *body,
                     size_t n);
@@ -112,6 +122,9 @@ int brebus_artifact_store(struct brebus *b, const char *body, size_t n,
    /brebus/lib/ (fetched and checked the first time): 0, or -1 with err */
 int brebus_lib(struct brebus *b, const char *rel, struct janas_buf *out,
                const char **mime, char *err, size_t en);
+/* an artifact's folder renamed with it ({"from", "to"}); never over one */
+int brebus_artifact_rename(struct brebus *b, const char *body, size_t n,
+                           struct janas_buf *out);
 int brebus_artifact_save(struct brebus *b, const char *body, size_t n,
                          struct janas_buf *out);
 /* a text saved in the downloads folder (body: {"name", "text"}), under a
@@ -131,6 +144,15 @@ int brebus_window(const char *url, volatile sig_atomic_t *quit, char *why,
 int brebus_pick(int file, const char *title, char *out, size_t n);
 /* 1 while Brebus shows its page in its own window */
 int brebus_window_on(void);
+/* window_place.c: the window's place and size (its normal ones, and
+   whether it was maximized), kept in data_dir/window.json; read: 0, or -1
+   when none is kept (the first start: maximized) */
+struct brebus_place {
+    int x, y, w, h, max;
+};
+void brebus_place_dir(const char *data_dir);
+int brebus_place_read(struct brebus_place *p);
+void brebus_place_write(const struct brebus_place *p);
 
 /* desktop.c: brebus.desktop and its icons written for the desktop's menu
    (quiet: as the window opens, saying nothing, an entry already there
@@ -159,10 +181,40 @@ int brebus_ws_open(struct brebus *b, const char *path, int create, char *why,
                    size_t wn);
 int brebus_ws_new(struct brebus *b, char *why, size_t wn);
 void brebus_ws_status(struct brebus *b, struct janas_buf *out);
+/* The free chats - those of no project - kept in a workspace of Brebus's
+   own, in its data folder; opened when no project is. */
+void brebus_free_path(const struct brebus *b, char *out, size_t n);
+int brebus_ws_free(struct brebus *b, char *why, size_t wn);
+/* path, when it is the free chats' place or a recent project, into real:
+   0, or -1 (no other folder is ever a chat's) */
+int brebus_ws_known(struct brebus *b, const char *path, char *real, size_t n);
+/* a chat of another project than the one open (ws), read, saved or
+   deleted, as brebus_chat_get, _put and _delete do for the open one */
+int brebus_chat_get_in(const char *ws, const char *id, struct janas_buf *out);
+int brebus_chat_put_in(const char *ws, const char *id, const char *body,
+                       size_t n);
+int brebus_chat_delete_in(const char *ws, const char *id);
+/* the free chats and every recent project with its chats, as JSON */
+void brebus_projects(struct brebus *b, struct janas_buf *out);
+/* {"id", "to": a project's path or "" for the free chats}: the chat of
+   the workspace open moved there; 0, or -1 with why */
+int brebus_chat_move_to(struct brebus *b, const char *body, size_t n, char *why,
+                        size_t wn);
 /* the conversations of every recent workspace whose title or messages hold
    query (any case; "" all), newest first, at most 50, as JSON into out */
 void brebus_chats_search(struct brebus *b, const char *query,
                          struct janas_buf *out);
+/* the same with filters: in "titles", "mine" (the user's messages) or
+   "all"; where: one project's path, "free" (the free chats) or "" (all);
+   since: newer than this time (ms, 0: any); model: "" any; archived too
+   or not */
+struct brebus_find {
+    const char *in, *where, *model;
+    double since;
+    int archived;
+};
+void brebus_chats_find(struct brebus *b, const char *query,
+                       const struct brebus_find *f, struct janas_buf *out);
 
 /* tools.c: janas-docs and janas-files for the workspace open, started
    (again: its folders changed) and stopped; their tools as OpenAI's
@@ -216,6 +268,12 @@ void brebus_python_stop(void);
    sizes: JSON into out, 0, or -1 with the reason */
 int brebus_hf_search(struct brebus *b, const char *q, struct janas_buf *out);
 int brebus_hf_files(struct brebus *b, const char *repo, struct janas_buf *out);
+/* a GGUF of Hugging Face looked at before its download: {"state":
+   "likely" (an architecture this engine runs), "unsupported", "unknown"
+   (no header read), "closed" (Hugging Face would not give it: gated, gone)
+   , "arch", "why"} */
+int brebus_hf_check(struct brebus *b, const char *repo, const char *file,
+                    struct janas_buf *out);
 
 /* server.c: the model unloaded after ttl minutes without a request through
    Brebus (settings.json's _server.ttl; 0: never), checked by a thread of
@@ -223,6 +281,10 @@ int brebus_hf_files(struct brebus *b, const char *repo, struct janas_buf *out);
    a folder there is): 0, or -1 */
 void brebus_idle_start(struct brebus *b);
 int brebus_models_dir_set(struct brebus *b, const char *path, int save);
+/* a model of the models' folder deleted, its companions (MTP head, vision
+   encoder) with it when no other model needs them; never the one loaded */
+int brebus_model_remove(struct brebus *b, const char *name, char *why,
+                        size_t wn);
 /* desktop.c: Brebus started at login, its server without a window
    (~/.config/autostart/brebus.desktop), on or off; whether it is */
 int brebus_autostart(int on);
@@ -243,6 +305,16 @@ int brebus_autostart_on(void);
    binary package), else beside it */
 void brebus_service_exe(const struct brebus *b, const char *name, char *out,
                         size_t n);
+
+/* pyinstall.c: Python for the cage on Windows, installed when the user
+   asks (python.org's embeddable package and PyPI's wheels, each checked
+   by its SHA-256): whether it is there; the install's state as JSON
+   ({"needed": false} on Linux); the install started in a thread of its
+   own, 0 or -1; the folder removed, 0 or -1 */
+int brebus_python_installed(void);
+void brebus_python_status(struct janas_buf *o);
+int brebus_python_install(void);
+int brebus_python_remove(void);
 
 /* proxy.c: a request to the model's API passed on: 0 with the response to
    queue and its status, -1 when no server runs or it cannot be reached */

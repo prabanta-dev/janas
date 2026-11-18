@@ -118,10 +118,20 @@ static void str(struct janas_buf *o, const char *s)
 
 void brebus_chats_list(struct brebus *b, struct janas_buf *out)
 {
+    char ws[4096];
+    brebus_chats_list_in(brebus_ws_path(b, ws, sizeof ws) == 0 ? ws : NULL,
+                         out);
+}
+
+/* the chats of the workspace (a project, or the free chats' own) ws */
+void brebus_chats_list_in(const char *ws, struct janas_buf *out)
+{
     char dir[4200];
     struct entry *e = calloc(MAX_CHATS, sizeof *e);
     int n = 0;
-    DIR *d = e && chats_dir(b, dir, sizeof dir) == 0 ? opendir(dir) : NULL;
+    if (ws)
+        snprintf(dir, sizeof dir, "%s/.brebus/chats", ws);
+    DIR *d = e && ws ? opendir(dir) : NULL;
     struct dirent *de;
     while (d && n < MAX_CHATS && (de = readdir(d))) {
         size_t len = strlen(de->d_name);
@@ -134,8 +144,7 @@ void brebus_chats_list(struct brebus *b, struct janas_buf *out)
             continue;
         char p[4400], err[160];
         struct janas_buf f = {0};
-        if (chat_path(b, e[n].id, p, sizeof p) != 0)
-            continue;
+        snprintf(p, sizeof p, "%s/%s.json", dir, e[n].id);
         struct janas_json_doc *doc =
             slurp(p, &f) == 0 ? janas_json_parse(f.p, f.n, err, sizeof err)
                               : NULL;
@@ -157,9 +166,13 @@ void brebus_chats_list(struct brebus *b, struct janas_buf *out)
         const char *folder = janas_json_str(janas_json_get(r, "folder"));
         janas_buf_puts(&o, ", \"folder\": ");
         str(&o, folder ? folder : "");
-        janas_buf_printf(&o, ", \"updated\": %.0f, \"messages\": %zu}",
-                         e[n].updated,
-                         msgs && msgs->type == JANAS_JSON_ARRAY ? msgs->n : 0);
+        const struct janas_json *arch = janas_json_get(r, "archived");
+        janas_buf_printf(
+            &o,
+            ", \"updated\": %.0f, \"messages\": %zu, "
+            "\"archived\": %s}",
+            e[n].updated, msgs && msgs->type == JANAS_JSON_ARRAY ? msgs->n : 0,
+            arch && arch->type == JANAS_JSON_TRUE ? "true" : "false");
         janas_buf_put(&o, "", 1);
         janas_json_free(doc);
         if (o.oom) {
@@ -200,6 +213,57 @@ int brebus_chat_put(struct brebus *b, const char *id, const char *body,
     if (chat_path(b, id, p, sizeof p) != 0)
         return -1;
     return put(p, body, n);
+}
+
+int brebus_chat_move(const char *id, const char *from, const char *to)
+{
+    char a[4400], c[4400], dir[4300];
+    if (!good_id(id))
+        return -1;
+    snprintf(a, sizeof a, "%s/.brebus/chats/%s.json", from, id);
+    snprintf(dir, sizeof dir, "%s/.brebus/chats", to);
+    snprintf(c, sizeof c, "%s/%s.json", dir, id);
+    if (janas_mkdirs(dir) != 0 || access(c, F_OK) == 0)
+        return -1;
+    /* Windows renames no file another reader holds open - the side bar's
+       list reading it, an antivirus's scan of a file just written: a few
+       tries, a little apart (tried on Windows 11, 17 Nov 2026) */
+    for (int i = 0; i < 20; i++) {
+        if (rename(a, c) == 0)
+            return 0;
+        if (access(a, F_OK) != 0)
+            return -1;
+        usleep(50000);
+    }
+    return -1;
+}
+
+int brebus_chat_get_in(const char *ws, const char *id, struct janas_buf *out)
+{
+    char p[4400];
+    if (!good_id(id))
+        return -1;
+    snprintf(p, sizeof p, "%s/.brebus/chats/%s.json", ws, id);
+    return slurp(p, out);
+}
+
+int brebus_chat_put_in(const char *ws, const char *id, const char *body,
+                       size_t n)
+{
+    char p[4400];
+    if (!good_id(id))
+        return -1;
+    snprintf(p, sizeof p, "%s/.brebus/chats/%s.json", ws, id);
+    return access(p, F_OK) == 0 ? put(p, body, n) : -1; /* only one there */
+}
+
+int brebus_chat_delete_in(const char *ws, const char *id)
+{
+    char p[4400];
+    if (!good_id(id))
+        return -1;
+    snprintf(p, sizeof p, "%s/.brebus/chats/%s.json", ws, id);
+    return remove(p);
 }
 
 int brebus_chat_delete(struct brebus *b, const char *id)
@@ -350,6 +414,39 @@ static void art_name(const char *title, char *name, size_t cap)
     name[k] = 0;
     if (!k)
         snprintf(name, cap, "artifact");
+}
+
+int brebus_artifact_rename(struct brebus *b, const char *body, size_t n,
+                           struct janas_buf *out)
+{
+    char ws[4096], err[160], from[96], to[96], a[4400], c[4400];
+    if (brebus_ws_path(b, ws, sizeof ws) != 0) {
+        janas_buf_puts(out, "{\"error\": \"no workspace\"}");
+        return -1;
+    }
+    struct janas_json_doc *d =
+        body && n ? janas_json_parse(body, n, err, sizeof err) : NULL;
+    const struct janas_json *o = d ? janas_json_root(d) : NULL;
+    art_name(o ? janas_json_str(janas_json_get(o, "from")) : NULL, from,
+             sizeof from);
+    art_name(o ? janas_json_str(janas_json_get(o, "to")) : NULL, to, sizeof to);
+    janas_json_free(d);
+    snprintf(a, sizeof a, "%s/artifact/%s", ws, from);
+    snprintf(c, sizeof c, "%s/artifact/%s", ws, to);
+    struct stat st;
+    /* its versions' folder follows the name; one of that name already
+       there is never written over */
+    if (!strcmp(from, to) || stat(a, &st) != 0) {
+        janas_buf_puts(out, "{\"ok\": true}");
+        return 0;
+    }
+    if (stat(c, &st) == 0 || rename(a, c) != 0) {
+        janas_buf_puts(out, "{\"error\": \"an artifact of that name is there "
+                            "already\"}");
+        return -1;
+    }
+    janas_buf_puts(out, "{\"ok\": true}");
+    return 0;
 }
 
 int brebus_artifact_save(struct brebus *b, const char *body, size_t n,

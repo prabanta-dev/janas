@@ -46,7 +46,6 @@ int main(void)
 #include "services/docs/store.c"
 #include "services/docs/tools.c"
 #include "services/docs/xml.c"
-#include "services/docs/zip.c"
 
 static int failures;
 

@@ -215,15 +215,53 @@ static enum MHD_Result handler(void *cls, struct MHD_Connection *conn,
         return json(conn, 200, &o);
     }
     if (get && !strcmp(url, "/brebus/chats/search")) {
-        brebus_chats_search(
+        /* the filters of the page's search, all optional */
+        const char *since = MHD_lookup_connection_value(
+                       conn, MHD_GET_ARGUMENT_KIND, "since"),
+                   *arch = MHD_lookup_connection_value(
+                       conn, MHD_GET_ARGUMENT_KIND, "archived");
+        struct brebus_find f = {.in = MHD_lookup_connection_value(
+                                    conn, MHD_GET_ARGUMENT_KIND, "in"),
+                                .where = MHD_lookup_connection_value(
+                                    conn, MHD_GET_ARGUMENT_KIND, "where"),
+                                .model = MHD_lookup_connection_value(
+                                    conn, MHD_GET_ARGUMENT_KIND, "model"),
+                                .since = since ? atof(since) : 0,
+                                .archived = !arch || strcmp(arch, "0")};
+        brebus_chats_find(
             b, MHD_lookup_connection_value(conn, MHD_GET_ARGUMENT_KIND, "q"),
-            &o);
+            &f, &o);
         return json(conn, 200, &o);
+    }
+    /* before /brebus/chats/<id>, which would take "move" for an id */
+    if (post && !strcmp(url, "/brebus/chats/move")) {
+        char why[300];
+        int rc = brebus_chat_move_to(b, r->body.p, r->body.n, why, sizeof why);
+        if (rc) {
+            janas_buf_puts(&o, "{\"error\": ");
+            janas_json_write_str(&o, why, strlen(why));
+            janas_buf_puts(&o, "}");
+        } else
+            janas_buf_puts(&o, "{\"ok\": true}");
+        return json(conn, rc ? 400 : 200, &o);
     }
     if (!strncmp(url, "/brebus/chats/", 14)) {
         const char *id = url + 14;
+        /* ?ws=: a chat of another project (or of the free chats), from
+           the side bar's menu, without opening it */
+        const char *in =
+            MHD_lookup_connection_value(conn, MHD_GET_ARGUMENT_KIND, "ws");
+        char real[4096];
         int rc = -1;
-        if (get)
+        if (in && brebus_ws_known(b, in, real, sizeof real) != 0)
+            rc = -1;
+        else if (in && get)
+            rc = brebus_chat_get_in(real, id, &o);
+        else if (in && post)
+            rc = brebus_chat_put_in(real, id, r->body.p, r->body.n);
+        else if (in && !strcmp(method, "DELETE"))
+            rc = brebus_chat_delete_in(real, id);
+        else if (get)
             rc = brebus_chat_get(b, id, &o);
         else if (post)
             rc = brebus_chat_put(b, id, r->body.p, r->body.n);
@@ -279,6 +317,13 @@ static enum MHD_Result handler(void *cls, struct MHD_Connection *conn,
         janas_buf_puts(&o, "}");
         return json(conn, 200, &o);
     }
+    if (get && !strcmp(url, "/brebus/hf/check")) {
+        int rc = brebus_hf_check(
+            b, MHD_lookup_connection_value(conn, MHD_GET_ARGUMENT_KIND, "repo"),
+            MHD_lookup_connection_value(conn, MHD_GET_ARGUMENT_KIND, "file"),
+            &o);
+        return json(conn, rc ? 400 : 200, &o);
+    }
     if (get && (!strcmp(url, "/brebus/hf/search") ||
                 !strcmp(url, "/brebus/hf/files"))) {
         const char *q = MHD_lookup_connection_value(
@@ -308,6 +353,25 @@ static enum MHD_Result handler(void *cls, struct MHD_Connection *conn,
                          brebus_autostart_on() ? "true" : "false");
         return json(conn, rc ? 400 : 200, &o);
     }
+    if (get && !strcmp(url, "/brebus/python")) {
+        brebus_python_status(&o);
+        return json(conn, 200, &o);
+    }
+    if (post && (!strcmp(url, "/brebus/python/install") ||
+                 !strcmp(url, "/brebus/python/remove"))) {
+        int install = url[15] == 'i', rc;
+        if (install)
+            rc = brebus_python_install();
+        else {
+            /* the session running on it ended first */
+            pthread_mutex_lock(&b->tools_mu);
+            brebus_python_stop();
+            pthread_mutex_unlock(&b->tools_mu);
+            rc = brebus_python_remove();
+        }
+        brebus_python_status(&o);
+        return json(conn, rc ? 400 : 200, &o);
+    }
     if (get && !strcmp(url, "/brebus/services")) {
         brebus_services_get(b, &o);
         return json(conn, 200, &o);
@@ -334,6 +398,22 @@ static enum MHD_Result handler(void *cls, struct MHD_Connection *conn,
         return json(conn, rc ? 400 : 200, &o);
     }
     if (get && !strcmp(url, "/brebus/workspace")) {
+        brebus_ws_status(b, &o);
+        return json(conn, 200, &o);
+    }
+    if (get && !strcmp(url, "/brebus/projects")) {
+        brebus_projects(b, &o);
+        return json(conn, 200, &o);
+    }
+    if (post && !strcmp(url, "/brebus/workspace/free")) {
+        char why[600];
+        int rc = brebus_ws_free(b, why, sizeof why);
+        if (rc) {
+            janas_buf_puts(&o, "{\"error\": ");
+            janas_json_write_str(&o, why, strlen(why));
+            janas_buf_puts(&o, "}");
+            return json(conn, 400, &o);
+        }
         brebus_ws_status(b, &o);
         return json(conn, 200, &o);
     }
@@ -383,6 +463,10 @@ static enum MHD_Result handler(void *cls, struct MHD_Connection *conn,
         int rc = brebus_artifact_store(b, r->body.p, r->body.n, &o);
         return json(conn, rc ? 400 : 200, &o);
     }
+    if (post && !strcmp(url, "/brebus/artifacts/rename")) {
+        int rc = brebus_artifact_rename(b, r->body.p, r->body.n, &o);
+        return json(conn, rc ? 400 : 200, &o);
+    }
     if (post && !strcmp(url, "/brebus/artifacts")) {
         int rc = brebus_artifact_save(b, r->body.p, r->body.n, &o);
         return json(conn, rc ? 400 : 200, &o);
@@ -407,12 +491,37 @@ static enum MHD_Result handler(void *cls, struct MHD_Connection *conn,
         static const char no[] = "{\"error\": \"not a JSON object\"}";
         return reply(conn, 400, "application/json", no, sizeof no - 1, 1);
     }
+    if (post && !strcmp(url, "/brebus/models/remove")) {
+        char err[160], why[300] = "";
+        struct janas_json_doc *d =
+            r->body.n ? janas_json_parse(r->body.p, r->body.n, err, sizeof err)
+                      : NULL;
+        const char *name =
+            d ? janas_json_str(janas_json_get(janas_json_root(d), "name"))
+              : NULL;
+        int rc = brebus_model_remove(b, name, why, sizeof why);
+        janas_json_free(d);
+        if (rc) {
+            janas_buf_puts(&o, "{\"error\": ");
+            janas_json_write_str(&o, why, strlen(why));
+            janas_buf_puts(&o, "}");
+        } else
+            janas_buf_puts(&o, "{\"ok\": true}");
+        return json(conn, rc ? 400 : 200, &o);
+    }
     if (post && !strcmp(url, "/brebus/get/start")) {
         int rc = brebus_get_start(b, r->body.p, r->body.n, &o);
         return json(conn, rc ? 400 : 200, &o);
     }
     if (post && !strcmp(url, "/brebus/get/stop")) {
-        brebus_get_stop(b);
+        char err[160];
+        struct janas_json_doc *d =
+            r->body.n ? janas_json_parse(r->body.p, r->body.n, err, sizeof err)
+                      : NULL;
+        brebus_get_stop(
+            b, d ? janas_json_str(janas_json_get(janas_json_root(d), "model"))
+                 : NULL);
+        janas_json_free(d);
         brebus_get_status(b, &o);
         return json(conn, 200, &o);
     }

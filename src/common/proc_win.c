@@ -263,6 +263,10 @@ int janas_proc_start(struct janas_proc *p, const char *const argv[],
         how |= CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP;
     else if (flags & JANAS_PROC_GROUP)
         how |= CREATE_NEW_PROCESS_GROUP;
+    /* a program with no console of its own (Brebus's window) would give
+       each console program it starts a window of its own: none */
+    if (!GetConsoleWindow())
+        how |= CREATE_NO_WINDOW;
     job = CreateJobObjectA(NULL, NULL);
     if (job) {
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION li = {0};

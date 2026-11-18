@@ -87,10 +87,27 @@ static void recent_file(const struct brebus *b, char *p, size_t n)
     snprintf(p, n, "%s/workspaces.json", b->data_dir);
 }
 
-/* the recent ones, newest first, with path put first */
+void brebus_free_path(const struct brebus *b, char *out, size_t n)
+{
+    snprintf(out, n, "%s/free-chats", b->data_dir);
+    janas_path_slashes(out);
+}
+
+/* whether path is the free chats' workspace */
+static int is_free(const struct brebus *b, const char *path)
+{
+    char f[4200], real[4096];
+    brebus_free_path(b, f, sizeof f);
+    return janas_path_real(f, real) && path && !strcmp(path, real);
+}
+
+/* the recent ones, newest first, with path put first; never the free
+   chats' own */
 static void recent_add(struct brebus *b, const char *path)
 {
     char rp[4200], err[160];
+    if (is_free(b, path))
+        return;
     recent_file(b, rp, sizeof rp);
     struct janas_buf f = {0}, o = {0};
     FILE *in = fopen(rp, "rb");
@@ -202,6 +219,13 @@ int brebus_ws_open(struct brebus *b, const char *path, int create, char *why,
     return 0;
 }
 
+int brebus_ws_free(struct brebus *b, char *why, size_t wn)
+{
+    char f[4200];
+    brebus_free_path(b, f, sizeof f);
+    return brebus_ws_open(b, f, 1, why, wn);
+}
+
 int brebus_ws_new(struct brebus *b, char *why, size_t wn)
 {
     char docs[4096], base[4200], path[4300], day[16];
@@ -232,6 +256,8 @@ void brebus_ws_status(struct brebus *b, struct janas_buf *out)
     const char *slash = on ? strrchr(ws, '/') : NULL;
     janas_buf_puts(out, ", \"name\": ");
     str(out, slash ? slash + 1 : "");
+    janas_buf_printf(out, ", \"free\": %s",
+                     on && is_free(b, ws) ? "true" : "false");
     documents(docs, sizeof docs);
     janas_buf_puts(out, ", \"new_in\": ");
     snprintf(rp, sizeof rp, "%s/Brebus", docs);
@@ -276,6 +302,128 @@ void brebus_ws_status(struct brebus *b, struct janas_buf *out)
     janas_buf_free(&f);
 }
 
+/* the recent projects' paths, those still there, into p[] */
+static int recent_paths(struct brebus *b, char (*p)[4096], int max)
+{
+    char rp[4200], err[160];
+    recent_file(b, rp, sizeof rp);
+    struct janas_buf f = {0};
+    FILE *in = fopen(rp, "rb");
+    if (in) {
+        char buf[16384];
+        size_t r;
+        while ((r = fread(buf, 1, sizeof buf, in)) > 0 && f.n < (1u << 20))
+            janas_buf_put(&f, buf, r);
+        fclose(in);
+    }
+    struct janas_json_doc *d =
+        f.n ? janas_json_parse(f.p, f.n, err, sizeof err) : NULL;
+    const struct janas_json *list =
+        d ? janas_json_get(janas_json_root(d), "recent") : NULL;
+    int k = 0;
+    for (const struct janas_json *e =
+             list && list->type == JANAS_JSON_ARRAY ? list->child : NULL;
+         e && k < max; e = e->next) {
+        const char *s = janas_json_str(e);
+        struct stat st;
+        if (!s || stat(s, &st) != 0 || !S_ISDIR(st.st_mode) || is_free(b, s))
+            continue;
+        snprintf(p[k++], 4096, "%s", s);
+    }
+    janas_json_free(d);
+    janas_buf_free(&f);
+    return k;
+}
+
+int brebus_ws_known(struct brebus *b, const char *path, char *real, size_t n)
+{
+    static char p[MAX_RECENT][4096];
+    char f[4200], fr[4096];
+    if (!path)
+        return -1;
+    brebus_free_path(b, f, sizeof f);
+    if (janas_path_real(f, fr) && !strcmp(path, fr))
+        return snprintf(real, n, "%s", fr) > 0 ? 0 : -1;
+    int k = recent_paths(b, p, MAX_RECENT);
+    for (int i = 0; i < k; i++)
+        if (!strcmp(p[i], path))
+            return snprintf(real, n, "%s", p[i]) > 0 ? 0 : -1;
+    return -1;
+}
+
+void brebus_projects(struct brebus *b, struct janas_buf *out)
+{
+    char f[4200], real[4096];
+    static char p[MAX_RECENT][4096];
+    brebus_free_path(b, f, sizeof f);
+    janas_buf_puts(out, "{\"free\": ");
+    int have = janas_path_real(f, real) != NULL;
+    str(out, have ? real : f);
+    janas_buf_puts(out, ", \"free_chats\": ");
+    brebus_chats_list_in(have ? real : NULL, out);
+    janas_buf_puts(out, ", \"projects\": [");
+    int n = recent_paths(b, p, MAX_RECENT);
+    for (int i = 0; i < n; i++) {
+        const char *slash = strrchr(p[i], '/');
+        janas_buf_puts(out, i ? ", {\"path\": " : "{\"path\": ");
+        str(out, p[i]);
+        janas_buf_puts(out, ", \"name\": ");
+        str(out, slash ? slash + 1 : p[i]);
+        janas_buf_puts(out, ", \"chats\": ");
+        brebus_chats_list_in(p[i], out);
+        janas_buf_puts(out, "}");
+    }
+    janas_buf_puts(out, "]}");
+}
+
+int brebus_chat_move_to(struct brebus *b, const char *body, size_t n, char *why,
+                        size_t wn)
+{
+    char ws[4096], err[160], to[4200], real[4096];
+    static char p[MAX_RECENT][4096];
+    if (brebus_ws_path(b, ws, sizeof ws) != 0) {
+        snprintf(why, wn, "no workspace open");
+        return -1;
+    }
+    struct janas_json_doc *d =
+        body && n ? janas_json_parse(body, n, err, sizeof err) : NULL;
+    const struct janas_json *o = d ? janas_json_root(d) : NULL;
+    const char *id = o ? janas_json_str(janas_json_get(o, "id")) : NULL;
+    const char *t = o ? janas_json_str(janas_json_get(o, "to")) : NULL;
+    /* "from": a chat of another project than the one open */
+    const char *from = o ? janas_json_str(janas_json_get(o, "from")) : NULL;
+    char fr[4096];
+    if (from && *from) {
+        if (brebus_ws_known(b, from, fr, sizeof fr) != 0) {
+            snprintf(why, wn, "not a project of Brebus");
+            janas_json_free(d);
+            return -1;
+        }
+        snprintf(ws, sizeof ws, "%s", fr);
+    }
+    /* only to the free chats or to a project Brebus knows */
+    int ok = 0;
+    if (t && !*t) {
+        brebus_free_path(b, to, sizeof to);
+        janas_mkdirs(to);
+        ok = janas_path_real(to, real) != NULL;
+    } else if (t) {
+        int k = recent_paths(b, p, MAX_RECENT);
+        for (int i = 0; i < k && !ok; i++)
+            if (!strcmp(p[i], t))
+                ok = snprintf(real, sizeof real, "%s", t) > 0;
+    }
+    int rc = -1;
+    if (!ok)
+        snprintf(why, wn, "not a project of Brebus");
+    else if (!strcmp(real, ws))
+        snprintf(why, wn, "it is there already");
+    else if ((rc = brebus_chat_move(id, ws, real)) != 0)
+        snprintf(why, wn, "it could not be moved there");
+    janas_json_free(d);
+    return rc;
+}
+
 /* ---- the conversations of every recent workspace, searched ---- */
 
 #define MAX_HITS 50
@@ -313,10 +461,120 @@ static long find_ci(const char *t, size_t n, const char *q)
     return -1;
 }
 
+static void find_in(const char *ws, const char *q, const struct brebus_find *f,
+                    struct hit *hits, int *nh, int free_one)
+{
+    char dir[4300], err[160];
+    snprintf(dir, sizeof dir, "%s/.brebus/chats", ws);
+    DIR *dd = opendir(dir);
+    struct dirent *de;
+    while (dd && *nh < 4096 && (de = readdir(dd))) {
+        size_t l = strlen(de->d_name);
+        if (l < 6 || strcmp(de->d_name + l - 5, ".json") || l - 5 > 64)
+            continue;
+        char p[4400], id[72];
+        snprintf(id, sizeof id, "%.*s", (int)(l - 5), de->d_name);
+        snprintf(p, sizeof p, "%s/%s", dir, de->d_name);
+        struct janas_buf c = {0};
+        FILE *cf = fopen(p, "rb");
+        if (cf) {
+            char buf[65536];
+            size_t r;
+            while ((r = fread(buf, 1, sizeof buf, cf)) > 0 && c.n < (32u << 20))
+                janas_buf_put(&c, buf, r);
+            fclose(cf);
+        }
+        struct janas_json_doc *cd =
+            c.n ? janas_json_parse(c.p, c.n, err, sizeof err) : NULL;
+        const struct janas_json *cr = cd ? janas_json_root(cd) : NULL;
+        const char *title =
+            cr ? janas_json_str(janas_json_get(cr, "title")) : NULL;
+        const struct janas_json *msgs =
+            cr ? janas_json_get(cr, "messages") : NULL;
+        /* the filters: archived, time, model */
+        const struct janas_json *ar =
+            cr ? janas_json_get(cr, "archived") : NULL;
+        int archived = ar && ar->type == JANAS_JSON_TRUE;
+        double upd = cr ? janas_json_num(janas_json_get(cr, "updated"), 0) : 0;
+        const char *model =
+            cr ? janas_json_str(janas_json_get(cr, "model")) : NULL;
+        int keep =
+            cr && (f->archived || !archived) && upd >= f->since &&
+            (!f->model || !*f->model || (model && !strcmp(model, f->model)));
+        /* the title, else the first message holding the words (only
+           the user's, or none, as asked) */
+        const char *snip = NULL;
+        size_t sn = 0;
+        const char *in = f->in ? f->in : "all";
+        long at = keep && title ? find_ci(title, strlen(title), q) : -1;
+        if (keep && !*q)
+            at = 0; /* no words: every chat the filters keep */
+        for (const struct janas_json *m =
+                 keep && at < 0 && strcmp(in, "titles") && msgs &&
+                         msgs->type == JANAS_JSON_ARRAY
+                     ? msgs->child
+                     : NULL;
+             m && at < 0; m = m->next) {
+            const char *role = janas_json_str(janas_json_get(m, "role"));
+            if (!strcmp(in, "mine") && (!role || strcmp(role, "user")))
+                continue;
+            const struct janas_json *t = janas_json_get(m, "content");
+            if (t && t->type == JANAS_JSON_STRING &&
+                (at = find_ci(t->s, t->n, q)) >= 0) {
+                size_t from = at > 60 ? (size_t)at - 60 : 0;
+                snip = t->s + from;
+                sn = t->n - from < 160 ? t->n - from : 160;
+            }
+        }
+        if (cd && at >= 0) {
+            struct janas_buf o = {0};
+            const char *slash = strrchr(ws, '/');
+            janas_buf_puts(&o, "{\"workspace\": ");
+            janas_json_write_str(&o, ws, strlen(ws));
+            janas_buf_puts(&o, ", \"workspace_name\": ");
+            janas_json_write_str(&o, slash ? slash + 1 : ws,
+                                 strlen(slash ? slash + 1 : ws));
+            janas_buf_puts(&o, ", \"id\": ");
+            janas_json_write_str(&o, id, strlen(id));
+            janas_buf_puts(&o, ", \"title\": ");
+            janas_json_write_str(&o, title ? title : "",
+                                 title ? strlen(title) : 0);
+            double up = upd;
+            janas_buf_puts(&o, ", \"model\": ");
+            janas_json_write_str(&o, model ? model : "",
+                                 model ? strlen(model) : 0);
+            janas_buf_printf(&o,
+                             ", \"archived\": %s, \"free\": %s, "
+                             "\"updated\": %.0f, \"snippet\": ",
+                             archived ? "true" : "false",
+                             free_one ? "true" : "false", up);
+            janas_json_write_str(&o, snip ? snip : "", sn);
+            janas_buf_puts(&o, "}");
+            janas_buf_put(&o, "", 1);
+            if (!o.oom) {
+                hits[*nh].updated = up;
+                hits[(*nh)++].json = o.p;
+            } else
+                janas_buf_free(&o);
+        }
+        janas_json_free(cd);
+        janas_buf_free(&c);
+    }
+    if (dd)
+        closedir(dd);
+}
+
 void brebus_chats_search(struct brebus *b, const char *query,
                          struct janas_buf *out)
 {
-    char q[256], rp[4200], err[160];
+    static const struct brebus_find all = {.in = "all", .archived = 1};
+    brebus_chats_find(b, query, &all, out);
+}
+
+void brebus_chats_find(struct brebus *b, const char *query,
+                       const struct brebus_find *f, struct janas_buf *out)
+{
+    char q[256], rp[4200], err[160], fp[4200], freal[4096];
     size_t k = 0;
     for (const char *c = query ? query : ""; *c && k + 1 < sizeof q; c++)
         q[k++] = (char)(*c >= 'A' && *c <= 'Z' ? *c - 'A' + 'a' : *c);
@@ -325,102 +583,33 @@ void brebus_chats_search(struct brebus *b, const char *query,
     int nh = 0;
     /* the recent workspaces, from workspaces.json */
     recent_file(b, rp, sizeof rp);
-    struct janas_buf f = {0};
+    struct janas_buf fb = {0};
     FILE *in = fopen(rp, "rb");
     if (in) {
         char buf[16384];
         size_t r;
-        while ((r = fread(buf, 1, sizeof buf, in)) > 0 && f.n < (1u << 20))
-            janas_buf_put(&f, buf, r);
+        while ((r = fread(buf, 1, sizeof buf, in)) > 0 && fb.n < (1u << 20))
+            janas_buf_put(&fb, buf, r);
         fclose(in);
     }
     struct janas_json_doc *d =
-        f.n ? janas_json_parse(f.p, f.n, err, sizeof err) : NULL;
+        fb.n ? janas_json_parse(fb.p, fb.n, err, sizeof err) : NULL;
     const struct janas_json *list =
         d ? janas_json_get(janas_json_root(d), "recent") : NULL;
+    /* the free chats first, then the recent projects */
+    brebus_free_path(b, fp, sizeof fp);
+    const char *where = f && f->where ? f->where : "";
+    if (janas_path_real(fp, freal) && (!*where || !strcmp(where, "free")))
+        find_in(freal, q, f, hits, &nh, 1);
     for (const struct janas_json *e =
              list && list->type == JANAS_JSON_ARRAY ? list->child : NULL;
          e && nh < 4096; e = e->next) {
         const char *ws = janas_json_str(e);
-        char dir[4300];
-        if (!ws)
-            continue;
-        snprintf(dir, sizeof dir, "%s/.brebus/chats", ws);
-        DIR *dd = opendir(dir);
-        struct dirent *de;
-        while (dd && nh < 4096 && (de = readdir(dd))) {
-            size_t l = strlen(de->d_name);
-            if (l < 6 || strcmp(de->d_name + l - 5, ".json") || l - 5 > 64)
-                continue;
-            char p[4400], id[72];
-            snprintf(id, sizeof id, "%.*s", (int)(l - 5), de->d_name);
-            snprintf(p, sizeof p, "%s/%s", dir, de->d_name);
-            struct janas_buf c = {0};
-            FILE *cf = fopen(p, "rb");
-            if (cf) {
-                char buf[65536];
-                size_t r;
-                while ((r = fread(buf, 1, sizeof buf, cf)) > 0 &&
-                       c.n < (32u << 20))
-                    janas_buf_put(&c, buf, r);
-                fclose(cf);
-            }
-            struct janas_json_doc *cd =
-                c.n ? janas_json_parse(c.p, c.n, err, sizeof err) : NULL;
-            const struct janas_json *cr = cd ? janas_json_root(cd) : NULL;
-            const char *title =
-                cr ? janas_json_str(janas_json_get(cr, "title")) : NULL;
-            const struct janas_json *msgs =
-                cr ? janas_json_get(cr, "messages") : NULL;
-            /* the title, else the first message holding the words */
-            const char *snip = NULL;
-            size_t sn = 0;
-            long at = title ? find_ci(title, strlen(title), q) : -1;
-            for (const struct janas_json *m =
-                     at < 0 && msgs && msgs->type == JANAS_JSON_ARRAY
-                         ? msgs->child
-                         : NULL;
-                 m && at < 0; m = m->next) {
-                const struct janas_json *t = janas_json_get(m, "content");
-                if (t && t->type == JANAS_JSON_STRING &&
-                    (at = find_ci(t->s, t->n, q)) >= 0) {
-                    size_t from = at > 60 ? (size_t)at - 60 : 0;
-                    snip = t->s + from;
-                    sn = t->n - from < 160 ? t->n - from : 160;
-                }
-            }
-            if (cd && at >= 0) {
-                struct janas_buf o = {0};
-                const char *slash = strrchr(ws, '/');
-                janas_buf_puts(&o, "{\"workspace\": ");
-                janas_json_write_str(&o, ws, strlen(ws));
-                janas_buf_puts(&o, ", \"workspace_name\": ");
-                janas_json_write_str(&o, slash ? slash + 1 : ws,
-                                     strlen(slash ? slash + 1 : ws));
-                janas_buf_puts(&o, ", \"id\": ");
-                janas_json_write_str(&o, id, strlen(id));
-                janas_buf_puts(&o, ", \"title\": ");
-                janas_json_write_str(&o, title ? title : "",
-                                     title ? strlen(title) : 0);
-                double up = janas_json_num(janas_json_get(cr, "updated"), 0);
-                janas_buf_printf(&o, ", \"updated\": %.0f, \"snippet\": ", up);
-                janas_json_write_str(&o, snip ? snip : "", sn);
-                janas_buf_puts(&o, "}");
-                janas_buf_put(&o, "", 1);
-                if (!o.oom) {
-                    hits[nh].updated = up;
-                    hits[nh++].json = o.p;
-                } else
-                    janas_buf_free(&o);
-            }
-            janas_json_free(cd);
-            janas_buf_free(&c);
-        }
-        if (dd)
-            closedir(dd);
+        if (ws && (!*where || !strcmp(where, ws)))
+            find_in(ws, q, f, hits, &nh, 0);
     }
     janas_json_free(d);
-    janas_buf_free(&f);
+    janas_buf_free(&fb);
     qsort(hits, (size_t)nh, sizeof *hits, newer);
     janas_buf_puts(out, "{\"chats\": [");
     for (int i = 0; i < nh; i++) {

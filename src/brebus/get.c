@@ -2,17 +2,19 @@
    Copyright (C) 2026 Maurizio Cammalleri */
 /*
  * get.c - a model of the catalog downloaded from the page: janas-get, the
- * one beside brebus, started for it into the models' folder, one at a
- * time. Its output is read as it comes: the "== ..." lines are the step
- * it is at, "   x of y GB (p%), m MB/s" how far the download is, and its
- * last other line what it said last, the reason when it fails. Stopped,
- * it leaves its .part file: started again, the download goes on from there.
- * Besides the catalog's models, any file of Hugging Face as janas-get takes
- * it, hf:<owner>/<repo>/<file>: a JNS as it is, a GGUF converted here.
+ * one beside brebus, started for it into the models' folder, several at a
+ * time, each only when the disk has room for it beside those going on. Its
+ * output is read as it comes: the "== ..." lines are the step it is at, "   x
+ * of y GB (p%), m MB/s" how far the download is, and its last other line what
+ * it said last, the reason when it fails. Stopped, it leaves its .part file:
+ * started again, the download goes on from there. Besides the catalog's models,
+ * any file of Hugging Face as janas-get takes it, hf:<owner>/<repo>/<file>: a
+ * JNS as it is, a GGUF converted here.
  */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/statvfs.h>
 #include <unistd.h>
 
 #include "brebus.h"
@@ -44,8 +46,7 @@ static void line(struct brebus_get *g, char *s)
 
 static void *reader(void *arg)
 {
-    struct brebus *b = arg;
-    struct brebus_get *g = &b->get;
+    struct brebus_get *g = arg;
     char buf[4096], cur[1024];
     size_t n = 0;
     ssize_t r;
@@ -126,7 +127,6 @@ static int fail(struct janas_buf *out, const char *why)
 int brebus_get_start(struct brebus *b, const char *body, size_t n,
                      struct janas_buf *out)
 {
-    struct brebus_get *g = &b->get;
     char err[256];
     struct janas_json_doc *d =
         body && n ? janas_json_parse(body, n, err, sizeof err) : NULL;
@@ -142,12 +142,51 @@ int brebus_get_start(struct brebus *b, const char *body, size_t n,
         janas_json_free(d); /* name is in it */
         return fail(out, why);
     }
-    pthread_mutex_lock(&g->mu);
-    if (g->running) {
-        pthread_mutex_unlock(&g->mu);
-        janas_json_free(d);
-        return fail(out, "a download is already going on");
+    /* what it writes: a catalog's model its size (a GGUF converted here:
+       twice, the GGUF and the JNS, while it works), a file of Hugging Face
+       the size the page saw, a GGUF twice too */
+    double need = m ? (m->jns_repo ? m->jns_gb : m->gguf_gb * 2.0)
+                    : janas_json_num(janas_json_get(o, "bytes"), 0) / 1e9 *
+                          (strstr(name, ".gguf") ? 2.0 : 1.0);
+    const char *who = m ? m->name : name;
+    /* a free place, the same model not twice, and the room: the disk's
+       free space less what the others still have to write */
+    struct brebus_get *g = NULL;
+    double owed = 0;
+    for (int i = 0; i < BREBUS_GETS; i++) {
+        struct brebus_get *x = &b->get[i];
+        pthread_mutex_lock(&x->mu);
+        int on = x->running, same = on && !strcmp(x->model, who);
+        if (on)
+            owed += x->need_gb > x->done_gb ? x->need_gb - x->done_gb : 0;
+        pthread_mutex_unlock(&x->mu);
+        if (same) {
+            janas_json_free(d);
+            return fail(out, "it is being downloaded already");
+        }
+        if (!on && !g)
+            g = x;
     }
+    if (!g) {
+        janas_json_free(d);
+        return fail(out, "four downloads are going on: wait for one to end");
+    }
+    struct statvfs vf;
+    double free_gb = statvfs(b->models_dir, &vf) == 0
+                         ? (double)vf.f_bavail * (double)vf.f_frsize / 1e9
+                         : -1;
+    if (free_gb >= 0 && need > 0 && free_gb - owed < need + 1.0) {
+        char why[300];
+        snprintf(why, sizeof why,
+                 "not enough room: it needs about %.1f GB in %s, where %.1f "
+                 "GB are free%s",
+                 need + 1.0, b->models_dir,
+                 free_gb - owed > 0 ? free_gb - owed : 0,
+                 owed > 0 ? " once the downloads going on are done" : "");
+        janas_json_free(d);
+        return fail(out, why);
+    }
+    pthread_mutex_lock(&g->mu);
     if (g->joinable) {
         pthread_join(g->th, NULL);
         g->joinable = 0;
@@ -182,7 +221,8 @@ int brebus_get_start(struct brebus *b, const char *body, size_t n,
     g->running = 1;
     g->stopped = 0;
     g->code = 0;
-    if (pthread_create(&g->th, NULL, reader, b) != 0) {
+    g->need_gb = need;
+    if (pthread_create(&g->th, NULL, reader, g) != 0) {
         janas_proc_kill(&g->proc, 1);
         janas_proc_wait(&g->proc, -1, NULL);
         close(g->fd);
@@ -198,19 +238,25 @@ int brebus_get_start(struct brebus *b, const char *body, size_t n,
     return 0;
 }
 
-void brebus_get_stop(struct brebus *b)
+void brebus_get_stop(struct brebus *b, const char *model)
 {
-    struct brebus_get *g = &b->get;
-    pthread_mutex_lock(&g->mu);
-    if (g->running) {
-        g->stopped = 1;
-        janas_proc_kill(&g->proc, 0);
+    for (int i = 0; i < BREBUS_GETS; i++) {
+        struct brebus_get *g = &b->get[i];
+        pthread_mutex_lock(&g->mu);
+        if (model && strcmp(g->model, model)) {
+            pthread_mutex_unlock(&g->mu);
+            continue;
+        }
+        if (g->running) {
+            g->stopped = 1;
+            janas_proc_kill(&g->proc, 0);
+        }
+        int join = g->joinable;
+        g->joinable = 0;
+        pthread_mutex_unlock(&g->mu);
+        if (join)
+            pthread_join(g->th, NULL);
     }
-    int join = g->joinable;
-    g->joinable = 0;
-    pthread_mutex_unlock(&g->mu);
-    if (join)
-        pthread_join(g->th, NULL);
 }
 
 static void str(struct janas_buf *o, const char *s)
@@ -218,9 +264,8 @@ static void str(struct janas_buf *o, const char *s)
     janas_json_write_str(o, s, strlen(s));
 }
 
-void brebus_get_status(struct brebus *b, struct janas_buf *out)
+static void one_status(struct brebus_get *g, struct janas_buf *out)
 {
-    struct brebus_get *g = &b->get;
     pthread_mutex_lock(&g->mu);
     janas_buf_printf(
         out, "{\"running\": %s, \"model\": ", g->running ? "true" : "false");
@@ -236,4 +281,22 @@ void brebus_get_status(struct brebus *b, struct janas_buf *out)
                      g->done_gb, g->total_gb, g->pct, g->mbs,
                      g->running ? 0 : g->code);
     pthread_mutex_unlock(&g->mu);
+}
+
+/* every download of this run, going on or ended */
+void brebus_get_status(struct brebus *b, struct janas_buf *out)
+{
+    janas_buf_puts(out, "{\"downloads\": [");
+    int k = 0;
+    for (int i = 0; i < BREBUS_GETS; i++) {
+        struct brebus_get *g = &b->get[i];
+        pthread_mutex_lock(&g->mu);
+        int any = g->model[0] != 0;
+        pthread_mutex_unlock(&g->mu);
+        if (!any)
+            continue;
+        janas_buf_puts(out, k++ ? ", " : "");
+        one_status(g, out);
+    }
+    janas_buf_puts(out, "]}");
 }

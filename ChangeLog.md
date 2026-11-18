@@ -4,6 +4,29 @@
 
 ## [Unreleased]
 
+## [2026-11-18] - Brebus reviewed with its users in mind; dictation; Janas on 64-bit ARM; Python on Windows
+
+- **Brebus, its page reviewed**, line by line on Windows 11 and Linux:
+  - **Chats and projects apart.** The free chats live in Brebus's data folder and open at the start. A project is a folder of yours with its documents, files and chats. A chat moves between them, and is archived (kept to read, restored at will).
+  - **The side bar**: New chat; the groups Chats, Projects (each with its chats) and Archived; a menu by every chat that acts on it where it is; the pages anchored at the bottom (Discover, My models, Server, Settings, Info). It is widened by its edge and hidden with Ctrl+B. A magnifier (Ctrl+K) finds a chat by words in titles, in your messages or in all, with filters for the project, the time, the model and archived chats.
+  - **The chat's bar**: its title opens what is done to the chat (rename, move, export, a window of its own, archive, delete). The menu at its right holds the chat's artifacts and pictures, its files and its instructions, in plain words (the model's role; precise or creative answers; the technical ones under Advanced).
+  - **Under the field**: attachments; a speaker that reads the replies aloud with the system's voices; the model, chosen from those installed; its settings in plain words; the engine's monitor; and a ring showing how much of the model's context the chat fills, its details under the pointer. The field empty, its button is a microphone.
+  - **Each message's actions**, small, under the pointer: copy; a question changed and asked again; a reply read aloud or written again.
+  - **Discover**:
+    - one field to search Hugging Face or get a file by its address;
+    - each file of the Hub shows how far it is from running here: found, likely to run or not supported yet once its header is read, not available (gated), converted here, loaded here;
+    - several downloads at once, each started only when the disk has room for it beside the others.
+  - **My models**: a model is removed with its companions.
+  - **Settings**: what the chat may do, each choice explained; Voice; the start with the computer; Python.
+  - **Info**: the program, its licence, the computer and the model loaded now.
+  - **Every control** in one style and one height, a tooltip on every button.
+  - **At the start**: the window is maximized the first time, then where it was left; it opens on the chat used last, and loads that chat's model, or the one used last. On Windows the frame follows the system's light or dark theme, and no program it starts opens a console window.
+  - **Artifacts** are named from their content (Untitled-001 and on otherwise) and renamed with a click. A picture a reply names from the project opens beside the chat. With Run code off, the model is told it cannot run code and must not report results it did not get.
+- **Dictation**: Whisper small and large-v3-turbo join the catalog (`janas-get whisper-small`), converted from OpenAI's checkpoints and published in [`prabanta-dev/whisper-small-JNS`](https://huggingface.co/prabanta-dev/whisper-small-JNS) and [`prabanta-dev/whisper-large-v3-turbo-JNS`](https://huggingface.co/prabanta-dev/whisper-large-v3-turbo-JNS). Brebus's microphone offers to get it the first time; Settings, Voice, has both. On Windows 11 a 7-second Italian recording was written word for word by whisper-small in 4.3 s.
+- **Python on Windows**, for Run code, in a cage of its own: an AppContainer with no network and the project's folder alone, inside a Job Object (memory, a single process, no access to the user's windows or clipboard). Python 3.14 with numpy and matplotlib is downloaded from python.org and PyPI only when the user says so, each file checked by its SHA-256, and removed from Settings. Tried on Windows 11: a matplotlib figure drawn and saved; the network, the user's folders and the models refused; MemoryError at the limit; a loop stopped at 120 s; nothing left running when Brebus closes.
+- **Janas on 64-bit ARM** (Linux): `JANAS_CPU=aarch64 ./build.sh` with a cross compiler. The engine has NEON kernels of its own for Q4_K, Q5_K, Q6_K, Q8_0, IQ4_NL and Q4_0, with the dot product instructions where the processor has them (Cortex-A55, A76 and later, Neoverse), to the bit of the references. Tried under qemu-aarch64 only, not yet on ARM hardware.
+- **janas-chat** writes formulas between dollars in Unicode (`25.0625°C`, `x²`, `α`), as a terminal cannot draw them; Brebus draws them with KaTeX, telling money from formulas.
+
 ## [2026-11-17] - Brebus on Windows; a card's prompt goes where it is faster
 
 - **Brebus on Windows** (`brebus.exe` in the Windows package, with `WebView2Loader.dll` beside it): the same app as on Linux, in a window of WebView2, the engine of Edge that Windows 10 and 11 carry (the browser where it is missing), with the system's dialog to choose folders and files, Brebus at login through the user's Run key, and `janas-docs` and `janas-files` ported to Windows for the workspace's documents and tools; the Python sandbox stays Linux's. Tried on Windows 11 Pro in a virtual machine (Ryzen 9 5950X, 8 cores): the window, a workspace in Documents, Qwen3-0.6B downloaded and answering - at temperature 0 the same text to the byte as on Linux - documents found, a system file outside the workspace refused, the artifacts' libraries, every program gone with the window. That test found and fixed: a view left hidden (a white window), the console each started program got, a server log left empty by Windows's buffering, and TLS on a fresh Windows, whose root store lacked the root a site needed - a chain Mbed TLS cannot link to the store is now judged by Windows itself, as curl and Edge do. Paths are kept the same way on every system (`src/common/paths.c`).

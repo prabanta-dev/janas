@@ -142,7 +142,8 @@ int janas_mxfp4_to_q8_0(const uint8_t *in, struct janas_block_q8_0 *out,
     return 0;
 }
 
-static int use_avx2_fma; /* set by float_helpers_init, further down */
+/* set by float_helpers_init, further down; read by the x86 code alone */
+static int use_avx2_fma __attribute__((unused));
 
 /* The eight blocks of 32 (d32, qs32, bsums32) of one block, as the 256
    are made: det, the division-free scale of the _det variant */
@@ -1612,6 +1613,23 @@ static inline void iq2_sub_mask(int type, const void *blk, int l,
 #undef DOTN_US2
 #undef DOTN_HAS_VNNI
 #include "quant_z.h"
+#elif defined(__aarch64__)
+#include "quant_neon.h" /* 64-bit ARM: the references' sums, with NEON */
+#if defined(__linux__)
+#include <sys/auxv.h>
+#endif
+/* the dot product instructions (ARMv8.2's extension): known at build time
+   when the target has them, asked of Linux otherwise */
+static int arm_has_sdot(void)
+{
+#if defined(__ARM_FEATURE_DOTPROD)
+    return 1;
+#elif defined(__linux__)
+    return (getauxval(AT_HWCAP) & (1UL << 20)) != 0; /* HWCAP_ASIMDDP */
+#else
+    return 0;
+#endif
+}
 #endif
 
 typedef float (*dot_fn)(const struct janas_block_q4k *,
@@ -1681,13 +1699,13 @@ static const char *dot_name = "ref";
    AVX-512 VNNI (use_evnni too) */
 static int use_vnni, use_evnni;
 /* the prompt's tiles on 512 bits (quant_z.h), where AVX-512 VNNI is */
-static int use_z;
+static int use_z __attribute__((unused));
 #define KPICK_VNNI(name) (use_evnni ? name##_evnni : name##_vnni)
 #define KPICK(name) (use_vnni ? KPICK_VNNI(name) : name##_avx2)
 /* Q3_K, Q4_K, Q5_K, Q6_K and Q6_K_P on many vectors through the tiles
    (quant_dotn.h q4k_gemm, q5k_gemm, q6k_gemm); JANAS_CPU_TILES=0 the rows'
    products */
-static int use_tiles = 1;
+static int use_tiles __attribute__((unused)) = 1; /* x86's tiles alone */
 /* The vectors from which the tiles pay: their buffer is filled once for
    the vectors of a call, so on few the rows' products win. bench_kernels
    (BENCH_NV, 2048 columns, 12 threads, 25 Oct 2026): Q4_K, Q5_K and Q6_K
@@ -1718,6 +1736,7 @@ __attribute__((constructor)) static void dot_kernels_init(void)
 {
     /* NVFP4's scales, before any kernel reads them (not once a row) */
     pthread_once(&ue4m3_once, ue4m3_init);
+#if defined(__x86_64__) /* the tables the x86 kernels read */
     for (int e = 0; e < 256; e++)
         e8m0_tab[e] = janas_e8m0_half((uint8_t)e);
     for (uint32_t i = 0; i < 256; i++) {
@@ -1728,7 +1747,6 @@ __attribute__((constructor)) static void dot_kernels_init(void)
     }
     for (uint32_t i = 0; i < 128; i++)
         iq_sign64[i] = iq_byte64[iq_signs(i)];
-#if defined(__x86_64__)
     __builtin_cpu_init();
     if (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma") &&
         __builtin_cpu_supports("f16c")) {
@@ -1817,6 +1835,19 @@ __attribute__((constructor)) static void dot_kernels_init(void)
         }
         use_z = z && use_vnni;
     }
+#elif defined(__aarch64__)
+    /* Advanced SIMD is every ARMv8-A processor's: no check needed; the dot
+       product instructions where the processor says it has them, unless
+       JANAS_KERNELS=neon (the two give the same bits) */
+    const char *k = getenv("JANAS_KERNELS");
+    int sdot = !(k && strcmp(k, "neon") == 0) && arm_has_sdot();
+    dot_impl = sdot ? q4k_dot_sdot : q4k_dot_neon;
+    dot6_impl = sdot ? q6k_dot_sdot : q6k_dot_neon;
+    dot5_impl = sdot ? q5k_dot_sdot : q5k_dot_neon;
+    dot80_impl = sdot ? q8_0_dot_sdot : q8_0_dot_neon;
+    dotnl_impl = sdot ? iq4nl_dot_sdot : iq4nl_dot_neon;
+    dot40_impl = sdot ? q4_0_dot_sdot : q4_0_dot_neon;
+    dot_name = sdot ? "neon-sdot" : "neon";
 #endif
 }
 

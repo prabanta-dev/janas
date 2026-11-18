@@ -295,7 +295,12 @@ static void test_q6k_tiles(void)
                 out[i] = -12345.0f;
             size_t done = janas_q6k_tile_rows(t, wr, rb, a1, a0, pb, x, NB,
                                               (size_t)nv, NB, ROWS, out, ROWS);
+#if defined(__x86_64__)
             CHECK(done == (nv >= 12 ? 24u : 0u), "q6k tiles: %zu rows", done);
+#else
+            /* the tiles are x86's: elsewhere the rows' products */
+            CHECK(done == 0, "q6k tiles: %zu rows", done);
+#endif
             for (size_t r = 0; r < done; r++)
                 for (int v = 0; v < nv; v++) {
                     float one = level
@@ -747,6 +752,7 @@ static void test_det(void)
 {
     float g[1024], u[1024], a[1024], b[1024];
     int bad = 0, compared = 0;
+    (void)a, (void)b; /* compared with the vector one on x86 alone */
     for (int round = 0; round < 1000; round++) {
         for (int i = 0; i < 1024; i++) {
             /* wide range, and the clamp edges */

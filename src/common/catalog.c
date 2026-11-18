@@ -340,6 +340,32 @@ const struct janas_model_entry janas_catalog[] = {
          "1e8eb8cbeba7a1a657354d259c5730bb79f6087160a9ca8da901bd08bdbe943f",
      .ram_gb = 2,
      .not_chat = 1},
+    /* speech to text: OpenAI's checkpoints converted by hf2jns_whisper
+       (half precision as released), so their JNS alone is downloaded */
+    {.name = "whisper-small",
+     .what = "Whisper small, speech to text (dictation), for janas-server "
+             "--speech-model",
+     .repo = "openai/whisper-small",
+     .out = "whisper-small.jns",
+     .jns_repo = "prabanta-dev/whisper-small-JNS",
+     .jns_gb = 0.49,
+     .flat_sha =
+         "78401176c4abda8124188d429ac777ed79bd7e63b262d4f1f0075066b42b316a",
+     .ram_gb = 4,
+     .not_chat = 1,
+     .speech = 1},
+    {.name = "whisper-large-v3-turbo",
+     .what = "Whisper large-v3-turbo, speech to text, more accurate, for "
+             "janas-server --speech-model",
+     .repo = "openai/whisper-large-v3-turbo",
+     .out = "whisper-large-v3-turbo.jns",
+     .jns_repo = "prabanta-dev/whisper-large-v3-turbo-JNS",
+     .jns_gb = 1.63,
+     .flat_sha =
+         "b2396b2c413af93a471b3f14ff6f0076630cc27f2e8a181cc982ac0d23d91b34",
+     .ram_gb = 8,
+     .not_chat = 1,
+     .speech = 1},
     {.name = "gemma-4-e2b",
      .what = "Gemma-4-E2B-it, with its assistant",
      .repo = "unsloth/gemma-4-E2B-it-GGUF",
@@ -467,6 +493,10 @@ int janas_mkdirs(const char *dir)
     int n = snprintf(p, sizeof(p), "%s", dir);
     if (n <= 0 || (size_t)n >= sizeof(p))
         return -1;
+    /* without the separators it ends with ("dir/", a zip's folder): Windows's
+       stat() finds no "C:/x/" even when C:/x is there */
+    while (n > 1 && is_sep(p[n - 1]) && !(n == 3 && p[1] == ':'))
+        p[--n] = 0;
     char *c = p + 1;
 #ifdef _WIN32
     if (p[0] && p[1] == ':') /* a drive's root is there already */

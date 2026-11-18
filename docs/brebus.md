@@ -1,56 +1,104 @@
 # Brebus
 
-Brebus is Janas's app: the models of this machine, a chat with them and the server for other programs, in a window of its own. *Brebus*, in Sardinian, are the magic words of the *janas*. It is on Linux and Windows; on macOS it is not yet. In the binary packages it is `./brebus` (Linux) and `brebus.exe` (Windows), beside `janas-chat`.
+Brebus is Janas's app: the models of your computer, a chat with them and a server for other programs, in a window of its own. Nothing leaves the computer unless you ask it to: the models run on it, your chats and documents stay on it. *Brebus*, in Sardinian, are the magic words of the *janas*. It runs on Linux and Windows; macOS is not supported yet.
+
+![Brebus: a chat with Qwen3-30B-A3B, which made a page with a doughnut chart of a monthly budget, open beside the chat as an artifact](img/brebus.png)
+
+## Get it
+
+| | |
+|---|---|
+| Linux x86-64 (Ubuntu 22.04, Debian 12 and later) | the release's `janas-linux-x86_64.tar.gz`: unpack it and start `./brebus` |
+| Windows 10 and 11 x86-64 | the release's `janas-windows-x86_64.zip`: unpack it and start `brebus.exe` |
+
+Releases: [github.com/prabanta-dev/janas/releases](https://github.com/prabanta-dev/janas/releases). Brebus carries Janas-LLM and its tools beside it (`janas-server`, `janas-get`, the converters, the services); nothing else needs installing.
+
+- **Linux:** the window is WebKitGTK's (`libwebkit2gtk-4.1`; on Debian and Ubuntu the package `libwebkit2gtk-4.1-0`), loaded when Brebus starts. Where it is missing, or there is no display, Brebus opens its page in the browser.
+- **Windows:** the window is WebView2, the engine of Edge that Windows 10 and 11 carry, through `WebView2Loader.dll` beside `brebus.exe` (Microsoft's, under its BSD licence, `LICENSE-WebView2.txt`).
+
+From a terminal:
 
 ```sh
-bin/x86_64-linux/brebus                    # its window
-bin/x86_64-linux/brebus --install-desktop  # in the desktop's menu, with its icon
-bin/x86_64-linux/brebus --browser          # in the browser instead
-bin/x86_64-linux/brebus --no-open          # neither: http://127.0.0.1:41414/
-bin/x86_64-linux/brebus --port 41500
+./brebus                    # its window
+./brebus --install-desktop  # Linux: in the desktop's menu, with its icon
+./brebus --browser          # in the browser instead
+./brebus --no-open          # neither: http://127.0.0.1:41414/
+./brebus --port 41500       # another port
+./brebus --workspace DIR    # open that folder as a project
 ```
 
-On Linux the window is WebKitGTK's (`libwebkit2gtk-4.1`, on Debian and Ubuntu the package `libwebkit2gtk-4.1-0`), loaded when Brebus starts: nothing is needed to build it, and where it is missing, or there is no display, Brebus opens its page in the browser. On Windows it is WebView2, the engine of Edge that Windows 10 and 11 carry, through `WebView2Loader.dll` beside `brebus.exe` (Microsoft's, under its BSD licence, `LICENSE-WebView2.txt`); started from Explorer or the Start menu, Brebus asks for its folder instead of taking the program's, keeps its data in `%LOCALAPPDATA%\janas\brebus`, and starts at login, when asked, through the user's Run key. The Python sandbox is Linux's only. Links to other sites open in the browser. Brebus ends when its window is closed (or with Ctrl+C), and the model's server ends with it.
+## The first start
 
-Its icon is the Prabanta logo, drawn for each size and system ([src/brebus/icons](../src/brebus/icons/README.md)). When the window opens, Brebus writes its icons in `~/.local/share/icons/hicolor` and, where there is none, `brebus.desktop` in `~/.local/share/applications`: the desktop's menu has Brebus, and the task bar shows its logo (on Wayland it comes from there only). `--install-desktop` writes them without opening it, and the `JANAS_MODELS` given then is kept for the menu's start.
+The window opens maximized the first time; afterwards it opens where it was left, at the size it had (on Windows, also on the screen it was on, or on the main one if that screen is gone; on Linux with Wayland the desktop places it, and only the size and maximized state are kept). On Windows its frame follows the system's light or dark theme.
 
-## The workspace
+Brebus opens on a new chat. With no model on the computer, the model button under the field says *Choose a model*: *Other models…* in its menu, or *Discover* in the side bar, lists the models Janas knows, with how much each one downloads and how much memory it is meant for. *Get* downloads one, checked against its published fingerprint; then it is chosen under the field and loads by itself. From then on Brebus loads, at each start, the model of the chat it opens, or the one used last; with none remembered, the largest installed model that leaves half the memory free.
 
-Brebus works in a folder, as Claude Code does: started from a terminal, the folder it is started in, or the one given with `--workspace DIR`; started from the desktop's menu, the page asks for one: a recent one, a path, or a new one, `Documents/Brebus/<date>` (then `<date> (2)`…). The home itself and `/` are refused, too wide for a model's files. The button under the logo shows it and changes it; in Brebus's window, *Browse…* opens the system's own dialog to choose a folder (GTK's, the desktop portal's on KDE and GNOME), there and to add a folder read only or attach a file; in the browser, the path is typed.
+At each start Brebus opens the chat used last, in its project or among the free chats; if that chat is gone or archived, the newest free chat, or a new one.
 
-The box over the conversations searches those of every recent workspace, by their titles and their messages: each found with its workspace and the words around what was found; one of another workspace opens it.
+## The window
 
-| In the workspace | |
+![A project's chat: the side bar with the free chats and the project "Trip to Sardinia" with its chats, the reply as an artifact beside it](img/brebus-project.png)
+
+**The side bar**, from the top:
+
+- the magnifier (Ctrl+K) opens *Find a chat*; the panel icon (Ctrl+B) hides the bar to a strip of icons, and its right edge, dragged, widens it;
+- *New chat* (Ctrl+Shift+O): a chat of no project;
+- *Find a chat*: the chats whose title or messages hold the words typed, in every project;
+- **Chats**: the free chats, the newest first; a **Projects** group, each project with its chats; **Archived**, folded. The arrow beside each group's name folds it; under the pointer, `+` makes a new chat (or, beside *Projects*, a new project), and `⋯` beside a chat opens its menu without opening it: *Open*, *Rename*, *Move to…*, *Export*, *Archive* or *Restore*, *Delete*;
+- at the bottom, the pages: *Discover*, *My models*, *Server*, *Settings*, *Info*.
+
+**The chat's bar**, over the conversation: its title opens what is done to the chat (*Rename*, *Move to…*, *Export*, *In a new window*, *Archive*, *Delete*); the project it belongs to is named beside it; `⋯` at the right lists the chat's artifacts and the pictures its replies showed, the files attached to it, and *Instructions and answer*.
+
+**Under the field**, from the left: `+` attaches a file or a web address; the speaker reads the replies aloud (grey and crossed off: off; orange: on); then, at the right, the ring of the model's memory, the model that answers (its menu chooses another, or *Other models…*), the engine's monitor and the model's settings (the gear).
+
+## Chats and projects
+
+A **chat** belongs to no project: its conversation is kept in Brebus's data folder, and the model's tools see only that folder.
+
+A **project** is a folder of yours, for work that goes on: the model searches and reads its documents, writes there what it makes for you (artifacts, exports, files), and its chats are kept in it (`.brebus/chats/`). `+` beside *Projects* opens one: a recent folder, a folder you choose (*Browse…* opens the system's own dialog), or a new one, `Documents/Brebus/<date>`. The home folder itself and `/` are refused, too wide for a model's files. `⋯` beside a project opens its settings: the folders to read only beside it, the services, the model that searches its documents by meaning.
+
+A chat moves between the free chats and the projects (*Move to…*). An **archived** chat is kept to read: it no longer takes messages, and *Restore it* brings it back.
+
+**Find a chat** (the magnifier): words, and where to look for them - titles and messages, your messages only, or titles only; every project, the free chats or one project; any time, today, the last week, month or year; one model; archived chats too or not. The results are in a list; one opens its chat.
+
+![Find a chat: words and filters, the results in a list](img/brebus-find.png)
+
+| In a project's folder | |
 |---|---|
-| `.brebus/chats/` | its conversations, a JSON file each |
-| `exports/` | the conversations exported in Markdown |
-| `artifact/` | what the model made to keep (pages, drawings, documents, programs), `artifact/<title>/v1.html`, `v2.html`... |
-| `sources/` | the files attached to the chat by copy, and the web pages downloaded, each with `<name>.url.txt` (its address and when) |
-| `.brebus/workspace.json` | the folders and files added to be read only |
+| `.brebus/chats/` | its chats, a JSON file each |
+| `artifact/` | what the model made to keep, `artifact/<title>/v1.html`, `v2.html`... |
+| `exports/` | the chats exported in Markdown |
+| `sources/` | the files attached by copy, and the web pages downloaded, each with `<name>.url.txt` (its address and when) |
+| `.brebus/workspace.json` | the folders and files added to read only |
 | `.brebus/data/`, `.brebus/config/` | the index of its documents, and its list |
 
-**Read only, beside it**: folders and files of yours that the model may search and read but never write, added and removed in the workspace's window. Their documents and code are indexed and read; their pictures and recordings are not (yet): attach one to the chat for the model to see or hear it. Video is not read by Janas.
+## A conversation
 
-## Documents and tools in the chat
+- **The reply** is shown as it is written, in Markdown, with formulas (between `$$`, `\(` `\)`, or single dollars when they are plainly a formula: `$5 and $10` stays money) and code in colours. The model's reasoning is shown folded above it, and opens while it is being written too; how many tokens came and how fast is shown under it.
+- **Each message's actions**, small, under the pointer: on yours, copy, and *change this message and ask again from it*; on a reply, copy, read aloud, and on the last one *write this reply again* (the earlier ones kept, paged through with ‹ ›).
+- **The ring under the field** fills as the chat takes the model's memory (its context): grey, orange from 70%, red from 90%. Under the pointer it shows the tokens used, the room, what is left and the model. When it is full, the earliest messages are forgotten; a new chat starts afresh. The room is set in the model's settings.
+- **The field**: Enter sends, Shift+Enter starts a new line; while a reply comes, the button stops it, as Esc does. With the field empty, the button is a microphone (below, *Voice*).
+- **Instructions and answer** (`⋯` in the chat's bar): what the model should be or do in this chat (its role, the language, how long its answers are); precise or creative answers; under *Advanced*, the temperature, top-p, and an answer in JSON (any object, or by a schema). Instructions can be kept under a name, to use again.
+- **Export**: Markdown in the project's `exports/` (or Brebus's downloads), or a PDF through the system's print dialog.
 
-Brebus starts, for the workspace, [`janas-docs`](../src/services/docs/README.md), which indexes the workspace and the folders added to it (PDF, Word, Excel, PowerPoint, LibreOffice's, RTF, web pages, EPUB, text and Markdown), and [`janas-files`](../src/services/files/README.md), which reaches the workspace to read and write and the folders added only to read, not the rest of the home.
+## Documents and tools
 
-- **Search documents** (on by default): before each question, Brebus searches the workspace's documents for it and gives the model the passages found, each with its document, as LM Studio's documents do; it works with models that cannot call tools. The passages are shown, folded, under the question.
-- **Attach** (the `+` in the field): a file of this computer by its path, or a web address. A file is copied into `sources/` or read where it is (then added to the folders read only); a copy is offered up to 100 MB. A web address is always downloaded into `sources/`. A document of up to 24,000 characters goes into the message whole; a longer one is named, for the model to search or read.
-- **Pictures and recordings**: a picture attached (PNG, JPEG, WebP, GIF) goes to the model as a picture when it sees pictures (a `.vision.jns` beside it: Gemma 4, Qwen3.5; *My models* says "sees pictures"), else the model is told it cannot; a recording (WAV, MP3, FLAC, OGG, M4A) is transcribed by the model's server with the best Whisper among your models (large-v3-turbo first), and the transcript goes into the message.
-- **Tools** (on by default): the model may search and read the documents (`docs_search`, `docs_read`), list, read and search the files, and write in the workspace (`files_write`, `files_edit`, `files_mkdir`). A tool that writes runs only once you allow it, its arguments shown; the calls and their results are shown, folded, in the conversation.
+For a project, Brebus starts [`janas-docs`](../src/services/docs/README.md), which indexes the project and the folders added to it (PDF, Word, Excel, PowerPoint, LibreOffice's, RTF, web pages, EPUB, text and Markdown), and [`janas-files`](../src/services/files/README.md), which reaches the project to read and write and the folders added only to read, not the rest of the home. Settings turns each of these on or off:
 
-- **Run code** (off by default): the model may run Python in a cage of Janas's own (`src/common/sandbox.c`): no network, no other process, limits on memory, files and time (2 minutes a piece), the workspace as its `/mnt/data` and its current folder, to read and write, the folders read only at their own paths, nothing else of the computer. Variables stay from one piece of code to the next; each piece runs only once you allow it, its code shown. Linux only.
+- **Search documents** (on): before each question, Brebus searches the project's documents for it and gives the model the passages found, each with its document. It works with models that cannot call tools. The passages are shown, folded, under the question. The documents are searched by their words, and by their meaning too with an embedding model of yours (the first, or the one chosen in the project's settings).
+- **Tools** (on): the model may search and read the documents, list, read and search the files, and write in the project; a tool that writes runs only once you allow it, its arguments shown. Janas's services found beside Brebus (the web, Wikipedia, maps, weather, prices, flights, earthquakes, git, GitHub, this computer) and the MCP servers of your `~/.config/janas/mcp.json` (the format of Cursor and LM Studio) are offered as in `janas-chat`: a line for each, opened when a question needs it.
+- **Attach** (`+` under the field): a file of this computer, or a web address. A file is copied into `sources/` or read where it is; a web address is downloaded into `sources/`. A document of up to 24,000 characters goes into the message whole; a longer one is named, for the model to search or read. A picture goes to the model as a picture when it sees pictures (Gemma 4, Qwen3.5: *My models* says "sees pictures"); a recording is transcribed by Whisper and the transcript goes into the message.
 
-The documents are searched by their words, and by their meaning too with an embedding model of your models (the first, or the one chosen in the workspace's window; *words only* to do without): the index is made again when it changes.
+## Run code
 
-The dialogs are Brebus's own: the choice between copying a file and reading it where it is can be remembered, for files up to 100 MB and over.
+With *Run code* on (Settings; off by default), the model may run Python in a cage of Janas's own; each piece of code runs only once you allow it, its code shown. In the cage: no network, no other process, limits on memory and time (2 minutes a piece), the project's folder to read and write (the folders added to it, to read), nothing else of the computer. Variables stay from one piece to the next; a figure drawn with matplotlib is saved in the project, and opens beside the chat when the reply names it. With *Run code* off, the model is told it cannot run code, and not to report results of code it did not run.
 
-The recent ones are listed in `~/.local/share/janas/brebus/workspaces.json`; the conversations the first Brebus kept in that folder move, once, to the first workspace opened.
+- **Linux**: the system's Python 3, in namespaces with seccomp (`src/common/sandbox.c`).
+- **Windows**: an AppContainer with no network and the project's folder alone, inside a Job Object (memory, a single process, no access to your windows or clipboard). Python is not part of Brebus: the first time *Run code* is turned on, Brebus says what it would download - Python 3.14 from python.org and numpy and matplotlib with what they need from PyPI, about 45 MB - and does so only on *Install*, each file checked by its SHA-256. *Settings* removes it.
 
 ## Artifacts
 
-With *Artifacts* on (by default), the model is asked to put what it makes to see or keep between `<artifact type="..." title="...">` and `</artifact>`, and the reply shows a card in its place; the artifact opens in a pane beside the chat, its left edge dragged to widen it, ⤢ to put it over the chat. Its kinds are those of Claude's artifacts:
+With *Artifacts* on (by default), what the model makes to see or keep opens in a pane beside the chat, and the reply shows a card in its place. The pane is widened by its left edge, or put over the chat with ⤢. Its kinds are those of Claude's artifacts:
 
 | Kind | Shown as |
 |---|---|
@@ -58,35 +106,82 @@ With *Artifacts* on (by default), the model is asked to put what it makes to see
 | `react` | a React component exported as default, its JSX read by Babel, Tailwind's classes, the imports of `react`, `recharts`, `lucide-react`, `d3`, `lodash`, `mathjs`, `papaparse`, `xlsx`, `chart.js`, `three`, `tone`, and shadcn/ui's components from `@/components/ui/...` (written for Brebus with the same names and props) |
 | `mermaid` | the diagram |
 | `svg` | the drawing |
-| `markdown` | as the replies are, formulas between `$$` with KaTeX |
+| `markdown` | as the replies are, formulas with KaTeX |
 | `code` | the program, its syntax in colours |
 
-*Preview* and *Code* switch between the artifact and its text; *Download* saves it as a file; *Open* hands the saved one to the system's program; the versions, each saved as `artifact/<title>/v1.html`, `v2.html`..., are paged through. An error of the artifact shows above it, with *Ask the model to fix it*, which sends the error to the model.
+*Preview* and *Code* switch between the artifact and its text; *Copy*, *Download*, *Open* (the saved file, with the system's own program); the versions, each saved as `artifact/<title>/v1.html`, `v2.html`..., are paged through. A click on its title renames it, in the chat and in its folder. One the model left without a title takes the one it carries (a page's title, a document's first heading, a program's first comment), or `Untitled-001`, `Untitled-002`... An error of the artifact shows above it, with *Ask the model to fix it*.
 
-An artifact runs in a frame with no origin of its own and no network: it cannot reach Brebus, the page around it, the computer or the Internet. The libraries it may use - React 18.3.1, Recharts 2.13.3, lucide-react 0.460.0, D3 7.9.0, lodash 4.17.21, Papa Parse 5.4.1, math.js 13.2.2, Chart.js 4.4.6, Three.js r128, Plotly 2.35.2, SheetJS 0.18.5, Mermaid 11.4.1, KaTeX 0.16.11, highlight.js 11.10.0, Tone.js 15.0.4, mammoth 1.8.0, Tailwind 4.1.10, Babel 7.26.4 - come from Brebus: each file is downloaded once from jsdelivr's copy of npm when first needed, checked against the SHA-256 Brebus carries, and kept in `~/.local/share/janas/brebus/lib`; a page that asks for one of them from jsdelivr, unpkg or cdnjs gets Brebus's copy. They are not part of Janas: each keeps its own licence (MIT, BSD, ISC or Apache 2.0). Other addresses stay out, and the pane says so.
+A picture a reply names from the project (`![a chart](chart.png)`, a file the model's code wrote) is a card too, and opens in the pane.
 
-Inside a page or a component, as in Claude's: `await window.claude.complete(prompt)` asks the model loaded and gives its answer as a string; `window.storage.get(key)`, `set(key, value)`, `delete(key)` and `list(prefix)` keep the artifact's data between visits, in `artifact/<title>/storage.json` (20 MB at most); `window.fs.readFile(name)` reads a file attached to the conversation, `{encoding: "utf8"}` as text. Code and formulas in the replies are shown with the same libraries.
+An artifact runs in a frame with no origin of its own and no network: it cannot reach Brebus, the page around it, the computer or the Internet. The libraries it may use - React 18.3.1, Recharts 2.13.3, lucide-react 0.460.0, D3 7.9.0, lodash 4.17.21, Papa Parse 5.4.1, math.js 13.2.2, Chart.js 4.4.6, Three.js r128, Plotly 2.35.2, SheetJS 0.18.5, Mermaid 11.4.1, KaTeX 0.16.11, highlight.js 11.10.0, Tone.js 15.0.4, mammoth 1.8.0, Tailwind 4.1.10, Babel 7.26.4 - come from Brebus: each file is downloaded once from jsdelivr's copy of npm when first needed, checked against the SHA-256 Brebus carries, and kept in Brebus's data folder; a page that asks for one of them from jsdelivr, unpkg or cdnjs gets Brebus's copy. They are not part of Janas: each keeps its own licence (MIT, BSD, ISC or Apache 2.0). Inside a page or a component, as in Claude's: `await window.claude.complete(prompt)` asks the model loaded; `window.storage` keeps the artifact's data between visits (in `artifact/<title>/storage.json`, 20 MB at most); `window.fs.readFile(name)` reads a file attached to the chat.
 
-## Services and your MCP servers
+## Voice
 
-Beside the workspace's documents and files, the model may use Janas's services found beside Brebus (the web, Wikipedia, maps, weather, prices, flights, earthquakes, git, GitHub, this computer) and the MCP servers of your `~/.config/janas/mcp.json`, in the format of Cursor and LM Studio. As in `janas-chat`, their tools are not all put in the prompt: the model gets a line for each and opens one when a question needs it, its tools then given to it; a service starts only when it is opened. Each can be turned off in the workspace's window. A tool of Janas's that says it changes something asks you first; a tool of your servers asks you unless it says it only reads.
+- **Dictation**: with the field empty, its button is a microphone. Speak, click again, and what you said is written in the field by OpenAI's Whisper, run on this computer by Janas: nothing you say leaves it. The first time, Brebus offers to get the speech model: whisper-small (0.49 GB), from [`prabanta-dev/whisper-small-JNS`](https://huggingface.co/prabanta-dev/whisper-small-JNS), checked against its fingerprint. *Settings*, *Voice* has it and the more accurate large-v3-turbo (1.63 GB), each got or removed there. A speech model is used from the next time the chat's model loads. Windows asks once for the microphone.
+- **Reading aloud**: the speaker under the field reads the replies with the computer's own voices; *Settings*, *Voice* chooses one. On Linux the voices come from speech-dispatcher (with espeak-ng, for example); Janas's own voices will come with its speech synthesis.
 
-## What it has
+## Discover
 
-| Section | |
-|---|---|
-| Chat | the workspace's conversations in the side bar, under the sections (the bar hidden to a strip of icons with « or Ctrl+B, and by itself when an artifact opens on a narrow window), in folders, searched with those of every recent workspace, renamed, deleted, exported in Markdown to `exports/` or as a PDF (the system's print dialog); each one's settings: a system message, temperature, top-p, an answer in JSON (any object, or by a schema), saved as presets; the reply as it is written, in Markdown, the model's reasoning folded above it, its tokens and how fast they came; *Regenerate* writes the last answer again, the earlier ones paged through; *Edit* changes a question and goes on from it; *New window* puts a chat in a window of its own, beside the other; Enter sends, Shift+Enter starts a new line, and while a reply comes the button in the field stops it, as Esc does |
-| Discover | the models of `janas-get`, how much each one downloads and asks of the memory, and whether it is meant for a machine of this memory; *Get* downloads one, with how far it is, and *Stop* keeps what came so far for the next *Get*; Hugging Face searched by words (its models with GGUF files, the most downloaded first, each one's files with their sizes), or a file by its address or as `hf:owner/repo/file.gguf` (a GGUF converted here, a JNS as it is; a GGUF split in parts not yet) |
-| My models | the models in Janas's models folder (`janas-get`'s, `$JANAS_MODELS`, or the one chosen here), with their size and context, and whether they see pictures; *Settings* keeps for each one its context, reasoning on or off and how many conversations at once, and *Load* starts the model's server with them |
-| Server | the model loaded, and its addresses for other programs: OpenAI's API at `/v1`, Ollama's and Anthropic's beside it, on the local network too where it is open to it; the engine monitor in a window of its own; the settings: reachable from the local network, the key other programs must send (a new one made on request), the web pages of other sites allowed to call it, the model unloaded after a quiet while (loaded again at the next message; counted on Brebus's own chat) |
-| Machine | the processor, its features, the memory and the power; Brebus's server started at login, without a window (opened from the menu, Brebus finds it and only opens its window) |
+![Discover: a model's files on Hugging Face, each with how far it is from running here](img/brebus-discover.png)
+
+- **The catalog**: the models Janas knows, converted and checked, with how much each downloads and the memory it is meant for ("fits", or "needs more": it still runs, slower, reading its parts from the disk). *Get* downloads one into the models' folder, checked against its published fingerprint.
+- **One field to search or get**: words search Hugging Face for models with GGUF files, the most downloaded first; an address (`https://huggingface.co/…` or `hf:owner/repo/file.gguf`) gets that file. *Clear*, or emptying the field, brings the catalog back into view.
+- **A model's files**, each with its size and the free space its conversion takes (about twice a GGUF's size), and **how far it is from running here**: *Found* (listed); *Check* reads its first megabyte and says *Likely to run* (its kind of model is one Janas runs; only the conversion and the first load prove it) or *Not supported yet*; *Not available* (a gated model, which wants its licence accepted on its page); *Converted here*, *Loaded here*. A GGUF is converted here after its download; a GGUF split in parts, or a vision encoder alone, is not offered.
+- **Several downloads at once** (four at most), each with its progress and *Stop*; *Get* again goes on from where it stopped. A download starts only when the disk has room for it beside those going on, or Brebus says how much is needed and how much there is.
+
+## My models
+
+The models in the models' folder (`janas-get`'s, `$JANAS_MODELS`, or the one chosen with *Change…*), with their kind, size and context, and whether they see pictures. *Load* starts one (the loaded one reads *Loaded*); *Settings* says how it runs - how much of the chat it keeps in mind, whether it thinks before answering, and under *Advanced* how many chats it answers at the same time - used the next time it loads; *Remove* deletes it from the disk, with its prediction head and its vision encoder when no other model needs them.
+
+## Server
+
+The model loaded in Brebus can answer other programs too - an editor, a script, another chat app - through OpenAI's API at `/v1` and Ollama's and Anthropic's beside it, on this computer. *Server* shows the address for programs, the key, and the engine's monitor; its settings: free the memory after so many minutes without a message (the model loads again with the next one), let other computers of the network use it (with a key, so that only those who know it may), and, under *Advanced*, the key and the web pages of other sites allowed to call it. See [serving](serving.md).
+
+## Settings and Info
+
+*Settings*: Search documents, Tools, Run code and Artifacts, each with what it does; *Voice*; *When the computer starts* (Brebus in the background at login, without its window, the model loaded for other programs); Python for Run code on Windows. *Info*: Brebus's version, its makers and licence, its source, this computer (its processor, instructions, memory now free, power, the model loaded) and the engine's monitor.
+
+## Where Brebus keeps things
+
+| | Linux | Windows |
+|---|---|---|
+| Brebus's data: settings, the free chats, the window's place, the artifacts' libraries, the server's log | `~/.local/share/janas/brebus` | `%LOCALAPPDATA%\janas\brebus` |
+| The models | `~/.local/share/janas/models` | `%LOCALAPPDATA%\janas\models` |
+| A project's chats and files | in the project's folder | in the project's folder |
+| Python for Run code | the system's | `%LOCALAPPDATA%\janas\python` |
 
 ## How it works
 
-`brebus` serves its page and a small API of its own (`/brebus/...`) on `127.0.0.1` only, and opens no model itself. *Get* runs the `janas-get` beside it, one download at a time, into the models folder: the file is checked against its SHA-256 as from the terminal, and the page follows its steps. *Load* starts a `janas-server` beside it, on the next port, with the model and the server's own choices (several conversations at once where the memory holds them, see [serving](serving.md)). The page's chat goes to Brebus, which passes `/v1/...` and `/api/...` on to that server; other programs can use the server's address directly. One model at a time: loading another one ends the first. The key reaches `janas-server` in its environment, never on its command line, which every user of the machine can read; Brebus's own page needs none, as Brebus adds it to what it passes on. The server's output goes to `~/.local/share/janas/brebus/server.log`, the models' settings to `settings.json` beside it.
+`brebus` serves its page and a small API of its own (`/brebus/...`) on `127.0.0.1` only, and opens no model itself. *Get* runs the `janas-get` beside it into the models' folder. *Load* starts a `janas-server` beside it, on the next port, with the model and its settings. The page's chat goes to Brebus, which passes `/v1/...` and `/api/...` on to that server; other programs can use the server's address directly. One model at a time: loading another one ends the first. The key reaches `janas-server` in its environment, never on its command line, which every user of the machine can read. Brebus answers only requests for its own address, and refuses those of another site's page (`403`). It ends when its window is closed (or with Ctrl+C), and the model's server ends with it.
 
-A page of another site could make the browser send requests to the loopback address: Brebus answers only requests for its own address, and refuses those of any other page (`403`).
+Its icon is the Prabanta logo, drawn for each size and system ([src/brebus/icons](../src/brebus/icons/README.md)). On Linux, when the window opens, Brebus writes its icons in `~/.local/share/icons/hicolor` and, where there is none, `brebus.desktop` in `~/.local/share/applications`.
 
 ## What has been tried
 
-On the development laptop, with Qwen3-0.6B: the page in Chromium (headless), the model loaded from *My models*, two turns of a chat with their reasoning, the conversation still there after the page was opened again, the model unloaded, no `janas-server` left; Qwen3-0.6B downloaded from *Discover* into an empty folder and then in *My models*, Qwen3.5-2B stopped at 0.27 GB and taken up from there; settings saved and the server started with them (`--parallel 2 --ctx 8192 --think off`), a reply in Markdown, a conversation renamed and deleted, and those the first Brebus kept in the browser moved to their files. Its window on a virtual screen (Xvfb) with the models of the development laptop. With Qwen3-4B, from the page in Chromium: a note attached and put whole into the message, quoted by the model; "which river is in Lazio, and how long" answered "the Tevere, 405 km" from an Excel sheet in a folder read only, its document named; a file written by the model with `files_write` once allowed; with Qwen3-4B and Run code, the lines of a file of the workspace counted by Python in the cage, as `wc -l` counts them (149). With Qwen3-30B-A3B (16 November 2026): the weather of Cagliari asked, the weather service opened by the model and its data answered; an HTML page with a bar chart made as an artifact, saved and shown in the pane; an answer written again (two kept, paged through), a question edited, an answer in JSON by a schema (`{"river": "Po", "km": 657}`), the model unloaded after a minute without a message and loaded again by the next one; a page's attempts to read Brebus, the network and the page around it, all refused. With Gemma 4 E2B, the Prabanta logo attached and described ("a dark brown square with black dots arranged radially"); an Italian recording attached, transcribed by Whisper large-v3-turbo and summarised. The workspace's 60 passages given their vectors by Qwen3-Embedding-0.6B. `tests/test_brebus` starts `brebus` with no model and checks its page, its API, another site's page refused, a model that is not there refused (to load and to download), workspaces (none at first, the home and `/` refused, a new one in `Documents/Brebus`, one opened), conversations and settings saved, listed, read and deleted, with bad names and what is not a JSON object refused, exports never written over a file, the tools of the workspace (a write where it may only be read refused, one in the workspace done), a folder read only added (a path that is not there refused), a file attached by copy with its text, python in the cage writing in the workspace and refused in the folder read only, `/v1` answered 503 with no model loaded, and Brebus ending on SIGTERM.
+- **Windows 11** (a virtual machine, November 2026):
+  - the window, a project in Documents, Qwen3-0.6B downloaded and answering (at temperature 0 the same text to the byte as on Linux), documents found, a system file outside the project refused, the artifacts' libraries;
+  - chats and projects: moves, archives, the side bar's menus, *Find a chat* with its filters;
+  - whisper-small got from the microphone's offer, and a 7-second Italian recording written word for word in 4.3 s;
+  - a reply read aloud with the voice chosen;
+  - Python downloaded on *Install*, a matplotlib figure drawn and saved; the network, the user's folders and the models refused; MemoryError at the limit; a loop stopped at 120 s; nothing left running when Brebus closes.
+
+  Every check of the page's controls went through the page itself, with no errors in its console.
+- **Linux**: earlier, with Qwen3-4B and Qwen3-30B-A3B:
+  - a note attached and quoted;
+  - "which river is in Lazio, and how long" answered "the Tevere, 405 km" from an Excel sheet in a folder read only, its document named;
+  - a file written by the model once allowed;
+  - the lines of a file counted by Python in the cage as `wc -l` counts them;
+  - the weather of Cagliari from the weather service;
+  - an HTML page with a chart made as an artifact;
+  - an answer written again, a question edited, an answer in JSON by a schema;
+  - the model unloaded after a quiet minute and loaded again by the next message;
+  - a page's attempts to read Brebus, the network and the page around it, all refused;
+  - with Gemma 4 E2B, a picture described and an Italian recording transcribed and summarised.
+- **`tests/test_brebus`** starts `brebus` with no model and checks:
+  - its page, its API, another site's page refused;
+  - the free chats at the start; projects listed, a chat moved and refused outside Brebus's projects; the search's filters;
+  - chats and settings saved, listed, read and deleted;
+  - the project's tools, a folder read only, a file attached;
+  - Python in the cage;
+  - a model that is not there neither loaded, nor downloaded, nor removed;
+  - Brebus ending on SIGTERM.

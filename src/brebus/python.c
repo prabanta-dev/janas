@@ -97,8 +97,31 @@ void brebus_python_stop(void)
     on = 0;
 }
 
+#ifdef _WIN32
+/* Windows: the Python Brebus installs when the user asks for it (from
+   python.org, pyinstall.c), in %LOCALAPPDATA%\janas\python\runtime; its
+   temporary files in ...\python\tmp, which the cage is given */
+static void py_dirs(char *rt, size_t rn, char *tmp, size_t tn)
+{
+    const char *la = getenv("LOCALAPPDATA");
+    snprintf(rt, rn, "%s\\janas\\python\\runtime", la ? la : ".");
+    snprintf(tmp, tn, "%s\\janas\\python\\tmp", la ? la : ".");
+}
+#endif
+
 int brebus_python_ok(char *why, size_t n)
 {
+#ifdef _WIN32
+    char rt[4096], tmp[4096], exe[4200];
+    py_dirs(rt, sizeof rt, tmp, sizeof tmp);
+    snprintf(exe, sizeof exe, "%s\\python.exe", rt);
+    if (access(exe, F_OK) != 0) {
+        snprintf(why, n,
+                 "Python is not installed: Brebus downloads it from "
+                 "python.org when asked");
+        return 0;
+    }
+#endif
     return janas_sandbox_available(why, n);
 }
 
@@ -147,6 +170,40 @@ static int session(struct brebus *b, char *why, size_t n)
                                   .mem_bytes = (uint64_t)3 << 30,
                                   .file_bytes = (uint64_t)512 << 20,
                                   .tmp_bytes = (uint64_t)256 << 20};
+#ifdef _WIN32
+    /* the Python installed for it; what Python needs of Windows's
+       environment, the workspace given by its path */
+    char rt[4096], tmp[4096], py[4200];
+    py_dirs(rt, sizeof rt, tmp, sizeof tmp);
+    snprintf(py, sizeof py, "%s\\python.exe", rt);
+    static char e_path[4300], e_tmp[4200], e_temp[4200], e_mpl[4300],
+        e_data[4200], e_home[4200];
+    const char *sr = getenv("SYSTEMROOT");
+    snprintf(e_path, sizeof e_path, "PATH=%s;%s\\System32", rt,
+             sr ? sr : "C:\\Windows");
+    snprintf(e_tmp, sizeof e_tmp, "TMP=%s", tmp);
+    snprintf(e_temp, sizeof e_temp, "TEMP=%s", tmp);
+    snprintf(e_home, sizeof e_home, "USERPROFILE=%s", tmp);
+    snprintf(e_mpl, sizeof e_mpl, "MPLCONFIGDIR=%s\\mpl", tmp);
+    snprintf(e_data, sizeof e_data, "JANAS_PY_DATA=%s", ws);
+    static char e_root[300];
+    snprintf(e_root, sizeof e_root, "SYSTEMROOT=%s", sr ? sr : "C:\\Windows");
+    char *argv[] = {py, "-I", "-c", (char *)JANAS_PY_DRIVER, NULL};
+    char *envp[] = {e_path,
+                    e_root,
+                    e_tmp,
+                    e_temp,
+                    e_home,
+                    e_mpl,
+                    e_data,
+                    "PYTHONIOENCODING=utf-8",
+                    "PYTHONUTF8=1",
+                    "MPLBACKEND=Agg",
+                    "OPENBLAS_NUM_THREADS=4",
+                    "OMP_NUM_THREADS=4",
+                    "PYTHONDONTWRITEBYTECODE=1",
+                    NULL};
+#else
     char *argv[] = {"/usr/bin/python3", "-I", "-c", (char *)JANAS_PY_DRIVER,
                     NULL};
     char *envp[] = {"PATH=/usr/local/bin:/usr/bin:/bin",
@@ -158,13 +215,16 @@ static int session(struct brebus *b, char *why, size_t n)
                     "OMP_NUM_THREADS=4",
                     "PYTHONDONTWRITEBYTECODE=1",
                     NULL};
+#endif
     if (spawn(&c, argv, envp, why, n) != 0)
         return -1;
     on = 1;
     /* the workspace as its current folder: files written by name go there */
     struct janas_buf raw = {0};
-    char *a = janas_py_exchange(&sb, "import os\nos.chdir('/mnt/data')", 20,
-                                &raw, why, n);
+    char *a = janas_py_exchange(
+        &sb,
+        "import os\nos.chdir(os.environ.get('JANAS_PY_DATA', '/mnt/data'))", 20,
+        &raw, why, n);
     janas_buf_free(&raw);
     if (!a) {
         brebus_python_stop();
@@ -186,8 +246,18 @@ void brebus_python_tool(struct brebus *b, struct janas_buf *o)
                        "a notebook: variables and imports stay from one call "
                        "to the next, the value of the last expression is "
                        "shown, figures drawn with matplotlib are saved. The "
-                       "user's workspace is /mnt/data (read and write: read "
-                       "its files there, and write what you make there)");
+                       "user's workspace is ");
+#ifdef _WIN32
+    char ws[4096];
+    janas_buf_puts(&d, brebus_ws_path(b, ws, sizeof ws) == 0 ? ws
+                                                             : "the "
+                                                               "current "
+                                                               "folder");
+#else
+    janas_buf_puts(&d, "/mnt/data");
+#endif
+    janas_buf_puts(&d, ", the current folder (read and write: read its files "
+                       "there, and write what you make there)");
     if (nr) {
         janas_buf_puts(&d, "; these are there to read only, at their own "
                            "paths: ");
@@ -196,9 +266,19 @@ void brebus_python_tool(struct brebus *b, struct janas_buf *o)
             janas_buf_puts(&d, ro[i]);
         }
     }
-    janas_buf_puts(&d, ". Nothing else of the computer is reachable. A call "
+#ifdef _WIN32
+    /* an AppContainer reads Windows's own folders, as every app may */
+    janas_buf_puts(&d, ". Windows's own folders can be read; nothing else of "
+                       "the computer is reachable");
+#else
+    janas_buf_puts(&d, ". Nothing else of the computer is reachable");
+#endif
+    janas_buf_puts(&d, ". A call "
                        "runs at most 2 minutes. The system's libraries only "
-                       "(numpy, matplotlib... when installed); no pip.");
+                       "(numpy, matplotlib... when installed); no pip. To "
+                       "show the user a picture you saved (PNG, SVG, JPEG), "
+                       "write ![what it shows](its file name) in your "
+                       "answer: Brebus shows it there.");
     janas_buf_put(&d, "", 1);
     janas_buf_puts(o, "{\"type\": \"function\", \"function\": {\"name\": "
                       "\"python\", \"description\": ");
@@ -213,7 +293,7 @@ void brebus_python_tool(struct brebus *b, struct janas_buf *o)
 
 int brebus_python_run(struct brebus *b, const char *code, struct janas_buf *out)
 {
-    char why[400];
+    char why[1024];
     if (session(b, why, sizeof why) != 0) {
         janas_buf_puts(out, "{\"result\": ");
         str(out, why);

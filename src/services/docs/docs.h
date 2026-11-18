@@ -23,6 +23,7 @@
 #include <stdint.h>
 #include <time.h>
 
+#include "common/zip.h"
 #include "janas/llm.h"
 #include "llm/json.h"
 
@@ -72,8 +73,8 @@ int dz_resolve(const struct dz_roots *r, const char *in, char *out, size_t cap,
 /* The file name of the zip archive z (n bytes) into a malloc'd *out, its
    *out_n bytes followed by a 0: 0, 1 when there is none, -1 with the
    reason in why. */
-int dz_zip_get(const uint8_t *z, size_t n, const char *name, uint8_t **out,
-               size_t *out_n, char *why, size_t wn);
+#define dz_zip_get(z, n, name, out, out_n, why, wn)                            \
+    janas_zip_get(z, n, name, DZ_MAX_FILE, out, out_n, why, wn)
 /* The text of a docx's document.xml or an odt's content.xml (kind) added
    to out: 0, or -1 out of memory. */
 int dz_xml_text(const char *x, size_t n, int kind, struct janas_buf *out);

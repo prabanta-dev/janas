@@ -9,379 +9,172 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Brebus</title>
 <style>
-:root {
-  --bg: #f6f5f2; --panel: #ffffff; --side: #ecebe6; --line: #dcd9d0;
-  --fg: #23221f; --dim: #6d6a62; --accent: #b0602a; --ok: #3f7a4a;
-  --warn: #a2632a;
-  --sans: system-ui, -apple-system, "Segoe UI", "Noto Sans", sans-serif;
-  --mono: ui-monospace, "DejaVu Sans Mono", Menlo, Consolas, monospace;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #17171a; --panel: #1f1f23; --side: #131316; --line: #2e2e34;
-    --fg: #e4e2dc; --dim: #9a978f; --accent: #e08a4c; --ok: #79b386;
-    --warn: #d89a5c;
-  }
-}
-* { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
-             font: 15px/1.5 var(--sans); }
-body { display: flex; }
-nav { width: 250px; flex: none; background: var(--side);
-      border-right: 1px solid var(--line); padding: 14px 10px 12px;
-      display: flex; flex-direction: column; gap: 4px; min-height: 0; height: 100vh; }
-nav .top { display: flex; align-items: center; justify-content: space-between; margin: 0 0 10px; }
-nav h1 { font-size: 20px; margin: 0 6px; letter-spacing: .02em; white-space: nowrap; }
-nav #navtog { padding: 2px 9px; font-size: 16px; }
-nav .sects { display: flex; flex-direction: column; gap: 2px; }
-nav svg { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor;
-          stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-nav .sects button, nav #newc { display: flex; align-items: center; gap: 10px; padding: 6px 10px; }
-#convs { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 2px;
-         overflow: auto; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
-/* the side bar hidden to a strip of icons */
-nav.mini { width: 56px; padding-left: 6px; padding-right: 6px; }
-nav.mini .lbl, nav.mini #wsbtn, nav.mini #csearch, nav.mini #convs .c, nav.mini #convs .fold,
-nav.mini #convs .hit, nav.mini #convs .hitnote { display: none; }
-nav.mini .top { flex-direction: column; gap: 8px; }
-nav.mini .sects button, nav.mini #newc { justify-content: center; padding: 8px 0; }
-nav h1 { display: flex; align-items: center; gap: 10px; }
-nav h1 img { border-radius: 6px; }
-nav button { all: unset; cursor: pointer; padding: 8px 12px; border-radius: 8px;
-             color: var(--dim); }
-nav button:hover { background: var(--line); color: var(--fg); }
-nav button[aria-current="page"] { background: var(--panel); color: var(--fg);
-                                   box-shadow: inset 3px 0 var(--accent); }
-nav .foot { margin-top: auto; padding: 0 12px; color: var(--dim);
-            font-size: 12px; }
-main { flex: 1; overflow: auto; padding: 28px 32px; }
-main h2 { margin: 0 0 4px; font-size: 22px; }
-main p.lead { margin: 0 0 20px; color: var(--dim); }
-section { display: none; } section.on { display: block; }
-table { width: 100%; border-collapse: collapse; background: var(--panel);
-        border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
-th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line);
-         vertical-align: middle; }
-th { vertical-align: bottom; }
-th { font-size: 12px; text-transform: uppercase; letter-spacing: .05em;
-     color: var(--dim); font-weight: 600; }
-tr:last-child td { border-bottom: 0; }
-td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-code, .mono { font-family: var(--mono); font-size: 13px; }
-.badge { display: inline-flex; align-items: center; justify-content: center;
-         box-sizing: border-box; height: 26px; padding: 0 10px; border-radius: 999px;
-         font-size: 12px; border: 1px solid currentColor; white-space: nowrap; }
-td.tag, th.tag { text-align: center; white-space: nowrap; }
-td.tag .badge, td.tag button.act { min-width: 74px; border-radius: 999px; }
-.fits { color: var(--ok); } .big { color: var(--warn); }
-.card { background: var(--panel); border: 1px solid var(--line);
-        border-radius: 10px; padding: 16px 18px; max-width: 760px; }
-.card dl { display: grid; grid-template-columns: 180px 1fr; gap: 8px 16px; margin: 0; }
-.card dt { color: var(--dim); }
-.card dd { margin: 0; }
-.empty { color: var(--dim); padding: 20px 0; }
-#dl { margin-bottom: 16px; }
-button.act { all: unset; cursor: pointer; display: inline-flex; align-items: center;
-             justify-content: center; box-sizing: border-box; height: 26px;
-             padding: 0 12px; border-radius: 8px; background: var(--accent);
-             color: #fff; font-size: 13px; }
-button.act.quiet { background: transparent; color: var(--accent);
-                   border: 1px solid var(--accent); }
-button.act[disabled] { opacity: .5; cursor: default; }
-#chat.on { display: flex; gap: 16px; height: calc(100vh - 56px); }
-#artpane { width: 46%; flex: none; display: flex; flex-direction: column; gap: 8px;
-           border-left: 1px solid var(--line); padding-left: 14px; min-width: 0;
-           position: relative; }
-/* its left edge, dragged to widen it or the chat */
-#artgrip { position: absolute; left: -5px; top: 0; bottom: 0; width: 9px; cursor: col-resize; z-index: 2; }
-#artgrip:hover, body.drag #artgrip { background: var(--accent); opacity: .35; }
-body.drag iframe { pointer-events: none; }
-body.drag { cursor: col-resize; user-select: none; }
-#artpane[hidden] { display: none; }
-.arthead { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.arthead b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.artbtns { display: flex; gap: 6px; }
-#artver { padding: 3px 6px; border-radius: 6px; border: 1px solid var(--line);
-          background: var(--panel); color: var(--fg); }
-#artbody { flex: 1; min-height: 0; overflow: auto; border: 1px solid var(--line);
-           border-radius: 10px; background: var(--panel); }
-#artbody iframe { width: 100%; height: 100%; border: 0; background: #fff; display: block; }
-#artbody pre { margin: 0; padding: 12px; font: 13px var(--mono); white-space: pre; }
-#artbody .text { padding: 12px 16px; }
-#artpane.full { position: fixed; inset: 12px; width: auto; z-index: 20; background: var(--bg);
-                border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
-.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-.seg button { all: unset; cursor: pointer; padding: 3px 10px; font-size: 13px; color: var(--dim); }
-.seg button.on { background: var(--panel); color: var(--fg); }
-#arterr { border: 1px solid #c55; border-radius: 10px; padding: 8px 10px; display: flex;
-          flex-direction: column; gap: 6px; }
-#arterr pre { margin: 0; max-height: 120px; overflow: auto; font: 12px var(--mono);
-              white-space: pre-wrap; color: #e77; }
-#arterr[hidden] { display: none; }
-#arterr span { display: flex; gap: 8px; }
-#artbody pre.hljs, .text pre.hljs { background: transparent; }
-.artcard { all: unset; cursor: pointer; display: flex; gap: 10px; align-items: center;
-           margin: 6px 0; padding: 8px 12px; border: 1px solid var(--line);
-           border-radius: 10px; background: var(--bg); }
-.artcard:hover { border-color: var(--accent); }
-.artcard small { color: var(--dim); }
-#convs .c { padding: 6px 10px; border-radius: 8px; cursor: pointer; color: var(--dim);
-            white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#convs .c.on { background: var(--panel); color: var(--fg); }
-#convs .fold { font-size: 12px; color: var(--dim); padding: 8px 6px 2px; cursor: pointer; }
-#convs .fold ~ .c { padding-left: 18px; }
-#csearch { margin: 4px 0 6px; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line);
-           background: var(--panel); color: var(--fg); font: 12px inherit; }
-#convs .hit { padding: 6px 10px; border-radius: 8px; cursor: pointer; font-size: 13px; }
-#convs .hit:hover { background: var(--panel); }
-#convs .hit small { display: block; color: var(--dim); font-size: 11px; white-space: nowrap;
-                    overflow: hidden; text-overflow: ellipsis; }
-#talk { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-#bar { display: flex; gap: 10px; align-items: center; margin-bottom: 10px;
-       color: var(--dim); font-size: 13px; }
-.row-acts { white-space: nowrap; }
-.setf { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; font-size: 13px;
-        color: var(--dim); }
-.setf input, .setf select { margin-left: 6px; padding: 4px 6px; border-radius: 6px;
-        border: 1px solid var(--line); background: var(--panel); color: var(--fg); font: inherit; }
-.setf input { width: 130px; }
-.hfget { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 16px;
-         max-width: 900px; }
-.hfget input { flex: 1; min-width: 260px; padding: 6px 10px; border-radius: 8px;
-               border: 1px solid var(--line); background: var(--panel); color: var(--fg);
-               font: 13px var(--mono); }
-.hfget .note { flex-basis: 100%; }
-nav button.ws { margin: 0 6px 10px; padding: 4px 8px; font-size: 12px; color: var(--dim);
-                white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 210px;
-                border: 1px dashed var(--line); }
-.dlg { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex;
-       align-items: center; justify-content: center; z-index: 10; }
-.dlg[hidden] { display: none; }
-.dlg .box { background: var(--bg); border: 1px solid var(--line); border-radius: 14px;
-            padding: 22px 26px; width: min(620px, 92vw); max-height: 86vh; overflow: auto; }
-.dlg .box h2 { margin-top: 0; font-size: 18px; }
-.dlg .dtext { line-height: 1.5; }
-.dlg .din { width: 100%; box-sizing: border-box; margin-top: 12px; padding: 8px 10px;
-            border-radius: 8px; border: 1px solid var(--line); background: var(--panel);
-            color: var(--fg); font: 13px var(--mono); }
-.dlg .drem { display: flex; gap: 6px; align-items: center; margin-top: 12px; }
-.dlg .dargs { background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
-              padding: 8px 10px; max-height: 40vh; overflow: auto; font: 12px var(--mono);
-              white-space: pre-wrap; }
-.dlg .right { text-align: right; margin-bottom: 0; }
-#wsrecent { display: flex; flex-direction: column; gap: 4px; margin-bottom: 14px; }
-#wsrecent button { all: unset; cursor: pointer; padding: 6px 10px; border-radius: 8px;
-                   font: 13px var(--mono); overflow: hidden; text-overflow: ellipsis;
-                   white-space: nowrap; }
-#wsrecent button:hover { background: var(--panel); }
-#hfres { display: flex; flex-direction: column; gap: 4px; margin: -8px 0 16px; max-width: 900px; }
-#hfres .hfm { all: unset; cursor: pointer; padding: 6px 10px; border-radius: 8px;
-              display: flex; justify-content: space-between; gap: 10px; font-size: 13px; }
-#hfres .hfm:hover { background: var(--panel); }
-#hfres .hfm small, #hfres .hff small { color: var(--dim); }
-#hfres .hff { display: flex; justify-content: space-between; align-items: center; gap: 10px;
-              padding: 4px 10px 4px 24px; font: 13px var(--mono); }
-@media print {
-  nav, #convs, #bar, #form, #chips, #artpane, .msgact, .msgbar { display: none !important; }
-  #chat.on { height: auto; display: block; }
-  #log { overflow: visible; }
-  body, main { background: #fff; color: #000; }
-  .msg { break-inside: avoid; border: 1px solid #ccc; }
-  .msg.user { background: #eee; color: #000; }
-}
-main h3 { font-size: 15px; margin: 24px 0 10px; }
-.srvset { display: flex; flex-direction: column; gap: 14px; font-size: 14px; }
-.srvset label { display: flex; flex-direction: column; gap: 6px; }
-.srvset label:has(> input[type=checkbox]) { flex-direction: row; flex-wrap: wrap;
-                                            align-items: center; gap: 8px; }
-.srvset .note, .note { color: var(--dim); font-size: 12px; }
-.srvset label:has(> input[type=checkbox]) .note { flex-basis: 100%; margin-left: 24px; }
-.srvset .row { display: flex; gap: 8px; align-items: center; }
-.srvset input:not([type=checkbox]), .srvset textarea {
-  padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line);
-  background: var(--panel); color: var(--fg); font: 13px var(--mono); flex: 1; }
-.srvset textarea { resize: vertical; }
-#bar .tools[hidden] { display: none; }
-#bar .tools { margin-left: auto; display: flex; gap: 6px; }
-.msg.assistant { white-space: normal; }
-.msg.assistant details { white-space: pre-wrap; }
-#log { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: 12px;
-       padding: 4px max(4px, calc((100% - 820px) / 2)) 12px; }
-.msg { max-width: 80ch; padding: 10px 14px; border-radius: 12px; white-space: pre-wrap;
-       word-wrap: break-word; }
-.msg.user { align-self: flex-end; background: var(--accent); color: #fff; }
-.msg.assistant { align-self: flex-start; background: var(--panel);
-                 border: 1px solid var(--line); }
-.msg details { color: var(--dim); font-size: 13px; margin-bottom: 6px; }
-.msg .speed { color: var(--dim); font-size: 12px; margin-top: 6px; }
-#form { position: relative; width: 100%; max-width: 820px; margin: 0 auto; }
-.tog { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer;
-       white-space: nowrap; }
-#bar { flex-wrap: wrap; row-gap: 6px; }
-#chips { width: 100%; max-width: 820px; margin: 0 auto 6px; display: flex; flex-wrap: wrap; gap: 6px; }
-#chips span { font-size: 12px; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--line);
-              background: var(--panel); display: inline-flex; gap: 6px; align-items: center; }
-#chips button { all: unset; cursor: pointer; color: var(--dim); }
-#attach { all: unset; position: absolute; left: 10px; bottom: 10px; width: 34px; height: 34px;
-          border-radius: 10px; display: flex; align-items: center; justify-content: center;
-          font-size: 22px; color: var(--dim); cursor: pointer; }
-#attach:hover { background: var(--bg); color: var(--fg); }
-.msg.tool { align-self: flex-start; font-size: 12px; color: var(--dim); padding: 4px 10px;
-            border: 1px dashed var(--line); background: transparent; max-width: 80ch; }
-.msg.tool pre { white-space: pre-wrap; max-height: 260px; overflow: auto; }
-.msg .att { font-size: 12px; opacity: .85; margin-top: 4px; }
-.msgact { all: unset; cursor: pointer; font-size: 12px; opacity: .75; padding: 0 6px; }
-.msgact:hover { opacity: 1; text-decoration: underline; }
-.msgact[disabled] { opacity: .3; cursor: default; text-decoration: none; }
-.msg.user .msgact { display: block; text-align: right; margin-top: 4px; }
-.msgbar { display: flex; gap: 6px; align-items: center; margin-top: 6px; font-size: 12px;
-          color: var(--dim); }
-.msg.user .att, .msg.user .att summary { color: inherit; }
-#svclist label { display: flex; gap: 8px; align-items: baseline; padding: 3px 0; font-size: 13px; }
-#svclist small { color: var(--dim); }
-#rolist div { display: flex; gap: 8px; align-items: center; font: 13px var(--mono); padding: 3px 0; }
-#rolist button { all: unset; cursor: pointer; color: var(--warn); font-size: 12px; }
-#form textarea { display: block; width: 100%; box-sizing: border-box; resize: none;
-                 min-height: 56px; max-height: 40vh; overflow-y: auto;
-                 padding: 14px 56px 14px 50px; border-radius: 16px;
-                 border: 1px solid var(--line); background: var(--panel);
-                 color: var(--fg); font: inherit; line-height: 1.45; }
-#form textarea:focus { outline: none; border-color: var(--accent); }
-#send { all: unset; position: absolute; right: 10px; bottom: 10px; width: 34px;
-        height: 34px; border-radius: 10px; background: var(--accent); color: #fff;
-        display: flex; align-items: center; justify-content: center; cursor: pointer; }
-#send[disabled] { opacity: .35; cursor: default; }
-#send svg { width: 18px; height: 18px; }
-@media (max-width: 700px) {
-  body { flex-direction: column; }
-  nav { width: auto; flex-direction: row; flex-wrap: wrap; padding: 10px; }
-  nav h1 { width: 100%; margin-bottom: 6px; }
-  nav .foot { display: none; }
-  main { padding: 18px 16px; }
-  .card dl { grid-template-columns: 1fr; }
-}
-<!--#include web/markdown.css-->
-:root { --md-accent: var(--accent); --md-code: var(--fg); --md-code-bg: var(--bg);
-        --md-dim: var(--dim); --md-line: var(--line); --md-pre-bg: var(--bg); }
-.msg .text pre { border: 1px solid var(--line); }
-.msg .text pre, .msg .text .m { font-family: var(--mono); font-size: 13px; }
+<!--#include brebus/page/app.css-->
 </style>
 </head>
 <body>
 <nav id="side">
   <div class="top"><h1><img src="/prabanta.png" alt="Prabanta" width="28" height="28"> <span class="lbl">Brebus</span></h1>
-    <button id="navtog" title="Hide the side bar (Ctrl+B)" aria-label="Hide the side bar">«</button></div>
-  <button id="wsbtn" class="ws" title="The folder Brebus works in">…</button>
-  <div class="sects">
-    <button data-s="chat" title="Chat"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H10l-5 4v-4H4z"/></svg><span class="lbl">Chat</span></button>
-    <button data-s="discover" title="Discover"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/></svg><span class="lbl">Discover</span></button>
-    <button data-s="models" title="My models"><svg viewBox="0 0 24 24"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/></svg><span class="lbl">My models</span></button>
-    <button data-s="server" title="Server"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="7" rx="1.5"/><rect x="4" y="13" width="16" height="7" rx="1.5"/><path d="M8 7.5h.01M8 16.5h.01"/></svg><span class="lbl">Server</span></button>
-    <button data-s="machine" title="Machine"><svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1.5"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg><span class="lbl">Machine</span></button>
+    <span class="topbtns"><button id="findbtn" class="ico lbl" title="Search the chats and the projects (Ctrl+K)" aria-label="Search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg></button>
+    <button id="navtog" class="ico" title="Hide the side bar (Ctrl+B)" aria-label="Hide the side bar"><svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M9.5 4.5v15"/></svg></button></span></div>
+  <button id="newc" class="newchat" title="A new chat, of no project (Ctrl+Shift+O)"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span class="lbl">New chat</span></button>
+  <div id="tree" class="lbl">
+    <input id="csearch" type="search" placeholder="Find a chat" spellcheck="false" title="The chats whose title or messages hold these words, in every project">
+    <div id="hits"></div>
+    <div class="grp" data-g="chats"><div class="ghead"><span class="arrow"></span><span class="gname">Chats</span>
+      <button class="gadd" id="addchat" title="A new chat, of no project" aria-label="New chat">+</button></div>
+      <div class="glist" id="freelist"></div></div>
+    <div class="grp" data-g="projects"><div class="ghead"><span class="arrow"></span><span class="gname">Projects</span>
+      <button class="gadd" id="addproj" title="A new project: a folder of yours, with its documents, files and chats" aria-label="New project">+</button></div>
+      <div class="glist" id="projlist"></div></div>
+    <div class="grp shut" data-g="archived"><div class="ghead"><span class="arrow"></span><span class="gname">Archived</span></div>
+      <div class="glist" id="archlist"></div></div>
   </div>
-  <div id="convs"><button id="newc" title="New chat"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span class="lbl">New chat</span></button>
-    <input id="csearch" type="search" placeholder="Search every workspace's chats" spellcheck="false"></div>
-  <div class="foot lbl" id="ver"></div>
+  <div class="sects">
+    <button data-s="chat" hidden></button>
+    <button data-s="discover" title="Discover: the models to get"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/></svg><span class="lbl">Discover</span></button>
+    <button data-s="models" title="My models: those on this computer"><svg viewBox="0 0 24 24"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/></svg><span class="lbl">My models</span></button>
+    <button data-s="server" title="Server: the model for other programs"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="7" rx="1.5"/><rect x="4" y="13" width="16" height="7" rx="1.5"/><path d="M8 7.5h.01M8 16.5h.01"/></svg><span class="lbl">Server</span></button>
+    <button data-s="prefs" title="Settings: what the chat may do"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg><span class="lbl">Settings</span></button>
+    <button data-s="machine" title="Info: Brebus, this computer, the engine"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5h.01"/></svg><span class="lbl">Info</span></button>
+  </div>
 </nav>
 <main>
   <section id="chat">
     <div id="talk">
-      <div id="bar"><span id="loaded">No model loaded.</span>
-        <label class="tog" title="Before each question, Brebus searches the workspace's documents and gives the model the passages found"><input type="checkbox" id="usedocs"> Search documents</label>
-        <label class="tog" title="The model may search and read the workspace's documents and files, and write in the workspace (asking you first)"><input type="checkbox" id="usetools"> Tools</label>
-        <label class="tog" title="The model may run Python in a sandbox: the workspace and its folders, no network, no other file; each piece of code only once you allow it"><input type="checkbox" id="usecode"> Run code</label>
-        <label class="tog" title="Pages, drawings, documents and programs the model makes open beside the chat, kept in the workspace's artifact/ folder with their versions"><input type="checkbox" id="useart"> Artifacts</label>
-        <span class="tools" hidden><button class="act quiet" id="sys">Settings</button>
-          <button class="act quiet" id="fold">Folder</button>
-          <button class="act quiet" id="neww" title="This chat in another window, beside this one">New window</button>
-          <button class="act quiet" id="ren">Rename</button>
-          <button class="act quiet" id="exp">Export</button>
-          <button class="act quiet" id="del">Delete</button></span></div>
+      <div id="bar"><button id="ctitle" class="ctitle" title="This chat: rename, export, move, archive, delete">New chat<span class="caret"></span></button>
+        <span id="cwhere" class="note"></span>
+        <button type="button" id="chatmore" class="ico" title="This chat's artifacts, its files and its settings" aria-label="More of this chat"></button></div>
       <div id="log"></div>
       <div id="chips"></div>
-      <form id="form"><button type="button" id="attach" title="Attach a file of this computer or a web address" aria-label="Attach">+</button><textarea id="ask" rows="1" placeholder="Ask the model. Enter sends, Shift+Enter a new line."></textarea>
+      <div id="archbar" class="note" hidden>This chat is archived: it can be read, not continued. <button class="act quiet" id="unarch" title="Back among the chats, to be continued">Restore it</button></div>
+      <form id="form"><textarea id="ask" rows="1" placeholder="Ask the model. Enter sends, Shift+Enter a new line."></textarea>
         <button type="submit" id="send" title="Send (Enter)" aria-label="Send" disabled></button></form>
+      <div id="under"><button type="button" id="attach" class="ico" title="Attach a file of this computer or a web address" aria-label="Attach"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+        <button type="button" id="speak" class="ico" title="Read the replies aloud" aria-label="Read the replies aloud" aria-pressed="false"></button>
+        <span id="loaded" class="note"></span>
+        <span id="ctxring" title="The model's memory of this chat: nothing used yet"><svg viewBox="0 0 24 24"><circle class="bg" cx="12" cy="12" r="8.5"/><circle class="fg" cx="12" cy="12" r="8.5"/></svg></span>
+        <button type="button" id="modelbtn" class="modelbtn" title="The model that answers: click to choose another">…<span class="caret"></span></button>
+        <button type="button" id="monbtn" class="ico" title="The engine's monitor: the reply being written, the memory and the devices the model uses, live" aria-label="Engine monitor"></button>
+        <button type="button" id="modelset" class="ico" title="This model's settings: how much it remembers, how it reasons, its devices" aria-label="Model settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg></button></div>
     </div>
     <aside id="artpane" hidden><div id="artgrip" title="Drag to widen"></div>
       <div class="arthead"><b id="arttitle"></b>
         <select id="artver" title="Its versions"></select>
-        <span class="artbtns"><span class="seg" id="artview"><button data-v="preview" class="on">Preview</button><button data-v="code">Code</button></span>
-          <button class="act quiet" id="artcopy">Copy</button>
+        <span class="artbtns"><span class="seg" id="artview"><button data-v="preview" class="on" title="The artifact as it looks and works">Preview</button><button data-v="code" title="The artifact's source, as the model wrote it">Code</button></span>
+          <button class="act quiet" id="artcopy" title="Copy its source to the clipboard">Copy</button>
           <button class="act quiet" id="artdown" title="Save it as a file of its own">Download</button>
-          <button class="act quiet" id="artopen">Open</button>
+          <button class="act quiet" id="artopen" title="Open the saved file with this computer's own program for it">Open</button>
           <button class="act quiet" id="artfull" title="Wide, over the chat">⤢</button>
           <button class="act quiet" id="artclose" title="Close">×</button></span></div>
-      <div id="arterr" hidden><pre></pre><span><button class="act" id="artfix">Ask the model to fix it</button>
-        <button class="act quiet" id="arterrx">Dismiss</button></span></div>
+      <div id="arterr" hidden><pre></pre><span><button class="act" id="artfix" title="The error goes to the model, which writes the artifact again">Ask the model to fix it</button>
+        <button class="act quiet" id="arterrx" title="Hide this error">Dismiss</button></span></div>
       <div id="artbody"></div>
       <div class="note" id="artpath"></div>
     </aside>
   </section>
   <section id="discover">
     <h2>Discover</h2>
-    <p class="lead">The models Janas knows, converted and checked. <span id="mem"></span></p>
+    <p class="lead">The models Janas knows, converted and checked: Get downloads one. "fits" means this computer has the memory it is meant for; one that "needs more" still runs, slower, reading its parts from the disk. <span id="mem"></span></p>
     <div class="card" id="dl" hidden></div>
     <form class="hfget" id="hfsearch" onsubmit="return false">
-      <input name="q" spellcheck="false" placeholder="Search Hugging Face: qwen3 4b, gemma 4, mistral…">
-      <button class="act" type="submit">Search</button>
+      <input name="q" spellcheck="false" placeholder="Search or get: qwen3 4b, gemma 4… or a file's address on Hugging Face">
+      <button class="act" type="submit" id="hfgo" title="Words: search Hugging Face. An address: download that file"><span>Search</span><span hidden>Get</span></button>
     </form>
+    <p class="note">Words search Hugging Face; an address (https://… or hf:owner/repo/file.gguf) gets that file. A GGUF is converted here, and not checked against MODELS.md as the catalog's models are.</p>
     <div id="hfres"></div>
-    <form class="hfget" id="hfget" onsubmit="return false">
-      <input name="spec" spellcheck="false" placeholder="Any model of Hugging Face: its file's address, or hf:owner/repo/file.gguf">
-      <button class="act" type="submit">Get</button>
-      <span class="note">a GGUF is converted here; not checked against MODELS.md as the catalog's are</span>
-    </form>
     <table><thead><tr><th>Model</th><th></th><th class="num">Download</th>
       <th class="num">Memory it is meant for</th><th class="tag">Here</th><th class="tag"></th></tr></thead>
       <tbody id="cat"><tr><td colspan="6" class="empty">Reading…</td></tr></tbody></table>
   </section>
   <section id="models">
     <h2>My models</h2>
-    <p class="lead">The models installed in <code id="dir"></code>
-      <button class="act quiet" id="dirchg">Change…</button></p>
+    <div class="dirrow"><input id="dir" readonly aria-label="The folder of the models" title="The folder where the models are kept">
+      <button class="act quiet" id="dirchg" title="Keep the models in another folder (one with more room, an external disk…)">Change…</button></div>
+    <p class="lead">The models on this computer. Load starts one (or choose it under the chat's field); Settings says how it runs; Remove deletes it from the disk.</p>
     <table><thead><tr><th>Model</th><th>Kind</th><th class="num">Size</th>
       <th class="num">Context</th><th></th></tr></thead>
       <tbody id="mine"><tr><td colspan="5" class="empty">Reading…</td></tr></tbody></table>
   </section>
   <section id="server">
     <h2>Server</h2>
-    <p class="lead">A model for other programs too: OpenAI's, Ollama's and Anthropic's APIs.</p>
+    <p class="lead">The model loaded in Brebus can answer other programs too: an editor, a script, another chat app. They talk to it as they would to OpenAI, Ollama or Anthropic, only here, on this computer.</p>
     <div class="card"><dl id="srv"></dl></div>
     <h3>Settings</h3>
     <div class="card">
-      <form id="srvset" class="srvset" onsubmit="return false">
-        <label><input type="checkbox" name="lan"> Reachable from the local network
-          <span class="note">other computers of this network can use the model: set a key too</span></label>
+      <form id="srvset" class="srvset plainset" onsubmit="return false">
+        <label>Free the memory when the chat is idle for this many minutes
+          <input name="ttl" type="number" min="0" step="5" placeholder="0: never">
+          <span class="note">The model is unloaded after so long without a message, and loaded again with the next one (a few seconds). 0 keeps it loaded.</span></label>
+        <label class="tog"><input type="checkbox" name="lan"> Other computers of this network may use it
+          <span class="note">Off, only programs on this computer reach the model. On, any computer of your network can: set a key below, so that only those who know it may.</span></label>
+        <details><summary>Advanced</summary>
         <label>Key the other programs must send
           <span class="row"><input name="api_key" autocomplete="off" spellcheck="false" placeholder="none: anyone who reaches it">
-          <button class="act quiet" type="button" id="genkey">New key</button></span>
-          <span class="note">as <code>Authorization: Bearer &lt;key&gt;</code>; this page needs none</span></label>
-        <label>Unload the model after this many minutes without a message (0: never)
-          <input name="ttl" type="number" min="0" step="5" placeholder="0">
-          <span class="note">counted on Brebus's chat; it is loaded again at the next message</span></label>
+          <button class="act quiet" type="button" id="genkey" title="Make a new random key">New key</button></span>
+          <span class="note">A password for programs: they send it as <code>Authorization: Bearer &lt;key&gt;</code>. Brebus's own window needs none.</span></label>
         <label>Web pages of other sites allowed to call it, one a line
-          <textarea name="origins" rows="2" spellcheck="false" placeholder="http://localhost:3000"></textarea></label>
-        <span class="row"><button class="act" type="button" id="srvsave">Save</button>
+          <textarea name="origins" rows="2" spellcheck="false" placeholder="http://localhost:3000"></textarea>
+          <span class="note">Only for a web app you are building that calls the model from the browser; leave it empty otherwise.</span></label>
+        </details>
+        <span class="row"><button class="act" type="button" id="srvsave" title="Keep these settings">Save</button>
           <span class="note" id="srvnote"></span></span>
       </form>
     </div>
   </section>
+  <section id="prefs">
+    <h2>Settings</h2>
+    <p class="lead">What the chat may do. Each choice holds for every chat until you change it.</p>
+    <div class="card prefs">
+      <label class="tog"><input type="checkbox" id="usedocs"> Search documents
+        <span class="note">Before each question Brebus searches the project's documents (PDF, Word, Excel, text…) and gives the model the passages it finds, so that it answers from them.</span></label>
+      <label class="tog"><input type="checkbox" id="usetools"> Tools
+        <span class="note">The model may list, read and search the project's files, and write there; it asks you before writing anything. The services (weather, maps, Wikipedia…) too, when they are on.</span></label>
+      <label class="tog"><input type="checkbox" id="usecode"> Run code
+        <span class="note">The model may run Python in a sandbox: the project's folder only, no network, a few minutes at most. You allow each piece of code before it runs. Off, the model is told it cannot run anything.</span></label>
+      <label class="tog"><input type="checkbox" id="useart"> Artifacts
+        <span class="note">Pages, drawings, documents and programs the model makes open beside the chat, and are kept with their versions in the project's artifact folder.</span></label>
+    </div>
+    <h3>Voice</h3>
+    <div class="card prefs" id="voicecard"></div>
+    <h3>When the computer starts</h3>
+    <div class="card prefs">
+      <label class="tog"><input type="checkbox" id="autost"> Start Brebus in the background
+        <span class="note">When you log in, Brebus starts without its window and loads the model, so that other programs (an editor, a script, another chat app) can use it at once through its server. Brebus's own window opens onto it when you start it.</span></label>
+    </div>
+    <div id="pyset" hidden>
+      <h3>Python, for Run code</h3>
+      <div class="card"><p id="pyline" class="note"></p></div>
+    </div>
+  </section>
   <section id="machine">
-    <h2>Machine</h2>
-    <p class="lead">What Janas sees of this computer.</p>
+    <h2>Info</h2>
+    <div class="card about">
+      <p><b>Brebus</b> <span id="aboutver"></span> - a private chat with AI models that run on this computer, with no cloud.</p>
+      <dl>
+        <dt>Made by</dt><dd>Prabanta</dd>
+        <dt>Author</dt><dd>Maurizio "camauri" Cammalleri</dd>
+        <dt>Engine</dt><dd>Janas-LLM, part of Janas</dd>
+        <dt>Licence</dt><dd>GNU GPL 3.0 or later: free to use, study, share and change; whoever shares it shares the source too.</dd>
+        <dt>Source</dt><dd><a href="https://github.com/prabanta-dev/janas" target="_blank" rel="noopener">github.com/prabanta-dev/janas</a></dd>
+      </dl>
+    </div>
+    <h3>This computer</h3>
+    <p class="note">What Janas sees of it, and how it is doing now.</p>
     <div class="card"><dl id="mach"></dl></div>
+    <p class="note"><a href="/monitor" target="_blank" rel="noopener">The engine's monitor</a>: the reply being written, the memory and the devices the model uses, live.</p>
   </section>
 </main>
 <div id="wsdlg" class="dlg" hidden><div class="box">
-  <h2>Where should Brebus work?</h2>
-  <p class="lead">A folder of yours: its conversations, the files copied into it and what is written for you stay there.</p>
+  <h2>A project</h2>
+  <p class="lead">A folder of yours, for work that goes on: the model reads its documents and files, writes there what it makes for you, and its chats stay with it. One of the recent ones, a folder you choose, or a new one.</p>
   <div id="wsrecent"></div>
   <form id="wsform" class="hfget" onsubmit="return false">
     <input name="path" spellcheck="false" placeholder="/home/you/Projects/something">
-    <button class="act quiet browse" type="button" id="wsbrowse">Browse…</button>
-    <button class="act quiet" type="submit">Open</button>
+    <button class="act quiet browse" type="button" id="wsbrowse" title="Choose the folder in the system's window">Browse…</button>
+    <button class="act quiet" type="submit" title="Open the folder written in the field as a project">Open</button>
   </form>
-  <p><button class="act" id="wsnew">New folder</button> <span class="note" id="wsnewin"></span></p>
+  <p><button class="act" id="wsnew" title="A new project, in a new folder named by today's date">New folder</button> <span class="note" id="wsnewin"></span></p>
   <div id="wsemb" hidden><h3>Search by meaning</h3>
     <p class="note" id="embnote"></p>
     <select id="embsel"></select></div>
@@ -393,1382 +186,22 @@ main h3 { font-size: 15px; margin: 24px 0 10px; }
     <div id="rolist"></div>
     <form id="roform" class="hfget" onsubmit="return false">
       <input name="path" spellcheck="false" placeholder="/home/you/Documents/contracts">
-      <button class="act quiet browse" type="button" id="robrowse">Browse…</button>
-      <button class="act quiet" type="submit">Add</button>
+      <button class="act quiet browse" type="button" id="robrowse" title="Choose the folder in the system's window">Browse…</button>
+      <button class="act quiet" type="submit" title="Let the model read this folder too, never write in it">Add</button>
     </form></div>
-  <p class="right"><button class="act quiet" id="wsclose">Cancel</button></p>
+  <p class="right"><button class="act quiet" id="wsclose" title="Close, changing nothing">Cancel</button></p>
 </div></div>
 <script>
 <!--#include web/markdown.js-->
 </script>
 <script>
-"use strict";
-const $ = (s) => document.querySelector(s);
-
-/* Brebus's own dialogs, in place of the browser's alert, confirm and
-   prompt: a title, a text (or HTML), a field when asked, buttons, a box
-   to remember the choice. A promise of {button, value, remember}; Esc is
-   the last button, Enter the primary one. window.__dialogAuto, when a
-   test sets it, answers in the user's place. */
-function dialog(o) {
-  if (window.__dialogAuto) return Promise.resolve(window.__dialogAuto(o));
-  return new Promise((done) => {
-    const box = document.createElement("div");
-    box.className = "dlg";
-    const btns = o.buttons || [{label: "OK", value: "ok", primary: true}];
-    box.innerHTML = `<div class="box" role="dialog" aria-modal="true">
-      ${o.title ? `<h2>${esc(o.title)}</h2>` : ""}
-      <div class="dtext">${o.html || esc(o.text || "").replace(/\n/g, "<br>")}</div>
-      ${o.input !== undefined ? (o.multiline
-        ? `<textarea class="din" rows="4" spellcheck="false">${esc(o.input)}</textarea>`
-        : `<input class="din" spellcheck="false" value="${esc(o.input)}" placeholder="${esc(o.placeholder || "")}">`) : ""}
-      ${o.remember ? `<label class="note drem"><input type="checkbox"> ${esc(o.remember)}</label>` : ""}
-      <p class="right">${btns.map((b, i) => `<button class="act${b.primary ? "" : " quiet"}" data-i="${i}">${esc(b.label)}</button>`).join(" ")}</p>
-    </div>`;
-    document.body.append(box);
-    const field = box.querySelector(".din");
-    const end = (b) => {
-      const res = {button: b.value, value: field ? field.value : undefined,
-                   remember: !!box.querySelector(".drem input")?.checked,
-                   form: o.read ? o.read(box) : undefined};
-      box.remove(); document.removeEventListener("keydown", key, true);
-      done(res);
-    };
-    const key = (e) => {
-      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); end(btns[btns.length - 1]); }
-      else if (e.key === "Enter" && !e.shiftKey && !(field && field.tagName === "TEXTAREA")) {
-        e.preventDefault(); end(btns.find((b) => b.primary) || btns[0]);
-      }
-    };
-    document.addEventListener("keydown", key, true);
-    for (const b of box.querySelectorAll("button[data-i]")) b.onclick = () => end(btns[+b.dataset.i]);
-    if (o.ready) o.ready(box);
-    (field || box.querySelector("button.act:not(.quiet)") || box.querySelector("button"))?.focus();
-  });
-}
-window.markdownAsk = (text) => yes(text, "A link the model wrote", "Open it");
-const say = (text, title) => dialog({title, text, buttons: [{label: "OK", value: "ok", primary: true}]});
-const yes = async (text, title, ok = "OK") => (await dialog({title, text,
-  buttons: [{label: ok, value: "yes", primary: true}, {label: "Cancel", value: "no"}]})).button === "yes";
-const input = async (title, value, text, multiline) => {
-  const r = await dialog({title, text, input: value || "", multiline,
-    buttons: [{label: "OK", value: "ok", primary: true}, {label: "Cancel", value: "no"}]});
-  return r.button === "ok" ? r.value : null;
-};
-const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
-  ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"})[c]);
-const gib = (b) => (b / 2 ** 30).toFixed(1) + " GiB";
-async function ask(what) {
-  const r = await fetch("/brebus/" + what);
-  if (!r.ok) throw new Error(what + ": " + r.status);
-  return r.json();
-}
-function show(id) {
-  for (const s of document.querySelectorAll("section"))
-    s.classList.toggle("on", s.id === id);
-  for (const b of document.querySelectorAll("nav button[data-s]"))
-    b.setAttribute("aria-current", b.dataset.s === id ? "page" : "false");
-  try { localStorage.setItem("brebus.section", id); } catch (e) {}
-}
-for (const b of document.querySelectorAll("nav button[data-s]"))
-  b.addEventListener("click", () => show(b.dataset.s));
-/* the side bar: whole, or a strip of icons (its button, Ctrl+B), as left */
-let navAuto = false; /* hidden by an artifact opened, shown again when it closes */
-function navMini(on, remember) {
-  $("#side").classList.toggle("mini", on);
-  $("#navtog").textContent = on ? "»" : "«";
-  $("#navtog").title = (on ? "Show" : "Hide") + " the side bar (Ctrl+B)";
-  if (remember) { navAuto = false; try { localStorage.setItem("brebus.mini", on ? "1" : ""); } catch (e) {} }
-}
-try { navMini(localStorage.getItem("brebus.mini") === "1", false); } catch (e) {}
-$("#navtog").onclick = () => navMini(!$("#side").classList.contains("mini"), true);
-document.addEventListener("keydown", (e) => {
-  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "b") {
-    e.preventDefault();
-    navMini(!$("#side").classList.contains("mini"), true);
-  }
-});
-let first = "discover";
-try { first = localStorage.getItem("brebus.section") || first; } catch (e) {}
-const hashChat = (location.hash.match(/^#chat\/([\w-]+)$/) || [])[1];
-if (location.hash.length > 1) first = location.hash.slice(1).split("/")[0]; /* #chat, #models... */
-show(document.getElementById(first) ? first : "discover");
-
-async function load() {
-  const m = await ask("machine");
-  $("#ver").textContent = "Janas " + m.version;
-  $("#mem").textContent = "This computer: " + gib(m.memory_total) + ".";
-  $("#mach").innerHTML = [
-    ["Processor", m.cpu || "unknown"],
-    ["Instructions", m.features || "none known"],
-    ["Memory", gib(m.memory_total) + ", " + gib(m.memory_available) + " available"],
-    ["Power", m.mains === 1 ? "mains" : m.mains === 0 ? "battery" : "unknown"],
-  ].map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("") +
-    `<dt>At login</dt><dd><label><input type="checkbox" id="autost"${m.autostart ? " checked" : ""}> start Brebus's server, without a window</label></dd>`;
-  $("#autost").onchange = async (e) => {
-    const r = await fetch("/brebus/autostart", {method: "POST", body: JSON.stringify({on: e.target.checked})});
-    const j = await r.json();
-    e.target.checked = j.autostart;
-  };
-  await mine();
-  await status();
-  await getStatus();
-}
-let catalog = null, modelInfo = {};
-async function mine() {
-  const c = catalog = catalog || await ask("catalog");
-  const my = await ask("models");
-  for (const x of my.models) modelInfo[x.name] = x;
-  try { settings = await ask("settings"); } catch (e) { settings = {}; }
-  srvForm();
-  const have = new Set(my.models.map((x) => x.path.split("/").pop()));
-  $("#cat").innerHTML = c.models.filter((x) => !x.test_only).map((x) =>
-    `<tr><td><b>${esc(x.name)}</b><br><span class="mono" style="color:var(--dim)">${esc(x.file)}</span></td>
-     <td>${esc(x.what)}</td><td class="num">${x.download_gb.toFixed(1)} GB</td>
-     <td class="num">${x.ram_gb} GB</td>
-     <td class="tag">${x.fits ? '<span class="badge fits">fits</span>' : '<span class="badge big">needs more</span>'}</td>
-     <td class="tag">${have.has(x.file) ? '<span class="badge">installed</span>'
-       : `<button class="act quiet get" data-m="${esc(x.name)}">Get</button>`}</td></tr>`
-  ).join("") || '<tr><td colspan="6" class="empty">None.</td></tr>';
-  for (const b of document.querySelectorAll("button.get"))
-    b.onclick = () => getModel(b.dataset.m);
-  $("#dir").textContent = my.dir;
-  $("#mine").innerHTML = my.models.map((x) =>
-    `<tr><td><b>${esc(x.name)}</b></td>
-     <td>${esc(x.arch)}${x.recurrent ? " · recurrent" : ""}${x.fim ? " · fills in the middle" : ""}${x.vision ? " · sees pictures" : ""}</td>
-     <td class="num">${gib(x.bytes)}</td><td class="num">${x.context ? x.context.toLocaleString() : "—"}</td>
-     <td class="row-acts"><button class="act load" data-m="${esc(x.name)}">Load</button>
-       <button class="act quiet opts" data-m="${esc(x.name)}">Settings</button></td></tr>
-     <tr class="set" data-m="${esc(x.name)}" hidden><td colspan="5">${setForm(x)}</td></tr>`
-  ).join("") || '<tr><td colspan="5" class="empty">None yet: get one in Discover, or with <code>janas-get</code>.</td></tr>';
-  for (const b of document.querySelectorAll("button.load"))
-    b.onclick = () => loadModel(b.dataset.m, b);
-  for (const b of document.querySelectorAll("button.opts"))
-    b.onclick = () => { const t = document.querySelector(`tr.set[data-m="${CSS.escape(b.dataset.m)}"]`); t.hidden = !t.hidden; };
-  for (const f of document.querySelectorAll("tr.set form"))
-    f.onchange = () => saveSettings(f);
-}
-
-/* each model's settings, kept by Brebus, used when it is loaded */
-let settings = {};
-function setForm(x) {
-  const v = settings[x.name] || {};
-  return `<form class="setf" data-m="${esc(x.name)}" onsubmit="return false">
-    <label>Context <input name="context" type="number" min="512" step="512" placeholder="the server's choice" value="${v.context || ""}"></label>
-    <label>Reasoning <select name="think">
-      <option value="">the model's</option><option value="on"${v.think === true ? " selected" : ""}>on</option>
-      <option value="off"${v.think === false ? " selected" : ""}>off</option></select></label>
-    <label>Conversations at once <input name="parallel" type="number" min="1" max="8" placeholder="from the memory" value="${v.parallel || ""}"></label>
-    <span class="note">used at the next Load</span></form>`;
-}
-async function saveSettings(f) {
-  const v = {};
-  const c = parseInt(f.context.value, 10), p = parseInt(f.parallel.value, 10);
-  if (c >= 512) v.context = c;
-  if (p >= 1 && p <= 8) v.parallel = p;
-  if (f.think.value) v.think = f.think.value === "on";
-  settings[f.dataset.m] = v;
-  await fetch("/brebus/settings", {method: "POST", body: JSON.stringify(settings)});
-}
-
-/* a file of Hugging Face: hf:owner/repo/file, or its page's address
-   (huggingface.co/owner/repo/blob/main/file, or resolve/) */
-function hfSpec(t) {
-  t = t.trim();
-  const m = t.match(/^https?:\/\/(?:www\.)?huggingface\.co\/([\w.-]+)\/([\w.-]+)\/(?:blob|resolve)\/[\w.-]+\/([^?#]+)/);
-  if (m) return `hf:${m[1]}/${m[2]}/${decodeURIComponent(m[3])}`;
-  return t.startsWith("hf:") ? t : "";
-}
-$("#hfget").onsubmit = () => {
-  const spec = hfSpec($("#hfget").spec.value);
-  if (!/^hf:[\w.-]+\/[\w.-]+\/[\w.\/-]+\.(gguf|jns)$/.test(spec)) {
-    say("A GGUF or JNS file of Hugging Face: its address, or hf:owner/repo/file.gguf");
-    return false;
-  }
-  getModel(spec);
-  return false;
-};
-
-/* Hugging Face searched by words, through Brebus */
-const num = (n) => n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(0) + "k" : String(n);
-$("#hfsearch").onsubmit = async () => {
-  const q = $("#hfsearch").q.value.trim();
-  if (!q) return false;
-  $("#hfres").innerHTML = '<div class="note">Searching…</div>';
-  const j = await ask("hf/search?q=" + encodeURIComponent(q));
-  if (j.error) { $("#hfres").innerHTML = `<div class="note">${esc(j.error)}</div>`; return false; }
-  $("#hfres").innerHTML = j.models.map((m) =>
-    `<button class="hfm" data-r="${esc(m.id)}"><span>${esc(m.id)}</span><small>${num(m.downloads)} downloads · ${num(m.likes)} likes</small></button>
-     <div class="hffiles" data-r="${esc(m.id)}" hidden></div>`).join("") || '<div class="note">Nothing found with GGUF files.</div>';
-  for (const b of document.querySelectorAll("#hfres .hfm")) b.onclick = () => hfFiles(b.dataset.r);
-  return false;
-};
-async function hfFiles(repo) {
-  const box = document.querySelector(`.hffiles[data-r="${CSS.escape(repo)}"]`);
-  if (!box.hidden) { box.hidden = true; return; }
-  box.hidden = false;
-  box.innerHTML = '<div class="note hff">Reading…</div>';
-  const j = await ask("hf/files?repo=" + encodeURIComponent(repo));
-  if (j.error) { box.innerHTML = `<div class="note hff">${esc(j.error)}</div>`; return; }
-  const mem = modelInfo.__mem || 0;
-  box.innerHTML = j.files.map((f) => {
-    const why = f.split ? "split in parts: not taken yet" : f.mmproj ? "a vision encoder, not a model" : "";
-    return `<div class="hff"><span>${esc(f.file)} <small>${gib(f.bytes)}</small></span>
-      ${why ? `<small>${why}</small>` : `<button class="act quiet get" data-s="hf:${esc(repo)}/${esc(f.file)}">Get</button>`}</div>`;
-  }).join("") || '<div class="note hff">No GGUF or JNS file.</div>';
-  for (const b of box.querySelectorAll("button.get")) b.onclick = () => getModel(b.dataset.s);
-}
-
-/* downloads, by janas-get: one at a time, followed every second */
-let getting = false;
-async function getModel(name) {
-  const r = await fetch("/brebus/get/start", {method: "POST", body: JSON.stringify({model: name})});
-  const j = await r.json();
-  if (!r.ok) { say(j.error || "it did not start"); return; }
-  getStatus();
-}
-async function getStatus() {
-  const g = await ask("get");
-  const box = $("#dl");
-  if (!g.model) { box.hidden = true; return; }
-  box.hidden = false;
-  if (g.running) {
-    const bar = g.total_gb ? `${g.done_gb.toFixed(2)} of ${g.total_gb.toFixed(2)} GB (${g.percent}%), ${g.mb_s} MB/s` : "";
-    const step = g.step.startsWith(g.model + ": ") ? g.step.slice(g.model.length + 2) : g.step;
-    box.innerHTML = `<b>${esc(g.model)}</b>: ${esc(step || "starting")}<br>
-      <progress max="100" value="${g.percent}" style="width:100%"></progress><br>
-      <span class="mono">${esc(bar)}</span> <button class="act quiet" id="dlstop">Stop</button>`;
-    $("#dlstop").onclick = async () => { await fetch("/brebus/get/stop", {method: "POST", body: "{}"}); getStatus(); };
-    for (const b of document.querySelectorAll("button.get")) b.disabled = true;
-    getting = true;
-    setTimeout(() => getStatus().catch(() => {}), 1000);
-    return;
-  }
-  box.innerHTML = g.code === 0 ? `<b>${esc(g.model)}</b> is ready: load it in My models.`
-    : g.code === -2 ? `<b>${esc(g.model)}</b>: stopped. Get it again to go on from where it was.`
-    : `<b>${esc(g.model)}</b> did not download: ${esc(g.said || "janas-get ended with " + g.code)}`;
-  if (getting) { getting = false; await mine(); await status(); }
-}
-let server = {running: false};
-async function status() {
-  server = await ask("server");
-  $("#loaded").innerHTML = server.running
-    ? `Model: <b>${esc(server.model)}</b> <button class="act quiet" id="unload">Unload</button>`
-    : "No model loaded: choose one in My models.";
-  if (server.running) $("#unload").onclick = unload;
-  const base = (u) => u.replace(/\/v1$/, "");
-  $("#srv").innerHTML = server.running
-    ? `<dt>Model</dt><dd>${esc(server.model)}</dd>
-       <dt>On this computer</dt><dd><code>${esc(server.url)}</code> (OpenAI), <code>${esc(base(server.url))}</code> (Ollama, Anthropic)</dd>
-       ${server.lan_url ? `<dt>On the local network</dt><dd><code>${esc(server.lan_url)}</code>, <code>${esc(base(server.lan_url))}</code></dd>` : ""}
-       <dt>Key</dt><dd>${server.api_key ? "<code>" + esc(server.api_key) + "</code>" : "none"}</dd>
-       <dt>Engine monitor</dt><dd><a href="/monitor" target="_blank" rel="noopener">open it</a>: the reply being written, the engine's memory and devices</dd>`
-    : `<dt>State</dt><dd>off${server.error ? " - " + esc(server.error) : ""}</dd>
-       <dt>To start it</dt><dd>load a model in My models</dd>`;
-  for (const b of document.querySelectorAll("button.load"))
-    b.textContent = server.running && b.dataset.m === server.model ? "Loaded" : "Load";
-}
-/* the server's own settings, under "_server" with the models' ones */
-function srvForm() {
-  const f = $("#srvset"), v = settings._server || {};
-  f.lan.checked = !!v.lan;
-  f.api_key.value = v.api_key || "";
-  f.origins.value = (v.origins || []).join("\n");
-  f.ttl.value = v.ttl || "";
-}
-async function srvSave() {
-  const f = $("#srvset");
-  const origins = f.origins.value.split(/\s+/).filter((x) => /^https?:\/\/[^\s]+$/.test(x));
-  const key = f.api_key.value.trim();
-  if (key && !/^[\x21-\x7e]{8,199}$/.test(key)) { say("A key is 8 or more letters, digits or signs, no spaces."); return; }
-  if (f.lan.checked && !key && !await yes("Without a key anyone on this network can use the model.", "No key", "Go on")) return;
-  settings._server = {lan: f.lan.checked, api_key: key, origins, ttl: +f.ttl.value || 0};
-  await fetch("/brebus/settings", {method: "POST", body: JSON.stringify(settings)});
-  if (server.running && await yes("Saved. Start the model's server again now, to use them?", "Settings", "Start again")) {
-    const b = document.querySelector(`button.load[data-m="${CSS.escape(server.model)}"]`);
-    if (b) await loadModel(server.model, b);
-  }
-  $("#srvnote").textContent = server.running ? "" : "Saved: used at the next Load.";
-}
-$("#srvsave").onclick = srvSave;
-$("#genkey").onclick = () => {
-  const a = new Uint8Array(24); crypto.getRandomValues(a);
-  $("#srvset").api_key.value = "jns-" + Array.from(a, (x) => x.toString(16).padStart(2, "0")).join("");
-};
-
-async function loadModel(name, btn) {
-  btn.disabled = true; btn.textContent = "Loading…";
-  const r = await fetch("/brebus/server/start", {method: "POST",
-    body: JSON.stringify({model: name, ...(settings[name] || {})})});
-  const j = await r.json();
-  btn.disabled = false;
-  if (!r.ok) say(j.error || "it did not start");
-  await status();
-}
-async function unload() {
-  await fetch("/brebus/server/stop", {method: "POST", body: "{}"});
-  await status();
-}
-
-/* conversations, a file each in Brebus's data folder */
-let convs = [], cur = null;
-const newId = () => Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
-async function saveConv(c) {
-  c.updated = Date.now();
-  await fetch("/brebus/chats/" + c.id, {method: "POST", body: JSON.stringify(c)});
-}
-async function readConvs() {
-  /* those the first Brebus kept in the browser, moved once */
-  let old = [];
-  try { old = JSON.parse(localStorage.getItem("brebus.convs") || "[]"); } catch (e) {}
-  if (old.length) {
-    for (const c of old) {
-      c.id = newId(); c.updated = Date.now();
-      await saveConv(c);
-    }
-    try { localStorage.removeItem("brebus.convs"); } catch (e) {}
-  }
-  convs = (await ask("chats")).chats;
-}
-async function openConv(id) {
-  const r = await fetch("/brebus/chats/" + id);
-  cur = r.ok ? await r.json() : null;
-  listConvs(); drawLog();
-}
-/* the chats of every recent workspace, searched as the user types */
-let searchTimer = null;
-async function searchChats() {
-  const q = $("#csearch").value.trim();
-  const box = $("#convs");
-  box.querySelectorAll(".hit, .hitnote").forEach((x) => x.remove());
-  if (!q) { listConvs(); return; }
-  const j = await ask("chats/search?q=" + encodeURIComponent(q));
-  box.querySelectorAll(".c").forEach((x) => x.remove());
-  if (!j.chats.length) {
-    const n = document.createElement("div"); n.className = "hitnote note"; n.textContent = "Nothing found.";
-    box.appendChild(n); return;
-  }
-  for (const h of j.chats) {
-    const d = document.createElement("div");
-    d.className = "hit";
-    d.innerHTML = `${esc(h.title || "New chat")}<small>📁 ${esc(h.workspace_name)}${h.snippet ? " · " + esc(h.snippet) : ""}</small>`;
-    d.title = h.workspace;
-    d.onclick = async () => {
-      show("chat");
-      if (h.workspace !== ws.path) await wsOpen(h.workspace, false);
-      $("#csearch").value = ""; searchChats();
-      await openConv(h.id);
-    };
-    box.appendChild(d);
-  }
-  if (j.more) {
-    const n = document.createElement("div"); n.className = "hitnote note";
-    n.textContent = `and ${j.more} more: say more words`; box.appendChild(n);
-  }
-}
-$("#csearch").addEventListener("input", () => {
-  clearTimeout(searchTimer); searchTimer = setTimeout(() => searchChats().catch(() => {}), 250);
-});
-let foldClosed = {};
-try { foldClosed = JSON.parse(localStorage.getItem("brebus.folds") || "{}"); } catch (e) {}
-function listConvs() {
-  const box = $("#convs");
-  box.querySelectorAll(".c, .hit, .hitnote, .fold").forEach((x) => x.remove());
-  /* the chats without a folder first, then each folder's, by its name */
-  const folders = [...new Set(convs.map((c) => c.folder || ""))].sort();
-  const order = folders.flatMap((f) => convs.filter((c) => (c.folder || "") === f));
-  let at = null;
-  for (const c of order) {
-    const f = c.folder || "";
-    if (f !== at) {
-      at = f;
-      if (f) {
-        const h = document.createElement("div");
-        h.className = "fold";
-        h.textContent = (foldClosed[f] ? "▸ " : "▾ ") + f;
-        h.onclick = () => { foldClosed[f] = !foldClosed[f];
-          try { localStorage.setItem("brebus.folds", JSON.stringify(foldClosed)); } catch (e) {}
-          listConvs(); };
-        box.appendChild(h);
-      }
-    }
-    if (f && foldClosed[f] && !(cur && c.id === cur.id)) continue;
-    const d = document.createElement("div");
-    d.className = "c" + (cur && c.id === cur.id ? " on" : "");
-    d.textContent = c.title || "New chat";
-    d.title = d.textContent + (c.model ? " · " + c.model : "");
-    d.onclick = () => { show("chat"); openConv(c.id); };
-    box.appendChild(d);
-  }
-  $("#bar .tools").hidden = !cur;
-}
-function newConv() {
-  cur = {id: newId(), title: "", model: "", system: "", messages: [], updated: Date.now()};
-  convs.unshift({id: cur.id, title: "", model: "", updated: cur.updated, messages: 0});
-  listConvs(); drawLog();
-}
-async function renameConv() {
-  const t = await input("A title for this chat", cur.title || "");
-  if (t === null) return;
-  cur.title = t.trim();
-  await saveConv(cur);
-  const e = convs.find((c) => c.id === cur.id); if (e) e.title = cur.title;
-  listConvs();
-}
-async function deleteConv() {
-  if (!await yes(`"${cur.title || "New chat"}" and its messages are deleted from the workspace.`, "Delete this chat?", "Delete")) return;
-  await fetch("/brebus/chats/" + cur.id, {method: "DELETE"});
-  convs = convs.filter((c) => c.id !== cur.id);
-  cur = null;
-  if (convs.length) await openConv(convs[0].id); else { listConvs(); drawLog(); }
-}
-async function exportConv() {
-  const how = await dialog({title: "Export this chat", text: "As a Markdown file in the workspace's exports/, or as a PDF through the system's print dialog (Print to file).",
-    buttons: [{label: "Markdown", value: "md", primary: true}, {label: "PDF", value: "pdf"}, {label: "Cancel", value: "no"}]});
-  if (how.button === "no") return;
-  if (how.button === "pdf") { document.title = cur.title || "Chat"; window.print(); document.title = "Brebus"; return; }
-  const md = [`# ${cur.title || "Chat"}`, ""];
-  for (const m of cur.messages)
-    md.push(`## ${m.role === "user" ? "You" : "Assistant"}`, "", m.content || "", "");
-  /* saved by Brebus in the downloads folder: a window has no downloads */
-  const r = await fetch("/brebus/export", {method: "POST",
-    body: JSON.stringify({name: cur.title || "chat", text: md.join("\n")})});
-  const j = await r.json();
-  say(r.ok ? j.path : j.error || "not saved", r.ok ? "Exported" : "Not exported");
-}
-
-function bubble(m) {
-  const d = document.createElement("div");
-  d.className = "msg " + m.role;
-  if (m.think) {
-    const t = document.createElement("details");
-    t.innerHTML = "<summary>Reasoning</summary>";
-    t.append(document.createTextNode(m.think));
-    d.append(t);
-  }
-  if (m.role === "tool") {
-    const t = document.createElement("details");
-    t.innerHTML = `<summary>${esc(m.name)}${m.denied ? " (not allowed)" : ""}</summary>`;
-    const pre = document.createElement("pre");
-    pre.textContent = (m.args ? "arguments: " + m.args + "\n\n" : "") + (m.content || "");
-    t.append(pre); d.append(t);
-    return d;
-  }
-  const body = document.createElement("div");
-  if (m.role === "assistant") {
-    const parts = m.content ? artParts(m.content) : [];
-    for (const p of parts) {
-      if (p.text !== undefined) {
-        if (!p.text.trim()) continue;
-        const t = document.createElement("div"); t.className = "text"; render(t, p.text); body.append(t);
-        if (!busy || m !== cur.messages.at(-1)) decorate(t);
-      } else {
-        const c = document.createElement("button");
-        c.className = "artcard";
-        c.innerHTML = `<span>📄</span><span><b>${esc(p.art.title)}</b><br><small>${esc(p.art.type)}${p.art.open ? " · being written…" : " · open it beside the chat"}</small></span>`;
-        if (!p.art.open) c.onclick = () => artShow(p.art.title);
-        body.append(c);
-      }
-    }
-    if (!parts.length && m.tool_calls) body.textContent = "…";
-  } else body.textContent = m.content || "";
-  d.append(body);
-  if (m.attached && m.attached.length) {
-    const a = document.createElement("div");
-    a.className = "att";
-    a.textContent = "📎 " + m.attached.map((x) => x.name).join(", ");
-    d.append(a);
-  }
-  if (m.found) {
-    const f = document.createElement("details");
-    f.className = "att";
-    f.innerHTML = "<summary>Passages found in the documents</summary>";
-    const pre = document.createElement("pre");
-    pre.style.whiteSpace = "pre-wrap"; pre.textContent = m.found;
-    f.append(pre); d.append(f);
-  }
-  if (m.speed) {
-    const s = document.createElement("div");
-    s.className = "speed"; s.textContent = m.speed; d.append(s);
-  }
-  return d;
-}
-function drawLog() {
-  const log = $("#log");
-  log.innerHTML = "";
-  const ms = cur ? cur.messages : [];
-  ms.forEach((m, k) => {
-    const d = bubble(m);
-    if (m.role === "user" && !busy) {
-      const e = document.createElement("button");
-      e.className = "msgact"; e.textContent = "Edit"; e.title = "Change this message and go on from it";
-      e.onclick = () => editMessage(k);
-      d.append(e);
-    }
-    if (m.role === "assistant" && k === ms.length - 1 && !busy) {
-      const bar = document.createElement("div");
-      bar.className = "msgbar";
-      if (m.variants && m.variants.length > 1) {
-        const prev = document.createElement("button"), next = document.createElement("button");
-        prev.className = next.className = "msgact";
-        prev.textContent = "‹"; next.textContent = "›";
-        prev.disabled = m.vi === 0; next.disabled = m.vi === m.variants.length - 1;
-        prev.onclick = () => showVariant(m, m.vi - 1);
-        next.onclick = () => showVariant(m, m.vi + 1);
-        const n = document.createElement("span");
-        n.textContent = `${m.vi + 1}/${m.variants.length}`;
-        bar.append(prev, n, next);
-      }
-      const r = document.createElement("button");
-      r.className = "msgact"; r.textContent = "Regenerate"; r.title = "Write this answer again; the earlier ones are kept";
-      r.onclick = regenerate;
-      bar.append(r);
-      d.append(bar);
-    }
-    log.append(d);
-  });
-  log.scrollTop = log.scrollHeight;
-}
-/* one button inside the field: an arrow to send, a square to stop while
-   the reply comes (Esc stops it too) */
-const ICON_SEND = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>';
-const ICON_STOP = '<svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></svg>';
-let busy = null; /* the AbortController of the reply coming */
-function sendButton() {
-  const b = $("#send");
-  b.innerHTML = busy ? ICON_STOP : ICON_SEND;
-  b.title = busy ? "Stop (Esc)" : "Send (Enter)";
-  b.setAttribute("aria-label", busy ? "Stop" : "Send");
-  b.disabled = !busy && !$("#ask").value.trim();
-}
-function growAsk() {
-  const t = $("#ask");
-  t.style.height = "auto";
-  t.style.height = t.scrollHeight + 2 + "px";
-  sendButton();
-}
-function stopReply() { if (busy) busy.abort(); }
-/* the tools of the workspace (janas-docs, janas-files), and those that
-   only read */
-let tools = {tools: [], read_only: []};
-async function readTools() {
-  try { tools = await ask("tools"); } catch (e) { tools = {tools: [], read_only: []}; }
-  const has = (n) => tools.tools.some((t) => t.function && t.function.name === n);
-  $("#usedocs").disabled = !has("docs_search");
-  $("#usetools").disabled = !tools.tools.length;
-  $("#usecode").disabled = !has("python");
-  $("#usecode").parentElement.hidden = !has("python");
-  /* the embedding model of janas-docs: words only without one */
-  const em = tools.embedding_models || [];
-  $("#wsemb").hidden = !ws.path;
-  $("#embnote").textContent = em.length
-    ? "The documents are searched by their words, and by their meaning with an embedding model, which finds what is said in other words. It indexes them again when changed."
-    : "The documents are searched by their words alone: get qwen3-embedding-0.6b in Discover to search them by their meaning too.";
-  $("#embsel").hidden = !em.length;
-  $("#embsel").innerHTML = em.map((n) => `<option value="${esc(n)}"${n === tools.embedding ? " selected" : ""}>${esc(n)}</option>`).join("") +
-    `<option value="none"${tools.embedding ? "" : " selected"}>words only</option>`;
-}
-const pref = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : v === "1"; } catch (e) { return d; } };
-$("#usedocs").checked = pref("brebus.usedocs", true);
-$("#usetools").checked = pref("brebus.usetools", true);
-$("#usecode").checked = pref("brebus.usecode", false);
-$("#useart").checked = pref("brebus.useart", true);
-for (const id of ["usedocs", "usetools", "usecode", "useart"])
-  $("#" + id).onchange = () => { try { localStorage.setItem("brebus." + id, $("#" + id).checked ? "1" : "0"); } catch (e) {} };
-
-async function callTool(name, args) {
-  const r = await fetch("/brebus/tools/call", {method: "POST",
-    body: JSON.stringify({name, arguments: args})});
-  const j = await r.json();
-  return r.ok ? j : {result: j.error || "the tool did not answer", is_error: true};
-}
-
-/* attachments waiting for the next message */
-let pending = [];
-function drawChips() {
-  $("#chips").innerHTML = pending.map((a, i) =>
-    `<span>📎 ${esc(a.name)} <button data-i="${i}" title="Remove">×</button></span>`).join("");
-  for (const b of document.querySelectorAll("#chips button"))
-    b.onclick = () => { pending.splice(+b.dataset.i, 1); drawChips(); };
-}
-const kb = (n) => n < 1e6 ? (n / 1024).toFixed(0) + " KB" : (n / 1048576).toFixed(1) + " MB";
-async function attach() {
-  if (!ws.path) { wsShow(true); return; }
-  let src;
-  if (ws.window) {
-    const d = await dialog({title: "Attach", text: "A file of this computer, by its full path, or a web address (downloaded into the workspace's sources/).",
-      input: "", buttons: [{label: "OK", value: "ok", primary: true}, {label: "Browse…", value: "browse"}, {label: "Cancel", value: "no"}]});
-    if (d.button === "no") return;
-    src = d.button === "browse" ? await pick(true, "Attach a file") : d.value;
-  } else
-    src = await input("Attach", "", "A file of this computer, by its full path, or a web address (downloaded into the workspace's sources/).");
-  src = (src || "").trim();
-  if (!src) return;
-  let mode = "copy";
-  if (!/^https?:\/\//.test(src)) {
-    const i = await (await fetch("/brebus/attach", {method: "POST",
-      body: JSON.stringify({source: src, mode: "info"})})).json();
-    if (i.error) { say(i.error); return; }
-    if (!i.inside) {
-      /* copied into the workspace, or read where it is: copying offered up
-         to 100 MB, the choice remembered for files of that size if asked */
-      const big = i.bytes > 100 * 1048576, key = "brebus.attach." + (big ? "big" : "small");
-      let kept = null;
-      try { kept = localStorage.getItem(key); } catch (e) {}
-      if (kept === "copy" || kept === "place") mode = kept;
-      else {
-        const copy = {label: "Copy into the workspace", value: "copy", primary: !big};
-        const place = {label: "Read it where it is", value: "place", primary: big};
-        const d = await dialog({title: "Attach " + src.split("/").pop(),
-          text: `${kb(i.bytes)}. A copy keeps the workspace whole and is read again as it is now; read where it is, it is added to the folders read only and follows its changes.`,
-          buttons: big ? [place, copy, {label: "Cancel", value: "no"}] : [copy, place, {label: "Cancel", value: "no"}],
-          remember: `Do the same for files ${big ? "over" : "up to"} 100 MB`});
-        if (d.button === "no") return;
-        mode = d.button;
-        if (d.remember) try { localStorage.setItem(key, mode); } catch (e) {}
-      }
-    }
-  }
-  $("#attach").textContent = "…";
-  const r = await fetch("/brebus/attach", {method: "POST", body: JSON.stringify({source: src, mode})});
-  const j = await r.json();
-  $("#attach").textContent = "+";
-  if (!r.ok) { say(j.error || "not attached"); return; }
-  pending.push(j); drawChips();
-  if (mode === "place") readFolders();
-}
-$("#attach").onclick = () => attach().catch((e) => say(e.message));
-
-const WHOLE = 24000; /* characters of a document put whole into a message */
-/* what the model reads of a user's message: its text, the documents
-   attached, the passages found */
-function userContent(m) {
-  let c = m.content;
-  const sees = modelInfo[server.model]?.vision;
-  for (const a of m.attached || []) {
-    if (a.media === "image" && !sees)
-      c += `\n\n[A picture was attached, ${a.name}; this model does not see pictures.]`;
-    else if (a.media === "image")
-      continue; /* sent as the picture itself (apiMessages) */
-    else if (a.media === "audio" && a.transcript !== undefined)
-      c += `\n\n<transcript of="${a.name}">\n${a.transcript}\n</transcript>`;
-    else if (a.media === "audio")
-      c += `\n\n[A recording was attached, ${a.name}, which could not be transcribed: ${a.unread || "no speech model"}.]`;
-    else if (a.text !== undefined && a.text.length <= WHOLE && !a.cut)
-      c += `\n\n<document name="${a.name}" path="${a.path}">\n${a.text}\n</document>`;
-    else if (a.text !== undefined)
-      c += `\n\n[Attached: ${a.path}, ${kb(a.bytes)}, too long to be put here whole: search it with docs_search, or read it with docs_read.]`;
-    else
-      c += `\n\n[Attached: ${a.path}, which could not be read: ${a.unread}.]`;
-  }
-  if (m.found)
-    c += "\n\n[Passages found in the user's documents for this question, each with its document. Use them if they answer, and name the documents you use; say so if they do not answer.]\n" + m.found;
-  return c;
-}
-/* ---- artifacts: documents the model makes, beside the chat ---- */
-const ART_RULE = "When you write a self-contained document the user may want to see or keep - a web page, an interactive app, a chart, a diagram, an SVG drawing, a long Markdown document, a program - put it whole between <artifact type=\"html\" title=\"A short title\"> and </artifact>. Types: html (a whole page); react (one React component exported as default, needing no props, styled with Tailwind classes; it may import react, recharts, lucide-react, d3, lodash, mathjs, papaparse, xlsx, chart.js, three, tone, and shadcn/ui from @/components/ui/<name>); mermaid (a diagram); svg; markdown (math between $$ and $$); code (add lang=\"python\" or the language). There is no network: an html page may load from cdn.jsdelivr.net or cdnjs only chart.js, d3, three (r128), plotly, mathjs, lodash, papaparse, xlsx, tone, katex, mermaid, react, react-dom, @babel/standalone and tailwind; images only as data: URLs. In html and react, await window.claude.complete(prompt) asks the model and returns its answer as a plain string; await window.storage.set(key, value), get(key) (gives {key, value} or null), delete(key) and list(prefix) keep data between visits; await window.fs.readFile(name, {encoding: \"utf8\"}) reads a file the user attached. To change one you made, write it again whole with the same title. Outside the artifact, say in a sentence what it is. Short answers and short code stay in the text.";
-const attrsOf = (t) => {
-  const a = {};
-  for (const m of t.matchAll(/(\w+)\s*=\s*"([^"]*)"/g)) a[m[1]] = m[2];
-  return a;
-};
-/* the parts of a reply: text, and artifacts (closed, or open while it
-   is being written) - <artifact ...>...</artifact>, or a whole HTML or
-   SVG document in a fenced block, from a model that does not write tags */
-function artParts(text) {
-  const parts = [];
-  const re = /<artifact\b([^>]*)>([\s\S]*?)(<\/artifact>|$)|```(html|svg)[^\n]*\n(\s*(?:<!doctype html|<html|<svg)[\s\S]*?)(```|$)/gi;
-  let at = 0, m;
-  while ((m = re.exec(text))) {
-    if (m.index > at) parts.push({text: text.slice(at, m.index)});
-    if (m[1] !== undefined || m[2] !== undefined) {
-      const a = attrsOf(m[1] || "");
-      parts.push({art: {title: a.title || "Untitled", type: (a.type || "html").toLowerCase(),
-                        lang: a.lang || "",
-                        /* a model may fence what it puts in the tag too */
-                        content: m[2].trim().replace(/^```[\w-]*\n([\s\S]*?)\n?```$/, "$1"),
-                        open: !m[3]}});
-    } else {
-      const svg = m[4].toLowerCase() === "svg";
-      const t = (m[5].match(/<title>([^<]{1,80})<\/title>/i) || [])[1];
-      parts.push({art: {title: t || (svg ? "Drawing" : "Page"), type: svg ? "svg" : "html",
-                        lang: "", content: m[5].trim(), open: !m[6]}});
-    }
-    at = re.lastIndex;
-  }
-  if (at < text.length) parts.push({text: text.slice(at)});
-  return parts;
-}
-/* every artifact of the conversation, by its title: its versions */
-function artVersions(title) {
-  const out = [];
-  for (const m of cur ? cur.messages : [])
-    if (m.role === "assistant" && m.content)
-      for (const p of artParts(m.content))
-        if (p.art && !p.art.open && p.art.title === title) {
-          const saved = (m.saved || []).find((x) => x.title === title && x.content === p.art.content);
-          out.push({...p.art, path: saved ? saved.path : ""});
-        }
-  return out;
-}
-let artShown = null;
-function artShow(title, version) {
-  const vs = artVersions(title);
-  if (!vs.length) return;
-  const k = version === undefined ? vs.length - 1 : version;
-  const a = vs[k];
-  artShown = {title, k};
-  if ($("#artpane").hidden && innerWidth < 1500 && !$("#side").classList.contains("mini")) {
-    navMini(true, false); navAuto = true;
-  }
-  $("#artpane").hidden = false;
-  $("#arttitle").textContent = title;
-  $("#artver").innerHTML = vs.map((v, i) => `<option value="${i}"${i === k ? " selected" : ""}>version ${i + 1}</option>`).join("");
-  $("#artver").hidden = vs.length < 2;
-  const body = $("#artbody");
-  body.innerHTML = "";
-  $("#arterr").hidden = true;
-  artFrame = null;
-  const live = ["html", "svg", "react", "mermaid"].includes(a.type);
-  $("#artview").hidden = a.type === "code";
-  for (const b of $("#artview").children) b.classList.toggle("on", b.dataset.v === artMode);
-  if (live && artMode === "preview") {
-    /* in Brebus's frame (frame.html): no origin of its own, so no access to
-       Brebus or to this page; no network, the libraries from Brebus */
-    const f = document.createElement("iframe");
-    f.setAttribute("sandbox", "allow-scripts allow-forms allow-modals allow-downloads");
-    f.src = "/brebus/frame";
-    artFrame = {win: null, title, art: a, el: f};
-    body.append(f);
-    artFrame.win = f.contentWindow;
-  } else if (a.type === "markdown" && artMode === "preview") {
-    const d = document.createElement("div"); d.className = "text"; render(d, a.content); body.append(d);
-    decorate(d);
-  } else {
-    const p = document.createElement("pre"); p.textContent = a.content; body.append(p);
-    p.dataset.lang = a.type === "code" ? a.lang : a.type === "react" ? "jsx" : a.type === "svg" ? "xml" : a.type === "mermaid" ? "" : a.type;
-    highlight(p);
-  }
-  $("#artpath").textContent = a.path ? a.path : "";
-  $("#artopen").hidden = !a.path;
-}
-$("#artver").onchange = () => artShow(artShown.title, +$("#artver").value);
-let artMode = "preview", artFrame = null;
-for (const b of $("#artview").children)
-  b.onclick = () => { artMode = b.dataset.v; if (artShown) artShow(artShown.title, artShown.k); };
-$("#artfull").onclick = () => $("#artpane").classList.toggle("full");
-$("#artdown").onclick = () => {
-  const a = artVersions(artShown.title)[artShown.k];
-  const ext = {html: "html", svg: "svg", markdown: "md", react: "jsx", mermaid: "mmd"}[a.type] ||
-    ({python: "py", javascript: "js", typescript: "ts", bash: "sh", rust: "rs"}[a.lang] || a.lang || "txt");
-  const u = URL.createObjectURL(new Blob([a.content], {type: "text/plain"}));
-  const l = document.createElement("a");
-  l.href = u; l.download = a.title.replace(/[\\/:*?"<>|]/g, "_") + "." + ext;
-  document.body.append(l); l.click(); l.remove();
-  setTimeout(() => URL.revokeObjectURL(u), 1000);
-};
-$("#arterrx").onclick = () => { $("#arterr").hidden = true; };
-$("#artfix").onclick = () => {
-  const t = $("#arterr pre").textContent;
-  $("#arterr").hidden = true;
-  $("#artpane").classList.remove("full");
-  const ask = $("#ask");
-  ask.value = `The artifact "${artShown.title}" gives this error:\n\n${t}\n\nFix it, and write it again whole with the same title.`;
-  ask.dispatchEvent(new Event("input"));
-  $("#send").click();
-};
-/* what an artifact's frame asks: only the frame shown, only these */
-window.addEventListener("message", async (e) => {
-  const f = artFrame;
-  if (!f || e.source !== f.el.contentWindow || !e.data) return;
-  const d = e.data;
-  if (d.janasReady) {
-    const dark = matchMedia("(prefers-color-scheme: dark)").matches;
-    f.el.contentWindow.postMessage({janasArtifact: {type: f.art.type, content: f.art.content, title: f.art.title, dark}}, "*");
-  } else if (d.janasError) {
-    /* each error once, the first ones kept */
-    const pre = $("#arterr pre");
-    const was = $("#arterr").hidden ? "" : pre.textContent;
-    if (!was.includes(d.janasError) && was.length < 6000)
-      pre.textContent = was ? was + "\n\n" + d.janasError : d.janasError;
-    $("#arterr").hidden = false;
-  } else if (d.janasCall) {
-    const c = d.janasCall;
-    const answer = (ok, value, error) => f.el.contentWindow &&
-      f.el.contentWindow.postMessage({janasReply: {id: c.id, ok, value, error}}, "*");
-    try { answer(true, await artCall(f, c)); }
-    catch (err) { answer(false, undefined, String(err.message || err)); }
-  }
-});
-let artAsking = Promise.resolve();
-async function artCall(f, c) {
-  if (c.op === "complete") {
-    /* one question at a time, as Claude's: the model has one reply to write */
-    const run = async () => {
-      if (!await ensureModel()) throw new Error("no model is loaded");
-      const r = await fetch("/v1/chat/completions", {method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({model: server.model, stream: false, max_tokens: 4096,
-                              messages: [{role: "user", content: String(c.prompt).slice(0, 200000)}]})});
-      const j = await r.json();
-      if (!r.ok) throw new Error((j.error && j.error.message) || "the model answered " + r.status);
-      return (j.choices[0].message.content || "").replace(/<think>[\s\S]*?<\/think>\s*/g, "");
-    };
-    const p = artAsking.then(run, run);
-    artAsking = p.catch(() => {});
-    return p;
-  }
-  if (c.op === "storage") {
-    if (!ws.path) throw new Error("no workspace: storage needs one");
-    const r = await fetch("/brebus/artifact-store", {method: "POST",
-      body: JSON.stringify({title: f.title, act: c.act, key: c.key, value: c.value, prefix: c.prefix})});
-    const j = await r.json();
-    if (!r.ok) throw new Error(j.error || "storage failed");
-    return j;
-  }
-  if (c.op === "file") {
-    /* the files attached to this conversation, by name or path */
-    const all = (cur ? cur.messages : []).flatMap((m) => m.attached || []);
-    const a = all.find((x) => x.name === c.name || x.path === c.name || x.path.endsWith("/" + c.name));
-    if (!a) throw new Error(`no file "${c.name}" is attached to this conversation; attached: ${all.map((x) => x.name).join(", ") || "none"}`);
-    const r = await fetch("/brebus/file?path=" + encodeURIComponent(a.path));
-    if (!r.ok) throw new Error("cannot read " + a.name);
-    return new Uint8Array(await r.arrayBuffer());
-  }
-  throw new Error("not a call an artifact can make");
-}
-/* code in colours and formulas, with the libraries Brebus serves (loaded
-   when first needed) */
-const libLoaded = new Map();
-function loadLib(js, css) {
-  const key = js + (css || "");
-  if (!libLoaded.has(key))
-    libLoaded.set(key, new Promise((ok, no) => {
-      if (css) for (const c of [].concat(css)) {
-        const l = document.createElement("link");
-        l.rel = "stylesheet"; l.href = "/brebus/lib/" + c; document.head.append(l);
-      }
-      const js1 = [].concat(js);
-      const next = (i) => {
-        if (i >= js1.length) return ok();
-        const s = document.createElement("script");
-        s.src = "/brebus/lib/" + js1[i]; s.onload = () => next(i + 1); s.onerror = () => no(new Error(js1[i]));
-        document.head.append(s);
-      };
-      next(0);
-    }));
-  return libLoaded.get(key);
-}
-async function highlight(pre) {
-  try {
-    await loadLib("@highlightjs/cdn-assets@11.10.0/highlight.min.js",
-      matchMedia("(prefers-color-scheme: dark)").matches ? "@highlightjs/cdn-assets@11.10.0/styles/github-dark.min.css"
-                                                         : "@highlightjs/cdn-assets@11.10.0/styles/github.min.css");
-    const lang = (pre.dataset.lang || "").toLowerCase();
-    const r = lang && hljs.getLanguage(lang) ? hljs.highlight(pre.textContent, {language: lang})
-                                             : hljs.highlightAuto(pre.textContent);
-    pre.innerHTML = r.value;
-    pre.classList.add("hljs");
-  } catch (e) { /* offline the first time: the code as it is */ }
-}
-async function decorate(el) {
-  for (const p of el.querySelectorAll("pre")) if (p.dataset.lang) highlight(p);
-  el.normalize(); /* the renderer writes text in runs: a formula in one piece */
-  if (!/\$\$|\\\(|\\\[/.test(el.textContent)) return;
-  try {
-    await loadLib(["katex@0.16.11/dist/katex.min.js", "katex@0.16.11/dist/contrib/auto-render.min.js"],
-                  "katex@0.16.11/dist/katex.min.css");
-    renderMathInElement(el, {throwOnError: false, ignoredTags: ["pre", "code"],
-      delimiters: [{left: "$$", right: "$$", display: true}, {left: "\\[", right: "\\]", display: true},
-                   {left: "\\(", right: "\\)", display: false}]});
-  } catch (e) {}
-}
-$("#artclose").onclick = () => {
-  $("#artpane").hidden = true; artShown = null;
-  $("#artpane").classList.remove("full");
-  if (navAuto) { navMini(false, false); navAuto = false; }
-};
-try { const w = +localStorage.getItem("brebus.artw"); if (w > 0) $("#artpane").style.width = w + "px"; } catch (e) {}
-$("#artgrip").addEventListener("pointerdown", (e) => {
-  e.preventDefault();
-  document.body.classList.add("drag");
-  const box = $("#chat").getBoundingClientRect();
-  const move = (ev) => {
-    const w = Math.max(320, Math.min(box.right - ev.clientX, box.width - 360));
-    $("#artpane").style.width = w + "px";
-  };
-  const up = () => {
-    document.body.classList.remove("drag");
-    removeEventListener("pointermove", move); removeEventListener("pointerup", up);
-    try { localStorage.setItem("brebus.artw", parseInt($("#artpane").style.width)); } catch (e) {}
-  };
-  addEventListener("pointermove", move); addEventListener("pointerup", up);
-});
-$("#artcopy").onclick = () => {
-  const a = artVersions(artShown.title)[artShown.k];
-  navigator.clipboard?.writeText(a.content).catch(() => {});
-};
-$("#artopen").onclick = () => {
-  const a = artVersions(artShown.title)[artShown.k];
-  /* by the system's own program, as a file: never with Brebus's origin */
-  if (a.path) fetch("/brebus/open", {method: "POST", body: JSON.stringify({path: a.path})});
-};
-/* the artifacts of a reply saved in the workspace, the last one shown */
-async function artSave(reply) {
-  let last = null;
-  for (const p of artParts(reply.content || ""))
-    if (p.art && !p.art.open) {
-      const r = await fetch("/brebus/artifacts", {method: "POST", body: JSON.stringify(p.art)});
-      const j = await r.json();
-      if (r.ok) (reply.saved = reply.saved || []).push({title: p.art.title, content: p.art.content, path: j.path});
-      last = p.art.title;
-    }
-  if (last) artShow(last);
-}
-
-function apiMessages() {
-  const out = [];
-  const sys = [cur.system, $("#useart").checked ? ART_RULE : "",
-               $("#usetools").checked && tools.catalog ? tools.catalog : ""].filter(Boolean).join("\n\n");
-  if (sys) out.push({role: "system", content: sys});
-  for (const m of cur.messages) {
-    if (m.role === "user") {
-      /* pictures as pictures, for a model that sees them */
-      const pics = modelInfo[server.model]?.vision
-        ? (m.attached || []).filter((a) => a.media === "image" && pictures.has(a.path)) : [];
-      out.push({role: "user", content: pics.length
-        ? [{type: "text", text: userContent(m)},
-           ...pics.map((a) => ({type: "image_url", image_url: {url: pictures.get(a.path)}}))]
-        : userContent(m)});
-    }
-    else if (m.role === "assistant") {
-      const a = {role: "assistant", content: m.content || ""};
-      if (m.tool_calls) a.tool_calls = m.tool_calls;
-      out.push(a);
-    } else if (m.role === "tool")
-      out.push({role: "tool", tool_call_id: m.tool_call_id, content: m.content});
-  }
-  return out;
-}
-
-/* one reply of the model, streamed into reply: its tool calls, if any */
-async function streamTurn(reply, withTools) {
-  const t0 = performance.now(); let t1 = 0, tokens = 0, pieces = 0;
-  const calls = [];
-  const body = {model: server.model, stream: true, stream_options: {include_usage: true},
-                messages: apiMessages().slice(0, -1)};
-  const p = cur.params || {};
-  if (p.temperature !== undefined) body.temperature = p.temperature;
-  if (p.top_p !== undefined) body.top_p = p.top_p;
-  if (p.format === "json") body.response_format = {type: "json_object"};
-  else if (p.format === "schema" && p.schema)
-    try { body.response_format = {type: "json_schema", json_schema: {name: "answer", schema: JSON.parse(p.schema)}}; } catch (e) {}
-  if (withTools)
-    body.tools = tools.tools.filter((t) => t.function.name === "python"
-      ? $("#usecode").checked : $("#usetools").checked);
-  const r = await fetch("/v1/chat/completions", {method: "POST", signal: busy.signal,
-    headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
-  if (!r.ok) { reply.content = "(" + r.status + ") " + await r.text(); return []; }
-  const rd = r.body.getReader(), dec = new TextDecoder();
-  let buf = "";
-  try {
-    for (;;) {
-      const {done, value} = await rd.read();
-      if (done) break;
-      buf += dec.decode(value, {stream: true});
-      let i;
-      while ((i = buf.indexOf("\n\n")) >= 0) {
-        const ev2 = buf.slice(0, i); buf = buf.slice(i + 2);
-        for (const line of ev2.split("\n")) {
-          if (!line.startsWith("data:")) continue;
-          const data = line.slice(5).trim();
-          if (data === "[DONE]") continue;
-          try {
-            const j = JSON.parse(data);
-            if (j.usage) tokens = j.usage.completion_tokens || 0;
-            const d = j.choices?.[0]?.delta || {};
-            if (d.reasoning_content) reply.think += d.reasoning_content;
-            if (d.content) reply.content += d.content;
-            for (const tc of d.tool_calls || []) {
-              const k = tc.index ?? calls.length;
-              calls[k] = calls[k] || {id: "", type: "function", function: {name: "", arguments: ""}};
-              if (tc.id) calls[k].id = tc.id;
-              if (tc.function?.name) calls[k].function.name += tc.function.name;
-              if (tc.function?.arguments) calls[k].function.arguments += tc.function.arguments;
-            }
-            if (d.content || d.reasoning_content) { pieces++; if (!t1) t1 = performance.now(); }
-          } catch (e) {}
-        }
-        const last = $("#log").lastElementChild;
-        if (last) last.replaceWith(bubble(reply));
-        $("#log").scrollTop = $("#log").scrollHeight;
-      }
-    }
-  } catch (err) {
-    reply.speed = err.name === "AbortError" ? `stopped after ${pieces} pieces` : "failed: " + err.message;
-    throw err;
-  }
-  const t2 = performance.now();
-  if (tokens > 1 && t1)
-    reply.speed = `${tokens} tokens, ${((tokens - 1) / ((t2 - t1) / 1000)).toFixed(1)} tok/s, first after ${((t1 - t0) / 1000).toFixed(2)} s`;
-  return calls.filter(Boolean);
-}
-
-/* the pictures of the conversation, as data URLs, kept in memory only (the
-   conversation's file keeps their paths) */
-const pictures = new Map();
-async function fileBlob(path) {
-  const r = await fetch("/brebus/file?path=" + encodeURIComponent(path));
-  if (!r.ok) throw new Error("not found: " + path);
-  return r.blob();
-}
-const dataURL = (blob) => new Promise((ok, no) => {
-  const f = new FileReader(); f.onload = () => ok(f.result); f.onerror = no; f.readAsDataURL(blob);
-});
-async function prepareMedia() {
-  for (const m of cur.messages)
-    for (const a of (m.role === "user" && m.attached) || []) {
-      if (a.media === "image" && !pictures.has(a.path))
-        try { pictures.set(a.path, await dataURL(await fileBlob(a.path))); } catch (e) {}
-      if (a.media === "audio" && a.transcript === undefined && !a.unread) {
-        /* transcribed by the model's server (its Whisper) */
-        try {
-          const fd = new FormData();
-          fd.append("file", await fileBlob(a.path), a.name);
-          fd.append("model", "whisper");
-          const r = await fetch("/v1/audio/transcriptions", {method: "POST", body: fd});
-          const j = await r.json();
-          if (r.ok && typeof j.text === "string") a.transcript = j.text.trim();
-          else a.unread = j.error?.message || j.error || "the server did not transcribe it";
-        } catch (e) { a.unread = e.message; }
-      }
-    }
-}
-
-/* a turn of the model for the user's message um, the last of the
-   conversation: its documents searched, the model's replies and its tools'
-   calls, until it answers; the answer it gives last keeps the earlier ones
-   (keep: those of a regeneration) to be paged through */
-/* the model unloaded after a quiet while, loaded again */
-async function ensureModel() {
-  if (server.running) return true;
-  await status();
-  if (server.running) return true;
-  if (!server.last) { say("Load a model first, in My models."); return false; }
-  $("#loaded").textContent = "Loading " + server.last + " again…";
-  const r = await fetch("/brebus/server/start", {method: "POST",
-    body: JSON.stringify({model: server.last, ...(settings[server.last] || {})})});
-  await status();
-  return r.ok && server.running;
-}
-async function runTurn(um, keep) {
-  busy = new AbortController(); sendButton();
-  try {
-    await prepareMedia();
-    /* the workspace's documents searched for the question */
-    if ($("#usedocs").checked && !$("#usedocs").disabled) {
-      const f = await callTool("docs_search", JSON.stringify({query: um.content, max: 6}));
-      if (!f.is_error && f.result && !/^0 passages|^No /.test(f.result))
-        um.found = f.result.slice(0, 11000);
-      drawLog();
-    }
-    /* an answer asked in JSON is a direct one: no tools then */
-    const json = cur.params && cur.params.format;
-    const withTools = !json && ($("#usetools").checked || $("#usecode").checked) && tools.tools.length > 0;
-    for (let round = 0; round < 7; round++) {
-      /* the tools' rounds spent: the last one answers with what it has */
-      const lastRound = round === 6;
-      const reply = {role: "assistant", content: "", think: ""};
-      cur.messages.push(reply); drawLog();
-      const calls = await streamTurn(reply, withTools && !lastRound);
-      if ($("#useart").checked || /<artifact\b/.test(reply.content)) await artSave(reply);
-      if (!calls.length) break;
-      reply.tool_calls = calls;
-      for (const c of calls) {
-        const name = c.function.name, args = c.function.arguments || "{}";
-        const only_reads = tools.read_only.includes(name);
-        let res;
-        let pretty = args, what = "It changes something in the workspace. Its arguments:";
-        try {
-          const a = JSON.parse(args);
-          pretty = name === "python" && typeof a.code === "string" ? a.code : JSON.stringify(a, null, 2);
-          if (name === "python") what = "Python code, run in a sandbox: the workspace (read and write) and its folders read only, no network:";
-        } catch (e) {}
-        if (!only_reads && (await dialog({title: "The model wants to run " + name,
-              html: `${what}<pre class="dargs">${esc(pretty)}</pre>`,
-              buttons: [{label: "Allow", value: "yes", primary: true}, {label: "Don't allow", value: "no"}]})).button !== "yes")
-          res = {result: "The user did not allow this call.", is_error: true, denied: true};
-        else
-          res = await callTool(name, args);
-        cur.messages.push({role: "tool", tool_call_id: c.id, name, args,
-                           content: res.result, denied: !!res.denied});
-        if (res.opened) await readTools(); /* the service's tools, from now */
-        drawLog();
-      }
-    }
-  } catch (err) {
-    if (err.name !== "AbortError") {
-      const last = cur.messages[cur.messages.length - 1];
-      if (last && last.role === "assistant" && !last.speed) last.speed = "failed: " + err.message;
-    }
-  } finally {
-    const last = cur.messages[cur.messages.length - 1];
-    if (keep && keep.length && last && last.role === "assistant") {
-      last.variants = [...keep, variantOf(last)];
-      last.vi = last.variants.length - 1;
-    }
-    busy = null; sendButton();
-    drawLog(); await saveConv(cur);
-    $("#ask").focus();
-  }
-}
-
-async function sendAsk(ev) {
-  ev.preventDefault();
-  if (busy) { stopReply(); return; }
-  const text = $("#ask").value.trim();
-  if (!text) return;
-  if (!ws.path) { wsShow(true); return; }
-  if (!await ensureModel()) return;
-  if (!cur) newConv();
-  const um = {role: "user", content: text};
-  if (pending.length) { um.attached = pending; pending = []; drawChips(); }
-  cur.messages.push(um);
-  if (!cur.title) cur.title = text.slice(0, 40);
-  cur.model = server.model;
-  const e = convs.find((c) => c.id === cur.id); if (e) e.title = cur.title;
-  $("#ask").value = ""; growAsk();
-  listConvs(); drawLog();
-  await runTurn(um);
-}
-
-/* ---- regenerate, and edit a message ---- */
-const variantOf = (m) => ({content: m.content, think: m.think, speed: m.speed, saved: m.saved,
-                           tool_calls: m.tool_calls});
-/* the answer to the last question written again, the earlier ones kept */
-async function regenerate() {
-  if (busy || !await ensureModel()) return;
-  let i = cur.messages.length - 1;
-  while (i >= 0 && cur.messages[i].role !== "user") i--;
-  if (i < 0) return;
-  const last = cur.messages[cur.messages.length - 1];
-  const keep = last && last.role === "assistant"
-    ? (last.variants ? last.variants : [variantOf(last)]) : [];
-  cur.messages = cur.messages.slice(0, i + 1);
-  drawLog();
-  await runTurn(cur.messages[i], keep);
-}
-/* one of the user's messages changed: the conversation goes on from it */
-async function editMessage(k) {
-  if (busy) return;
-  const m = cur.messages[k];
-  const t = await input("Edit the message", m.content, "The conversation after it is replaced by the new answer.", true);
-  if (t === null || !t.trim()) return;
-  if (!await ensureModel()) return;
-  m.content = t.trim();
-  delete m.found;
-  cur.messages = cur.messages.slice(0, k + 1);
-  drawLog();
-  await runTurn(m);
-}
-function showVariant(m, vi) {
-  const v = m.variants[vi];
-  Object.assign(m, {content: v.content, think: v.think, speed: v.speed, saved: v.saved, tool_calls: v.tool_calls});
-  m.vi = vi;
-  drawLog(); saveConv(cur);
-}
-
-/* Janas's services and the user's MCP servers: on or off */
-async function readServices() {
-  const j = await ask("services");
-  $("#wssvc").hidden = !ws.path;
-  $("#svcnote").innerHTML = `The model opens one when a question needs it. Your own MCP servers go in <code>${esc(j.config)}</code>, in the format of Cursor and LM Studio.`;
-  $("#svclist").innerHTML = j.services.map((x) =>
-    `<label><input type="checkbox" data-n="${esc(x.name)}"${x.on ? " checked" : ""}> <b>${esc(x.name)}</b> <small>${esc(x.about)}</small></label>`).join("") ||
-    '<div class="note">none found beside Brebus</div>';
-  for (const c of document.querySelectorAll("#svclist input"))
-    c.onchange = async () => {
-      const off = [...document.querySelectorAll("#svclist input")].filter((x) => !x.checked).map((x) => x.dataset.n);
-      settings._services = {off};
-      await fetch("/brebus/settings", {method: "POST", body: JSON.stringify(settings)});
-      await fetch("/brebus/tools/restart", {method: "POST", body: "{}"});
-      await readTools();
-    };
-}
-
-/* the folders read only beside the workspace */
-async function readFolders() {
-  const f = await ask("folders");
-  $("#wsro").hidden = !ws.path;
-  $("#rolist").innerHTML = f.read_only.length
-    ? f.read_only.map((p, i) => `<div><span>${esc(p)}</span><button data-i="${i}">remove</button></div>`).join("")
-    : '<div class="note">none</div>';
-  for (const b of document.querySelectorAll("#rolist button"))
-    b.onclick = async () => { f.read_only.splice(+b.dataset.i, 1); await setFolders(f.read_only); };
-  return f;
-}
-async function setFolders(list) {
-  const r = await fetch("/brebus/folders", {method: "POST", body: JSON.stringify({read_only: list})});
-  const j = await r.json();
-  if (j.refused) say("Some were not added: a folder or file there is, by its full path.");
-  await readFolders(); await readTools();
-}
-$("#embsel").onchange = async () => {
-  settings._docs = {embedding: $("#embsel").value};
-  await fetch("/brebus/settings", {method: "POST", body: JSON.stringify(settings)});
-  await fetch("/brebus/tools/restart", {method: "POST", body: "{}"});
-  await readTools();
-};
-$("#wsbrowse").onclick = async () => {
-  const p = await pick(false, "The folder Brebus works in");
-  if (p) wsOpen(p, false);
-};
-$("#robrowse").onclick = async () => {
-  const p = await pick(false, "A folder to read only, beside the workspace");
-  if (!p) return;
-  const f = await ask("folders");
-  await setFolders([...f.read_only, p]);
-};
-$("#roform").onsubmit = async () => {
-  const p = $("#roform").path.value.trim();
-  if (!p) return false;
-  const f = await ask("folders");
-  await setFolders([...f.read_only, p]);
-  $("#roform").path.value = "";
-  return false;
-};
-
-$("#newc").onclick = () => { show("chat"); newConv(); };
-$("#form").onsubmit = sendAsk;
-$("#ask").addEventListener("input", growAsk);
-/* Enter sends, Shift+Enter a new line; an IME's Enter composes */
-$("#ask").addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
-    e.preventDefault();
-    if (!busy) sendAsk(e);
-  }
-});
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && busy) { e.preventDefault(); stopReply(); }
-});
-sendButton();
-$("#ren").onclick = renameConv;
-$("#del").onclick = deleteConv;
-$("#exp").onclick = exportConv;
-/* a conversation's settings: its system message, temperature, top-p and
-   the answer's form (JSON, by a schema), saved as a preset to use again */
-$("#sys").onclick = async () => {
-  const p = cur.params || {};
-  const presets = settings._presets || {};
-  const d = await dialog({title: "This chat's settings",
-    html: `<div class="srvset">
-      <label>Preset <select class="pre"><option value="">-</option>${Object.keys(presets).map((n) => `<option>${esc(n)}</option>`).join("")}</select></label>
-      <label>System message <textarea class="sysm" rows="4">${esc(cur.system || "")}</textarea></label>
-      <span class="row"><label>Temperature <input class="temp" type="number" min="0" max="2" step="0.1" value="${p.temperature ?? ""}" placeholder="the model's"></label>
-        <label>Top-p <input class="topp" type="number" min="0" max="1" step="0.05" value="${p.top_p ?? ""}" placeholder="the model's"></label></span>
-      <label>Answer as <select class="fmt"><option value="">text</option><option value="json"${p.format === "json" ? " selected" : ""}>a JSON object</option><option value="schema"${p.format === "schema" ? " selected" : ""}>JSON by this schema</option></select></label>
-      <textarea class="schema" rows="4" placeholder='{"type": "object", "properties": {...}}'>${esc(p.schema || "")}</textarea>
-      <label>Save as preset <input class="pname" placeholder="a name (optional)"></label></div>`,
-    ready: (box) => {
-      box.querySelector(".pre").onchange = (e) => {
-        const v = presets[e.target.value]; if (!v) return;
-        box.querySelector(".sysm").value = v.system || "";
-        box.querySelector(".temp").value = v.temperature ?? "";
-        box.querySelector(".topp").value = v.top_p ?? "";
-        box.querySelector(".fmt").value = v.format || "";
-        box.querySelector(".schema").value = v.schema || "";
-      };
-    },
-    read: (box) => ({system: box.querySelector(".sysm").value.trim(),
-      temperature: box.querySelector(".temp").value, top_p: box.querySelector(".topp").value,
-      format: box.querySelector(".fmt").value, schema: box.querySelector(".schema").value.trim(),
-      name: box.querySelector(".pname").value.trim()}),
-    buttons: [{label: "Save", value: "ok", primary: true}, {label: "Cancel", value: "no"}]});
-  if (d.button !== "ok") return;
-  const f = d.form;
-  if (f.format === "schema") {
-    try { JSON.parse(f.schema); } catch (e) { say("The schema is not JSON: " + e.message); return; }
-  }
-  cur.system = f.system;
-  cur.params = {temperature: f.temperature === "" ? undefined : +f.temperature,
-                top_p: f.top_p === "" ? undefined : +f.top_p, format: f.format, schema: f.schema};
-  if (f.name) {
-    settings._presets = {...presets, [f.name]: {system: f.system, ...cur.params}};
-    await fetch("/brebus/settings", {method: "POST", body: JSON.stringify(settings)});
-  }
-  await saveConv(cur);
-};
-$("#neww").onclick = () => window.open("/#chat/" + cur.id, "_blank");
-$("#dirchg").onclick = async () => {
-  let p = ws.window ? await pick(false, "The folder of the models") : null;
-  if (p === null) p = await input("The folder of the models", $("#dir").textContent);
-  if (!p) return;
-  const r = await fetch("/brebus/models-dir", {method: "POST", body: JSON.stringify({path: p})});
-  if (!r.ok) { say("Not a folder there is: " + p); return; }
-  catalog = null; await mine();
-};
-$("#fold").onclick = async () => {
-  const t = await input("Folder", cur.folder || "", "A folder of this workspace's chats; empty: none.");
-  if (t === null) return;
-  cur.folder = t.trim();
-  const e = convs.find((c) => c.id === cur.id); if (e) e.folder = cur.folder;
-  await saveConv(cur); listConvs();
-};
-/* the workspace: chosen before the conversations, which live in it */
-let ws = {path: ""};
-/* the system's dialog, in Brebus's window: the path, "" cancelled, null
-   where there is none (the browser) */
-async function pick(file, title) {
-  const r = await fetch("/brebus/pick", {method: "POST", body: JSON.stringify({file, title})});
-  if (!r.ok) return null;
-  return (await r.json()).path;
-}
-function wsShow(open) {
-  for (const b of document.querySelectorAll("button.browse")) b.hidden = !ws.window;
-  /* paths as this system writes them */
-  if (ws.windows)
-    for (const i of document.querySelectorAll('input[name="path"]'))
-      i.placeholder = i.placeholder.replace("/home/you/", "C:\\Users\\you\\").replaceAll("/", "\\");
-  $("#wsbtn").textContent = ws.path ? "📁 " + ws.name : "Choose a folder";
-  $("#wsbtn").title = ws.path || "The folder Brebus works in";
-  $("#wsrecent").innerHTML = ws.recent.length
-    ? "<b>Recent</b>" + ws.recent.map((p) => `<button data-p="${esc(p)}" title="${esc(p)}">${esc(p)}</button>`).join("")
-    : "";
-  for (const b of document.querySelectorAll("#wsrecent button")) b.onclick = () => wsOpen(b.dataset.p, false);
-  $("#wsnewin").textContent = "in " + ws.new_in + ", named by today's date";
-  $("#wsclose").hidden = !ws.path;
-  $("#wsdlg").hidden = !open;
-}
-async function wsOpen(path, create) {
-  const r = await fetch(create === "new" ? "/brebus/workspace/new" : "/brebus/workspace/open",
-    {method: "POST", body: JSON.stringify({path, create: !!create})});
-  const j = await r.json();
-  if (!r.ok) { say(j.error || "it did not open"); return; }
-  ws = j; wsShow(false);
-  await readTools(); await readFolders(); await readServices();
-  cur = null; await readConvs();
-  if (convs.length) await openConv(convs[0].id); else { listConvs(); drawLog(); }
-}
-$("#wsbtn").onclick = () => wsShow(true);
-$("#wsclose").onclick = () => wsShow(false);
-$("#wsnew").onclick = () => wsOpen("", "new");
-$("#wsform").onsubmit = () => {
-  const p = $("#wsform").path.value.trim();
-  if (p) yes(`Make ${p} if it is not there?`, "Open a folder", "Make it").then((m) => wsOpen(p, m));
-  return false;
-};
-(async () => {
-  ws = await ask("workspace");
-  wsShow(!ws.path);
-  if (!ws.path) return;
-  await readTools(); await readFolders(); await readServices();
-  await readConvs();
-  if (hashChat && convs.some((c) => c.id === hashChat)) await openConv(hashChat);
-  else if (convs.length) await openConv(convs[0].id); else listConvs();
-})().catch(() => {});
-status().catch(() => {});
-
-load().catch((e) => { document.body.insertAdjacentHTML("beforeend",
-  `<p style="position:fixed;bottom:8px;right:16px;color:var(--warn)">${esc(e.message)}</p>`); });
+<!--#include brebus/page/base.js-->
+<!--#include brebus/page/models.js-->
+<!--#include brebus/page/chats.js-->
+<!--#include brebus/page/artifacts.js-->
+<!--#include brebus/page/turn.js-->
+<!--#include brebus/page/side.js-->
+<!--#include brebus/page/more.js-->
 </script>
 </body>
 </html>

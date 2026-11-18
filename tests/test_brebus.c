@@ -202,15 +202,22 @@ int main(void)
         CHECK(st == 400 && strstr(o.p, "not a file of Hugging Face"),
               "%s taken: %d %s", bad_hf[i], st, o.p);
     }
+    /* none started: the downloads' list is empty */
     st = ask("GET", "/brebus/get", NULL, NULL, &o);
-    CHECK(st == 200 && strstr(o.p, "\"running\": false"), "get: %d %s", st,
-          o.p);
-    /* the workspace: none yet (not started from a terminal), so no
-       conversation can be kept; too wide ones refused; one opened */
-    st = ask("POST", "/brebus/chats/a-1", "{}", own, &o);
-    CHECK(st == 400, "a conversation kept with no workspace: %d", st);
+    CHECK(st == 200 && strstr(o.p, "\"downloads\": []"), "get: %d %s", st, o.p);
+    /* a model that is not there is not removed, nor anything else */
+    st = ask("POST", "/brebus/models/remove", "{\"name\": \"../x\"}", own, &o);
+    CHECK(st == 400 && strstr(o.p, "no model named so"),
+          "a model not there removed: %d %s", st, o.p);
+    /* no project given (not started from a terminal): the free chats,
+       in Brebus's data folder, where a chat is kept; too wide folders
+       refused; a project opened */
     st = ask("GET", "/brebus/workspace", NULL, NULL, &o);
-    CHECK(st == 200 && strstr(o.p, "\"path\": \"\""), "no workspace: %s", o.p);
+    CHECK(st == 200 && strstr(o.p, "/free-chats\"") &&
+              strstr(o.p, "\"free\": true"),
+          "the free chats at the start: %s", o.p);
+    st = ask("POST", "/brebus/chats/a-1", "{\"title\": \"free one\"}", own, &o);
+    CHECK(st == 200, "a free chat kept: %d %s", st, o.p);
     st = ask("POST", "/brebus/workspace/open", "{\"path\": \"/\"}", own, &o);
     CHECK(st == 400 && strstr(o.p, "too wide"), "/ taken: %d %s", st, o.p);
     char body[4600], want[4600];
@@ -232,6 +239,33 @@ int main(void)
           "a workspace opened: %d %s", st, o.p);
     snprintf(want, sizeof want, "%s/work/.brebus/chats", dir);
     CHECK(access(want, W_OK) == 0, "no %s", want);
+    /* the side bar's list: the free chats with theirs, the projects (never
+       the free chats' own place among them); a chat moved there and back */
+    st = ask("GET", "/brebus/projects", NULL, NULL, &o);
+    snprintf(want, sizeof want, "\"path\": \"%s/work\"", dir);
+    CHECK(st == 200 && strstr(o.p, "\"free one\"") && strstr(o.p, want) &&
+              !strstr(o.p, "\"name\": \"free-chats\""),
+          "the projects: %d %s", st, o.p);
+    st = ask("POST", "/brebus/chats/w-1", "{\"title\": \"work one\"}", own, &o);
+    st = ask("POST", "/brebus/chats/move", "{\"id\": \"w-1\", \"to\": \"\"}",
+             own, &o);
+    CHECK(st == 200, "a chat moved to the free chats: %d %s", st, o.p);
+    st = ask("POST", "/brebus/chats/move",
+             "{\"id\": \"w-1\", \"to\": \"/etc\"}", own, &o);
+    CHECK(st == 400, "a chat moved out of Brebus's projects: %d %s", st, o.p);
+    st = ask("GET", "/brebus/projects", NULL, NULL, &o);
+    CHECK(st == 200 && strstr(o.p, "\"work one\""), "moved, listed: %s", o.p);
+    /* the search with its filters: the free chats only, titles only */
+    st = ask("GET", "/brebus/chats/search?q=one&where=free&in=titles", NULL,
+             NULL, &o);
+    CHECK(st == 200 && strstr(o.p, "\"free one\"") &&
+              strstr(o.p, "\"work one\"") && strstr(o.p, "\"free\": true"),
+          "found in the free chats: %s", o.p);
+    snprintf(body, sizeof body, "/brebus/chats/search?q=one&where=%s/work",
+             dir);
+    st = ask("GET", body, NULL, NULL, &o);
+    CHECK(st == 200 && strstr(o.p, "\"chats\": []"),
+          "a project with no such chat: %s", o.p);
 
     /* the workspace's tools (janas-docs and janas-files beside brebus),
        a folder read only, a file attached */

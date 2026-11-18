@@ -210,7 +210,7 @@ AVX2 static uint32_t janas_exp_sub_avx2(float *x, uint32_t n, float mx,
 }
 #endif
 
-static int fast_cpu(void)
+__attribute__((unused)) static int fast_cpu(void) /* x86's choice */
 {
 #if defined(__x86_64__)
     return __builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma") &&

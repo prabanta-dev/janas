@@ -294,6 +294,7 @@ static void f32_worker(void *arg, int tid, int n_threads)
     (void)n_threads;
     struct f32_job *b = arg;
     int v = have_avx2();
+    (void)v; /* x86's choice alone */
     for (;;) {
         uint32_t r0 = atomic_fetch_add(&b->next, PLE_CHUNK);
         if (r0 >= b->rows)

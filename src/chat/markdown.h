@@ -25,6 +25,7 @@
 #include <string.h>
 
 #include "term.h"
+#include "tex.h"
 
 #define T_ITAL(t) ((t)->colour ? "\033[3m" : "")
 #define T_NOBOLD(t) ((t)->colour ? "\033[22m" : "")
@@ -54,6 +55,16 @@ struct janas_md {
      */
     char indent[16];
     int in;
+    /*
+     * A formula between dollars, held until its closing dollar: then
+     * written as Unicode (tex.h) when it is plainly one, or as it came -
+     * "$5 and $10" is money. A line's end, or a formula too long to be
+     * one, lets it out as it came.
+     */
+    int math;     /* 1: after $, 2: after $$ */
+    int math_end; /* $$...: one closing dollar seen */
+    char tex[192];
+    int tn;
 };
 
 static void md_init(struct janas_md *m, struct janas_term *t, int on)
@@ -115,6 +126,92 @@ static void md_end_line(struct janas_md *m)
  */
 static void md_byte(struct janas_md *m, char c);
 
+static int md_alnum(char c);
+
+/* what was held as a formula, let out as it came, then c */
+static void md_math_raw(struct janas_md *m, char c)
+{
+    md_byte(m, '$');
+    if (m->math == 2)
+        md_byte(m, '$');
+    for (int i = 0; i < m->tn; i++)
+        md_byte(m, m->tex[i]);
+    if (m->math_end)
+        md_byte(m, '$');
+    m->math = m->math_end = m->tn = 0;
+    if (c)
+        md_byte(m, c);
+}
+
+/* a formula, plainly one: a backslash, ^, _, braces or = in it, no space
+   at its edges */
+static int md_math_is(const char *s, int n)
+{
+    if (n < 1 || s[0] == ' ' || s[n - 1] == ' ')
+        return 0;
+    for (int i = 0; i < n; i++)
+        if (strchr("\\^_{}=", s[i]))
+            return 1;
+    return 0;
+}
+
+static void md_math_done(struct janas_md *m)
+{
+    if (m->math == 1 && !md_math_is(m->tex, m->tn)) {
+        m->math_end = 1;
+        md_math_raw(m, 0);
+        return;
+    }
+    char b[640];
+    struct tex_out o = {b, 0, sizeof b};
+    b[0] = 0;
+    tex_conv(m->tex, (size_t)m->tn, &o);
+    m->math = m->math_end = m->tn = 0;
+    md_flush_pend(m);
+    if (o.n) {
+        term_write(m->t, b, o.n);
+        m->last = b[o.n - 1];
+        m->bol = 0;
+    }
+}
+
+/* one byte, a formula's dollars read before the marks */
+static void md_feed(struct janas_md *m, char c)
+{
+    if (m->math) {
+        if (m->math == 2 && m->math_end) {
+            if (c == '$')
+                return md_math_done(m);
+            m->math_end = 0; /* one dollar inside: kept */
+            if (m->tn < (int)sizeof m->tex - 1)
+                m->tex[m->tn++] = '$';
+        }
+        if (c == '$' && m->math == 1 && m->tn == 0) {
+            m->math = 2; /* $$: a formula of its own */
+            return;
+        }
+        if (c == '$') {
+            if (m->math == 2)
+                m->math_end = 1;
+            else
+                md_math_done(m);
+            return;
+        }
+        if (!c || (c == '\n' && m->math == 1) ||
+            m->tn >= (int)sizeof m->tex - 1 ||
+            (m->math == 1 && m->tn == 0 && c == ' '))
+            return md_math_raw(m, c);
+        m->tex[m->tn++] = c == '\n' ? ' ' : c;
+        return;
+    }
+    if (c == '$' && !m->fence && !m->mono && !m->fence_info && !m->pn &&
+        !md_alnum(m->last) && m->last != '\\' && m->last != '$') {
+        m->math = 1;
+        return;
+    }
+    md_byte(m, c);
+}
+
 static void md_write(struct janas_md *m, const char *s, size_t n)
 {
     if (!m->on) {
@@ -122,7 +219,7 @@ static void md_write(struct janas_md *m, const char *s, size_t n)
         return;
     }
     for (size_t i = 0; i < n; i++)
-        md_byte(m, s[i]);
+        md_feed(m, s[i]);
 }
 
 /* The reply is over. What was held back is decided as if the text ended
@@ -132,6 +229,8 @@ static void md_end(struct janas_md *m)
 {
     if (!m->on)
         return;
+    if (m->math)
+        md_math_raw(m, 0); /* an open formula: as it came */
     if (m->pn)
         md_byte(m, 0); /* 0: the end, decided but never printed */
     md_flush_indent(m);

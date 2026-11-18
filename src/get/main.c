@@ -99,6 +99,13 @@ static int from_gguf(const struct janas_model_entry *m, const char *dir,
                      int keep, int no_mtp)
 {
     char out[4096], first[4096], flat[4200];
+    if (!m->parts[0]) { /* converted from safetensors: its JNS alone */
+        fprintf(stderr,
+                "janas-get: %s is published converted only (%s); it could "
+                "not be downloaded\n",
+                m->name, m->jns_repo ? m->jns_repo : "nowhere");
+        return 1;
+    }
     snprintf(out, sizeof(out), "%s/%s", dir, m->out);
     get_local(first, sizeof(first), dir, m->parts[0]);
     int have = exists(out) &&

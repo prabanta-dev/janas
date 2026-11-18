@@ -157,7 +157,19 @@ controller_made(ICoreWebView2CreateCoreWebView2ControllerCompletedHandler *self,
     ICoreWebView2_add_NavigationStarting(view, &nav_handler, &t);
     ICoreWebView2_add_NewWindowRequested(view, &popup_handler, &t);
     ICoreWebView2_Navigate(view, start_url);
-    ShowWindow(main_win, SW_SHOWNORMAL);
+    /* where it was when it closed, or maximized the first time; a place
+       on no screen any more (a monitor gone) given back to the main one */
+    struct brebus_place pl;
+    int kept = brebus_place_read(&pl) == 0;
+    if (kept) {
+        RECT r = {pl.x, pl.y, pl.x + pl.w, pl.y + pl.h};
+        if (!MonitorFromRect(&r, MONITOR_DEFAULTTONULL))
+            OffsetRect(&r, -r.left + 40, -r.top + 40);
+        WINDOWPLACEMENT wp = {
+            .length = sizeof wp, .showCmd = SW_HIDE, .rcNormalPosition = r};
+        SetWindowPlacement(main_win, &wp);
+    }
+    ShowWindow(main_win, !kept || pl.max ? SW_SHOWMAXIMIZED : SW_SHOWNORMAL);
     SetForegroundWindow(main_win);
     /* made while the window was hidden, the view stays so until told:
        the page was drawn but the window white (Windows 11 in a VM, 16 Nov
@@ -200,6 +212,43 @@ static ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandlerVtbl
 static ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler
     environment_handler = {&environment_vtbl};
 
+/* Windows's choice of light or dark for apps (Settings, Personalization,
+   Colours): 1 dark */
+static int system_dark(void)
+{
+    DWORD v = 1, n = sizeof v;
+    if (RegGetValueW(HKEY_CURRENT_USER,
+                     L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\"
+                     L"Personalize",
+                     L"AppsUseLightTheme", RRF_RT_REG_DWORD, NULL, &v,
+                     &n) != ERROR_SUCCESS)
+        return 0;
+    return v == 0;
+}
+
+/* the title bar and the frame in the system's light or dark: Windows
+   draws a program's frame light unless it asks for the dark one
+   (DWMWA_USE_IMMERSIVE_DARK_MODE, 20 on Windows 11 and 10 20H1, 19
+   before); dwmapi looked up at run time */
+static void frame_theme(HWND h)
+{
+    typedef HRESULT(WINAPI * set_fn)(HWND, DWORD, LPCVOID, DWORD);
+    static set_fn set;
+    static int tried;
+    if (!tried) {
+        tried = 1;
+        HMODULE d = LoadLibraryW(L"dwmapi.dll");
+        if (d)
+            set = (set_fn)(void (*)(void))GetProcAddress(
+                d, "DwmSetWindowAttribute");
+    }
+    if (!set)
+        return;
+    BOOL dark = system_dark();
+    if (set(h, 20, &dark, sizeof dark) != S_OK)
+        set(h, 19, &dark, sizeof dark);
+}
+
 static LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp)
 {
     switch (m) {
@@ -216,13 +265,30 @@ static LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp)
             ICoreWebView2Controller_NotifyParentWindowPositionChanged(
                 controller);
         break;
+    case WM_SETTINGCHANGE: /* light or dark changed in Windows's settings */
+        if (lp && !lstrcmpW((LPCWSTR)lp, L"ImmersiveColorSet"))
+            frame_theme(h);
+        break;
     case WM_TIMER: /* Ctrl+C, or Brebus ending otherwise */
         if (stop && *stop)
             DestroyWindow(h);
         return 0;
-    case WM_DESTROY:
+    case WM_DESTROY: {
+        /* its place kept for the next start: the normal one, and whether
+           it was maximized */
+        WINDOWPLACEMENT wp = {.length = sizeof wp};
+        if (GetWindowPlacement(h, &wp)) {
+            RECT r = wp.rcNormalPosition;
+            struct brebus_place pl = {.x = r.left,
+                                      .y = r.top,
+                                      .w = r.right - r.left,
+                                      .h = r.bottom - r.top,
+                                      .max = wp.showCmd == SW_SHOWMAXIMIZED};
+            brebus_place_write(&pl);
+        }
         PostQuitMessage(0);
         return 0;
+    }
     }
     return DefWindowProcW(h, m, wp, lp);
 }
@@ -326,7 +392,11 @@ int brebus_window(const char *url, volatile sig_atomic_t *quit, char *why,
                       .hIcon = LoadIconW(hi, MAKEINTRESOURCEW(1)),
                       .hIconSm = LoadIconW(hi, MAKEINTRESOURCEW(1)),
                       .hCursor = LoadCursorW(NULL, (LPCWSTR)IDC_ARROW),
-                      .hbrBackground = (HBRUSH)(COLOR_WINDOW + 1),
+                      /* the ground before the page is drawn, in the
+                         system's light or dark: no white flash */
+                      .hbrBackground = system_dark()
+                                           ? CreateSolidBrush(RGB(23, 23, 26))
+                                           : (HBRUSH)(COLOR_WINDOW + 1),
                       .lpszClassName = L"Brebus"};
     RegisterClassExW(&wc);
     main_win = CreateWindowExW(0, L"Brebus", L"Brebus", WS_OVERLAPPEDWINDOW,
@@ -336,6 +406,7 @@ int brebus_window(const char *url, volatile sig_atomic_t *quit, char *why,
         snprintf(why, wn, "no window");
         return -1;
     }
+    frame_theme(main_win); /* before it shows: no light frame first */
     /* WebView2's own data (its cache, its storage) apart from Edge's */
     const char *la = getenv("LOCALAPPDATA");
     char data[4200];

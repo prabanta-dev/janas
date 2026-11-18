@@ -122,8 +122,10 @@ int main(int argc, char **argv)
                  home ? home : ".");
     janas_path_slashes(b.data_dir);
     janas_mkdirs(b.data_dir);
+    brebus_place_dir(b.data_dir); /* the window's place, kept there */
     pthread_mutex_init(&b.mu, NULL);
-    pthread_mutex_init(&b.get.mu, NULL);
+    for (int i = 0; i < BREBUS_GETS; i++)
+        pthread_mutex_init(&b.get[i].mu, NULL);
     pthread_mutex_init(&b.tools_mu, NULL);
     char why[600];
     /* the workspace: the one given, or this terminal's folder; from the
@@ -146,8 +148,12 @@ int main(int argc, char **argv)
        Windows 11 on 16 Nov 2026) */
     else if (isatty(STDIN_FILENO) && getcwd(cwd, sizeof cwd) &&
              brebus_ws_open(&b, cwd, 0, why, sizeof why) != 0)
-        fprintf(stderr, "brebus: %s; the page will ask for a folder\n", why);
+        fprintf(stderr, "brebus: %s; the free chats instead\n", why);
 #endif
+    /* no project given: the free chats, as a chat app starts */
+    if (brebus_ws_path(&b, cwd, sizeof cwd) != 0 &&
+        brebus_ws_free(&b, why, sizeof why) != 0)
+        fprintf(stderr, "brebus: %s\n", why);
     /* the models' folder chosen in the page, where JANAS_MODELS says none */
     {
         struct janas_buf f = {0};
@@ -206,7 +212,7 @@ int main(int argc, char **argv)
     brebus_http_stop(&b);
     struct janas_buf o = {0};
     brebus_server_stop(&b, &o); /* the model's server goes with it */
-    brebus_get_stop(&b);        /* a download too, to go on next time */
+    brebus_get_stop(&b, NULL);  /* a download too, to go on next time */
     brebus_tools_stop(&b);
     janas_buf_free(&o);
     return 0;
