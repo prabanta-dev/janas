@@ -75,6 +75,10 @@ Or all of it in a window: double-click `brebus.exe` - the models, a chat that wo
 | `gguf2jns` | converts a GGUF file (Q4_K_M and the other types `MODELS.md` lists) to the `.jns` file Janas reads |
 | `jns_planes` | cuts the experts of a converted mixture into bit planes, so that fewer bits can be read when the memory is short |
 | `hf2jns_mtp` | makes a model's multi-token prediction block from its original checkpoint |
+| `hf2jns_ds4` | converts DeepSeek-V4-Flash from DeepSeek's own checkpoint, read from Hugging Face by ranges: only the `.jns` is written |
+| `hf2jns_vision` | makes a model's vision encoder (its pictures) from its original checkpoint |
+| `hf2jns_whisper` | converts a Whisper model, for dictation and transcription |
+| `silero2jns`, `wespeaker2jns` | convert the voice detector and the speaker model that transcription uses |
 | `jns_check` | what a `.jns` file says about itself: architecture, sizes, types, licence |
 | `vkcheck` | whether this computer's GPU can run Janas's GPU backend, and why not: what the backend needs with the driver's answer, then three short tests on the GPU |
 | `services/` | Janas's services, which bring data of the world to a model: your files, flights, weather, maps, prices, earthquakes, Wikipedia, GitHub, git, this computer. `janas-chat` starts them by itself; any other MCP client can use them. See `services/README.md` |

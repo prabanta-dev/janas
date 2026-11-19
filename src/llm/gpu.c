@@ -574,10 +574,22 @@ static struct janas_gpu *vk_create(char *err, size_t err_len);
 /* Vulkan, the GPU of every maker, with the products, the prompt's tiles,
    the experts and the whole token; where there is no Vulkan (a server's
    card with its maker's driver alone), NVIDIA's CUDA, then AMD's HIP.
-   JANAS_GPU_API=vulkan, cuda or hip takes that one alone. */
+   JANAS_GPU_API=vulkan, cuda or hip takes that one alone; any other
+   value is refused, said in err, rather than read as the default order
+   (issue #73: a mistyped name ran Vulkan without a word). */
 struct janas_gpu *janas_gpu_create(char *err, size_t err_len)
 {
     const char *api = getenv("JANAS_GPU_API");
+    if (api && !*api)
+        api = NULL;
+    if (api && strcmp(api, "vulkan") && strcmp(api, "cuda") &&
+        strcmp(api, "hip")) {
+        snprintf(err, err_len,
+                 "JANAS_GPU_API=%.40s is not an API Janas knows: vulkan, "
+                 "cuda or hip",
+                 api);
+        return NULL;
+    }
     if (api && !strcmp(api, "cuda"))
         return drv_create(0, err, err_len);
     if (api && !strcmp(api, "hip"))

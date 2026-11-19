@@ -4,6 +4,11 @@
 
 ## [Unreleased]
 
+## [2026-11-19] - Every converter in the packages; an unknown GPU API refused
+
+- **The packages carry every converter the documentation names** (issue #73): `hf2jns_ds4` (DeepSeek-V4-Flash, new on 19 November), `hf2jns_vision`, `hf2jns_whisper`, `silero2jns` and `wespeaker2jns`, beside `gguf2jns`, `jns_planes` and `hf2jns_mtp`, on Linux and on Windows.
+- **`JANAS_GPU_API` with a value other than `vulkan`, `cuda` or `hip` is refused** with that list, the GPU left off, rather than read as the default order without a word (issue #73).
+
 ## [2026-11-19] - Tools allowed always, kept to their conversation
 
 - **Tools allowed always, kept to their conversation** (`janas-chat` and Brebus). In `janas-chat` a tool allowed with `a` stayed allowed for the whole session, and a new conversation (`/new`), or another one taken up, ran it without asking; now an approval belongs to the conversation it was given in.

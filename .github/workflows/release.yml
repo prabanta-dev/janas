@@ -79,7 +79,8 @@ jobs:
           P="$PACKAGE/janas"
           mkdir -p "$P/services" "$P/lib" "$P/include/janas" "$P/docs" "$P/node"
           for f in janas-chat janas-server janas-get janas-setup janas-bench janas-mcp brebus \
-                   gguf2jns jns_planes hf2jns_mtp jns_check vkcheck gpu_check; do
+                   gguf2jns jns_planes hf2jns_mtp hf2jns_ds4 hf2jns_vision hf2jns_whisper \
+                   silero2jns wespeaker2jns jns_check vkcheck gpu_check; do
             install -m 755 "$B/$f" "$P/"
           done
           for s in src/services/*/; do
@@ -257,7 +258,8 @@ jobs:
           P="$WPACKAGE/janas"
           mkdir -p "$P/services" "$P/lib" "$P/include/janas" "$P/docs"
           for f in janas-chat janas-server janas-get janas-setup janas-bench janas-mcp \
-                   brebus gguf2jns jns_planes hf2jns_mtp jns_check vkcheck gpu_check; do
+                   brebus gguf2jns jns_planes hf2jns_mtp hf2jns_ds4 hf2jns_vision \
+                   hf2jns_whisper silero2jns wespeaker2jns jns_check vkcheck gpu_check; do
             install -m 755 "$B/$f.exe" "$P/"
           done
           # Brebus's window: WebView2's loader beside brebus.exe, from
