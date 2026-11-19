@@ -182,9 +182,28 @@ async function runTurn(um, keep) {
           if (name === "python") what = "Python code, run in a sandbox: the workspace (read and write) and its folders read only, no network:";
           if (name === "janas__open_service") what = "It starts one of Janas's services, which gives the model its tools (it may reach the network):";
         } catch (e) {}
-        if (!only_reads && (await dialog({title: "The model wants to run " + name,
-              html: `${what}<pre class="dargs">${esc(pretty)}</pre>`,
-              buttons: [{label: "Allow", value: "yes", primary: true}, {label: "Don't allow", value: "no"}]})).button !== "yes")
+        /* a tool of the user's servers may be allowed always in this chat,
+           for the server it was given to; Janas's own that change something
+           are asked every time */
+        const srv = (tools.servers || []).find((s) => name.startsWith(s.prefix));
+        const ap = srv && cur.approvals && cur.approvals[name];
+        const good = ap && ap.ident === srv.ident && ap.version === srv.version;
+        let ok = only_reads || good;
+        if (!ok) {
+          const btns = [{label: "Allow", value: "yes", primary: true}];
+          if (srv) btns.push({label: "Allow always in this chat", value: "always"});
+          btns.push({label: "Don't allow", value: "no"});
+          const b = (await dialog({title: "The model wants to run " + name,
+                html: `${what}<pre class="dargs">${esc(pretty)}</pre>`, buttons: btns})).button;
+          ok = b === "yes" || b === "always";
+          if (b === "always") {
+            cur.approvals = cur.approvals || {};
+            cur.approvals[name] = {ident: srv.ident, version: srv.version, used: Date.now()};
+          }
+        } else if (good) {
+          ap.used = Date.now(); /* its clock starts again */
+        }
+        if (!ok)
           res = {result: "The user did not allow this call.", is_error: true, denied: true};
         else
           res = await callTool(name, args);

@@ -37,6 +37,7 @@ struct janas_buf;
 static void svc_scan(struct brebus *b);
 static void svc_tools(struct janas_buf *out, int *first, struct janas_buf *cat);
 static void svc_read_only(struct janas_buf *out, int *k);
+static void svc_servers(struct janas_buf *out);
 static int svc_call(struct brebus *b, const char *name, const char *args,
                     size_t an, struct janas_buf *out);
 
@@ -306,6 +307,8 @@ void brebus_tools_list(struct brebus *b, struct janas_buf *out)
     }
     svc_read_only(out, &k);
     janas_buf_puts(out, k++ ? ", \"janas__skill\"" : "\"janas__skill\"");
+    janas_buf_puts(out, "], \"servers\": [");
+    svc_servers(out);
     janas_buf_puts(out, "], \"catalog\": ");
     janas_json_write_str(out, cat.p ? cat.p : "", cat.n);
     janas_buf_free(&cat);
@@ -564,6 +567,12 @@ struct svc {
     int sign_in;    /* it refused us (HTTP 401): it wants the user to sign in */
     int on;         /* offered to the model */
     janas_mcp *m;   /* started when opened */
+    /* what it is - its command line or address - and the version it says
+       it is once started: a tool allowed always in a chat is allowed for
+       that server alone; autoApprove, its tools mcp.json allows for good,
+       a line each */
+    char ident[2048], version[64];
+    char auto_ok[4096];
 };
 static struct svc svcs[MAX_SVC];
 static int n_svc;
@@ -650,10 +659,27 @@ static void svc_scan(struct brebus *b)
     if (janas_mcp_config_path(cfg, sizeof cfg, &cl) == JANAS_MCP_OK &&
         janas_mcp_config_read(cfg, &c, &nc, err, sizeof err) == 0) {
         for (size_t i = 0; i < nc; i++)
-            for (int k = 0; k < n_svc; k++)
-                if (svcs[k].user && c[i].url &&
-                    !strcmp(svcs[k].name, c[i].name))
-                    snprintf(svcs[k].url, sizeof svcs[k].url, "%s", c[i].url);
+            for (int k = 0; k < n_svc; k++) {
+                struct svc *s = &svcs[k];
+                if (!s->user || strcmp(s->name, c[i].name))
+                    continue;
+                if (c[i].url)
+                    snprintf(s->url, sizeof s->url, "%s", c[i].url);
+                /* what it is, and the tools allowed for good */
+                size_t at = 0;
+                if (c[i].url)
+                    at = (size_t)snprintf(s->ident, sizeof s->ident, "%s",
+                                          c[i].url);
+                for (char **a = c[i].argv; a && *a && at < sizeof s->ident; a++)
+                    at +=
+                        (size_t)snprintf(s->ident + at, sizeof s->ident - at,
+                                         "%s%s", a == c[i].argv ? "" : " ", *a);
+                at = 0;
+                for (char **a = c[i].auto_approve;
+                     a && *a && at < sizeof s->auto_ok; a++)
+                    at += (size_t)snprintf(s->auto_ok + at,
+                                           sizeof s->auto_ok - at, "%s\n", *a);
+            }
         janas_mcp_config_free(c, nc);
     }
     for (int i = 0; i < n_svc; i++) {
@@ -674,6 +700,21 @@ static void svc_scan(struct brebus *b)
 }
 
 /* tools_mu held: the service started (when not already) */
+/* The version the server says it is ("version: ..." of its info). */
+static void svc_version(struct svc *s)
+{
+    char info[4096] = "";
+    int32_t len = 0;
+    s->version[0] = 0;
+    janas_mcp_info(s->m, info, sizeof info, &len);
+    const char *v = strstr(info, "version: ");
+    if (v && (v == info || v[-1] == '\n')) {
+        v += 9;
+        size_t n = strcspn(v, "\n");
+        snprintf(s->version, sizeof s->version, "%.*s", (int)n, v);
+    }
+}
+
 static int svc_start(struct brebus *b, struct svc *s)
 {
     if (s->m)
@@ -681,6 +722,7 @@ static int svc_start(struct brebus *b, struct svc *s)
     if (s->user) {
         if (janas_mcp_open(NULL, s->name, 60, &s->m) == JANAS_MCP_OK) {
             s->sign_in = 0;
+            svc_version(s);
             return 0;
         }
         s->sign_in = s->url[0] && strstr(janas_mcp_last_error(), "HTTP 401");
@@ -788,7 +830,15 @@ static void svc_read_only(struct janas_buf *out, int *k)
                something (janas-chat's rule); a server of the user's: run
                without asking only those that say they only read */
             int ro = janas_mcp_tool_read_only(svcs[i].m, t, (int32_t)strlen(t));
-            if (svcs[i].user ? ro == 1 : ro != 0) {
+            /* and those mcp.json allows for good (autoApprove) */
+            int ok = 0;
+            size_t tn = strlen(t);
+            for (const char *l = svcs[i].auto_ok; svcs[i].user && *l && !ok;) {
+                size_t ln = strcspn(l, "\n");
+                ok = ln == tn && !strncmp(l, t, tn);
+                l += ln + (l[ln] == '\n');
+            }
+            if (svcs[i].user ? ro == 1 || ok : ro != 0) {
                 char full[256];
                 snprintf(full, sizeof full, "%s%s", svcs[i].prefix, t);
                 janas_buf_puts(out, (*k)++ ? ", " : "");
@@ -989,4 +1039,21 @@ int brebus_oauth_forget(struct brebus *b, const char *body, size_t n,
     janas_json_free(d);
     janas_buf_puts(out, rc ? "{\"error\": \"not signed in\"}" : "{}");
     return rc;
+}
+
+/* tools_mu held: the user's servers opened, what each is (its command or
+   address, the version it says), for the chats' approvals */
+static void svc_servers(struct janas_buf *out)
+{
+    for (int i = 0, k2 = 0; i < n_svc; i++) {
+        if (!svcs[i].user || !svcs[i].on || !svcs[i].m)
+            continue;
+        janas_buf_puts(out, k2++ ? ", {\"prefix\": " : "{\"prefix\": ");
+        str(out, svcs[i].prefix);
+        janas_buf_puts(out, ", \"ident\": ");
+        str(out, svcs[i].ident[0] ? svcs[i].ident : svcs[i].name);
+        janas_buf_puts(out, ", \"version\": ");
+        str(out, svcs[i].version);
+        janas_buf_puts(out, "}");
+    }
 }

@@ -186,7 +186,15 @@
     <select id="embsel"></select></div>
   <div id="wssvc" hidden><h3>Services</h3>
     <p class="note" id="svcnote"></p>
-    <div id="svclist"></div></div>
+    <div id="svclist"></div>
+    <p><label>A tool of your servers allowed always in a chat stays allowed, when the chat is taken up again,
+      <select id="apprage">
+        <option value="3600">for an hour</option><option value="28800">for 8 hours</option>
+        <option value="86400">for a day</option><option value="604800">for a week</option>
+        <option value="2592000">for 30 days</option><option value="-1">for good</option>
+        <option value="0">never</option></select> after its last use.</label>
+      <span class="note">It holds for the server it was given to: a new command, address or version asks again. Janas's own tools that change something ask every time.</span></p>
+    <p><button type="button" class="act quiet" id="apprclear" title="The tools allowed always in this chat ask again">Ask again in this chat</button></p></div>
   <div id="wsro" hidden><h3>Read only, beside it</h3>
     <p class="note">Folders and files the model may search and read, never write: documents, code, pictures, audio. Video is not read by Janas yet.</p>
     <div id="rolist"></div>

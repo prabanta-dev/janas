@@ -41,6 +41,9 @@ void janas_mcp_config_free(struct janas_mcp_conf *c, size_t n)
         for (char **h = c[i].headers; h && *h; h++)
             free(*h);
         free(c[i].headers);
+        for (char **a = c[i].auto_approve; a && *a; a++)
+            free(*a);
+        free(c[i].auto_approve);
     }
     free(c);
 }
@@ -53,15 +56,16 @@ static const char *plain(const struct janas_json *v)
 }
 
 /* the keys read here */
-static const char *const KEYS[] = {"command", "args",     "env", "url",
-                                   "headers", "disabled", "type"};
+static const char *const KEYS[] = {"command", "args",       "env",
+                                   "url",     "headers",    "disabled",
+                                   "type",    "autoApprove"};
 /* keys of the other clients, left to them: not a mistyped one of ours */
 static const char *const THEIRS[] = {
-    "autoApprove",   "alwaysAllow",  "disabledTools", "enabledTools",
-    "includeTools",  "excludeTools", "timeout",       "transport",
-    "transportType", "cwd",          "envFile",       "headersHelper",
-    "oauth",         "description",  "serverUrl",     "trust",
-    "dev",           "name",         "enabled",       "tools"};
+    "alwaysAllow",  "disabledTools", "enabledTools",  "includeTools",
+    "excludeTools", "timeout",       "transport",     "transportType",
+    "cwd",          "envFile",       "headersHelper", "oauth",
+    "description",  "serverUrl",     "trust",         "dev",
+    "name",         "enabled",       "tools"};
 
 /* a key near one of ours and not another client's: a mistake to say */
 static int mistyped(const struct janas_json *k, const char *server, char *err,
@@ -108,6 +112,26 @@ static int one(const struct janas_json *s, struct janas_mcp_conf *c, char *err,
         return -1;
     }
     c->disabled = d && d->type == JANAS_JSON_TRUE;
+    /* the tools the user allows for good, by their names on the server */
+    const struct janas_json *aa = janas_json_get(s, "autoApprove");
+    if (aa && aa->type != JANAS_JSON_ARRAY) {
+        snprintf(err, err_len, "server %s: autoApprove is a list of tools",
+                 c->name);
+        return -1;
+    }
+    c->auto_approve = calloc((aa ? aa->n : 0) + 1, sizeof(*c->auto_approve));
+    if (!c->auto_approve)
+        goto oom;
+    size_t na0 = 0;
+    for (const struct janas_json *a = aa ? aa->child : NULL; a; a = a->next) {
+        if (!plain(a)) {
+            snprintf(err, err_len, "server %s: autoApprove holds tool names",
+                     c->name);
+            return -1;
+        }
+        if (!(c->auto_approve[na0++] = dup_n(a->s, a->n)))
+            goto oom;
+    }
     const struct janas_json *type = janas_json_get(s, "type");
     const struct janas_json *url = janas_json_get(s, "url");
     const struct janas_json *cmd = janas_json_get(s, "command");

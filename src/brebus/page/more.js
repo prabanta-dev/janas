@@ -51,6 +51,19 @@ async function readServices() {
   $("#svclist").innerHTML = j.services.map((x) =>
     `<div class="svc"><label><input type="checkbox" data-n="${esc(x.name)}"${x.on ? " checked" : ""}> <b>${esc(x.name)}</b> <small>${esc(x.about + (!x.http ? "" : x.signed_in ? " · signed in" : x.sign_in ? " · it asks you to sign in" : ""))}</small></label>${auth(x)}</div>`).join("") ||
     '<div class="note">none found beside Brebus</div>';
+  /* how long an approval of a chat lasts, and taking the chat's back */
+  const age = $("#apprage");
+  age.value = String(settings._approvals ? settings._approvals.age : 86400);
+  age.onchange = async () => {
+    settings._approvals = {age: +age.value};
+    await fetch("/brebus/settings", {method: "POST", body: JSON.stringify(settings)});
+  };
+  $("#apprclear").disabled = !cur || !cur.approvals || !Object.keys(cur.approvals).length;
+  $("#apprclear").onclick = async () => {
+    if (!cur) return;
+    delete cur.approvals; await saveConv(cur);
+    $("#apprclear").disabled = true; say("The tools of this chat ask again.");
+  };
   for (const b of document.querySelectorAll("#svclist .svcauth"))
     b.onclick = () => b.dataset.out ? signOut(b.dataset.n) : signIn(b.dataset.n);
   for (const c of document.querySelectorAll("#svclist input"))

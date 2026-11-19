@@ -422,7 +422,11 @@ static void usage(void)
         "                   default: it is text their authors wrote, which\n"
         "                   the model would read as instructions)\n"
         "  --mcp-auto       run the tools the model calls without asking\n"
-        "                   (needed on a pipe, where nobody can answer)\n");
+        "                   (needed on a pipe, where nobody can answer)\n"
+        "  --approvals <t>  how long a tool allowed with a stays allowed in\n"
+        "                   a conversation taken up again, after its last\n"
+        "                   use: 30m, 8h, 7d..., permanent or never\n"
+        "                   (default 1d)\n");
 }
 
 /*
@@ -483,7 +487,10 @@ static const struct {
     {"/mcp", "the MCP servers running and the tools they give the model"},
     {"/mcp auto [on|off]",
      "run the tools the model calls without asking first (off by default: "
-     "every call is shown and waits for y, n or a - always that tool)"},
+     "every call is shown and waits for y, n or a - always that tool in "
+     "this conversation)"},
+    {"/mcp revoke <tool|all>",
+     "ask again before a tool allowed with a, or before every one"},
     {"/save-config [global]",
      "keep these settings for this model's next start (asks to overwrite); "
      "global: for every model"},
@@ -513,6 +520,65 @@ static void help(const janas_llm *llm)
             term_field(&term, help_lines[i].cmd, help_lines[i].what);
         else
             term_printf(&term, "%s\n\n", help_lines[i].what);
+}
+
+/* How long a tool allowed with "a" stays allowed in a conversation taken
+   up again, after its last use, in seconds (-1: for good, 0: never): a
+   day unless the user says otherwise (--approvals) */
+#define APPROVALS_DEFAULT 86400LL
+static long long approvals_age = APPROVALS_DEFAULT;
+
+/* "permanent", "never" (or 0), or a number with s, m, h or d: into *age,
+   0; -1 if it is none of these */
+static int parse_age(const char *v, long long *age)
+{
+    if (!strcmp(v, "permanent")) {
+        *age = -1;
+        return 0;
+    }
+    if (!strcmp(v, "never") || !strcmp(v, "0")) {
+        *age = 0;
+        return 0;
+    }
+    char *e;
+    long long n = strtoll(v, &e, 10);
+    long long unit = !strcmp(e, "s")   ? 1
+                     : !strcmp(e, "m") ? 60
+                     : !strcmp(e, "h") ? 3600
+                     : !strcmp(e, "d") ? 86400
+                                       : 0;
+    if (e == v || n <= 0 || !unit || n > 3650LL * 86400 / unit)
+        return -1;
+    *age = n * unit;
+    return 0;
+}
+
+/* The same written back: the largest unit that divides it */
+static const char *age_word(long long age, char *buf, size_t n)
+{
+    if (age < 0)
+        snprintf(buf, n, "permanent");
+    else if (age == 0)
+        snprintf(buf, n, "never");
+    else if (age % 86400 == 0)
+        snprintf(buf, n, "%lldd", age / 86400);
+    else if (age % 3600 == 0)
+        snprintf(buf, n, "%lldh", age / 3600);
+    else if (age % 60 == 0)
+        snprintf(buf, n, "%lldm", age / 60);
+    else
+        snprintf(buf, n, "%llds", age);
+    return buf;
+}
+
+/* The approvals of the conversation written beside its file. */
+static void save_approvals(janas_llm_chat *c)
+{
+    char path[4096];
+    int32_t len = 0;
+    if (janas_llm_chat_file(c, path, sizeof path, &len) == JANAS_LLM_OK &&
+        len > 0 && (size_t)len < sizeof path)
+        mcpc_approvals_save(path);
 }
 
 static int on_off(const char *arg, int current)
@@ -910,6 +976,7 @@ static void restart(janas_llm_chat *c, const char *system)
 {
     janas_llm_chat_reset(c);
     mcpc_close_services(); /* a new conversation opens them anew */
+    mcpc_forget_always();  /* and asks again before a tool runs */
     janas_llm_chat_tools_add(c, NULL, 0);
     if (set_system(c, system) != JANAS_LLM_OK)
         term_printf(&term, "%s\n", janas_llm_last_error());
@@ -924,6 +991,20 @@ static int take_up(janas_llm_chat *c, const char *path)
         return -1;
     }
     mcpc_close_services();
+    /* this one's approvals, where they are still good; any other's gone */
+    mcpc_forget_always();
+    int dropped = 0;
+    int got = mcpc_approvals_load(path, approvals_age, &dropped);
+    if (got)
+        term_printf(&term,
+                    "%d tool%s allowed in this conversation still "
+                    "allowed (/mcp lists them)\n",
+                    got, got == 1 ? "" : "s");
+    if (dropped)
+        term_printf(&term,
+                    "%d tool%s allowed before asked again: unused too long, "
+                    "or the server changed\n",
+                    dropped, dropped == 1 ? "" : "s");
     janas_llm_chat_tools_add(c, NULL, 0);
     return 0;
 }
@@ -1087,6 +1168,9 @@ struct chat_opts { /* where the words land: main keeps them, this names them */
     int *npu_int8;
     const char **speech_model;
     int *save; /* conversations saved as they go */
+    /* how long a tool allowed with "a" stays allowed in a conversation
+       taken up again, after its last use: seconds; -1 for good, 0 never */
+    long long *approvals;
 };
 
 /* every option, for the nearest to one mistyped: the first N_ALONE stand
@@ -1103,7 +1187,8 @@ static const char *const OPTIONS[] = {
     "--mcp-config",  "--progress",  "--temp",        "--top-k",
     "--top-p",       "--min-p",     "--seed",        "--max",
     "--head",        "--profile",   "--models",      "--quality",
-    "--prompt-on",   "--drafts-on", "--reply-on",    "--speech-model"};
+    "--prompt-on",   "--drafts-on", "--reply-on",    "--speech-model",
+    "--approvals"};
 #define N_OPTIONS (sizeof OPTIONS / sizeof *OPTIONS)
 
 /* v of option a as a whole number or a number within limits; on a
@@ -1304,7 +1389,15 @@ static int take_options(int n, char **w, struct chat_opts *o, char *why,
             *o->mcp_config = v;
         else if (strcmp(a, "--speech-model") == 0)
             *o->speech_model = v;
-        else if (strcmp(a, "--progress") == 0) {
+        else if (strcmp(a, "--approvals") == 0) {
+            if (parse_age(v, o->approvals) != 0) {
+                snprintf(why, why_len,
+                         "%s: permanent, never, or a time such as 30m, 8h, "
+                         "7d",
+                         a);
+                return -1;
+            }
+        } else if (strcmp(a, "--progress") == 0) {
             if (opt_real(a, v, 0, 86400, &r, why, why_len) != 0)
                 return -1;
             setenv("JANAS_PROGRESS", v, 1);
@@ -1539,6 +1632,11 @@ static void conf_write(const char *path, const struct chat_opts *o)
         fprintf(f, "--mcp-auto\n");
     if (*o->mcp_instructions)
         fprintf(f, "--mcp-instructions\n");
+    if (*o->approvals != APPROVALS_DEFAULT) {
+        char age[32];
+        fprintf(f, "--approvals %s\n",
+                age_word(*o->approvals, age, sizeof age));
+    }
     if (m->min_quality == JANAS_LLM_QUALITY_HIGH)
         fprintf(f, "--quality high\n");
     else if (m->min_quality == JANAS_LLM_QUALITY_MEDIUM)
@@ -1680,6 +1778,10 @@ static int run_calls(janas_llm_chat *c, int autorun)
            whole, since the user says yes to what it holds */
         int writes = mcpc_writes(name);
         int go = !writes && (autorun || mcpc_always(name) || mcpc_own(name));
+        if (go && !autorun && !mcpc_own(name) && !mcpc_auto_approved(name)) {
+            mcpc_touch(name); /* an approval used: its clock starts again */
+            save_approvals(c);
+        }
         /* whole where the user is asked: a yes (or an always) is to all of
            it, not to its first 400 bytes */
         int cut = go ? 400 : INT_MAX;
@@ -1714,8 +1816,10 @@ static int run_calls(janas_llm_chat *c, int autorun)
         } else if (!go) {
             int k = ask_key("run it? [y]es, [n]o, [a]lways this tool");
             go = k == 'y' || k == 'a';
-            if (k == 'a')
+            if (k == 'a') {
                 mcpc_set_always(name);
+                save_approvals(c);
+            }
         }
         if (go) {
             footer(idle_llm, c, "running a tool");
@@ -1962,11 +2066,17 @@ int main(int argc, char **argv)
     int all_tools = 0, profile = 0, tune = 0, npu_int8 = 0, save = 1;
     int devices[JANAS_DEVICES_OPTIONS] = {0, 0, 0};
     static char mtp_found[4096];
-    struct chat_opts o = {
-        &mp,       &cp,         &system_arg, &stats,        &markdown,
-        &gpu,      &mcp_config, &mcp,        &mcp_auto,     &mcp_instructions,
-        &services, &no_mtp,     mtp_found,   &all_tools,    &profile,
-        &tune,     devices,     &npu_int8,   &speech_model, &save};
+    struct chat_opts o = {&mp,           &cp,
+                          &system_arg,   &stats,
+                          &markdown,     &gpu,
+                          &mcp_config,   &mcp,
+                          &mcp_auto,     &mcp_instructions,
+                          &services,     &no_mtp,
+                          mtp_found,     &all_tools,
+                          &profile,      &tune,
+                          devices,       &npu_int8,
+                          &speech_model, &save,
+                          &approvals_age};
     /*
      * The settings in layers, each over the one before: the catalog's
      * profile for the model, the chat's own file, the model's file, the
@@ -2436,8 +2546,29 @@ int main(int argc, char **argv)
                     term_printf(&term, "MCP tools %s\n",
                                 mcp_auto ? "run without asking"
                                          : "run after asking");
+                } else if (strncmp(arg, "revoke", 6) == 0) {
+                    const char *v = arg[6] == ' ' ? arg + 7 : "";
+                    int n = *v ? mcpc_revoke(v) : 0;
+                    if (n)
+                        save_approvals(c);
+                    term_printf(&term,
+                                *v ? "%d approval%s revoked\n"
+                                   : "/mcp revoke <tool> or all\n",
+                                n, n == 1 ? "" : "s");
                 } else {
                     mcp_list();
+                    const char *t;
+                    int64_t used;
+                    size_t na = mcpc_approved(0, &t, &used);
+                    char age[32];
+                    term_printf(&term,
+                                "allowed in this conversation (a): %zu, kept "
+                                "%s after their last use\n",
+                                na, age_word(approvals_age, age, sizeof age));
+                    for (size_t i = 0; i < na; i++) {
+                        mcpc_approved(i, &t, &used);
+                        term_printf(&term, "  %s\n", t);
+                    }
                 }
             } else if (strcmp(msg, "/context") == 0) {
                 context_page(c);

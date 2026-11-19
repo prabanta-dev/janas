@@ -27,6 +27,13 @@ async function openConv(id) {
   followLog = true; /* a chat opened at its end */
   const r = await fetch("/brebus/chats/" + id);
   cur = r.ok ? await r.json() : null;
+  /* its tools allowed always: those unused for longer than the user allows
+     ask again (Settings, Services) */
+  if (cur && cur.approvals) {
+    const age = settings._approvals ? settings._approvals.age : 86400;
+    for (const [k, a] of Object.entries(cur.approvals))
+      if (age === 0 || (age > 0 && Date.now() - (a.used || 0) > age * 1000)) delete cur.approvals[k];
+  }
   /* the chat used last, opened again at the next start */
   if (cur) try { localStorage.setItem("brebus.last", JSON.stringify({ws: ws.path, id: cur.id})); } catch (e) {}
   listConvs(); drawLog();
@@ -133,6 +140,7 @@ async function branchConv(c, upto, where) {
   const n = {...JSON.parse(JSON.stringify(c)), id: newId(), messages: JSON.parse(JSON.stringify(ms)),
     /* named first by what it is: the side bar shows a title's beginning */
     title: `${upto === undefined ? "Copy" : "Branch"} of ${c.title || "New chat"}`, archived: false, updated: Date.now()};
+  delete n.approvals; /* a new chat: its tools ask again */
   if (where !== undefined && where !== ws.path) {
     await fetch(`/brebus/chats/${n.id}?ws=${encodeURIComponent(where)}`, {method: "POST", body: JSON.stringify(n)});
     refreshTree(); say(`"${n.title}" is beside it.`);

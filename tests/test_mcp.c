@@ -195,6 +195,22 @@ static void test_config(void)
     CHECK(rc == 0 && n == 1, "other clients' keys: %s", err);
     if (rc == 0)
         janas_mcp_config_free(c, n);
+    /* autoApprove, read: the tools allowed for good */
+    const char *aa = "{\"mcpServers\": {\"a\": {\"command\": \"x\", "
+                     "\"autoApprove\": [\"read\", \"list\"]}}}";
+    rc = janas_mcp_config_parse(aa, strlen(aa), &c, &n, err, sizeof(err));
+    CHECK(rc == 0 && n == 1 && c[0].auto_approve && c[0].auto_approve[0] &&
+              !strcmp(c[0].auto_approve[0], "read") && c[0].auto_approve[1] &&
+              !strcmp(c[0].auto_approve[1], "list") && !c[0].auto_approve[2],
+          "autoApprove: %s", err);
+    if (rc == 0)
+        janas_mcp_config_free(c, n);
+    const char *aab = "{\"mcpServers\": {\"a\": {\"command\": \"x\", "
+                      "\"autoApprove\": \"read\"}}}";
+    CHECK(janas_mcp_config_parse(aab, strlen(aab), &c, &n, err, sizeof(err)) !=
+                  0 &&
+              strstr(err, "autoApprove is a list of tools"),
+          "autoApprove as a string: %s", err);
     const char *off = "{\"mcpServers\": {\"a\": {\"command\": \"x\", "
                       "\"disabled\": \"true\"}}}";
     CHECK(janas_mcp_config_parse(off, strlen(off), &c, &n, err, sizeof(err)) !=

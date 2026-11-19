@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+## [2026-11-19] - Tools allowed always, kept to their conversation
+
+- **Tools allowed always, kept to their conversation** (`janas-chat` and Brebus). In `janas-chat` a tool allowed with `a` stayed allowed for the whole session, and a new conversation (`/new`), or another one taken up, ran it without asking; now an approval belongs to the conversation it was given in.
+  - **Kept beside the conversation's file**, readable by you alone, so that taking the same conversation up again finds it: for a day after its last use by default, or as long as `--approvals` says (`30m`, `8h`, `7d`..., `permanent`, `never`).
+  - **Tied to its server**: a server whose command, address or reported version has changed asks again, and a conversation copied in from elsewhere comes without approvals.
+  - **`/mcp`** lists a conversation's approvals, and `/mcp revoke <tool|all>` takes them back. `autoApprove` in `mcp.json` (the format other clients use) lets a server's tools run without asking, for good.
+  - **Brebus**: *Allow always in this chat*, its duration in the project's settings, *Ask again in this chat*. A copy or branch of a chat asks again.
+  - Janas's own tools that change something are asked every time, as before.
+
 ## [2026-11-19] - DeepSeek-V4-Flash from its own checkpoint; CUDA and HIP; Brebus with skills, connectors and HTTPS
 
 - **DeepSeek-V4-Flash** (284B parameters, 13B active), from DeepSeek's own checkpoint:

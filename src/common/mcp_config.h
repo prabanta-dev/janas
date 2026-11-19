@@ -13,10 +13,12 @@
  *               "headers": {"Authorization": "Bearer ..."}}}}
  *
  * "servers" (VS Code's name) is read as well as "mcpServers"; "disabled":
- * true leaves a server out; "type" may say "stdio", "http" or "sse". A key
- * a letter or two from one of these is refused as mistyped, with the one
- * meant; the keys of the other clients (autoApprove, cwd...) are left to
- * them. The default file is $XDG_CONFIG_HOME/janas/mcp.json, or
+ * true leaves a server out; "type" may say "stdio", "http" or "sse";
+ * "autoApprove" lists the tools that run without asking (a tool of
+ * Janas's own services that changes something is asked for all the
+ * same). A key a letter or two from one of these is refused as mistyped,
+ * with the one meant; the keys of the other clients (alwaysAllow, cwd...)
+ * are left to them. The default file is $XDG_CONFIG_HOME/janas/mcp.json, or
  * ~/.config/janas/.
  */
 #ifndef JANAS_MCP_CONFIG_H
@@ -31,6 +33,9 @@ struct janas_mcp_conf {
     char *url;      /* a server over HTTP, NULL for stdio */
     char **headers; /* its headers, "Name: value", NULL-terminated */
     int disabled;
+    /* autoApprove: the tools (their names on the server) the user allows
+       for good, NULL-terminated (may be empty) */
+    char **auto_approve;
 };
 
 /* Reads a configuration file. 0 with *out and *n (n may be 0), 1 when the
