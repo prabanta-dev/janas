@@ -162,6 +162,15 @@ long janas_http_head_parse(const char *p, size_t n, struct janas_http_head *h)
                         (unsigned char)v[i] > 0x7e)
                         h->location[0] = 0;
             }
+        } else if ((v = header_value(line, ln, "WWW-Authenticate", &vn))) {
+            if (vn < sizeof(h->www_auth)) {
+                memcpy(h->www_auth, v, vn);
+                h->www_auth[vn] = 0;
+                for (size_t i = 0; i < vn; i++) /* printable ASCII only */
+                    if ((unsigned char)v[i] < 0x20 ||
+                        (unsigned char)v[i] > 0x7e)
+                        h->www_auth[0] = 0;
+            }
         } else if ((v = header_value(line, ln, "Mcp-Session-Id", &vn))) {
             if (vn < sizeof(h->session)) {
                 memcpy(h->session, v, vn);

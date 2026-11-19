@@ -635,8 +635,8 @@ int main(int argc, char **argv)
                 strcmp(c->host, "0.0.0.0") ? c->host : "127.0.0.1",
                 strchr(c->host, ':') ? "]" : "", (unsigned)c->port);
     if (c->monitor)
-        fprintf(stderr, "janas-server: monitor on http://%s%s%s:%u/monitor\n",
-                strchr(c->host, ':') ? "[" : "",
+        fprintf(stderr, "janas-server: monitor on %s://%s%s%s:%u/monitor\n",
+                c->tls_cert ? "https" : "http", strchr(c->host, ':') ? "[" : "",
                 strcmp(c->host, "0.0.0.0") ? c->host : "127.0.0.1",
                 strchr(c->host, ':') ? "]" : "", (unsigned)c->port);
     janas_stop_wait();

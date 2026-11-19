@@ -56,6 +56,6 @@ The [hardware report form](https://github.com/prabanta-dev/janas/issues/new?temp
 
 **What testers found so far** (every report, with its numbers: [reports.md](reports.md)). On a Radeon 780M (Ryzen 7 255, issue #16) the GPU read Qwen3-4B's prompt 5.2 times faster than the CPU alone (477 against 92 tokens/s, the second with `JANAS_GPU_FAST_PROMPT=0`), and subgroups of 32 (`JANAS_GPU_SG=32`) instead of the 64 the engine chose cost 14% (405 against 470 tokens/s): the default is right there. Its "+ GPU" rows wrote a reply at 10.5 tokens/s against 17.3 on the CPU alone: the GPU was kept awake for the single tokens of a reply, which an integrated GPU does not take, and awake it only took the power the cores need. Since 14 October 2026 it is kept awake only for the passes it takes; on the development laptop's Arc the "+ GPU" rows wrote 2-5% slower than the CPU alone before, and as fast after (Qwen3-4B, two alternated runs each). On a Quadro RTX 5000 (issue #17) the defect above.
 
-**What not to bother with yet:** macOS (not supported), and models outside the Qwen3, Qwen3.5, Qwen3.6, Qwen3-Next, Gemma 4, Llama 3 and Nemotron 3.5 Bolt families (they are refused with a message).
+**What not to bother with yet:** macOS (not supported), and models outside the Qwen3, Qwen3.5, Qwen3.6, Qwen3-Next, Gemma 4, Llama 3, Nemotron 3.5 Bolt and DeepSeek-V4-Flash families (they are refused with a message).
 
 Patches are welcome too, but a measurement from a machine nobody here can buy is worth more than most patches.

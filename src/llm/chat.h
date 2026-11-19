@@ -32,6 +32,13 @@ enum chat_format {
        im_start and im_end holding <|start_header_id|> and <|eot_id|>, the
        role closed by hdr_end */
     FORMAT_LLAMA3,
+    /* DeepSeek-V4: <｜begin▁of▁sentence｜> once, the system message as it
+       is, then <｜User｜>text, and <｜Assistant｜></think>text
+       <｜end▁of▁sentence｜> (no newlines, no role names); reasoning opens
+       with <think> after <｜Assistant｜>, the earlier turns' dropped.
+       im_start holds <｜User｜>, hdr_end <｜Assistant｜>, im_end the end of
+       sentence. No tools yet (its DSML) */
+    FORMAT_DEEPSEEK,
 };
 
 /* a picture read by the vision encoder (api_image.c): its embeddings and
@@ -70,7 +77,9 @@ struct janas_llm {
     int think_kept;
     int empty_thought; /* Gemma 4: an empty channel when not reasoning */
     enum janas_tool_dialect tools; /* how its template writes tool calls */
-    int32_t call_open, call_close; /* <tool_call>, </tool_call>, or -1 */
+    int32_t call_open, call_close; /* <tool_call>, </tool_call>, or -1;
+                                      DeepSeek's ｜DSML｜, -1 */
+    int32_t lt_tok; /* DeepSeek: "<", which comes before ｜DSML｜ */
     int32_t resp_open, resp_close; /* <tool_response>, </tool_response> */
     uint32_t pooling; /* embeddings: 1 mean, 2 first, 3 last; 0 none */
     int add_eos;      /* the tokenizer ends every text with eos_id */
@@ -227,8 +236,10 @@ struct janas_llm_chat {
     struct janas_grammar *g;       /* of the reply being read, with ... */
     struct janas_constraint *cons; /* ... what holds it to it */
 
-    /* the reply's tool calls: the one being written, and those closed */
-    int in_call;
+    /* the reply's tool calls: the one being written, and those closed;
+       held_lt: DeepSeek's "<" kept back until the next token says whether
+       a block of calls opens */
+    int in_call, held_lt;
     struct janas_buf body;
     struct rcall {
         char *name, *args;
@@ -377,6 +388,10 @@ int janas_api_record(janas_llm_chat *c, int32_t t, int32_t part,
 /* A call's closing token: the call written since its opening one becomes
    a call of the reply (or, not being one, text: returned in *text). */
 void janas_api_close_call(janas_llm_chat *c, struct janas_buf *text);
+/* DeepSeek's block of calls in body (from <｜DSML｜ to
+   </｜DSML｜tool_calls>): its invokes into the reply's calls, or the block
+   into text when they are not calls */
+void janas_api_close_dsml(janas_llm_chat *c, struct janas_buf *text);
 
 /* api_load.c: the messages of janas_llm_chat_add, at the chat's end. */
 void janas_api_msgs_free(janas_llm_chat *c);

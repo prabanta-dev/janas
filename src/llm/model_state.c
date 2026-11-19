@@ -230,7 +230,8 @@ static void *dup_mem(const void *p, size_t len)
 struct janas_llm_state *janas_llm_model_state_save(struct janas_llm_model *m,
                                                    uint32_t n)
 {
-    if (n > m->n_ctx)
+    /* DeepSeek-V4's state (model_ds4.c) is not saved yet */
+    if (n > m->n_ctx || m->a->ds4)
         return NULL;
     janas_m_gtok_host(m, 0); /* what the GPU made newer, read here */
     if (!janas_llm_model_rewind_ok(m, n))

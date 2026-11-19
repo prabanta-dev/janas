@@ -43,9 +43,16 @@ async function readServices() {
   const j = await ask("services");
   $("#wssvc").hidden = !ws.path;
   $("#svcnote").innerHTML = `The model opens one when a question needs it. Your own MCP servers go in <code>${esc(j.config)}</code>, in the format of Cursor and LM Studio.`;
+  /* a server of yours over HTTP that asks for a sign-in (OAuth) has its
+     button: the authorization server's page opens in the browser */
+  const auth = (x) => !x.http ? "" : x.signed_in
+    ? `<button type="button" class="act quiet svcauth" data-n="${esc(x.name)}" data-out="1" title="Its token is forgotten here">Sign out</button>`
+    : `<button type="button" class="act svcauth" data-n="${esc(x.name)}" title="Its sign-in page opens in the browser">Sign in</button>`;
   $("#svclist").innerHTML = j.services.map((x) =>
-    `<label><input type="checkbox" data-n="${esc(x.name)}"${x.on ? " checked" : ""}> <b>${esc(x.name)}</b> <small>${esc(x.about)}</small></label>`).join("") ||
+    `<div class="svc"><label><input type="checkbox" data-n="${esc(x.name)}"${x.on ? " checked" : ""}> <b>${esc(x.name)}</b> <small>${esc(x.about + (!x.http ? "" : x.signed_in ? " · signed in" : x.sign_in ? " · it asks you to sign in" : ""))}</small></label>${auth(x)}</div>`).join("") ||
     '<div class="note">none found beside Brebus</div>';
+  for (const b of document.querySelectorAll("#svclist .svcauth"))
+    b.onclick = () => b.dataset.out ? signOut(b.dataset.n) : signIn(b.dataset.n);
   for (const c of document.querySelectorAll("#svclist input"))
     c.onchange = async () => {
       const off = [...document.querySelectorAll("#svclist input")].filter((x) => !x.checked).map((x) => x.dataset.n);
@@ -54,6 +61,26 @@ async function readServices() {
       await fetch("/brebus/tools/restart", {method: "POST", body: "{}"});
       await readTools();
     };
+}
+
+async function signIn(name) {
+  const r = await fetch("/brebus/oauth/begin", {method: "POST",
+    body: JSON.stringify({name, redirect: location.origin + "/brebus/oauth/callback"})});
+  const j = await r.json();
+  if (!r.ok) { say(j.error || "the sign-in did not start", "Not signed in"); return; }
+  window.open(j.url, "_blank"); /* Brebus's window gives it to the browser */
+  say(`Sign in to ${name} in the page just opened; this list shows it when it is done.`, "Sign in");
+  /* the list follows the sign-in, for five minutes at most */
+  for (let i = 0; i < 150; i++) {
+    await new Promise((ok) => setTimeout(ok, 2000));
+    const x = (await ask("services")).services.find((v) => v.name === name);
+    if (x && x.signed_in) { await readServices(); say(`Signed in to ${name}.`, "Signed in"); return; }
+  }
+}
+async function signOut(name) {
+  if (!await yes(`Brebus forgets the token of ${name}; the next time it will ask you to sign in again.`, "Sign out?", "Sign out")) return;
+  await fetch("/brebus/oauth/forget", {method: "POST", body: JSON.stringify({name})});
+  await readServices();
 }
 
 /* the folders read only beside the workspace */

@@ -2,8 +2,8 @@
    Copyright (C) 2026 Maurizio Cammalleri */
 /*
  * gen_unicode.c - generates src/llm/unicode_data.h: code point ranges of the
- * Unicode letter (L*), number (N*) and mark (M*) categories and of the
- * White_Space property, for the pre-tokenizer of src/llm/tokenizer.c.
+ * Unicode letter (L*), number (N*), mark (M*), punctuation (P*) and symbol
+ * (S*) categories and of the White_Space property, for the pre-tokenizer of src/llm/tokenizer.c.
  *
  * It reads the Unicode Character Database: the general categories from
  * UnicodeData.txt (a code point it does not list is unassigned, Cn), the
@@ -147,6 +147,8 @@ int main(int argc, char **argv)
     emit_category("janas_uni_letter", 'L');
     emit_category("janas_uni_number", 'N');
     emit_category("janas_uni_mark", 'M');
+    emit_category("janas_uni_punct", 'P');
+    emit_category("janas_uni_symbol", 'S');
     emit_head("janas_uni_space");
     for (size_t i = 0; i < sizeof WHITE_SPACE / sizeof *WHITE_SPACE; i++)
         printf("    {0x%X, 0x%X},\n", WHITE_SPACE[i][0], WHITE_SPACE[i][1]);

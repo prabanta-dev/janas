@@ -422,6 +422,8 @@ done:
 
 const char *janas_gpu_check_note(const struct janas_gpu *g)
 {
+    if (g->cuda)
+        return "";
     return g->check_note;
 }
 

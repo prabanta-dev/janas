@@ -19,6 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "brebus.h"
@@ -27,6 +28,8 @@
 #include <shellapi.h>
 #endif
 #include "common/catalog.h"
+#include "common/mcp_config.h"
+#include "common/mcp_oauth.h"
 #include "common/mcp_services.h"
 #include "janas/mcp.h"
 
@@ -269,6 +272,19 @@ void brebus_tools_list(struct brebus *b, struct janas_buf *out)
     janas_buf_free(&py);
     struct janas_buf cat = {0};
     svc_tools(out, &first, &cat);
+    /* the skills: their tool, and their lines in the catalog */
+    struct janas_buf sk = {0}, skc = {0};
+    brebus_skills_tool(b, &sk, &skc);
+    if (sk.n) {
+        janas_buf_puts(out, first ? "" : ", ");
+        janas_buf_put(out, sk.p, sk.n);
+        first = 0;
+        if (cat.n)
+            janas_buf_puts(&cat, "\n\n");
+        janas_buf_put(&cat, skc.p, skc.n);
+    }
+    janas_buf_free(&sk);
+    janas_buf_free(&skc);
     janas_buf_puts(out, "], \"read_only\": [");
     /* the tools that say they only read, run without asking */
     janas_mcp *ms[] = {b->docs, b->files};
@@ -289,6 +305,7 @@ void brebus_tools_list(struct brebus *b, struct janas_buf *out)
             }
     }
     svc_read_only(out, &k);
+    janas_buf_puts(out, k++ ? ", \"janas__skill\"" : "\"janas__skill\"");
     janas_buf_puts(out, "], \"catalog\": ");
     janas_json_write_str(out, cat.p ? cat.p : "", cat.n);
     janas_buf_free(&cat);
@@ -359,6 +376,13 @@ int brebus_tools_call(struct brebus *b, const char *body, size_t n,
             janas_buf_puts(out, "{\"result\": \"python needs its code\", "
                                 "\"is_error\": true}");
         janas_json_free(pd);
+        pthread_mutex_unlock(&b->tools_mu);
+        janas_buf_free(&a);
+        janas_json_free(d);
+        return 0;
+    }
+    if (name && !strcmp(name, "janas__skill")) {
+        brebus_skills_call(b, a.p, a.n, out);
         pthread_mutex_unlock(&b->tools_mu);
         janas_buf_free(&a);
         janas_json_free(d);
@@ -535,12 +559,27 @@ int brebus_open_path(struct brebus *b, const char *path)
 
 struct svc {
     char name[64], prefix[72];
-    int user;     /* a server of the user's mcp.json */
-    int on;       /* offered to the model */
-    janas_mcp *m; /* started when opened */
+    int user;       /* a server of the user's mcp.json */
+    char url[2048]; /* its address, for a server over HTTP */
+    int sign_in;    /* it refused us (HTTP 401): it wants the user to sign in */
+    int on;         /* offered to the model */
+    janas_mcp *m;   /* started when opened */
 };
 static struct svc svcs[MAX_SVC];
 static int n_svc;
+static time_t cfg_time; /* mcp.json's when the services were listed */
+
+/* the time mcp.json was last changed, 0 with none */
+static time_t cfg_changed(void)
+{
+    char cfg[4096];
+    int32_t cl = 0;
+    struct stat st;
+    if (janas_mcp_config_path(cfg, sizeof cfg, &cl) != JANAS_MCP_OK ||
+        stat(cfg, &st) != 0)
+        return 0;
+    return st.st_mtime;
+}
 
 /* the names turned off, from settings.json's _services.off */
 static int svc_off(struct brebus *b, const char *name)
@@ -602,6 +641,21 @@ static void svc_scan(struct brebus *b)
             s->user = 1;
         }
     }
+    cfg_time = cfg_changed();
+    /* the addresses of those over HTTP, for their sign-in */
+    char cfg[4096], err[300];
+    int32_t cl = 0;
+    struct janas_mcp_conf *c = NULL;
+    size_t nc = 0;
+    if (janas_mcp_config_path(cfg, sizeof cfg, &cl) == JANAS_MCP_OK &&
+        janas_mcp_config_read(cfg, &c, &nc, err, sizeof err) == 0) {
+        for (size_t i = 0; i < nc; i++)
+            for (int k = 0; k < n_svc; k++)
+                if (svcs[k].user && c[i].url &&
+                    !strcmp(svcs[k].name, c[i].name))
+                    snprintf(svcs[k].url, sizeof svcs[k].url, "%s", c[i].url);
+        janas_mcp_config_free(c, nc);
+    }
     for (int i = 0; i < n_svc; i++) {
         struct svc *s = &svcs[i];
         s->on = !svc_off(b, s->name);
@@ -624,9 +678,14 @@ static int svc_start(struct brebus *b, struct svc *s)
 {
     if (s->m)
         return 0;
-    if (s->user)
-        return janas_mcp_open(NULL, s->name, 60, &s->m) == JANAS_MCP_OK ? 0
-                                                                        : -1;
+    if (s->user) {
+        if (janas_mcp_open(NULL, s->name, 60, &s->m) == JANAS_MCP_OK) {
+            s->sign_in = 0;
+            return 0;
+        }
+        s->sign_in = s->url[0] && strstr(janas_mcp_last_error(), "HTTP 401");
+        return -1;
+    }
     char exe[4400];
     brebus_service_exe(b, s->name, exe, sizeof exe);
     const char *argv[] = {exe};
@@ -640,7 +699,8 @@ static int svc_start(struct brebus *b, struct svc *s)
 void brebus_services_get(struct brebus *b, struct janas_buf *out)
 {
     pthread_mutex_lock(&b->tools_mu);
-    if (!n_svc)
+    /* listed again when the user's mcp.json changed meanwhile */
+    if (!n_svc || cfg_changed() != cfg_time)
         svc_scan(b);
     janas_buf_puts(out, "{\"services\": [");
     for (int i = 0; i < n_svc; i++) {
@@ -649,10 +709,19 @@ void brebus_services_get(struct brebus *b, struct janas_buf *out)
         janas_buf_puts(out, ", \"about\": ");
         str(out, svcs[i].user ? "a server of yours (mcp.json)"
                               : janas_service_about(svcs[i].name));
-        janas_buf_printf(out, ", \"user\": %s, \"on\": %s, \"open\": %s}",
+        janas_buf_printf(out, ", \"user\": %s, \"on\": %s, \"open\": %s",
                          svcs[i].user ? "true" : "false",
                          svcs[i].on ? "true" : "false",
                          svcs[i].m ? "true" : "false");
+        /* a server over HTTP: whether it wants a sign-in, and has one */
+        if (svcs[i].url[0])
+            janas_buf_printf(out,
+                             ", \"http\": true, \"signed_in\": %s, "
+                             "\"sign_in\": %s",
+                             janas_oauth_signed_in(svcs[i].name) ? "true"
+                                                                 : "false",
+                             svcs[i].sign_in ? "true" : "false");
+        janas_buf_puts(out, "}");
     }
     char cfg[4096];
     int32_t cl = 0;
@@ -749,8 +818,13 @@ static int svc_call(struct brebus *b, const char *name, const char *args,
             janas_buf_printf(&t, "There is no service \"%s\".",
                              want ? want : "");
         else if (svc_start(b, s) != 0)
-            janas_buf_printf(&t, "The service %s did not start: %s", s->name,
-                             janas_mcp_last_error());
+            janas_buf_printf(&t, "The service %s did not start: %s%s", s->name,
+                             janas_mcp_last_error(),
+                             s->sign_in
+                                 ? ". It wants the user to sign in: "
+                                   "the project's settings (its ⋯ in the side "
+                                   "bar), Services, Sign in"
+                                 : "");
         else
             janas_service_opened(&t, s->m, s->name, s->prefix);
         janas_buf_puts(out, "{\"result\": ");
@@ -764,8 +838,25 @@ static int svc_call(struct brebus *b, const char *name, const char *args,
     }
     for (int i = 0; i < n_svc; i++) {
         size_t pl = strlen(svcs[i].prefix);
-        if (!svcs[i].on || !svcs[i].m || strncmp(name, svcs[i].prefix, pl))
+        if (!svcs[i].on || strncmp(name, svcs[i].prefix, pl))
             continue;
+        /* a tool of a service closed since (signed out, restarted): opened
+           again, or the model told why not */
+        if (!svcs[i].m && svc_start(b, &svcs[i]) != 0) {
+            struct janas_buf t = {0};
+            janas_buf_printf(&t, "The service %s is not open: %s%s",
+                             svcs[i].name, janas_mcp_last_error(),
+                             svcs[i].sign_in
+                                 ? ". It wants the user to sign in: the "
+                                   "project's settings (its ⋯ in the side "
+                                   "bar), Services, Sign in"
+                                 : "");
+            janas_buf_puts(out, "{\"result\": ");
+            janas_json_write_str(out, t.p ? t.p : "", t.n);
+            janas_buf_puts(out, ", \"is_error\": true}");
+            janas_buf_free(&t);
+            return 1;
+        }
         const char *tool = name + pl;
         if (janas_mcp_call(svcs[i].m, tool, (int32_t)strlen(tool), args,
                            (int32_t)an, 120) != JANAS_MCP_OK) {
@@ -784,4 +875,118 @@ static int svc_call(struct brebus *b, const char *name, const char *args,
         return 1;
     }
     return 0;
+}
+
+/* ---- signing in to a server of the user's over HTTP (mcp_oauth.h): the
+   page sends the user to the address begun here, and the authorization
+   server sends the browser back to /brebus/oauth/callback ---- */
+
+static struct svc *svc_named(const char *name)
+{
+    for (int i = 0; name && i < n_svc; i++)
+        if (!strcmp(svcs[i].name, name))
+            return &svcs[i];
+    return NULL;
+}
+
+int brebus_oauth_begin(struct brebus *b, const char *body, size_t n,
+                       struct janas_buf *out)
+{
+    char err[400] = "", url[2048] = "", name[64] = "";
+    struct janas_json_doc *d =
+        n ? janas_json_parse(body, n, err, sizeof err) : NULL;
+    const struct janas_json *o = d ? janas_json_root(d) : NULL;
+    const char *nm = o ? janas_json_str(janas_json_get(o, "name")) : NULL;
+    const char *rd = o ? janas_json_str(janas_json_get(o, "redirect")) : NULL;
+    pthread_mutex_lock(&b->tools_mu);
+    if (!n_svc)
+        svc_scan(b);
+    struct svc *s = svc_named(nm);
+    if (s && s->user && s->url[0]) {
+        snprintf(url, sizeof url, "%s", s->url);
+        snprintf(name, sizeof name, "%s", s->name);
+    }
+    pthread_mutex_unlock(&b->tools_mu);
+    /* the browser comes back to this Brebus, by the address it reaches it */
+    static const char tail[] = "/brebus/oauth/callback";
+    size_t rl = rd ? strlen(rd) : 0;
+    int ok_rd = rl > sizeof tail && rl < 1024 &&
+                (!strncmp(rd, "http://", 7) || !strncmp(rd, "https://", 8)) &&
+                !strcmp(rd + rl - (sizeof tail - 1), tail) &&
+                !strpbrk(rd, "?#\"<> ");
+    static char auth[8192];
+    int rc = -1;
+    if (!url[0])
+        snprintf(err, sizeof err, "no server over HTTP named %s",
+                 nm ? nm : "(none)");
+    else if (!ok_rd)
+        snprintf(err, sizeof err,
+                 "the address to come back to is not Brebus's");
+    else
+        rc = janas_oauth_begin(name, url, rd, auth, sizeof auth, err,
+                               sizeof err);
+    janas_json_free(d);
+    janas_buf_puts(out, rc ? "{\"error\": " : "{\"url\": ");
+    str(out, rc ? err : auth);
+    janas_buf_puts(out, "}");
+    return rc;
+}
+
+void brebus_oauth_callback(struct brebus *b, const char *state,
+                           const char *code, const char *error,
+                           struct janas_buf *html)
+{
+    char name[128] = "", err[400] = "";
+    int rc = -1;
+    if (error && *error)
+        snprintf(err, sizeof err, "the server answered: %.200s", error);
+    else
+        rc =
+            janas_oauth_finish(state, code, name, sizeof name, err, sizeof err);
+    if (rc == 0) { /* opened again, with the token, when the model asks */
+        pthread_mutex_lock(&b->tools_mu);
+        struct svc *s = svc_named(name);
+        if (s) {
+            if (s->m)
+                janas_mcp_close(s->m);
+            s->m = NULL;
+            s->sign_in = 0;
+        }
+        pthread_mutex_unlock(&b->tools_mu);
+    }
+    struct janas_buf t = {0};
+    janas_json_write_str(&t, rc ? err : name, strlen(rc ? err : name));
+    janas_buf_printf(html,
+                     "<!doctype html><meta charset=\"utf-8\"><title>Brebus</"
+                     "title><style>body{font:16px system-ui,sans-serif;"
+                     "margin:15vh auto;max-width:34em;padding:0 16px;color:"
+                     "#222;background:#f6f5f2}@media(prefers-color-scheme:"
+                     "dark){body{color:#e8e6e1;background:#17181a}}</style>"
+                     "<h1>%s</h1><p id=\"m\"></p><p>You can close this %s "
+                     "and go back to Brebus.</p><script>document."
+                     "getElementById(\"m\").textContent=%s;</script>",
+                     rc ? "Not signed in" : "Signed in", "tab",
+                     t.p ? t.p : "\"\"");
+    janas_buf_free(&t);
+}
+
+int brebus_oauth_forget(struct brebus *b, const char *body, size_t n,
+                        struct janas_buf *out)
+{
+    char err[200];
+    struct janas_json_doc *d =
+        n ? janas_json_parse(body, n, err, sizeof err) : NULL;
+    const char *nm =
+        d ? janas_json_str(janas_json_get(janas_json_root(d), "name")) : NULL;
+    pthread_mutex_lock(&b->tools_mu);
+    struct svc *s = svc_named(nm);
+    int rc = s && s->user ? janas_oauth_forget(s->name) : -1;
+    if (s && s->m) {
+        janas_mcp_close(s->m);
+        s->m = NULL;
+    }
+    pthread_mutex_unlock(&b->tools_mu);
+    janas_json_free(d);
+    janas_buf_puts(out, rc ? "{\"error\": \"not signed in\"}" : "{}");
+    return rc;
 }

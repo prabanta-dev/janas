@@ -18,8 +18,8 @@ int janas_llm_model_parts_ok(const struct janas_llm_model *m)
        per-layer inputs, which are the tokens' - and the recurrent layers,
        Gated DeltaNet (Qwen3-Next, Qwen3.5 and 3.6) and Mamba-2
        (Nemotron-H), each piece on its own sequence: not yet qwen4exp's
-       streams and sparse attention */
-    return !m->hc_n && !m->ix_heads;
+       streams and sparse attention, nor DeepSeek-V4's */
+    return !m->hc_n && !m->ix_heads && !m->a->ds4;
 }
 
 void janas_llm_model_set_seq(struct janas_llm_model *m, struct janas_seq *s)
@@ -93,6 +93,7 @@ void janas_llm_model_seq_free(struct janas_llm_model *m, struct janas_seq *s)
         return;
     if (m->cur == s) /* the single calls go back to the model's own */
         m->cur = &m->seq0;
+    janas_m_ds4_seq_free(m, s);
     for (uint32_t i = 0; i < s->n_media; i++)
         free(s->media[i].embd);
     free(s->media);

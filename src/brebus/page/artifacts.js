@@ -249,8 +249,45 @@ async function highlight(pre) {
     pre.classList.add("hljs");
   } catch (e) { /* offline the first time: the code as it is */ }
 }
+/* a ```mermaid block of a reply drawn where it is, by Brebus's copy of
+   Mermaid (strict: no script, no HTML in its labels) and shown as a picture,
+   which runs nothing; a diagram drawn once for its text. One not yet whole,
+   or that Mermaid cannot draw, stays as its text */
+const diagrams = new Map();
+let diagramN = 0, diagramQ = Promise.resolve();
+/* one at a time: Mermaid draws one diagram at once */
+function diagram(pre) { diagramQ = diagramQ.then(() => drawDiagram(pre)); }
+async function drawDiagram(pre) {
+  if (!pre.isConnected) return; /* the reply drawn again meanwhile */
+  const src = pre.textContent;
+  try {
+    let svg = diagrams.get(src);
+    if (!svg) {
+      await loadLib("mermaid@11.4.1/dist/mermaid.min.js");
+      const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+      mermaid.initialize({startOnLoad: false, securityLevel: "strict", suppressErrorRendering: true,
+        theme: dark ? "dark" : "default", htmlLabels: false, flowchart: {htmlLabels: false}});
+      const id = "brebus-diagram-" + ++diagramN;
+      try { svg = (await mermaid.render(id, src)).svg; }
+      finally { document.getElementById(id)?.remove(); document.getElementById("d" + id)?.remove(); }
+      diagrams.set(src, svg);
+    }
+    if (!pre.isConnected) return;
+    const fig = document.createElement("figure");
+    fig.className = "diagram";
+    const img = new Image();
+    img.alt = "A diagram"; img.title = "A diagram, drawn from the text the model wrote";
+    img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+    /* at the size Mermaid drew it, narrower only where the chat is */
+    const vb = svg.match(/viewBox="[-\d.]+ [-\d.]+ ([\d.]+) ([\d.]+)"/);
+    if (vb) img.style.width = Math.round(+vb[1]) + "px";
+    fig.append(img);
+    pre.replaceWith(fig);
+  } catch (e) { /* its text, as it is */ }
+}
 async function decorate(el) {
-  for (const p of el.querySelectorAll("pre")) if (p.dataset.lang) highlight(p);
+  for (const p of el.querySelectorAll("pre"))
+    if (/^mermaid$/i.test(p.dataset.lang || "")) diagram(p); else if (p.dataset.lang) highlight(p);
   el.normalize(); /* the renderer writes text in runs: a formula in one piece */
   /* $...$ too, each one that is plainly a formula - a backslash, ^, _,
      braces or = inside, no space at its edges - written as \(...\) in its

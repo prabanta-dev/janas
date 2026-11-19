@@ -563,3 +563,37 @@ main:has(#chat.on) { padding-bottom: 10px; }
 .seg { height: var(--ctl-h); box-sizing: border-box; align-items: stretch; }
 .seg button { display: inline-flex; align-items: center; padding: 0 12px; font-size: 14px; }
 .arthead { gap: 8px; }
+
+/* a service with its sign-in button at the right */
+#svclist .svc { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+#svclist .svc label { min-width: 0; }
+#svclist .svcauth { flex: none; }
+
+/* a diagram of a reply, drawn in its place */
+.msg figure.diagram { margin: 8px 0; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel, transparent); overflow-x: auto; }
+.msg figure.diagram img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+.msg:has(figure.diagram) { width: min(100%, 760px); }
+
+/* a certificate's fingerprint: long, broken anywhere */
+#srv code.fp { word-break: break-all; }
+
+/* the fields under Advanced, as far apart as those above */
+.setf.plain details > label, .setf.plain details > p.note { margin-top: 14px; }
+.setf.plain details > p.note { margin-bottom: 0; }
+
+/* the skills, as the services: a row each, its button at the right */
+#sklist .svc { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+#sklist label { display: flex; gap: 8px; align-items: baseline; padding: 3px 0; font-size: 13px; min-width: 0; }
+#sklist small { color: var(--dim); }
+#sklist .skrm { flex: none; }
+#skadd { margin-top: 10px; }
+
+/* the connectors: as the services, a row each with its button */
+#conncard .cnlist .svc { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+#conncard .cnlist label { display: flex; gap: 8px; align-items: baseline; padding: 3px 0; font-size: 13px; min-width: 0; }
+#conncard .cnlist small { color: var(--dim); }
+#conncard .cnlist button { flex: none; }
+#conncard h4 { margin: 14px 0 6px; font-size: 13px; }
+#cnadd { margin-top: 10px; }
+/* Add and Remove of the same width, in one column */
+#conncard .cnlist button, #sklist .skrm, #svclist .svcauth { min-width: 6.5em; justify-content: center; }

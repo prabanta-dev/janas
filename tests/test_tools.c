@@ -264,8 +264,64 @@ static void test_mangled(void)
     CHECK(parsed > 0, "mangled: none parsed");
 }
 
+/* DeepSeek-V4's DSML: the system text, a turn's calls as the encoding
+   writes them (encode_arguments_to_dsml), and back */
+static void test_dsml(void)
+{
+    struct janas_toolset *t = tools();
+    if (!t)
+        return;
+    struct janas_buf b = {0};
+    janas_tools_system(&b, JANAS_TOOLS_DSML, t, "Be brief.", 9);
+    CHECK(b.p &&
+              strncmp(b.p, "Be brief.\n\n## Tools\n\nYou have access", 36) == 0,
+          "dsml system start: %.60s", b.p);
+    CHECK(b.p && strstr(b.p, "### Available Tool Schemas\n\n{\"name\": "
+                             "\"get_weather\", \"description\": "),
+          "dsml schemas: %s", b.p);
+    CHECK(b.p && strstr(b.p, "\n{\"name\": \"ping\"}\n\nYou MUST strictly"),
+          "dsml schemas end");
+    janas_buf_free(&b);
+    struct janas_tool_call calls[] = {
+        {.name = "get_weather", .args = "{\"city\": \"Rome\", \"days\": 2}"},
+        {.name = "ping", .args = "{}"},
+    };
+    for (int i = 0; i < 2; i++) {
+        calls[i].name_n = strlen(calls[i].name);
+        calls[i].args_n = strlen(calls[i].args);
+    }
+    janas_tools_assistant(&b, JANAS_TOOLS_DSML, "Let me see.", 11, calls, 2);
+    static const char want[] =
+        "Let me see.\n\n<｜DSML｜tool_calls>\n<｜DSML｜invoke "
+        "name=\"get_weather\">\n<｜DSML｜parameter name=\"city\" "
+        "string=\"true\">Rome</｜DSML｜parameter>\n<｜DSML｜parameter "
+        "name=\"days\" string=\"false\">2</｜DSML｜parameter>\n</｜DSML｜"
+        "invoke>\n<｜DSML｜invoke name=\"ping\">\n\n</｜DSML｜invoke>\n</"
+        "｜DSML｜tool_calls>";
+    CHECK(b.p && strcmp(b.p, want) == 0, "dsml assistant: %s", b.p);
+    struct janas_buf name = {0}, args = {0};
+    const char *inv = b.p ? strstr(b.p, "<｜DSML｜invoke") : NULL;
+    CHECK(inv &&
+              janas_tools_parse(JANAS_TOOLS_DSML, t, inv, strlen(inv), &name,
+                                &args) == 0 &&
+              strcmp(name.p, "get_weather") == 0 &&
+              strcmp(args.p, "{\"city\": \"Rome\", \"days\": 2}") == 0,
+          "parse dsml: %s %s", name.p, args.p);
+    janas_buf_free(&name);
+    janas_buf_free(&args);
+    const char *bad = "<｜DSML｜invoke name=\"nope\">\n</｜DSML｜invoke>";
+    CHECK(janas_tools_parse(JANAS_TOOLS_DSML, t, bad, strlen(bad), &name,
+                            &args) != 0,
+          "parse dsml of an unknown function");
+    janas_buf_free(&name);
+    janas_buf_free(&args);
+    janas_buf_free(&b);
+    janas_toolset_free(t);
+}
+
 int main(void)
 {
+    test_dsml();
     test_dialects();
     test_system();
     test_assistant();

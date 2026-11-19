@@ -44,6 +44,8 @@ static const struct janas_arch archs[] = {
      .rec = JANAS_REC_MAMBA2,
      .no_qk_norm = 1,
      .nh = 1},
+    /* DeepSeek-V4-Flash */
+    {.name = "deepseek4", .rec = JANAS_REC_NONE, .ds4 = 1},
     /* its scores are not scaled down, and an eight-bit key moves them: at
        eight bits llama.cpp agrees with its own f16 cache at 169 of 200 most
        likely tokens */

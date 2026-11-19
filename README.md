@@ -46,7 +46,7 @@ Measured on 21 October 2026 (the first two) and 26-27 October (the context of 8,
 
 ### Brebus, the app
 
-The models of your computer in a window of their own, nothing sent anywhere: the catalog and any model of Hugging Face downloaded, each file of the Hub said how far it is from running here; chats, and projects that work in a folder of yours - your documents (PDF, Word, Excel, PowerPoint, LibreOffice, web pages, EPUB) searched before each question and given to the model with their names; artifacts beside the chat as Claude's; dictation by Whisper and replies read aloud; files, web pages and pictures attached; the model's tools and Python in a cage asking you first; and the server for other programs. On Linux and Windows (macOS later): [docs/brebus.md](docs/brebus.md), a complete guide.
+The models of your computer in a window of their own, nothing sent anywhere: the catalog and any model of Hugging Face downloaded, each file of the Hub said how far it is from running here; chats, and projects that work in a folder of yours - your documents (PDF, Word, Excel, PowerPoint, LibreOffice, web pages, EPUB) searched before each question and given to the model with their names; artifacts beside the chat as Claude's; dictation by Whisper and replies read aloud; files, web pages and pictures attached; the model's tools and Python in a cage asking you first; and the server for other programs. On Linux and Windows (macOS later): [docs/brebus.md](docs/brebus.md), a complete guide. Beside LM Studio, Jan, Ollama, AnythingLLM and Msty, feature by feature, from their official documentation: [docs/compare.md](docs/compare.md), updated every week.
 
 ### janas-chat
 
@@ -284,7 +284,7 @@ Janas is designed and written by **Maurizio "camauri" Cammalleri** ([LinkedIn](h
 
 It stands on the work of others, and says so:
 
-- **The models** it runs are their authors': Qwen3, Qwen3.5, Qwen3.6 and Qwen3-Next by the Qwen team of Alibaba Cloud, Gemma 4 by Google, Nemotron 3.5 Bolt by NVIDIA (under the OpenMDW-1.1), Llama 3.2 by Meta (under the Llama 3.2 Community License); DeepNSM's adapter by the authors of [arXiv 2505.11764](https://arxiv.org/abs/2505.11764) (CC BY-NC-SA: research, not commercial use); the GGUF quantizations by Qwen, bartowski and unsloth ([MODELS.md](MODELS.md) has every source).
+- **The models** it runs are their authors': Qwen3, Qwen3.5, Qwen3.6 and Qwen3-Next by the Qwen team of Alibaba Cloud, Gemma 4 by Google, Nemotron 3.5 Bolt by NVIDIA (under the OpenMDW-1.1), DeepSeek-V4-Flash by DeepSeek (MIT), Llama 3.2 by Meta (under the Llama 3.2 Community License); DeepNSM's adapter by the authors of [arXiv 2505.11764](https://arxiv.org/abs/2505.11764) (CC BY-NC-SA: research, not commercial use); the GGUF quantizations by Qwen, bartowski and unsloth ([MODELS.md](MODELS.md) has every source).
 - **llama.cpp and ggml** are the reference the engine is checked against (logits, tokens, speed); none of their code is in Janas. The one thing taken from ggml is data that defines a format: the IQ3_S grid, in `src/llm/iq3s_grid.h`, under ggml's MIT licence.
 - **The Unicode Character Database** gives the tokenizer its tables (`tools/gen_unicode`), and **OpenAI's OpenAPI specification** gives `janas-server` its route table (`tools/openapi_routes`).
 - **GNU libmicrohttpd, yyjson and Mbed TLS** are compiled into the programs named below.

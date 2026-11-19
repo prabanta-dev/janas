@@ -122,8 +122,15 @@ static void act_worker(void *arg, int tid, int n_threads)
     for (uint32_t i = (uint32_t)tid; i < a->n; i += (uint32_t)n_threads) {
         size_t g = m->glist[i];
         uint32_t ff = m->hlen[g];
-        const float *gt = m->gate + g * stride, *u = m->up + g * stride;
+        float *gt = m->gate + g * stride, *u = m->up + g * stride;
         float *h = m->h + g * stride;
+        if (m->swiglu_limit > 0.0f) { /* DeepSeek-V4's clamp */
+            float lim = m->swiglu_limit;
+            for (uint32_t r = 0; r < ff; r++) {
+                gt[r] = fminf(gt[r], lim);
+                u[r] = fminf(fmaxf(u[r], -lim), lim);
+            }
+        }
         /* deterministic operations only, so that a GPU computing an
            expert gives the same bits */
         uint32_t r = 0;
@@ -772,7 +779,12 @@ int janas_m_moe_block(struct janas_llm_model *m, const struct layer *ly,
     }
     uint32_t np = n * k;
     double t_route = 0;
-    if (k) {
+    if (k && m->ds4) {
+        /* DeepSeek-V4's own scores, and its tables by token */
+        janas_m_ds4_route(m, ly, l, n);
+        if (m->route_fn && cache == m->cache)
+            m->route_fn(m->route_ctx, l, n, k, m->pair_exp);
+    } else if (k) {
         struct router_job rj = {.m = m,
                                 .w = ly->router16,
                                 .n = n,

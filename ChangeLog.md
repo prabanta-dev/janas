@@ -4,6 +4,29 @@
 
 ## [Unreleased]
 
+## [2026-11-19] - DeepSeek-V4-Flash from its own checkpoint; CUDA and HIP; Brebus with skills, connectors and HTTPS
+
+- **DeepSeek-V4-Flash** (284B parameters, 13B active), from DeepSeek's own checkpoint:
+  - `tools/hf2jns_ds4` converts it straight from Hugging Face, reading it by ranges, so that only the 155 GB JNS is written to disk. Every shard's SHA-256 is checked. The experts keep their FP4 bits (MXFP4); the dense FP8 matrices become Q8_0.
+  - The engine runs the `deepseek4` architecture on the CPU:
+    - the residual in four streams mixed by Sinkhorn;
+    - attention over one latent per position: a window of 128, compressed latents, and an indexer that picks 512 of them;
+    - experts chosen by sqrt(softplus) scores, or by a table of token ids in the first layers.
+  - Its chat format, with reasoning and DSML tool calls, and its tokenizer, identical to the official one on the texts checked.
+  - Against llama.cpp on the same three layers (one of each kind), the most likely token agrees at 2,359 of 2,400 positions, mean logit difference 0.028. The positions that differ are near-ties. Prompt blocks give the same bits as token by token.
+  - On the development laptop (Core Ultra 9 185H, 30 GB of RAM) the whole model writes about 2 tokens/s, cold cache, its experts streamed from the NVMe.
+  - Not yet: GPU, MTP, saving the conversation's state.
+- **NVIDIA's CUDA and AMD's HIP**, beside Vulkan: the engine reaches an NVIDIA card through CUDA's driver and an AMD one through HIP, both loaded at run time, where there is no Vulkan or when `JANAS_GPU_API` asks. Fourteen quantized types are computed bit for bit as the CPU does, the kernels compiled by clang with no vendor toolkit. Checked on the CPU; not yet run on a card.
+- **Intel's NPU on Windows too**, through the same Level Zero as on Linux (built; not yet run on a Windows machine with an NPU).
+- **Brebus**:
+  - **Encrypted server (HTTPS)**, with a certificate Brebus makes for the computer and its fingerprint shown.
+  - **Where the model runs**: chosen by Janas by default, or set by the user for reading, checking guesses and writing (CPU, GPU, NPU); also how it reaches the graphics card (Vulkan, CUDA, HIP). *Info* shows what Janas chose.
+  - **Signing in to MCP servers over HTTP (OAuth)**, as MCP's authorization says; the token is kept for the user and renewed, and `janas-chat` uses it too.
+  - **Chats**: duplicated, or branched from any reply; exported as plain text too.
+  - **Mermaid diagrams** drawn in the chat.
+  - **Skills**, in the format of Claude's: a folder with a `SKILL.md`, for every chat or for one project; a skill made for Claude works as it is. The model reads one when a task needs it; its scripts run with *Run code*, in its cage.
+  - **Connectors**: thirteen MCP services of the web added with a click (Notion, Linear, Sentry, Stripe, Hugging Face, Cloudflare...), and desktop extensions (Claude Desktop's `.mcpb` bundles) installed from their file.
+
 ## [2026-11-18] - Brebus reviewed with its users in mind; dictation; Janas on 64-bit ARM; Python on Windows
 
 - **Brebus, its page reviewed**, line by line on Windows 11 and Linux:

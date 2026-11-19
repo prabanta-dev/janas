@@ -38,6 +38,10 @@ jobs:
       - name: The shaders' compiler and the Vulkan headers
         run: |
           set -euo pipefail
+          # clang and lld: the CUDA and HIP kernels (build.sh)
+          export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a
+          sudo -E apt-get update -q
+          sudo -E apt-get install -y -q --no-install-recommends clang lld
           mkdir -p "$RUNNER_TEMP/khronos"
           cd "$RUNNER_TEMP/khronos"
           curl -fsSL -o glslang.tar.gz \
@@ -59,6 +63,10 @@ jobs:
           # run on the CPU alone without a word
           if grep -q "building without GPU support" build.log; then
             echo "the build left the GPU out"; exit 1
+          fi
+          # nor NVIDIA's and AMD's own ways to their cards
+          if grep -qE "building without (CUDA|HIP)" build.log; then
+            echo "the build left CUDA or HIP out"; exit 1
           fi
 
       - name: Test
@@ -167,7 +175,7 @@ jobs:
           export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a
           sudo -E apt-get update -q
           sudo -E apt-get install -y -q --no-install-recommends \
-            gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64
+            gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64 clang lld
           mkdir -p "$RUNNER_TEMP/khronos"
           cd "$RUNNER_TEMP/khronos"
           curl -fsSL -o glslang.tar.gz \
@@ -187,6 +195,10 @@ jobs:
           JANAS_OS=windows ./build.sh release build 2>&1 | tee build.log
           if grep -q "building without GPU support" build.log; then
             echo "the build left the GPU out"; exit 1
+          fi
+          # nor NVIDIA's and AMD's own ways to their cards
+          if grep -qE "building without (CUDA|HIP)" build.log; then
+            echo "the build left CUDA or HIP out"; exit 1
           fi
           # nothing but Windows's own DLLs
           for f in bin/x86_64-windows/*.exe bin/x86_64-windows/*.dll; do

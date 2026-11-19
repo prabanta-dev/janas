@@ -99,21 +99,48 @@ async function deleteConv() {
 }
 async function exportConv(c) {
   if (!c || c instanceof Event) c = cur;
-  const how = await dialog({title: "Export this chat", text: "As a Markdown file in the workspace's exports/, or as a PDF through the system's print dialog (Print to file).",
-    buttons: [{label: "Markdown", value: "md", primary: true}, {label: "PDF", value: "pdf"}, {label: "Cancel", value: "no"}]});
+  const how = await dialog({title: "Export this chat", text: "As a Markdown or plain text file in the project's exports/, or as a PDF through the system's print dialog (Print to file).",
+    buttons: [{label: "Markdown", value: "md", primary: true}, {label: "Text", value: "txt"}, {label: "PDF", value: "pdf"}, {label: "Cancel", value: "no"}]});
   if (how.button === "no") return;
   if (how.button === "pdf") {
     if (c !== cur) { say("Open the chat first: the PDF is printed from the page that shows it."); return; }
     document.title = cur.title || "Chat"; window.print(); document.title = "Brebus"; return;
   }
-  const md = [`# ${c.title || "Chat"}`, ""];
-  for (const m of c.messages)
-    md.push(`## ${m.role === "user" ? "You" : "Assistant"}`, "", m.content || "", "");
-  /* saved by Brebus in the downloads folder: a window has no downloads */
+  /* the words said, not the tools' calls and answers */
+  const said = c.messages.filter((m) => (m.role === "user" || m.role === "assistant") && m.content);
+  const title = c.title || "Chat", out = [];
+  if (how.button === "txt") {
+    out.push(title, "=".repeat(Math.min(title.length, 72)), "");
+    for (const m of said) out.push(m.role === "user" ? "You:" : "Assistant:", m.content, "");
+  } else {
+    out.push(`# ${title}`, "");
+    for (const m of said) out.push(`## ${m.role === "user" ? "You" : "Assistant"}`, "", m.content, "");
+  }
+  /* saved by Brebus where the chat is kept: a window has no downloads */
   const r = await fetch("/brebus/export", {method: "POST",
-    body: JSON.stringify({name: c.title || "chat", text: md.join("\n")})});
+    body: JSON.stringify({name: c.title || "chat", ext: how.button, text: out.join("\n")})});
   const j = await r.json();
   say(r.ok ? j.path : j.error || "not saved", r.ok ? "Exported" : "Not exported");
+}
+
+/* a copy of a chat, whole or up to one of its replies, beside it: to take
+   the conversation another way and keep the first. where: the project (or
+   the free chats) of a chat of the side bar that is not the one open */
+async function branchConv(c, upto, where) {
+  if (busy) return;
+  if (c !== cur && !c.messages) return;
+  const ms = upto === undefined ? c.messages : c.messages.slice(0, upto + 1);
+  const n = {...JSON.parse(JSON.stringify(c)), id: newId(), messages: JSON.parse(JSON.stringify(ms)),
+    /* named first by what it is: the side bar shows a title's beginning */
+    title: `${upto === undefined ? "Copy" : "Branch"} of ${c.title || "New chat"}`, archived: false, updated: Date.now()};
+  if (where !== undefined && where !== ws.path) {
+    await fetch(`/brebus/chats/${n.id}?ws=${encodeURIComponent(where)}`, {method: "POST", body: JSON.stringify(n)});
+    refreshTree(); say(`"${n.title}" is beside it.`);
+    return;
+  }
+  await saveConv(n);
+  convs.unshift({id: n.id, title: n.title, model: n.model || "", updated: n.updated, messages: n.messages.length});
+  await openConv(n.id);
 }
 
 /* the reasoning and the tools' boxes the user opened: a message is drawn
@@ -323,6 +350,7 @@ function drawLog() {
       bar.className = "msgacts";
       const c = act("copy", "Copy this reply", () => copy(c));
       bar.append(c);
+      if (!cur.archived) bar.append(act("branch", "A new chat with the conversation up to this reply, to go on another way", () => branchConv(cur, k)));
       if ("speechSynthesis" in window)
         bar.append(act("speakOn", "Read this reply aloud (again: stop)", () => {
           if (speechSynthesis.speaking) { speechSynthesis.cancel(); return; }

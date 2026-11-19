@@ -28,6 +28,7 @@ const ICON = {
   speakOn: '<path d="M4.5 9.5h3l4.5-4v13l-4.5-4h-3z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>',
   file: '<path d="M6.5 3.5h7l4 4v13h-11z"/><path d="M13.5 3.5v4h4"/>',
   art: '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 9h16M9 9v11"/>',
+  branch: '<circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="7" r="2"/><path d="M6 7v10"/><path d="M18 9c0 5-12 3-12 8"/>',
   copy: '<rect x="8.5" y="8.5" width="11" height="11" rx="1.5"/><path d="M15.5 8.5V5.5A1.5 1.5 0 0 0 14 4H5.5A1.5 1.5 0 0 0 4 5.5V14a1.5 1.5 0 0 0 1.5 1.5h3"/>',
   check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
   more: '<circle cx="6" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="18" cy="12" r="1.2"/>',
@@ -137,7 +138,11 @@ function drawTree() {
     };
     const [add, more] = h.querySelectorAll(".gadd");
     add.onclick = () => goChat(p.path, "new");
-    more.onclick = async () => { if (p.path !== ws.path) await wsOpen(p.path, false); wsShow(true); };
+    more.onclick = async () => {
+      if (p.path !== ws.path) await wsOpen(p.path, false);
+      wsShow(true);
+      readServices(); /* mcp.json may have changed since */
+    };
     const list = document.createElement("div");
     list.className = "plist";
     const chats = p.chats.chats || [];
@@ -199,7 +204,8 @@ function chatMenu(at) {
   popMenu(at, [
     {label: "Rename", icon: "pencil", run: renameConv},
     {label: "Move to…", icon: "move", note: ws.free ? "a project" : "another project, or the free chats", run: () => moveConv(at)},
-    {label: "Export", icon: "export", note: "Markdown or PDF", run: exportConv},
+    {label: "Duplicate", icon: "copy", note: "a copy to take another way", run: () => branchConv(cur)},
+    {label: "Export", icon: "export", note: "Markdown, text or PDF", run: exportConv},
     {label: "In a new window", icon: "window", run: () => window.open("/#chat/" + cur.id, "_blank")},
     "-",
     {label: arch ? "Restore" : "Archive", icon: arch ? "restore" : "archive", note: arch ? "back among the chats" : "kept to read, no longer continued", run: () => archiveConv(!arch)},
@@ -232,7 +238,8 @@ function rowMenu(c, where, at) {
         refreshTree();
       }})));
     }},
-    {label: "Export", icon: "export", note: "Markdown", run: async () => { const x = await load(); if (x) exportConv(x); }},
+    {label: "Duplicate", icon: "copy", note: "a copy to take another way", run: async () => { const x = await load(); if (x) branchConv(x, undefined, where); }},
+    {label: "Export", icon: "export", note: "Markdown or text", run: async () => { const x = await load(); if (x) exportConv(x); }},
     "-",
     {label: c.archived ? "Restore" : "Archive", icon: c.archived ? "restore" : "archive",
      note: c.archived ? "back among the chats" : "kept to read, no longer continued",
@@ -609,3 +616,108 @@ function drawVoice() {
   if (sel) sel.onchange = () => { try { localStorage.setItem("brebus.voice", sel.value); } catch (e) {} };
 }
 if ("speechSynthesis" in window) speechSynthesis.onvoiceschanged = () => drawVoice();
+
+/* ---- Skills, in Settings: instructions the model reads when a task needs
+   them, in the format of Claude's (a folder with SKILL.md); every chat's in
+   the folder beside mcp.json, a project's own in its .brebus/skills ---- */
+async function drawSkills() {
+  const box = $("#skillcard");
+  if (!box) return;
+  let j;
+  try { j = await ask("skills"); } catch (e) { return; }
+  const rows = j.skills.map((s) =>
+    `<div class="svc"><label><input type="checkbox" data-n="${esc(s.name)}"${s.on ? " checked" : ""}> <b>${esc(s.name)}</b> <small>${esc((s.description || "no description") + (s.project ? " · this project's own" : ""))}</small></label>` +
+    (s.project ? "" : `<button type="button" class="act quiet skrm" data-n="${esc(s.name)}" title="Its folder is deleted from Brebus's skills">Remove</button>`) + "</div>").join("");
+  box.innerHTML = `<p class="note">Instructions for particular tasks, which the model reads when a task needs them: skills in the format of Claude's, a folder with a SKILL.md, work here as they are. Those for every chat are in <code>${esc(j.dir)}</code>, a project's own in its <code>.brebus/skills</code>.</p>
+    <div id="sklist">${rows || '<div class="note">None yet.</div>'}</div>
+    <form class="hfget" id="skadd" onsubmit="return false"><input name="path" spellcheck="false" placeholder="a folder with SKILL.md, to copy among every chat's skills">
+      <button class="act quiet browse" type="button" id="skbrowse" title="Choose the folder in the system's window"${ws.window ? "" : " hidden"}>Browse…</button>
+      <button class="act" type="submit" title="Copy the skill's folder among every chat's skills">Add</button></form>`;
+  for (const c of box.querySelectorAll("#sklist input"))
+    c.onchange = async () => {
+      const off = [...box.querySelectorAll("#sklist input")].filter((x) => !x.checked).map((x) => x.dataset.n);
+      settings._skills = {off};
+      await fetch("/brebus/settings", {method: "POST", body: JSON.stringify(settings)});
+      readTools();
+    };
+  for (const b of box.querySelectorAll(".skrm"))
+    b.onclick = async () => {
+      if (!await yes(`The skill ${b.dataset.n} and its folder are deleted from Brebus's skills.`, "Remove this skill?", "Remove")) return;
+      await fetch("/brebus/skills/remove", {method: "POST", body: JSON.stringify({name: b.dataset.n})});
+      drawSkills(); readTools();
+    };
+  $("#skbrowse").onclick = async () => {
+    const p = await pick(false, "A skill's folder (with its SKILL.md)");
+    if (p) $("#skadd").path.value = p;
+  };
+  $("#skadd").onsubmit = async () => {
+    const path = $("#skadd").path.value.trim();
+    if (!path) return false;
+    const r = await fetch("/brebus/skills/add", {method: "POST", body: JSON.stringify({path})});
+    const k = await r.json();
+    say(r.ok ? `The skill ${k.name} is added: the model sees it from the next message.` : k.error, r.ok ? "Added" : "Not added");
+    drawSkills(); readTools();
+    return false;
+  };
+}
+
+/* ---- Connectors, in Settings: services of the web that speak MCP, a
+   click each (their sign-in in a project's settings, Services), and
+   desktop extensions (.mcpb, Claude Desktop's), installed from a file ---- */
+async function drawConnectors() {
+  const box = $("#conncard");
+  if (!box) return;
+  let cat, mine;
+  try { [cat, mine] = await Promise.all([ask("connectors/catalog"), ask("connectors")]); } catch (e) { return; }
+  const web = cat.remote.map((c) =>
+    `<div class="svc"><label><b>${esc(c.title)}</b> <small>${esc(c.about)}</small></label>` +
+    `<button type="button" class="act ${c.added ? "quiet " : ""}cnweb" data-id="${esc(c.id)}" data-on="${c.added ? 1 : ""}" title="${c.added ? "Taken out of mcp.json" : "Added to mcp.json: then Sign in from a project's settings, Services"}">${c.added ? "Remove" : "Add"}</button></div>`).join("");
+  const ext = mine.installed.map((c) =>
+    `<div class="svc"><label><b>${esc(c.display_name)}</b> <small>${esc((c.version ? "v" + c.version + " · " : "") + (c.description || ""))}</small></label>` +
+    `<button type="button" class="act quiet cnrm" data-n="${esc(c.name)}" title="Its folder and its entry in mcp.json are removed">Remove</button></div>`).join("");
+  box.innerHTML = `<p class="note">Services and programs the model can use, through MCP. Those of the web sign in from a project's settings (its ⋯), Services, where each one added is listed.</p>
+    <h4>Services on the web</h4><div class="cnlist">${web}</div>
+    <h4>Desktop extensions</h4>
+    <p class="note">MCP Bundles (.mcpb), as Claude Desktop installs them: a program that reaches an application of this computer. Brebus asks for the settings it needs and installs it in <code>${esc(mine.dir)}</code>.</p>
+    <div class="cnlist">${ext || '<div class="note">None yet.</div>'}</div>
+    <form class="hfget" id="cnadd" onsubmit="return false"><input name="path" spellcheck="false" placeholder="an extension's .mcpb file">
+      <button class="act quiet browse" type="button" id="cnbrowse" title="Choose the file in the system's window"${ws.window ? "" : " hidden"}>Browse…</button>
+      <button class="act" type="submit" title="Look at it, then install it">Install</button></form>`;
+  for (const b of box.querySelectorAll(".cnweb"))
+    b.onclick = async () => {
+      await fetch(b.dataset.on ? "/brebus/connectors/drop" : "/brebus/connectors/add", {method: "POST", body: JSON.stringify({id: b.dataset.id})});
+      drawConnectors(); readServices();
+    };
+  for (const b of box.querySelectorAll(".cnrm"))
+    b.onclick = async () => {
+      if (!await yes(`${b.dataset.n} and its folder are removed, and its entry in mcp.json.`, "Remove this extension?", "Remove")) return;
+      await fetch("/brebus/connectors/remove", {method: "POST", body: JSON.stringify({name: b.dataset.n})});
+      drawConnectors(); readServices();
+    };
+  $("#cnbrowse").onclick = async () => {
+    const p = await pick(true, "A desktop extension (.mcpb)");
+    if (p) $("#cnadd").path.value = p;
+  };
+  $("#cnadd").onsubmit = async () => {
+    const path = $("#cnadd").path.value.trim();
+    if (!path) return false;
+    const r = await fetch("/brebus/connectors/inspect", {method: "POST", body: JSON.stringify({path})});
+    const m = await r.json();
+    if (!r.ok) { say(m.error || "not an extension", "Not installed"); return false; }
+    if (!m.runs) { say(`${m.display_name}: ${m.why}.`, "Not installed"); return false; }
+    const fields = m.user_config.map((f) =>
+      `<label>${esc(f.title)}${f.required ? "" : " (optional)"}
+        <input class="cnf" data-k="${esc(f.key)}" type="${f.sensitive ? "password" : f.type === "number" ? "number" : "text"}" value="${f.default === null || f.default === undefined ? "" : esc(String(f.default))}" spellcheck="false">
+        ${f.description ? `<span class="note">${esc(f.description)}</span>` : ""}</label>`).join("");
+    const d = await dialog({title: `Install ${m.display_name}?`,
+      html: `<div class="srvset plainset"><p class="note">${esc(m.description || "")}${m.version ? " (v" + esc(m.version) + ")" : ""}. Its program runs on this computer when the model opens it, with your settings below; it is not in a cage.</p>${fields}</div>`,
+      read: (b) => Object.fromEntries([...b.querySelectorAll(".cnf")].map((i) => [i.dataset.k, i.type === "number" && i.value !== "" ? +i.value : i.value])),
+      buttons: [{label: "Install", value: "ok", primary: true}, {label: "Cancel", value: "no"}]});
+    if (d.button !== "ok") return false;
+    const ri = await fetch("/brebus/connectors/install", {method: "POST", body: JSON.stringify({path, config: d.form})});
+    const k = await ri.json();
+    say(ri.ok ? `${m.display_name} is installed: the model can open it, as the other services.` : k.error, ri.ok ? "Installed" : "Not installed");
+    drawConnectors(); readServices();
+    return false;
+  };
+}

@@ -372,6 +372,71 @@ static enum MHD_Result handler(void *cls, struct MHD_Connection *conn,
         brebus_python_status(&o);
         return json(conn, rc ? 400 : 200, &o);
     }
+    if (post && !strcmp(url, "/brebus/oauth/begin")) {
+        int rc = brebus_oauth_begin(b, r->body.p, r->body.n, &o);
+        return json(conn, rc ? 400 : 200, &o);
+    }
+    if (post && !strcmp(url, "/brebus/oauth/forget")) {
+        int rc = brebus_oauth_forget(b, r->body.p, r->body.n, &o);
+        return json(conn, rc ? 400 : 200, &o);
+    }
+    if (get && !strcmp(url, "/brebus/oauth/callback")) {
+        /* the browser sent back by the authorization server */
+        brebus_oauth_callback(
+            b,
+            MHD_lookup_connection_value(conn, MHD_GET_ARGUMENT_KIND, "state"),
+            MHD_lookup_connection_value(conn, MHD_GET_ARGUMENT_KIND, "code"),
+            MHD_lookup_connection_value(conn, MHD_GET_ARGUMENT_KIND, "error"),
+            &o);
+        enum MHD_Result ret = reply(conn, 200, "text/html; charset=utf-8",
+                                    o.p ? o.p : "", o.n, 0);
+        janas_buf_free(&o);
+        return ret;
+    }
+    if (get && !strcmp(url, "/brebus/connectors/catalog")) {
+        brebus_connectors_catalog(b, &o);
+        return json(conn, 200, &o);
+    }
+    if (post && !strcmp(url, "/brebus/connectors/add")) {
+        int rc = brebus_connector_add_remote(b, r->body.p, r->body.n, &o);
+        return json(conn, rc ? 400 : 200, &o);
+    }
+    if (post && !strcmp(url, "/brebus/connectors/drop")) {
+        int rc = brebus_connector_drop(b, r->body.p, r->body.n, &o);
+        return json(conn, rc ? 400 : 200, &o);
+    }
+    if (get && !strcmp(url, "/brebus/connectors")) {
+        brebus_connectors_get(b, &o);
+        return json(conn, 200, &o);
+    }
+    if (post && !strcmp(url, "/brebus/connectors/inspect")) {
+        int rc = brebus_connector_inspect(b, r->body.p, r->body.n, &o);
+        return json(conn, rc ? 400 : 200, &o);
+    }
+    if (post && !strcmp(url, "/brebus/connectors/install")) {
+        int rc = brebus_connector_install(b, r->body.p, r->body.n, &o);
+        return json(conn, rc ? 400 : 200, &o);
+    }
+    if (post && !strcmp(url, "/brebus/connectors/remove")) {
+        int rc = brebus_connector_remove(b, r->body.p, r->body.n, &o);
+        return json(conn, rc ? 400 : 200, &o);
+    }
+    if (get && !strcmp(url, "/brebus/skills")) {
+        brebus_skills_get(b, &o);
+        return json(conn, 200, &o);
+    }
+    if (post && !strcmp(url, "/brebus/skills/add")) {
+        int rc = brebus_skills_add(b, r->body.p, r->body.n, &o);
+        return json(conn, rc ? 400 : 200, &o);
+    }
+    if (post && !strcmp(url, "/brebus/skills/remove")) {
+        int rc = brebus_skills_remove(b, r->body.p, r->body.n, &o);
+        return json(conn, rc ? 400 : 200, &o);
+    }
+    if (get && !strcmp(url, "/brebus/server/choices")) {
+        brebus_server_choices(b, &o);
+        return json(conn, 200, &o);
+    }
     if (get && !strcmp(url, "/brebus/services")) {
         brebus_services_get(b, &o);
         return json(conn, 200, &o);

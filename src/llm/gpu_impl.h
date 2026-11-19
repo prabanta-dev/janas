@@ -10,6 +10,7 @@
 #define JANAS_LLM_GPU_IMPL_H
 
 #include "gpu.h"
+#include "gpu_cuda.h"
 
 #if defined(JANAS_GPU_SPV) && __has_include(<vulkan/vulkan.h>)
 
@@ -162,6 +163,9 @@ struct push {
 };
 
 struct janas_gpu {
+    /* an NVIDIA card through CUDA (gpu_cuda.c), JANAS_GPU_API=cuda: the
+       public functions pass their calls to it, Vulkan's fields unused */
+    struct janas_cuda *cuda;
     void *lib;
     PFN_vkGetInstanceProcAddr gipa;
 #define DECL(f) PFN_##f f;

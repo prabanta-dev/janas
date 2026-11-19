@@ -53,6 +53,12 @@ struct janas_arch {
        from d_model before them, up after), relu^2 without a gate, routed
        by sigmoids with a bias for the choice */
     int nh;
+    /* DeepSeek-V4 (deepseek4, model_ds4.c): four streams of the residual
+       mixed by Sinkhorn's hyper-connections, attention over one latent a
+       position (a window of raw ones and compressed ones, an indexer
+       choosing among them), experts chosen by sqrt(softplus) scores or by a
+       table of token ids, SwiGLU clamped */
+    int ds4;
 };
 
 /* The architecture called name, or NULL if Janas does not know it. */

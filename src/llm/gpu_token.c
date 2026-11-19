@@ -59,12 +59,16 @@ static const char *const ph_name[PH_N] = {"norm+quant",    "q k v",
                                           "experts' sum",  "between segs"};
 int janas_gpu_shares_host(const struct janas_gpu *g)
 {
+    if (g && g->cuda)
+        return 0; /* a card with memory of its own */
     return g && !g->broken && !g->discrete && g->host_import &&
            !janas_g_copy_asked();
 }
 
 size_t janas_gpu_local_room(const struct janas_gpu *g)
 {
+    if (g && g->cuda)
+        return janas_cuda_local_room(g->cuda);
     if (!g || g->broken || !g->discrete)
         return 0;
     /* the largest heap of the card's own memory, 85% of it: the desktop
@@ -398,6 +402,10 @@ struct janas_gpu_tok *janas_gpu_tok_create(struct janas_gpu *g,
                                            const struct janas_gpu_tok_model *md,
                                            char *err, size_t err_len)
 {
+    if (g->cuda) {
+        snprintf(err, err_len, "the whole token is not on CUDA yet");
+        return NULL;
+    }
     /* on a card with memory of its own the caller keeps the state the
        same in both places (model_gpu.c sync_state): every buffer named in
        md needs a region all the same, which check_model sees */

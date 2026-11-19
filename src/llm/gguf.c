@@ -24,7 +24,8 @@
 int janas_gguf_type(uint32_t type, uint64_t *blck, uint64_t *size)
 {
     /* the ggml types the converter takes (as the Python script before it
-       did), and src/llm/jns.c reads */
+       did), and src/llm/jns.c reads; I32 (26) for DeepSeek-V4's tables of
+       token to experts */
     static const struct {
         uint32_t type, blck, size;
     } t[] = {
@@ -34,7 +35,7 @@ int janas_gguf_type(uint32_t type, uint64_t *blck, uint64_t *size)
         {15, 256, 292}, {20, 32, 18},   {21, 256, 110}, {23, 256, 136},
         {30, 1, 2},     {39, 32, 17},   {40, 64, 36},   {42, 64, 18},
         {18, 256, 98},  {16, 256, 66},  {17, 256, 74},  {22, 256, 82},
-        {29, 256, 56},  {19, 256, 50},
+        {29, 256, 56},  {19, 256, 50},  {26, 1, 4},
     };
     for (size_t i = 0; i < sizeof(t) / sizeof(t[0]); i++)
         if (t[i].type == type) {

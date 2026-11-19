@@ -33,7 +33,10 @@
 #endif
 
 #include "brebus.h"
+#include "common/catalog.h"
+#include "common/devices.h"
 #include "common/mcp_http.h"
+#include "common/mcp_tls.h"
 #include "common/model_scan.h"
 
 static void str(struct janas_buf *o, const char *s)
@@ -51,10 +54,11 @@ static int fail(struct janas_buf *out, const char *why)
 }
 
 /* the server answers its models' list: ready */
-static int answers(unsigned short port, const char *key)
+static int answers(unsigned short port, const char *key, int tls)
 {
     char url[64], err[128];
-    snprintf(url, sizeof url, "http://127.0.0.1:%u/v1/models", port);
+    snprintf(url, sizeof url, "%s://127.0.0.1:%u/v1/models",
+             tls ? "https" : "http", port);
     struct janas_url u;
     if (janas_url_parse(url, &u, err, sizeof err) != 0)
         return 0;
@@ -73,10 +77,11 @@ static int answers(unsigned short port, const char *key)
 #define MAX_ORIGINS 8
 
 /* settings.json's "_server": the local network, the key, the origins */
-static void server_settings(struct brebus *b, int *lan, char *key, size_t kn,
-                            char origins[][256], int *n_origins)
+static void server_settings(struct brebus *b, int *lan, int *tls, char *key,
+                            size_t kn, char origins[][256], int *n_origins)
 {
     *lan = 0;
+    *tls = 0;
     key[0] = 0;
     *n_origins = 0;
     struct janas_buf f = {0};
@@ -88,6 +93,8 @@ static void server_settings(struct brebus *b, int *lan, char *key, size_t kn,
         d ? janas_json_get(janas_json_root(d), "_server") : NULL;
     const struct janas_json *v = s ? janas_json_get(s, "lan") : NULL;
     *lan = v && v->type == JANAS_JSON_TRUE;
+    v = s ? janas_json_get(s, "https") : NULL;
+    *tls = v && v->type == JANAS_JSON_TRUE;
     const char *k = s ? janas_json_str(janas_json_get(s, "api_key")) : NULL;
     /* printable, no spaces: it goes into a header */
     int good = k && *k && strlen(k) < kn && strlen(k) < 200;
@@ -159,6 +166,56 @@ static void lan_address(char *ip, size_t n)
 #endif
 }
 
+/* Brebus's own certificate, for HTTPS: made in data_dir/tls the first
+   time, or again when the names it is for changed or it ends within a
+   month; trusted by Brebus's own requests to its server. 0, or -1. */
+static int certificate(struct brebus *b, char *cert, char *key, size_t n,
+                       char *err, size_t en)
+{
+    char dir[4200], names_f[4300], host[256] = "localhost", ip[64] = "";
+    snprintf(dir, sizeof dir, "%s/tls", b->data_dir);
+    janas_mkdirs(dir);
+    snprintf(cert, n, "%s/cert.pem", dir);
+    snprintf(key, n, "%s/key.pem", dir);
+    snprintf(names_f, sizeof names_f, "%s/names.txt", dir);
+    gethostname(host, sizeof host - 1);
+    lan_address(ip, sizeof ip);
+    const char *names[] = {"localhost", host, "127.0.0.1", "::1", ip};
+    size_t nn = ip[0] ? 5 : 4;
+    char want[512], had[512] = "";
+    snprintf(want, sizeof want, "%s %s %s", host, ip, "v1");
+    FILE *f = fopen(names_f, "rb");
+    if (f) {
+        size_t r = fread(had, 1, sizeof had - 1, f);
+        had[r] = 0;
+        fclose(f);
+    }
+    struct stat st;
+    int fresh = stat(cert, &st) == 0 && access(key, R_OK) == 0 &&
+                !strcmp(had, want) &&
+                time(NULL) - st.st_mtime < (time_t)(825 - 30) * 86400;
+    if (!fresh) {
+        if (janas_tls_make_cert(cert, key, names, nn, 825, err, en) != 0)
+            return -1;
+        f = fopen(names_f, "wb");
+        if (f) {
+            fputs(want, f);
+            fclose(f);
+        }
+    }
+    static char trusted[4300];
+    if (strcmp(trusted, cert) || !fresh) {
+        if (janas_tls_trust(cert) != 0) {
+            snprintf(err, en, "cannot read the certificate Brebus made");
+            return -1;
+        }
+        snprintf(trusted, sizeof trusted, "%s", cert);
+    }
+    if (janas_tls_fingerprint(cert, b->srv_fp, sizeof b->srv_fp) != 0)
+        b->srv_fp[0] = 0;
+    return 0;
+}
+
 static void stop_locked(struct brebus *b)
 {
     if (!b->srv_on)
@@ -201,14 +258,25 @@ int brebus_server_start(struct brebus *b, const char *body, size_t n,
     stop_locked(b);
     char exe[4200], port[8], par_s[8], ctx_s[16], logp[4200], env_key[300];
     char origins[MAX_ORIGINS][256];
-    int lan, n_origins;
-    server_settings(b, &lan, b->srv_key, sizeof b->srv_key, origins,
+    int lan, tls, n_origins;
+    server_settings(b, &lan, &tls, b->srv_key, sizeof b->srv_key, origins,
                     &n_origins);
     b->srv_lan = lan;
+    static char cert[4300], key[4300];
+    b->srv_tls = 0;
+    b->srv_fp[0] = 0;
+    if (tls) {
+        if (certificate(b, cert, key, sizeof cert, err, sizeof err) != 0) {
+            pthread_mutex_unlock(&b->mu);
+            janas_json_free(d);
+            return fail(out, err);
+        }
+        b->srv_tls = 1;
+    }
     snprintf(exe, sizeof exe, "%s/janas-server%s", b->bin_dir, b->suffix);
     b->srv_port = (unsigned short)(b->port + 1);
     snprintf(port, sizeof port, "%u", b->srv_port);
-    const char *argv[26 + 2 * MAX_ORIGINS];
+    const char *argv[40 + 2 * MAX_ORIGINS];
     int k = 0;
     argv[k++] = exe;
     argv[k++] = m[at].path;
@@ -235,6 +303,12 @@ int brebus_server_start(struct brebus *b, const char *body, size_t n,
         argv[k++] = "--host";
         argv[k++] = "0.0.0.0";
     }
+    if (b->srv_tls) {
+        argv[k++] = "--tls-cert";
+        argv[k++] = cert;
+        argv[k++] = "--tls-key";
+        argv[k++] = key;
+    }
     for (int i = 0; i < n_origins; i++) {
         argv[k++] = "--allow-origin";
         argv[k++] = origins[i];
@@ -253,13 +327,34 @@ int brebus_server_start(struct brebus *b, const char *body, size_t n,
         argv[k++] = "--think";
         argv[k++] = th->type == JANAS_JSON_TRUE ? "on" : "off";
     }
+    /* where each kind of pass runs, when the user chose it: else Janas
+       chooses, measuring this computer */
+    static const char *const ON[] = {"prompt_on", "drafts_on", "reply_on"};
+    static char on_v[JANAS_DEVICES_OPTIONS][32];
+    for (int i = 0; i < JANAS_DEVICES_OPTIONS; i++) {
+        const char *v = o ? janas_json_str(janas_json_get(o, ON[i])) : NULL;
+        char why[200];
+        if (!v || strlen(v) >= sizeof on_v[i] ||
+            janas_devices_mask(v, why, sizeof why) <= 0)
+            continue; /* none, auto, or not one the engine reads */
+        snprintf(on_v[i], sizeof on_v[i], "%s", v);
+        argv[k++] = janas_devices_options[i];
+        argv[k++] = on_v[i];
+    }
     argv[k] = NULL;
+    /* the GPU's way, when the user chose one: else Janas's (Vulkan, then
+       CUDA or HIP where there is no Vulkan) */
+    static char env_api[40];
+    const char *ga = o ? janas_json_str(janas_json_get(o, "gpu_api")) : NULL;
+    int api_ok = ga && (!strcmp(ga, "vulkan") || !strcmp(ga, "cuda") ||
+                        !strcmp(ga, "hip"));
+    snprintf(env_api, sizeof env_api, "JANAS_GPU_API=%s", api_ok ? ga : "");
     janas_json_free(d);
     snprintf(logp, sizeof logp, "%s/server.log", b->data_dir);
     int fd = open(logp, O_WRONLY | O_CREAT | O_TRUNC, 0600);
     /* the key in its environment, or none: not one Brebus was started with */
     snprintf(env_key, sizeof env_key, "JANAS_API_KEY=%s", b->srv_key);
-    const char *env[] = {env_key, NULL};
+    const char *env[] = {env_key, api_ok ? env_api : NULL, NULL};
     int rc =
         janas_proc_start(&b->srv, argv, env, NULL, -1, fd, fd,
                          JANAS_PROC_GROUP | BREBUS_NO_CONSOLE, err, sizeof err);
@@ -278,7 +373,7 @@ int brebus_server_start(struct brebus *b, const char *body, size_t n,
     pthread_mutex_unlock(&b->mu);
     /* ready when it answers; a large model takes a while to open */
     for (int i = 0; i < 600; i++) {
-        if (answers(b->srv_port, b->srv_key))
+        if (answers(b->srv_port, b->srv_key, b->srv_tls))
             break;
         int code;
         pthread_mutex_lock(&b->mu);
@@ -322,15 +417,20 @@ void brebus_server_status(struct brebus *b, struct janas_buf *out)
     str(out, on ? b->srv_model : "");
     janas_buf_printf(out, ", \"port\": %u, \"url\": ", on ? b->srv_port : 0);
     char url[64] = "", ip[64] = "", lan_url[96] = "";
+    const char *sch = b->srv_tls ? "https" : "http";
     if (on)
-        snprintf(url, sizeof url, "http://127.0.0.1:%u/v1", b->srv_port);
+        snprintf(url, sizeof url, "%s://127.0.0.1:%u/v1", sch, b->srv_port);
     str(out, url);
     if (on && b->srv_lan)
         lan_address(ip, sizeof ip);
     if (ip[0])
-        snprintf(lan_url, sizeof lan_url, "http://%s:%u/v1", ip, b->srv_port);
+        snprintf(lan_url, sizeof lan_url, "%s://%s:%u/v1", sch, ip,
+                 b->srv_port);
     janas_buf_puts(out, ", \"lan_url\": ");
     str(out, lan_url);
+    janas_buf_printf(out, ", \"https\": %s, \"fingerprint\": ",
+                     on && b->srv_tls ? "true" : "false");
+    str(out, on && b->srv_tls ? b->srv_fp : "");
     janas_buf_puts(out, ", \"api_key\": ");
     str(out, on ? b->srv_key : "");
     janas_buf_puts(out, ", \"last\": ");
@@ -431,4 +531,52 @@ int brebus_models_dir_set(struct brebus *b, const char *path, int save)
     janas_buf_free(&f);
     janas_buf_free(&o);
     return rc;
+}
+
+/* what the engine of the model loaded chose for this computer (the devices
+   of each kind of pass, its threads), as its monitor's first event says */
+void brebus_server_choices(struct brebus *b, struct janas_buf *out)
+{
+    char url[96], err[200], auth[320];
+    pthread_mutex_lock(&b->mu);
+    int on = b->srv_on;
+    snprintf(url, sizeof url, "%s://127.0.0.1:%u/monitor/events",
+             b->srv_tls ? "https" : "http", b->srv_port);
+    snprintf(auth, sizeof auth, "Authorization: Bearer %s", b->srv_key);
+    int keyed = b->srv_key[0] != 0;
+    pthread_mutex_unlock(&b->mu);
+    struct janas_url u;
+    struct janas_http h;
+    struct janas_buf in = {0};
+    const char *hdr[] = {auth};
+    if (on && janas_url_parse(url, &u, err, sizeof err) == 0 &&
+        janas_http_request(&h, &u, "GET", hdr, keyed ? 1 : 0, NULL, 0, 3000,
+                           NULL, err, sizeof err) == 0) {
+        /* up to the end of the first event */
+        for (int i = 0; i < 40 && in.n < (1 << 20); i++) {
+            if (janas_http_body(&h, &in, 250) < 0)
+                break;
+            janas_buf_put(&in, "", 1); /* text: ended, for strstr */
+            in.n--;
+            if (strstr(in.p, "\n\n"))
+                break;
+        }
+        janas_http_close(&h);
+    }
+    char *d = in.p && !in.oom ? strstr(in.p, "data: ") : NULL;
+    char *e = d ? strchr(d, '\n') : NULL;
+    struct janas_json_doc *doc =
+        d && e ? janas_json_parse(d + 6, (size_t)(e - d - 6), err, sizeof err)
+               : NULL;
+    const struct janas_json *r = doc ? janas_json_root(doc) : NULL;
+    const char *ch = r ? janas_json_str(janas_json_get(r, "choices")) : NULL;
+    const char *ds =
+        r ? janas_json_str(janas_json_get(r, "description")) : NULL;
+    janas_buf_puts(out, "{\"choices\": ");
+    str(out, ch ? ch : "");
+    janas_buf_puts(out, ", \"description\": ");
+    str(out, ds ? ds : "");
+    janas_buf_puts(out, "}");
+    janas_json_free(doc);
+    janas_buf_free(&in);
 }

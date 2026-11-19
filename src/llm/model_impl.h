@@ -164,6 +164,8 @@ struct janas_seq {
     uint32_t base_pos, log_n, replay;
     struct janas_media *media;
     uint32_t n_media;
+    /* DeepSeek-V4's (model_ds4.c), made when first used */
+    struct janas_ds4_seq *ds4;
 };
 
 struct janas_llm_model {
@@ -285,6 +287,11 @@ struct janas_llm_model {
        sh_h and sh_hq the shared expert's rows */
     uint32_t moe_lat, moe_w;
     float route_scale;
+    /* the experts' SwiGLU clamped (DeepSeek-V4): gate below it, up within
+       plus or minus it; 0: none */
+    float swiglu_limit;
+    /* DeepSeek-V4 (model_ds4.c): its tensors, mixes and scratch */
+    struct janas_ds4 *ds4;
     const struct janas_block_q8k *moe_xq;
     float *moe_out, *lat, *lat_acc, *sh_h;
     struct janas_block_q8k *latq, *sh_hq;
@@ -943,6 +950,24 @@ void janas_m_qsa_restore(struct janas_llm_model *m, uint32_t n);
 /* the raw keys and the blocks when the context moves along */
 void janas_m_qsa_shift(struct janas_llm_model *m, uint32_t keep, uint32_t drop,
                        uint32_t n_kv);
+/* DeepSeek-V4 (model_ds4.c): its hyperparameters (0, or -1), layer l's
+   tensors, its buffers once the block is known, freed; a sequence's state
+   freed; a block's layers on the embeddings in x, the streams mixed back
+   into x for the output norm; the mixture's choice of layer l for the n
+   tokens normalized in xn (pair_tok, pair_exp, pair_w), from the tokens
+   in gtok_tokens where the layer routes by table */
+int janas_m_ds4_params(struct janas_llm_model *m);
+int janas_m_ds4_layer_load(struct janas_llm_model *m, uint32_t l,
+                           struct layer *ly, char *err, size_t err_len);
+int janas_m_ds4_alloc(struct janas_llm_model *m);
+void janas_m_ds4_free(struct janas_llm_model *m);
+void janas_m_ds4_seq_free(struct janas_llm_model *m, struct janas_seq *sq);
+int janas_m_ds4_layers(struct janas_llm_model *m, uint32_t n, uint32_t pos0);
+/* whether the current sequence can go back to position n: its rings still
+   hold the window before it */
+int janas_m_ds4_rewind_ok(const struct janas_llm_model *m, uint32_t n);
+void janas_m_ds4_route(struct janas_llm_model *m, const struct layer *ly,
+                       uint32_t l, uint32_t n);
 /* which experts a moe_block call runs */
 enum { MOE_ALL, MOE_SHARED, MOE_ROUTED };
 

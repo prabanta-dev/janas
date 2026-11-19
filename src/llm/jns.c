@@ -95,6 +95,7 @@ static int type_geometry(uint32_t type, uint64_t *blck, uint64_t *size)
         {22, 256, 82},  /* IQ2_S */
         {29, 256, 56},  /* IQ1_M */
         {19, 256, 50},  /* IQ1_S */
+        {26, 1, 4},     /* I32, DeepSeek-V4's token-to-expert tables */
     };
     for (size_t i = 0; i < sizeof(t) / sizeof(t[0]); i++)
         if (t[i].type == type) {

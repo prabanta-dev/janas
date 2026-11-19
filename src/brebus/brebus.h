@@ -61,6 +61,8 @@ struct brebus {
     time_t srv_used;    /* when the page last asked the model */
     char srv_key[256];  /* the key its clients send, or "" */
     int srv_lan;        /* reachable from the local network */
+    int srv_tls;        /* it speaks HTTPS, with Brebus's certificate */
+    char srv_fp[100];   /* that certificate's SHA-256, "AB:CD:..." */
     struct brebus_get get[BREBUS_GETS];
     /* tools.c: the chat's tools, MCP servers of the workspace's own */
     pthread_mutex_t tools_mu;
@@ -230,6 +232,48 @@ int brebus_tools_call(struct brebus *b, const char *body, size_t n,
    as JSON into out (settings.json's _services.off turns them off; the
    tools list gives the model their catalog and janas__open_service) */
 void brebus_services_get(struct brebus *b, struct janas_buf *out);
+/* Skills, in the format of Claude's (skills.c): the list for the page; the
+   tool janas__skill and the catalog's lines for the model; its call; one
+   added from a folder ({"path"}), one of every chat's removed ({"name"}) */
+void brebus_skills_get(struct brebus *b, struct janas_buf *out);
+/* Desktop extensions, MCP Bundles (.mcpb), connectors.c: the installed
+   ones; one looked at ({"path"}: its name, settings, whether it runs
+   here); installed ({"path", "config"}); removed ({"name"}) */
+void brebus_connectors_get(struct brebus *b, struct janas_buf *out);
+int brebus_connector_inspect(struct brebus *b, const char *body, size_t n,
+                             struct janas_buf *out);
+int brebus_connector_install(struct brebus *b, const char *body, size_t n,
+                             struct janas_buf *out);
+int brebus_connector_remove(struct brebus *b, const char *body, size_t n,
+                            struct janas_buf *out);
+/* The remote connectors a click adds ({"remote": [...]}, each said added
+   when mcp.json has it); one added ({"id"}); one of them taken out */
+void brebus_connectors_catalog(struct brebus *b, struct janas_buf *out);
+int brebus_connector_add_remote(struct brebus *b, const char *body, size_t n,
+                                struct janas_buf *out);
+int brebus_connector_drop(struct brebus *b, const char *body, size_t n,
+                          struct janas_buf *out);
+void brebus_skills_tool(struct brebus *b, struct janas_buf *tool,
+                        struct janas_buf *catalog);
+int brebus_skills_call(struct brebus *b, const char *args, size_t n,
+                       struct janas_buf *out);
+int brebus_skills_add(struct brebus *b, const char *body, size_t n,
+                      struct janas_buf *out);
+int brebus_skills_remove(struct brebus *b, const char *body, size_t n,
+                         struct janas_buf *out);
+/* A server of the user's over HTTP signed in to (common/mcp_oauth.h): the
+   address where the user signs in ({"name", "redirect"} → {"url"}), the
+   page the browser comes back to, the tokens forgotten ({"name"}) */
+/* What the engine of the model loaded chose for this computer:
+   {"choices", "description"}, empty when none is loaded */
+void brebus_server_choices(struct brebus *b, struct janas_buf *out);
+int brebus_oauth_begin(struct brebus *b, const char *body, size_t n,
+                       struct janas_buf *out);
+void brebus_oauth_callback(struct brebus *b, const char *state,
+                           const char *code, const char *error,
+                           struct janas_buf *html);
+int brebus_oauth_forget(struct brebus *b, const char *body, size_t n,
+                        struct janas_buf *out);
 void brebus_folders_get(struct brebus *b, struct janas_buf *out);
 int brebus_folders_set(struct brebus *b, const char *body, size_t n,
                        struct janas_buf *out);

@@ -41,6 +41,7 @@ struct janas_http_head {
     char content_type[128];
     char session[256];   /* Mcp-Session-Id */
     char location[4096]; /* of a redirect, visible ASCII, or empty */
+    char www_auth[1024]; /* WWW-Authenticate (OAuth's), printable, or empty */
 };
 
 /* The head in the first n bytes: its length (up to and with the blank

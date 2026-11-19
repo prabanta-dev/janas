@@ -11,6 +11,9 @@
  *
  * Mbed TLS has no threading of its own here: every call to it takes the
  * process's one lock (janas_tls_lock), the waits never inside it.
+ *
+ * On Windows, which has no socketpair, the pair is two ends of a connection
+ * over the loopback, made for each client; the sockets go through sock.h.
  */
 #include "server.h"
 
@@ -36,7 +39,49 @@
 
 #define HANDSHAKE_MS 30000
 
-#ifndef _WIN32 /* not served there yet: socketpair */
+/* a socket made not to block */
+static void no_block(int fd)
+{
+#ifdef _WIN32
+    u_long on = 1;
+    ioctlsocket((SOCKET)fd, FIONBIO, &on);
+#else
+    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
+#endif
+}
+
+/* Two connected sockets, sp[0] for libmicrohttpd: 0, or -1. */
+static int sock_pair(int sp[2])
+{
+#ifdef _WIN32
+    /* the two ends of a connection over the loopback, the listener gone
+       once they are made */
+    SOCKET l = socket(AF_INET, SOCK_STREAM, 0), a = INVALID_SOCKET,
+           b = INVALID_SOCKET;
+    struct sockaddr_in in = {.sin_family = AF_INET,
+                             .sin_addr.s_addr = htonl(INADDR_LOOPBACK)};
+    int len = sizeof in;
+    if (l != INVALID_SOCKET &&
+        bind(l, (struct sockaddr *)&in, sizeof in) == 0 && listen(l, 1) == 0 &&
+        getsockname(l, (struct sockaddr *)&in, &len) == 0 &&
+        (b = socket(AF_INET, SOCK_STREAM, 0)) != INVALID_SOCKET &&
+        connect(b, (struct sockaddr *)&in, sizeof in) == 0)
+        a = accept(l, NULL, NULL);
+    if (l != INVALID_SOCKET)
+        closesocket(l);
+    if (a == INVALID_SOCKET) {
+        if (b != INVALID_SOCKET)
+            closesocket(b);
+        return -1;
+    }
+    sp[0] = (int)a;
+    sp[1] = (int)b;
+    return 0;
+#else
+    return socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sp);
+#endif
+}
+
 static mbedtls_ssl_config conf;
 static mbedtls_x509_crt chain;
 static mbedtls_pk_context key;
@@ -69,17 +114,10 @@ static int same_key(const mbedtls_pk_context *pub,
                ? 0
                : -1;
 }
-#endif
 
 int srv_tls_setup(const char *cert, const char *keyfile, char *err,
                   size_t err_len)
 {
-#ifdef _WIN32
-    (void)cert;
-    (void)keyfile;
-    snprintf(err, err_len, "HTTPS is not served on Windows yet");
-    return -1;
-#else
     janas_tls_lock();
     int rc = janas_tls_crypto() == 0 ? 0 : -1;
     if (rc) {
@@ -110,13 +148,11 @@ int srv_tls_setup(const char *cert, const char *keyfile, char *err,
         why(rc, err, err_len, "the certificate and its key");
     janas_tls_unlock();
     return rc ? -1 : 0;
-#endif
 }
 
-#ifndef _WIN32
 static int bio_send(void *ctx, const unsigned char *p, size_t n)
 {
-    ssize_t w = send(*(int *)ctx, p, n, MSG_NOSIGNAL);
+    long w = janas_sock_send(*(int *)ctx, p, n);
     if (w >= 0)
         return (int)w;
     return errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR
@@ -126,7 +162,7 @@ static int bio_send(void *ctx, const unsigned char *p, size_t n)
 
 static int bio_recv(void *ctx, unsigned char *p, size_t n)
 {
-    ssize_t r = recv(*(int *)ctx, p, n, 0);
+    long r = janas_sock_recv(*(int *)ctx, p, n);
     if (r >= 0)
         return (int)r;
     return errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR
@@ -144,7 +180,7 @@ struct conn {
 static int put_all(int fd, const unsigned char *p, size_t n)
 {
     while (n) {
-        ssize_t w = send(fd, p, n, MSG_NOSIGNAL);
+        long w = janas_sock_send(fd, p, n);
         if (w < 0 && (errno == EAGAIN || errno == EINTR)) {
             struct pollfd pf = {.fd = fd, .events = POLLOUT};
             poll(&pf, 1, 1000);
@@ -184,10 +220,9 @@ static void *serve(void *arg)
             break;
         rc = 0;
     }
-    if (rc != 0 || stopping ||
-        socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sp) != 0 ||
-        MHD_add_connection(server->mhd, sp[0], (struct sockaddr *)&c->peer,
-                           c->peer_len) != MHD_YES)
+    if (rc != 0 || stopping || sock_pair(sp) != 0 ||
+        MHD_add_connection(server->mhd, (MHD_socket)sp[0],
+                           (struct sockaddr *)&c->peer, c->peer_len) != MHD_YES)
         goto done;
     sp[0] = -1; /* libmicrohttpd's now */
     /* the bytes both ways until either side closes */
@@ -216,10 +251,10 @@ static void *serve(void *arg)
             }
         }
         if (pf[1].revents & (POLLIN | POLLHUP | POLLERR)) {
-            ssize_t r = recv(sp[1], buf, sizeof buf, 0);
+            long r = janas_sock_recv(sp[1], buf, sizeof buf);
             if (r <= 0 && !(r < 0 && (errno == EAGAIN || errno == EINTR)))
                 break;
-            for (ssize_t done = 0; r > 0 && done < r;) {
+            for (long done = 0; r > 0 && done < r;) {
                 janas_tls_lock();
                 int w = mbedtls_ssl_write(&ssl, buf + done, (size_t)(r - done));
                 janas_tls_unlock();
@@ -241,10 +276,10 @@ done:
     mbedtls_ssl_free(&ssl);
     janas_tls_unlock();
     if (sp[0] >= 0)
-        close(sp[0]);
+        janas_sock_close(sp[0]);
     if (sp[1] >= 0)
-        close(sp[1]);
-    close(c->fd);
+        janas_sock_close(sp[1]);
+    janas_sock_close(c->fd);
     free(c);
     active--;
     return NULL;
@@ -261,66 +296,59 @@ static void *accept_main(void *arg)
         if (!c)
             continue;
         c->peer_len = sizeof c->peer;
-        c->fd = accept(listen_fd, (struct sockaddr *)&c->peer, &c->peer_len);
+        c->fd =
+            (int)accept(listen_fd, (struct sockaddr *)&c->peer, &c->peer_len);
         if (c->fd < 0) {
             free(c);
             continue;
         }
-        fcntl(c->fd, F_SETFL, fcntl(c->fd, F_GETFL) | O_NONBLOCK);
+        no_block(c->fd);
         pthread_t t;
         pthread_attr_t at;
         pthread_attr_init(&at);
         pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
         if (pthread_create(&t, &at, serve, c) != 0) {
-            close(c->fd);
+            janas_sock_close(c->fd);
             free(c);
         }
         pthread_attr_destroy(&at);
     }
     return NULL;
 }
-#endif
 
 int srv_tls_start(struct srv *s, const struct sockaddr *addr, char *err,
                   size_t err_len)
 {
-#ifdef _WIN32
-    (void)s;
-    (void)addr;
-    snprintf(err, err_len, "HTTPS is not served on Windows yet");
-    return -1;
-#else
     server = s;
     socklen_t len = addr->sa_family == AF_INET6
                         ? (socklen_t)sizeof(struct sockaddr_in6)
                         : (socklen_t)sizeof(struct sockaddr_in);
-    listen_fd = socket(addr->sa_family, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    listen_fd = janas_sock_open(addr->sa_family, SOCK_STREAM, 0);
     int one = 1;
     if (listen_fd >= 0)
-        setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+        setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, (const void *)&one,
+                   sizeof one);
     if (listen_fd < 0 || bind(listen_fd, addr, len) != 0 ||
         listen(listen_fd, 64) != 0) {
         snprintf(err, err_len, "cannot listen on %s:%u: %s", s->cfg.host,
                  (unsigned)s->cfg.port, strerror(errno));
         if (listen_fd >= 0)
-            close(listen_fd);
+            janas_sock_close(listen_fd);
         listen_fd = -1;
         return -1;
     }
     stopping = 0;
     if (pthread_create(&acceptor, NULL, accept_main, NULL) != 0) {
         snprintf(err, err_len, "cannot start the TLS listener");
-        close(listen_fd);
+        janas_sock_close(listen_fd);
         listen_fd = -1;
         return -1;
     }
     return 0;
-#endif
 }
 
 void srv_tls_stop(void)
 {
-#ifndef _WIN32
     if (listen_fd < 0)
         return;
     stopping = 1;
@@ -329,7 +357,6 @@ void srv_tls_stop(void)
        libmicrohttpd stops under them */
     for (int i = 0; active > 0 && i < 50; i++)
         usleep(100000);
-    close(listen_fd);
+    janas_sock_close(listen_fd);
     listen_fd = -1;
-#endif
 }

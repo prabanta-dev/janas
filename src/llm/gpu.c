@@ -545,7 +545,54 @@ static int tiles_exact(void)
     return e && atoi(e) > 0;
 }
 
+/* An NVIDIA card through CUDA's driver (hip 0) or an AMD one through HIP
+   (1), gpu_cuda.c: its products split by rows as Vulkan's are, what it has
+   no kernel for on the CPU */
+static struct janas_gpu *drv_create(int hip, char *err, size_t err_len)
+{
+    struct janas_gpu *g = calloc(1, sizeof(*g));
+    if (!g) {
+        snprintf(err, err_len, "out of memory");
+        return NULL;
+    }
+    g->cuda =
+        hip ? janas_hip_create(err, err_len) : janas_cuda_create(err, err_len);
+    if (!g->cuda) {
+        free(g);
+        return NULL;
+    }
+    const char *mn = getenv("JANAS_GPU_MIN_N");
+    g->pass_n = UINT32_MAX;
+    g->discrete = 1;
+    g->min_n = mn && atoi(mn) > 0 ? (size_t)atoi(mn) : 1;
+    g->full_n = (size_t)-1;
+    return g;
+}
+
+static struct janas_gpu *vk_create(char *err, size_t err_len);
+
+/* Vulkan, the GPU of every maker, with the products, the prompt's tiles,
+   the experts and the whole token; where there is no Vulkan (a server's
+   card with its maker's driver alone), NVIDIA's CUDA, then AMD's HIP.
+   JANAS_GPU_API=vulkan, cuda or hip takes that one alone. */
 struct janas_gpu *janas_gpu_create(char *err, size_t err_len)
+{
+    const char *api = getenv("JANAS_GPU_API");
+    if (api && !strcmp(api, "cuda"))
+        return drv_create(0, err, err_len);
+    if (api && !strcmp(api, "hip"))
+        return drv_create(1, err, err_len);
+    struct janas_gpu *g = vk_create(err, err_len);
+    if (g || (api && !strcmp(api, "vulkan")))
+        return g;
+    char e2[256];
+    if ((g = drv_create(0, e2, sizeof e2)) ||
+        (g = drv_create(1, e2, sizeof e2)))
+        return g;
+    return NULL; /* Vulkan's reason, in err */
+}
+
+static struct janas_gpu *vk_create(char *err, size_t err_len)
 {
     struct janas_gpu *g = calloc(1, sizeof(*g));
     if (g)
@@ -571,6 +618,7 @@ struct janas_gpu *janas_gpu_create(char *err, size_t err_len)
         snprintf(err, err_len, "out of memory");
         return NULL;
     }
+
 #ifdef _WIN32
 #define VULKAN_LOADER "vulkan-1.dll"
 #else
@@ -1045,6 +1093,11 @@ fail:
 
 void janas_gpu_destroy(struct janas_gpu *g)
 {
+    if (g && g->cuda) { /* an NVIDIA card through CUDA (gpu_cuda.c) */
+        janas_cuda_destroy(g->cuda);
+        free(g);
+        return;
+    }
     if (!g)
         return;
     if (g->verbose)
@@ -1329,11 +1382,15 @@ void janas_gpu_destroy(struct janas_gpu *g)
 
 const char *janas_gpu_name(const struct janas_gpu *g)
 {
+    if (g && g->cuda)
+        return janas_cuda_name(g->cuda);
     return g->name;
 }
 
 unsigned janas_gpu_subgroup(const struct janas_gpu *g)
 {
+    if (g && g->cuda)
+        return 32; /* a warp */
     return g->sg;
 }
 
@@ -1359,6 +1416,8 @@ static const struct {
 
 size_t janas_gpu_last_shader(const struct janas_gpu *g, char *buf, size_t len)
 {
+    if (g && g->cuda)
+        return (size_t)snprintf(buf, len, "%s", janas_cuda_last(g->cuda));
     buf[0] = 0;
     for (int i = 0; i < g->n_made; i++)
         if (g->made[i].p == g->last_pipe) {
@@ -1378,6 +1437,8 @@ size_t janas_gpu_last_shader(const struct janas_gpu *g, char *buf, size_t len)
 
 int janas_gpu_set_path(struct janas_gpu *g, enum janas_gpu_path path, int value)
 {
+    if (g && g->cuda)
+        return 0;
     int *f = path == JANAS_GPU_PATH_ROW      ? &g->row_on
              : path == JANAS_GPU_PATH_ROW_NV ? &g->row_nv
              : path == JANAS_GPU_PATH_MVD    ? &g->mvd_on
@@ -1390,12 +1451,18 @@ int janas_gpu_set_path(struct janas_gpu *g, enum janas_gpu_path path, int value)
 void janas_gpu_subgroup_range(const struct janas_gpu *g, unsigned *min,
                               unsigned *max)
 {
+    if (g && g->cuda) {
+        *min = *max = 32;
+        return;
+    }
     *min = g->sg_control ? g->sg_min : g->sg;
     *max = g->sg_control ? g->sg_max : g->sg;
 }
 
 const char *janas_gpu_about(const struct janas_gpu *g)
 {
+    if (g && g->cuda)
+        return janas_cuda_about(g->cuda);
     return g->about;
 }
 
@@ -1415,6 +1482,10 @@ static void sys_line(const char *path, char *out, size_t len)
 
 void janas_gpu_card(const struct janas_gpu *g, char *buf, size_t len)
 {
+    if (g && g->cuda) {
+        janas_cuda_card(g->cuda, buf, len);
+        return;
+    }
     if (!len)
         return;
     /* the memory heaps of the device's own (on an integrated GPU, the
@@ -1472,6 +1543,8 @@ void janas_gpu_set_min_n(struct janas_gpu *g, size_t n)
 
 void janas_gpu_keep_awake(struct janas_gpu *g, int on)
 {
+    if (g && g->cuda)
+        return;
     if (g)
         atomic_store(&g->ka_wanted, on);
 }
@@ -1704,6 +1777,8 @@ int janas_g_copy(struct janas_gpu *g, VkBuffer src, VkDeviceSize so,
 
 int janas_gpu_sync(struct janas_gpu *g, void *p, size_t bytes, int to_device)
 {
+    if (g && g->cuda)
+        return janas_cuda_sync(g->cuda, p, bytes, to_device);
     if (bytes == 0)
         return 0;
     const struct region *rg = janas_g_find_region(g, p, bytes);
@@ -1774,6 +1849,8 @@ static int import_refused(const struct janas_gpu *g, const void *p,
 
 int janas_gpu_import(struct janas_gpu *g, const void *p, size_t bytes)
 {
+    if (g && g->cuda)
+        return janas_cuda_import(g->cuda, p, bytes);
     /* below 4 GiB: Mesa's Intel driver passes an imported allocation's size
        on in 32 bits, and asked the kernel for 0 bytes of a region of 4 GiB
        (unsloth's 3-bit Qwen3-30B-A3B's experts, 21 Oct 2026) */
@@ -1855,6 +1932,8 @@ void janas_g_drop_region(struct janas_gpu *g, const void *host)
 
 void *janas_gpu_alloc(struct janas_gpu *g, size_t bytes)
 {
+    if (g && g->cuda)
+        return janas_cuda_alloc(g->cuda, bytes);
     bytes = (bytes + 4095) / 4096 * 4096;
     if (g->n_reg == MAX_REGIONS || bytes == 0 || bytes > ((size_t)4 << 30))
         return NULL;
@@ -1903,6 +1982,8 @@ void *janas_gpu_alloc(struct janas_gpu *g, size_t bytes)
 
 void janas_gpu_flush(struct janas_gpu *g, const void *p, size_t bytes)
 {
+    if (g && g->cuda)
+        return; /* the card reads it in place */
     const uint8_t *b = p;
     for (int i = 0; i < g->n_reg; i++) {
         const struct region *rg = &g->reg[i];
@@ -2011,6 +2092,8 @@ static int tail_ok(const struct janas_matvec_task *t)
 
 int janas_gpu_can(const struct janas_gpu *g, const struct janas_matvec_task *t)
 {
+    if (g && g->cuda)
+        return janas_cuda_can(g->cuda, t);
     /* the activations of a row ending inside a group: its last group
        whole, past the row's end zero (model_ffn.c) */
     size_t nb = (t->cols + JANAS_QK - 1) / JANAS_QK,
@@ -2084,6 +2167,8 @@ int janas_g_x_in_32(int type)
 int janas_gpu_begin(struct janas_gpu *g, const struct janas_matvec_task *tasks,
                     const size_t *gpu_rows, size_t n)
 {
+    if (g && g->cuda)
+        return janas_cuda_begin(g->cuda, tasks, gpu_rows, n);
     if (g->busy || g->broken)
         return -1;
     /* activations: tasks of a group often share theirs, converted once */
@@ -2296,6 +2381,8 @@ static VkPipeline mvd_pipe(const struct janas_gpu *g, int type)
 
 size_t janas_gpu_few_max(const struct janas_gpu *g)
 {
+    if (g && g->cuda)
+        return 0;
     return g->pipe_mvd && mvd_on(g) ? 8 : 0;
 }
 
@@ -2585,6 +2672,8 @@ int janas_gpu_ffn_begin(struct janas_gpu *g, const struct janas_gpu_expert *e,
                         size_t n, const struct janas_block_q8k *x, size_t d,
                         size_t ff, float *out)
 {
+    if (g && g->cuda)
+        return -1; /* not on CUDA yet: the CPU computes them */
     if (g->busy || g->broken || n == 0 || d % JANAS_QK || ff % JANAS_QK)
         return -1;
     size_t nbx = d / JANAS_QK, nbh = ff / JANAS_QK;
@@ -2662,6 +2751,8 @@ int janas_gpu_ffn_begin(struct janas_gpu *g, const struct janas_gpu_expert *e,
 
 int janas_gpu_finish(struct janas_gpu *g, int *waited)
 {
+    if (g && g->cuda)
+        return janas_cuda_finish(g->cuda, waited);
     *waited = 0;
     if (!g->busy)
         return g->n_pend ? -1 : 0;
@@ -3042,6 +3133,8 @@ int janas_gpu_dense_mm(struct janas_gpu *g, int bf16, const void *w,
                        const float *x, float *y, size_t rows, size_t cols,
                        size_t n, float scale)
 {
+    if (g && g->cuda)
+        return -1;
     if (!g || g->busy || g->broken || !mm_on() || n < JANAS_GPU_FAST_N ||
         cols % 16 || !g->pipe_dm[bf16 != 0])
         return -1;
@@ -3108,6 +3201,8 @@ int janas_gpu_dense_mm(struct janas_gpu *g, int bf16, const void *w,
 int janas_gpu_bf16_mv(struct janas_gpu *g, const uint16_t *w, const float *x,
                       float *y, size_t rows, size_t cols, size_t n, float scale)
 {
+    if (g && g->cuda)
+        return -1;
     /* not in a pass the tuner gave the CPU (janas_gpu_set_only_fast) */
     if (!g || g->busy || g->broken || g->only_fast || !g->pipe_b16 || n == 0 ||
         rows == 0 || cols == 0 || n < g->min_n)

@@ -153,7 +153,23 @@ static int add_ids(janas_llm_chat *c, const int32_t *ids, uint32_t n)
 static int add_assistant(janas_llm_chat *c, const struct cmsg *m, int after_q)
 {
     const janas_llm *llm = c->llm;
-    if (llm->format == FORMAT_LLAMA3) /* no reasoning, no tools */
+    if (llm->format == FORMAT_DEEPSEEK && m->n_calls &&
+        llm->tools == JANAS_TOOLS_DSML) {
+        /* <｜Assistant｜></think>, the text and the block of calls, the end
+           of sentence: its reasoning is not given back */
+        struct janas_buf b = {0};
+        janas_tools_assistant(&b, llm->tools, m->text, m->n, m->calls,
+                              m->n_calls);
+        int err = b.oom || janas_api_add_special(c, llm->hdr_end) ||
+                  (llm->think_close >= 0 &&
+                   janas_api_add_special(c, llm->think_close)) ||
+                  janas_api_add_markup(c, b.p, b.n) ||
+                  janas_api_add_special(c, llm->im_end);
+        janas_buf_free(&b);
+        return err ? -1 : 0;
+    }
+    if (llm->format == FORMAT_LLAMA3 || llm->format == FORMAT_DEEPSEEK)
+        /* no reasoning given back, no tools */
         return janas_api_add_message(c, llm->asst_role, m->text, m->n) ? -1 : 0;
     enum janas_tool_dialect d = llm->tools;
     int err = janas_api_add_special(c, llm->im_start);
@@ -244,6 +260,13 @@ static int render(janas_llm_chat *c, uint32_t *reply_off)
             c->sys_tokens = (uint32_t)c->n_ids;
             break;
         case JANAS_LLM_ROLE_USER:
+            if (llm->format == FORMAT_DEEPSEEK && i > 0 &&
+                c->msgs[i - 1].role == JANAS_LLM_ROLE_TOOL) {
+                /* DeepSeek: in the turn of the tools' answers */
+                err |= janas_api_add_text(c, "\n\n", 2);
+                err |= janas_api_add_text(c, m->text, m->n);
+                break;
+            }
             err |= janas_api_flush_text(c);
             c->last_at = (uint32_t)c->n_ids; /* the last one's, at the end */
             err |= janas_api_note_turn(c, (uint32_t)c->n_ids);
@@ -263,7 +286,10 @@ static int render(janas_llm_chat *c, uint32_t *reply_off)
                     c->in_turn = 1; /* the reply follows the answers */
                 break;
             }
-            const struct memo *mm = memo_find(c, m);
+            /* DeepSeek gives no reasoning back: its replies as written
+               would carry theirs */
+            const struct memo *mm =
+                llm->format == FORMAT_DEEPSEEK ? NULL : memo_find(c, m);
             if (mm) { /* one of the last replies: as the model wrote it */
                 err |= add_ids(c, mm->ids, mm->n);
                 if (!mm->closed)
@@ -279,6 +305,20 @@ static int render(janas_llm_chat *c, uint32_t *reply_off)
             int first = i == 0 || c->msgs[i - 1].role != JANAS_LLM_ROLE_TOOL;
             int last = i + 1 == c->n_msgs ||
                        c->msgs[i + 1].role != JANAS_LLM_ROLE_TOOL;
+            if (llm->format == FORMAT_DEEPSEEK) {
+                /* <｜User｜> and the answers, a blank line between them */
+                if (first) {
+                    err |= janas_api_flush_text(c);
+                    c->last_at = (uint32_t)c->n_ids;
+                    err |= janas_api_add_special(c, llm->im_start);
+                } else {
+                    err |= janas_api_add_text(c, "\n\n", 2);
+                }
+                err |= janas_api_add_text(c, "<tool_result>", 13);
+                err |= janas_api_add_text(c, m->text, m->n);
+                err |= janas_api_add_text(c, "</tool_result>", 14);
+                break;
+            }
             if (first) {
                 err |= janas_api_flush_text(c);
                 c->last_at = (uint32_t)c->n_ids;
@@ -480,8 +520,11 @@ int32_t janas_llm_chat_prompt(janas_llm_chat *c, const char *text, int32_t len)
     c->n_idpics = 0;
     c->n_turn = 0;
     c->sys_tokens = 0;
-    /* Llama 3's text starts with <|begin_of_text|>, as its tokenizer adds */
-    if ((c->llm->format == FORMAT_LLAMA3 && janas_api_begin_sequence(c)) ||
+    /* Llama 3's and DeepSeek's text starts with the beginning of sequence,
+       as their tokenizers add */
+    if (((c->llm->format == FORMAT_LLAMA3 ||
+          c->llm->format == FORMAT_DEEPSEEK) &&
+         janas_api_begin_sequence(c)) ||
         janas_api_add_text(c, text, janas_api_text_len(text, len)) != 0)
         return janas_api_fail(JANAS_LLM_ENOMEM, "out of memory");
     c->in_think = 0;

@@ -303,8 +303,9 @@ int janas_llm_model_shift(struct janas_llm_model *m, uint32_t keep,
 {
     /* pictures' positions are not slid (yet): the caller reads the prompt
        again instead */
+    /* nor DeepSeek-V4's compressed latents, turned at their positions */
     if (!drop || n_kv > m->n_ctx || keep + drop > n_kv || m->hd_max > 512 ||
-        m->cur->n_media)
+        m->cur->n_media || m->a->ds4)
         return -1;
     /* qwen4exp: its n-gram history first (the one part that can refuse) */
     if (m->hc_n && janas_m_hc_shift(m, keep, drop, n_kv) != 0)
@@ -716,6 +717,12 @@ static int forward(struct janas_llm_model *m, const int32_t *tokens, uint32_t n,
             rec_end(m->cur, pos0, n);
         return 0;
     }
+    /* DeepSeek-V4: its streams and attention (model_ds4.c) */
+    if (m->a->ds4) {
+        if (janas_m_ds4_layers(m, n, pos0) != 0)
+            return -1;
+        goto output;
+    }
     /* Nemotron-H: one part a layer (model_nh.c) */
     if (m->a->nh) {
         if (janas_m_nh_layers(m, n, pos0) != 0)
@@ -931,7 +938,7 @@ int janas_llm_model_rewind_ok(const struct janas_llm_model *m, uint32_t n)
     for (uint32_t sl = 0; sl < m->n_attn; sl++)
         if (m->kv_ring[sl] && m->cur->ring_hi > n + m->kv_cap[sl] - m->window)
             return 0;
-    return 1;
+    return !m->a->ds4 || janas_m_ds4_rewind_ok(m, n);
 }
 
 const float *janas_llm_model_hidden(const struct janas_llm_model *m)

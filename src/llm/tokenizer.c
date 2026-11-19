@@ -35,6 +35,7 @@ struct janas_tokenizer {
     int tekken; /* Mistral's Tekken expression (pre "pixtral": Nemotron-H),
                    and a pre-token in the vocabulary taken whole, unmerged */
     int gpt2;   /* GPT-2's expression (pre "whisper") */
+    int ds3;    /* DeepSeek-V3's splits (pre "deepseek-v3", "joyai-llm") */
 };
 
 static uint64_t hash_bytes(const char *s, size_t n)
@@ -188,6 +189,16 @@ static int is_newline(uint32_t c)
     return c == '\r' || c == '\n';
 }
 
+static int is_punct(uint32_t c)
+{
+    return in_ranges(janas_uni_punct, NR(janas_uni_punct), c);
+}
+
+static int is_symbol(uint32_t c)
+{
+    return in_ranges(janas_uni_symbol, NR(janas_uni_symbol), c);
+}
+
 struct janas_tokenizer *janas_tokenizer_create(const struct janas_jns *j,
                                                char *err, size_t err_len)
 {
@@ -217,6 +228,8 @@ struct janas_tokenizer *janas_tokenizer_create(const struct janas_jns *j,
     t->spm = strcmp(model, "gemma4") == 0;
     t->tekken = strcmp(pre, "pixtral") == 0 || strcmp(pre, "tekken") == 0;
     t->gpt2 = strcmp(pre, "whisper") == 0 || strcmp(pre, "gpt-2") == 0;
+    /* DeepSeek-V3's, and V4's, which llama.cpp calls joyai-llm */
+    t->ds3 = strcmp(pre, "deepseek-v3") == 0 || strcmp(pre, "joyai-llm") == 0;
     uint64_t total = 0;
     const uint8_t *p = toks;
     for (uint64_t i = 0; i < n; i++) {
@@ -542,6 +555,104 @@ static size_t tekken_end(const uint32_t *cp, size_t n, size_t i)
 #undef LO
 }
 
+/*
+ * DeepSeek-V3's pre-tokenizer, three splits one after the other, each
+ * keeping its matches and what lies between them as pieces:
+ *   \p{N}{1,3}, then [一-龥぀-ゟ゠-ヿ]+ (CJK ideographs, hiragana,
+ * katakana), then on what is left
+ *   [!"#$%&'()*+,\-./:;<=>?@\[\\\]^_`{|}~][A-Za-z]+
+ *   | [^\r\n\p{L}\p{P}\p{S}]?[\p{L}\p{M}]+ | ' '?[\p{P}\p{S}]+[\r\n]*
+ *   | \s*[\r\n]+ | \s+(?!\S) | \s+
+ * The first two never meet (no digit is a CJK character): a run of digits
+ * is cut every three from its start, a CJK run is whole. ds3_end gives the
+ * end of the third expression's match at i, or i where nothing matches
+ * there (that character goes to the piece between matches).
+ */
+static int is_cjk(uint32_t c)
+{
+    return (c >= 0x4E00 && c <= 0x9FA5) || (c >= 0x3040 && c <= 0x309F) ||
+           (c >= 0x30A0 && c <= 0x30FF);
+}
+
+static size_t ds3_end(const uint32_t *cp, size_t n, size_t i)
+{
+#define LM(c) (is_letter(c) || is_mark(c))
+#define PS(c) (is_punct(c) || is_symbol(c))
+#define ASCII_LETTER(c) (((c) | 0x20) >= 'a' && ((c) | 0x20) <= 'z')
+    uint32_t c = cp[i];
+    if (c < 0x80 && c > 0x20 && c != 0x7F && !ASCII_LETTER(c) &&
+        !(c >= '0' && c <= '9') && i + 1 < n && ASCII_LETTER(cp[i + 1])) {
+        size_t e = i + 1;
+        while (e < n && ASCII_LETTER(cp[e]))
+            e++;
+        return e;
+    }
+    size_t k = i;
+    if (!is_newline(c) && !is_letter(c) && !PS(c) && i + 1 < n && LM(cp[i + 1]))
+        k = i + 1;
+    if (LM(cp[k])) {
+        while (k < n && LM(cp[k]))
+            k++;
+        return k;
+    }
+    k = i + (c == ' ' && i + 1 < n && PS(cp[i + 1]));
+    if (PS(cp[k])) {
+        while (k < n && PS(cp[k]))
+            k++;
+        while (k < n && is_newline(cp[k]))
+            k++;
+        return k;
+    }
+    if (is_space(c)) {
+        size_t e = i, last_nl = 0;
+        while (e < n && is_space(cp[e])) {
+            if (is_newline(cp[e]))
+                last_nl = e + 1;
+            e++;
+        }
+        if (last_nl)
+            return last_nl;
+        if (e == n)
+            return e;
+        if (e - i >= 2)
+            return e - 1; /* leave the last space to the next word */
+        return e;
+    }
+    return i;
+#undef LM
+#undef PS
+#undef ASCII_LETTER
+}
+
+/* The end of DeepSeek-V3's piece at i: the first two splits' runs, else
+   the third expression's match, else the characters up to the next place
+   any of them matches. */
+static size_t ds3_piece(const uint32_t *cp, size_t n, size_t i)
+{
+    if (is_number(cp[i])) {
+        size_t e = i + 1;
+        while (e < n && e - i < 3 && is_number(cp[e]))
+            e++;
+        return e;
+    }
+    if (is_cjk(cp[i])) {
+        size_t e = i + 1;
+        while (e < n && is_cjk(cp[e]))
+            e++;
+        return e;
+    }
+    /* the third split sees only up to the next digit or CJK character */
+    size_t lim = i;
+    while (lim < n && !is_number(cp[lim]) && !is_cjk(cp[lim]))
+        lim++;
+    size_t e = ds3_end(cp, lim, i);
+    if (e > i)
+        return e;
+    while (e < lim && ds3_end(cp, lim, e) == e)
+        e++;
+    return e;
+}
+
 struct cand {
     uint32_t rank, pos; /* a mergeable pair, by its left symbol */
 };
@@ -756,6 +867,7 @@ static int encode_plain(const struct janas_tokenizer *t, const char *text,
     for (size_t i = 0; i < n;) {
         size_t e = t->tekken ? tekken_end(cp, n, i)
                    : t->gpt2 ? gpt2_end(cp, n, i)
+                   : t->ds3  ? ds3_piece(cp, n, i)
                              : pretoken_end(cp, n, i, t->marks, t->digits);
         if (t->tekken && whole(t, (const unsigned char *)text + at[i],
                                at[e] - at[i], out, max, count)) {

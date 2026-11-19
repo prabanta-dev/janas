@@ -121,7 +121,10 @@ int brebus_proxy(struct brebus *b, struct MHD_Connection *conn,
     MHD_get_connection_values(conn, MHD_GET_ARGUMENT_KIND, q_arg, &q);
     if (q.bad)
         return -1;
-    snprintf(to, sizeof to, "http://127.0.0.1:%u%s%s", port, url, qs);
+    pthread_mutex_lock(&b->mu);
+    const char *sch = b->srv_tls ? "https" : "http";
+    pthread_mutex_unlock(&b->mu);
+    snprintf(to, sizeof to, "%s://127.0.0.1:%u%s%s", sch, port, url, qs);
     struct janas_url u;
     if (janas_url_parse(to, &u, err, sizeof err) != 0)
         return -1;

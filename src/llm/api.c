@@ -182,6 +182,28 @@ static int32_t find_format_in(janas_llm *llm, const struct janas_jns *j,
             llm->tools = JANAS_TOOLS_NONE;
         if (llm->tools != JANAS_TOOLS_NONE)
             llm->stop[llm->n_stop++] = llm->resp_open;
+    } else if (janas_tokenizer_find(llm->tok, "<｜User｜>") >= 0 &&
+               janas_tokenizer_find(llm->tok, "<｜Assistant｜>") >= 0) {
+        /* DeepSeek-V4 (<｜User｜>, <｜Assistant｜>): reasoning, tools */
+        llm->format = FORMAT_DEEPSEEK;
+        llm->asst_role = "assistant";
+        llm->im_start = janas_tokenizer_find(llm->tok, "<｜User｜>");
+        llm->hdr_end = janas_tokenizer_find(llm->tok, "<｜Assistant｜>");
+        llm->im_end = janas_tokenizer_find(llm->tok, "<｜end▁of▁sentence｜>");
+        llm->bos = janas_tokenizer_find(llm->tok, "<｜begin▁of▁sentence｜>");
+        if (llm->im_end < 0 || llm->bos < 0)
+            return janas_api_fail(JANAS_LLM_EMODEL,
+                                  "chat format not supported");
+        llm->stop[llm->n_stop++] = llm->im_end;
+        llm->think_open = janas_tokenizer_find(llm->tok, "<think>");
+        llm->think_close = janas_tokenizer_find(llm->tok, "</think>");
+        llm->thinker = llm->think_open >= 0 && llm->think_close >= 0;
+        /* tools: DSML, its marker a token of its own after a "<" */
+        llm->call_open = janas_tokenizer_find(llm->tok, "｜DSML｜");
+        llm->lt_tok = janas_tokenizer_find(llm->tok, "<");
+        llm->call_close = llm->resp_open = llm->resp_close = -1;
+        llm->tools = llm->call_open >= 0 && llm->lt_tok >= 0 ? JANAS_TOOLS_DSML
+                                                             : JANAS_TOOLS_NONE;
     } else if (janas_tokenizer_find(llm->tok, "<|start_header_id|>") >= 0 &&
                janas_tokenizer_find(llm->tok, "<|end_header_id|>") >= 0 &&
                janas_tokenizer_find(llm->tok, "<|eot_id|>") >= 0 &&
@@ -576,11 +598,13 @@ int32_t janas_llm_open(const char *path, const struct janas_llm_params *pp,
     janas_jns_meta_str(&j, "general.name", name, sizeof(name));
     janas_jns_meta_str(&j, "general.architecture", arch, sizeof(arch));
     int32_t rc = 0;
-    /* byte-level BPE with Qwen's or Llama 3's pre-tokenizers, or Gemma 4's */
+    /* byte-level BPE with Qwen's, Llama 3's or DeepSeek's pre-tokenizers,
+       or Gemma 4's */
     int known =
         (strcmp(kind, "gpt2") == 0 &&
          (strcmp(pre, "qwen2") == 0 || strcmp(pre, "qwen35") == 0 ||
-          strcmp(pre, "llama-bpe") == 0 || strcmp(pre, "pixtral") == 0)) ||
+          strcmp(pre, "llama-bpe") == 0 || strcmp(pre, "pixtral") == 0 ||
+          strcmp(pre, "deepseek-v3") == 0 || strcmp(pre, "joyai-llm") == 0)) ||
         strcmp(kind, "gemma4") == 0;
     if (!known)
         rc = janas_api_fail(JANAS_LLM_EMODEL, "tokenizer %s/%s not supported",

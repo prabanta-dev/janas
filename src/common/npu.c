@@ -10,8 +10,8 @@
  * the list on the NPU's one queue, finish waits on the fence.
  *
  * JANAS_NPU_LOADER names the Level Zero loader to open (default
- * libze_loader.so.1): the NPU's driver may need a newer loader than the
- * system's. ZE_INTEL_NPU_CACHE_SIZE, the driver's, is set to 0 unless set.
+ * libze_loader.so.1, on Windows ze_loader.dll, which Intel's drivers put in
+ * System32): the NPU's driver may need a newer loader than the system's. ZE_INTEL_NPU_CACHE_SIZE, the driver's, is set to 0 unless set.
  */
 #include "npu.h"
 #include "npu_amd.h"
@@ -31,7 +31,7 @@ static void amd_reason(char *err, size_t err_len)
         snprintf(err, err_len, "%s: Janas does not use AMD's NPUs yet", d);
 }
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(_WIN32)
 
 #include <dlfcn.h>
 #include <errno.h>
@@ -165,7 +165,11 @@ struct janas_npu *janas_npu_create(char *err, size_t err_len)
     setenv("ZE_INTEL_NPU_CACHE_SIZE", "0", 0);
     const char *lib = getenv("JANAS_NPU_LOADER");
     if (!lib || !*lib)
+#ifdef _WIN32
+        lib = "ze_loader.dll"; /* Intel's drivers put it in System32 */
+#else
         lib = "libze_loader.so.1";
+#endif
     u->lib = dlopen(lib, RTLD_NOW | RTLD_LOCAL);
     if (!u->lib) {
         snprintf(err, err_len, "no Level Zero loader (%s)", lib);
@@ -186,9 +190,13 @@ struct janas_npu *janas_npu_create(char *err, size_t err_len)
         (n = 1, u->zeDeviceGet(u->drv, &n, &u->dev)) || !n ||
         u->zeDeviceGetProperties(u->dev, &dp) ||
         dp.type != ZE_DEVICE_TYPE_VPU) {
+#ifdef _WIN32
+        snprintf(err, err_len, "no NPU (Intel's NPU driver missing)");
+#else
         snprintf(err, err_len,
                  "no NPU (driver missing, or no access to "
                  "/dev/accel: group render)");
+#endif
         amd_reason(err, err_len);
         goto fail;
     }

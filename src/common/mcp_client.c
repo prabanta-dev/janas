@@ -26,10 +26,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <time.h>
 
 #include "common/mcp_config.h"
+#include "common/mcp_oauth.h"
 
 #ifndef JANAS_VERSION
 #define JANAS_VERSION "unknown"
@@ -582,11 +584,25 @@ int32_t janas_mcp_open(const char *path, const char *name, int32_t seconds,
     if (!s)
         rc = janas_mcp_fail(JANAS_MCP_EOPEN, "no server %s in %s", name, path);
     else if (s->url) {
-        int32_t nh = 0;
+        /* its headers, and the token of a sign-in (mcp_oauth.h) when they
+           carry no Authorization of their own */
+        int32_t nh = 0, auth = 0;
         while (s->headers && s->headers[nh])
-            nh++;
-        rc = janas_mcp_open_url(name, s->url, nh,
-                                (const char *const *)s->headers, seconds, out);
+            auth |= strncasecmp(s->headers[nh++], "Authorization:", 14) == 0;
+        const char **hs = calloc((size_t)nh + 2, sizeof(*hs));
+        if (!hs)
+            rc = janas_mcp_fail(JANAS_MCP_ENOMEM, "out of memory");
+        else {
+            for (int32_t i = 0; i < nh; i++)
+                hs[i] = s->headers[i];
+            char line[8300];
+            if (!auth &&
+                janas_oauth_header(name, s->url, line, sizeof(line)) == 0) {
+                hs[nh++] = line;
+            }
+            rc = janas_mcp_open_url(name, s->url, nh, hs, seconds, out);
+            free(hs);
+        }
     } else {
         int32_t argc = 0, nenv = 0;
         while (s->argv[argc])

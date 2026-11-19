@@ -21,6 +21,20 @@ function setForm(x) {
         <option value="off"${v.think === false ? " selected" : ""}>no</option></select>
       <span class="note">Some models can reason step by step before they answer: better on hard questions, slower on every one. The reasoning is shown, folded, above the answer.</span></label>
     <details><summary>Advanced</summary>
+      ${[["prompt_on", "Where it reads your message", "the message and the documents given with it, before it answers"],
+         ["drafts_on", "Where it checks its guesses", "words guessed ahead, checked a few at a time, to answer faster"],
+         ["reply_on", "Where it writes the reply", "one word at a time"]].map(([n, t, about]) => `
+      <label>${t}
+        <select name="${n}"><option value="">chosen by Janas, measuring this computer</option>
+          ${[["cpu", "the processor"], ["gpu", "the graphics card (GPU)"], ["npu", "the NPU"], ["npu+gpu", "the NPU and the GPU together"]]
+            .map(([d, l]) => `<option value="${d}"${v[n] === d ? " selected" : ""}>${l}</option>`).join("")}</select>
+        <span class="note">${about}</span></label>`).join("")}
+      <p class="note">Janas tries what this computer has and keeps the fastest; Info shows what it chose. Choose here only to try a device, or to leave one free. The processor always takes part.</p>
+      <label>How it reaches the graphics card
+        <select name="gpu_api"><option value="">chosen by Janas: Vulkan, or the card's maker's own where there is no Vulkan</option>
+          ${[["vulkan", "Vulkan (every maker)"], ["cuda", "CUDA (NVIDIA)"], ["hip", "HIP (AMD, with ROCm or the HIP SDK)"]]
+            .map(([d, l]) => `<option value="${d}"${v.gpu_api === d ? " selected" : ""}>${l}</option>`).join("")}</select>
+        <span class="note">Vulkan does the most on the card; CUDA and HIP are its makers' own ways, for the parts Janas has written for them.</span></label>
       <label>Chats answered at the same time <input name="parallel" type="number" min="1" max="8" placeholder="from the memory" value="${v.parallel || ""}">
         <span class="note">For other programs using the model through the server too: each one takes memory of its own.</span></label>
     </details>
@@ -32,6 +46,7 @@ async function saveSettings(f) {
   if (c >= 512) v.context = c;
   if (p >= 1 && p <= 8) v.parallel = p;
   if (f.think.value) v.think = f.think.value === "on";
+  for (const n of ["prompt_on", "drafts_on", "reply_on", "gpu_api"]) if (f[n].value) v[n] = f[n].value;
   settings[f.dataset.m] = v;
   await fetch("/brebus/settings", {method: "POST", body: JSON.stringify(settings)});
 }
@@ -193,6 +208,7 @@ async function status() {
     ? `<dt>Model</dt><dd>${esc(server.model)}</dd>
        <dt>Address for programs</dt><dd><code>${esc(server.url)}</code> <span class="note">for those that speak OpenAI's language (most); <code>${esc(base(server.url))}</code> for those that speak Ollama's or Anthropic's</span></dd>
        ${server.lan_url ? `<dt>On the local network</dt><dd><code>${esc(server.lan_url)}</code>, <code>${esc(base(server.lan_url))}</code></dd>` : ""}
+       ${server.https ? `<dt>Certificate</dt><dd>Brebus's own, its fingerprint (SHA-256): <code class="fp">${esc(server.fingerprint)}</code></dd>` : ""}
        <dt>Key</dt><dd>${server.api_key ? "<code>" + esc(server.api_key) + "</code>" : "none"}</dd>
        <dt>Engine monitor</dt><dd><a href="/monitor" target="_blank" rel="noopener">open it</a>: the reply being written, the engine's memory and devices</dd>`
     : `<dt>State</dt><dd>off${server.error ? " - " + esc(server.error) : ""}</dd>
@@ -209,6 +225,7 @@ async function status() {
 function srvForm() {
   const f = $("#srvset"), v = settings._server || {};
   f.lan.checked = !!v.lan;
+  f.https.checked = !!v.https;
   f.api_key.value = v.api_key || "";
   f.origins.value = (v.origins || []).join("\n");
   f.ttl.value = v.ttl || "";
@@ -219,7 +236,7 @@ async function srvSave() {
   const key = f.api_key.value.trim();
   if (key && !/^[\x21-\x7e]{8,199}$/.test(key)) { say("A key is 8 or more letters, digits or signs, no spaces."); return; }
   if (f.lan.checked && !key && !await yes("Without a key anyone on this network can use the model.", "No key", "Go on")) return;
-  settings._server = {lan: f.lan.checked, api_key: key, origins, ttl: +f.ttl.value || 0};
+  settings._server = {lan: f.lan.checked, https: f.https.checked, api_key: key, origins, ttl: +f.ttl.value || 0};
   await fetch("/brebus/settings", {method: "POST", body: JSON.stringify(settings)});
   if (server.running && await yes("Saved. Start the model's server again now, to use them?", "Settings", "Start again")) {
     const b = document.querySelector(`button.load[data-m="${CSS.escape(server.model)}"]`);

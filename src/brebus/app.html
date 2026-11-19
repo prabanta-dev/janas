@@ -108,6 +108,8 @@
           <span class="note">The model is unloaded after so long without a message, and loaded again with the next one (a few seconds). 0 keeps it loaded.</span></label>
         <label class="tog"><input type="checkbox" name="lan"> Other computers of this network may use it
           <span class="note">Off, only programs on this computer reach the model. On, any computer of your network can: set a key below, so that only those who know it may.</span></label>
+        <label class="tog"><input type="checkbox" name="https"> Encrypted (HTTPS)
+          <span class="note">What goes between the programs and the model, the key too, cannot be read on the way. Brebus makes the certificate for this computer; a program that asks to trust it compares its fingerprint, shown above, with the one it sees.</span></label>
         <details><summary>Advanced</summary>
         <label>Key the other programs must send
           <span class="row"><input name="api_key" autocomplete="off" spellcheck="false" placeholder="none: anyone who reaches it">
@@ -135,8 +137,12 @@
       <label class="tog"><input type="checkbox" id="useart"> Artifacts
         <span class="note">Pages, drawings, documents and programs the model makes open beside the chat, and are kept with their versions in the project's artifact folder.</span></label>
     </div>
-    <h3>Voice</h3>
+        <h3>Voice</h3>
     <div class="card prefs" id="voicecard"></div>
+    <h3>Connectors</h3>
+    <div class="card prefs" id="conncard"></div>
+    <h3>Skills</h3>
+    <div class="card prefs" id="skillcard"></div>
     <h3>When the computer starts</h3>
     <div class="card prefs">
       <label class="tog"><input type="checkbox" id="autost"> Start Brebus in the background

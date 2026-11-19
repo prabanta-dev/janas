@@ -341,6 +341,8 @@ int brebus_export(struct brebus *b, const char *body, size_t n,
         body && n ? janas_json_parse(body, n, err, sizeof err) : NULL;
     const struct janas_json *o = d ? janas_json_root(d) : NULL;
     const char *nm = o ? janas_json_str(janas_json_get(o, "name")) : NULL;
+    const char *e = o ? janas_json_str(janas_json_get(o, "ext")) : NULL;
+    const char *ext = e && !strcmp(e, "txt") ? "txt" : "md";
     const struct janas_json *text = o ? janas_json_get(o, "text") : NULL;
     if (!text || text->type != JANAS_JSON_STRING) {
         janas_json_free(d);
@@ -371,9 +373,9 @@ int brebus_export(struct brebus *b, const char *body, size_t n,
     int fd = -1;
     for (int i = 1; i < 100 && fd < 0; i++) {
         if (i == 1)
-            snprintf(path, sizeof path, "%s/%s.md", dir, name);
+            snprintf(path, sizeof path, "%s/%s.%s", dir, name, ext);
         else
-            snprintf(path, sizeof path, "%s/%s (%d).md", dir, name, i);
+            snprintf(path, sizeof path, "%s/%s (%d).%s", dir, name, i, ext);
         fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0644);
         if (fd < 0 && errno != EEXIST)
             break;

@@ -36,6 +36,12 @@ enum janas_tool_dialect {
        tokens, answers <|tool_response>response:f{value:...}<tool_response|>
        inside the model's own turn */
     JANAS_TOOLS_GEMMA,
+    /* DeepSeek-V4's DSML: the tools as JSON lines under "## Tools" in the
+       system message, calls in a <｜DSML｜tool_calls> block of
+       <｜DSML｜invoke name="f"> with <｜DSML｜parameter name="k"
+       string="true|false"> each, answers <tool_result>...</tool_result> in
+       a user turn. ｜DSML｜ is a token of its own, the rest text */
+    JANAS_TOOLS_DSML,
 };
 
 /* The dialect of a chat template (NONE when it has no tools). */

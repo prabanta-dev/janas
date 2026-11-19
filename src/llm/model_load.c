@@ -828,6 +828,10 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
     }
     if (meta_u32(m, "rope.dimension_count", &m->n_rot) != 0)
         m->n_rot = m->head_dim;
+    if (m->a->ds4 && janas_m_ds4_params(m) != 0) {
+        snprintf(err, err_len, "missing or inconsistent hyperparameters");
+        goto fail;
+    }
     /* the multimodal RoPE's sections, where the model has them */
     {
         char key[128];
@@ -1008,6 +1012,11 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
     for (uint32_t l = 0; l < m->n_layer; l++) {
         struct layer *ly = &m->layers[l];
         ly->rec = m->a->rec && (l + 1) % interval != 0;
+        if (m->a->ds4) { /* its state is model_ds4.c's, not the KV cache */
+            if (janas_m_ds4_layer_load(m, l, ly, err, err_len) != 0)
+                goto fail;
+            continue;
+        }
         if (m->a->nh) {
             /* one part a layer: only the Mamba-2 ones keep a state, only
                the attentions keys and values */
@@ -1110,7 +1119,7 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
     }
     for (uint32_t l = 0; l <= m->n_layer; l++) {
         const struct layer *ly = l < m->n_layer ? &m->layers[l] : &m->mtp_layer;
-        if (ly->rec || (l == m->n_layer && !m->mtp) ||
+        if (ly->rec || (l == m->n_layer && !m->mtp) || m->a->ds4 ||
             (m->a->nh && l < m->n_layer && ly->nh_kind == JANAS_NH_MOE))
             continue;
         m->kv_hd[ly->slot] = ly->hd;
@@ -1312,7 +1321,8 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
     m->moe_w = dm;
     m->moe_xq = m->xq;
     m->moe_out = m->x;
-    if (m->a->nh && janas_m_nh_alloc(m) != 0) {
+    if ((m->a->nh && janas_m_nh_alloc(m) != 0) ||
+        (m->a->ds4 && janas_m_ds4_alloc(m) != 0)) {
         snprintf(err, err_len, "out of memory");
         goto fail;
     }
@@ -1614,6 +1624,7 @@ void janas_llm_model_free(struct janas_llm_model *m)
         janas_aligned_free(m->resident);
     janas_m_hc_free(m);
     janas_m_nh_free(m);
+    janas_m_ds4_free(m);
     janas_m_qsa_free(m);
     if (m->layers)
         for (uint32_t l = 0; l < m->n_layer; l++) {

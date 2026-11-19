@@ -302,7 +302,9 @@ int janas_api_add_special(janas_llm_chat *c, int32_t id)
 /* The newline after a turn's end: ChatML's and Gemma's, none in Llama 3. */
 int janas_api_end_turn_nl(janas_llm_chat *c)
 {
-    return c->llm->format == FORMAT_LLAMA3 ? 0 : janas_api_add_text(c, "\n", 1);
+    return c->llm->format == FORMAT_LLAMA3 || c->llm->format == FORMAT_DEEPSEEK
+               ? 0
+               : janas_api_add_text(c, "\n", 1);
 }
 
 /* One message of the conversation, in the model's format. */
@@ -311,6 +313,18 @@ int janas_api_add_message(janas_llm_chat *c, const char *role, const char *text,
 {
     const janas_llm *llm = c->llm;
     switch (llm->format) {
+    case FORMAT_DEEPSEEK:
+        /* the system message as it is; a reply without its reasoning */
+        if (!strcmp(role, "system"))
+            return janas_api_add_text(c, text, n);
+        if (!strcmp(role, "assistant"))
+            return janas_api_add_special(c, llm->hdr_end) ||
+                   (llm->think_close >= 0 &&
+                    janas_api_add_special(c, llm->think_close)) ||
+                   janas_api_add_text(c, text, n) ||
+                   janas_api_add_special(c, llm->im_end);
+        return janas_api_add_special(c, llm->im_start) ||
+               janas_api_add_text(c, text, n);
     case FORMAT_LLAMA3:
         return janas_api_add_special(c, llm->im_start) ||
                janas_api_add_text(c, role, strlen(role)) ||
@@ -359,6 +373,17 @@ int janas_api_start_reply(janas_llm_chat *c)
                janas_api_add_text(c, "thought\n", 8) ||
                janas_api_add_special(c, llm->think_close) ||
                janas_api_flush_text(c);
+    case FORMAT_DEEPSEEK:
+        /* reasoning asked for: <think>, the model writes it and closes it;
+           otherwise </think> straight away, as its encoding does */
+        c->in_think = llm->thinker && c->p.thinking != 0;
+        if (janas_api_add_special(c, llm->hdr_end))
+            return -1;
+        if (llm->thinker &&
+            janas_api_add_special(c, c->in_think ? llm->think_open
+                                                 : llm->think_close))
+            return -1;
+        return janas_api_flush_text(c);
     case FORMAT_LLAMA3:
         c->in_think = 0;
         return janas_api_add_special(c, llm->im_start) ||
@@ -398,10 +423,11 @@ int janas_api_add_markup(janas_llm_chat *c, const char *s, size_t n)
 {
     const janas_llm *llm = c->llm;
     int gemma = llm->format == FORMAT_GEMMA;
+    int ds = llm->format == FORMAT_DEEPSEEK;
     const struct {
         const char *text;
         int32_t id;
-    } marks[] = {{"<tool_call>", llm->call_open},
+    } marks[] = {{"<tool_call>", ds ? -1 : llm->call_open},
                  {"</tool_call>", llm->call_close},
                  {"<tool_response>", llm->resp_open},
                  {"</tool_response>", llm->resp_close},
@@ -417,6 +443,15 @@ int janas_api_add_markup(janas_llm_chat *c, const char *s, size_t n)
                  {"<tool|>", llm->decl_close}};
     size_t from = 0;
     for (size_t i = 0; i < n; i++) {
+        if (ds && n - i >= 9 && !memcmp(s + i, "｜DSML｜", 9)) {
+            /* DeepSeek's marker, a token of its own */
+            if (janas_api_add_text(c, s + from, i - from) ||
+                janas_api_add_special(c, llm->call_open))
+                return -1;
+            i += 8;
+            from = i + 1;
+            continue;
+        }
         if (s[i] != '<')
             continue;
         for (size_t k = 0; k < sizeof(marks) / sizeof(marks[0]); k++) {
@@ -524,6 +559,14 @@ int janas_api_add_system(janas_llm_chat *c, const char *sys, size_t n)
         janas_buf_put(&b, nb.p, nb.n);
     janas_buf_free(&nb);
     janas_tools_system(&b, llm->tools, c->tools_sys, sys, n);
+    if (llm->format == FORMAT_DEEPSEEK) { /* no turn: the text as it is */
+        int err = b.oom || janas_api_add_markup(c, b.p, b.n) ||
+                  janas_api_flush_text(c);
+        janas_buf_free(&b);
+        if (!err && c->n_ids - ids0 > plain)
+            c->tools_tokens = (uint32_t)(c->n_ids - ids0 - plain);
+        return err ? -1 : 0;
+    }
     int err = b.oom || janas_api_add_special(c, llm->im_start) ||
               janas_api_add_text(c, "system\n", 7) ||
               janas_api_add_markup(c, b.p, b.n) ||

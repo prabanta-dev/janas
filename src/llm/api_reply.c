@@ -228,6 +228,48 @@ static void take(janas_llm_chat *c, int32_t t)
         }
         c->chan_label = 0;
     }
+    if (c->tools && llm->tools == JANAS_TOOLS_DSML && !c->in_think) {
+        /* DeepSeek: "<" then ｜DSML｜ opens a block of calls, which ends
+           with </｜DSML｜tool_calls>; the "<" waits for the next token */
+        if (c->in_call) {
+            size_t k = janas_tokenizer_decode(llm->tok, t, tmp, sizeof(tmp));
+            if (k > sizeof(tmp))
+                k = sizeof(tmp);
+            janas_buf_put(&c->body, tmp, k);
+            janas_api_record(c, t, JANAS_LLM_PART_CALL, tmp, k);
+            static const char end[] = "</｜DSML｜tool_calls>";
+            size_t e = sizeof(end) - 1;
+            if (c->body.n >= e && !memcmp(c->body.p + c->body.n - e, end, e)) {
+                struct janas_buf text = {0};
+                janas_api_close_dsml(c, &text);
+                if (text.n) {
+                    janas_api_rtext_add(c, text.p, text.n);
+                    give(c, text.p, text.n);
+                }
+                janas_buf_free(&text);
+            }
+            return;
+        }
+        if (c->held_lt) {
+            c->held_lt = 0;
+            if (t == llm->call_open) {
+                c->in_call = 1;
+                c->body.n = 0;
+                janas_buf_puts(&c->body, "<｜DSML｜");
+                janas_api_record(c, llm->lt_tok, JANAS_LLM_PART_MARK, "", 0);
+                janas_api_record(c, t, JANAS_LLM_PART_MARK, "", 0);
+                return;
+            }
+            /* not a call: the "<" is text, before this token */
+            janas_api_record(c, llm->lt_tok, JANAS_LLM_PART_ANSWER, "<", 1);
+            janas_api_rtext_add(c, "<", 1);
+            give(c, "<", 1);
+        }
+        if (t == llm->lt_tok) {
+            c->held_lt = 1;
+            return;
+        }
+    }
     if (c->tools && t == llm->call_open && !c->in_think && !c->in_call) {
         c->in_call = 1;
         c->body.n = 0;

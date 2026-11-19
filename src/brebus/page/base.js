@@ -77,12 +77,16 @@ async function machineNow() {
   try {
     const m = await ask("machine");
     await status();
+    /* what the engine chose for the model loaded, measuring this computer */
+    let chose = "";
+    if (server.running) try { chose = (await ask("server/choices")).choices; } catch (e) {}
     $("#mach").innerHTML = [
       ["Processor", m.cpu || "unknown"],
       ["Instructions", m.features || "none known"],
       ["Memory", gib(m.memory_total) + ", " + gib(m.memory_available) + " free now"],
       ["Power", m.mains === 1 ? "mains" : m.mains === 0 ? "battery" : "unknown"],
       ["Model loaded", server.running ? server.model : "none"],
+      ...(chose ? [["How it runs", chose]] : []),
     ].map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("");
   } catch (e) {}
 }
@@ -153,8 +157,10 @@ async function mine() {
   for (const x of my.models) modelInfo[x.name] = x;
   speechModels = my.speech || [];
   if (typeof drawVoice === "function") drawVoice();
-  try { settings = await ask("settings"); } catch (e) { settings = {}; }
+    try { settings = await ask("settings"); } catch (e) { settings = {}; }
   srvForm();
+  if (typeof drawSkills === "function") drawSkills();
+  if (typeof drawConnectors === "function") drawConnectors();
   const have = new Set(my.models.map((x) => x.path.split("/").pop()));
   $("#cat").innerHTML = c.models.filter((x) => !x.test_only).map((x) =>
     `<tr><td><b>${esc(x.name)}</b><br><span class="mono" style="color:var(--dim)">${esc(x.file)}</span></td>
