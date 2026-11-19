@@ -70,7 +70,7 @@ A research tool: a word's explication in the Natural Semantic Metalanguage, Godd
 
 ![Brebus, dark: a chat with Qwen3-30B-A3B, which made a page with a doughnut chart of a monthly budget, open beside the chat as an artifact; the side bar with the chats and the pages](docs/img/brebus.png)
 
-*Brebus with Qwen3-30B-A3B on the development laptop: the workspace's documents searched before the question, the answer from a spreadsheet in it, its source named.*
+*Brebus with Qwen3-30B-A3B on the development laptop: asked for an HTML page with a doughnut chart of a monthly budget, the model wrote it (506 tokens at 18.3 tokens/s), and the page opens beside the chat.*
 
 ## Read this first
 
