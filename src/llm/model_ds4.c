@@ -96,6 +96,10 @@ struct janas_ds4 {
        cut down to compare with llama.cpp on the same layers in a GGUF of
        their own, job/tests/c/jns2gguf_ds4.c); n_only 0: all */
     uint32_t only[64], n_only;
+    /* the multi-token prediction block (its own file, load_mtp): its
+       layer, and its final mix of the streams */
+    struct ds4_layer mtpL;
+    const struct janas_jns_tensor *mtp_head_fn, *mtp_head_base, *mtp_head_scale;
 };
 
 static int meta_u32(struct janas_llm_model *m, const char *suffix, uint32_t *v)
@@ -199,7 +203,7 @@ int janas_m_ds4_params(struct janas_llm_model *m)
 
 /* A tensor: name blk.l.suffix (l < 0: suffix alone), type (0 f32, 30 bf16,
    26 i32, -1 any type the products read), dims d0 x d1 (d1 0: one). */
-static const struct janas_jns_tensor *need(struct janas_llm_model *m, int l,
+static const struct janas_jns_tensor *need(const struct janas_jns *j, int l,
                                            const char *suffix, int type,
                                            uint64_t d0, uint64_t d1, char *err,
                                            size_t err_len)
@@ -209,7 +213,7 @@ static const struct janas_jns_tensor *need(struct janas_llm_model *m, int l,
         snprintf(name, sizeof(name), "%s", suffix);
     else
         snprintf(name, sizeof(name), "blk.%d.%s", l, suffix);
-    const struct janas_jns_tensor *t = janas_jns_tensor(&m->j, name);
+    const struct janas_jns_tensor *t = janas_jns_tensor(j, name);
     int ok = t && t->dims[0] == d0 && (d1 ? t->dims[1] == d1 : 1);
     if (ok)
         ok = type >= 0 ? (int)t->type == type
@@ -219,33 +223,38 @@ static const struct janas_jns_tensor *need(struct janas_llm_model *m, int l,
     return ok ? t : NULL;
 }
 
-static const struct janas_jns_tensor *maybe(struct janas_llm_model *m, int l,
+static const struct janas_jns_tensor *maybe(const struct janas_jns *j, int l,
                                             const char *suffix)
 {
     char name[96];
     snprintf(name, sizeof(name), "blk.%d.%s", l, suffix);
-    return janas_jns_tensor(&m->j, name);
+    return janas_jns_tensor(j, name);
 }
 
-int janas_m_ds4_layer_load(struct janas_llm_model *m, uint32_t l,
-                           struct layer *ly, char *err, size_t err_len)
+int janas_m_ds4_layer_load(struct janas_llm_model *m, const struct janas_jns *j,
+                           uint32_t l, struct layer *ly, char *err,
+                           size_t err_len)
 {
     struct janas_ds4 *d = m->ds4;
-    if (!d->L && !(d->L = calloc(m->n_layer, sizeof(*d->L))))
+    int main = j == &m->j; /* else the MTP block's file, its one layer */
+    if (main && !d->L && !(d->L = calloc(m->n_layer, sizeof(*d->L))))
         return -1;
-    struct ds4_layer *D = &d->L[l];
+    struct ds4_layer *D = main ? &d->L[l] : &d->mtpL;
     uint32_t dm = m->d_model, nh = m->n_head, ne = m->n_expert;
     uint64_t v = 0, cnt = 0;
-    if (janas_jns_meta_uint_at(&m->j, "deepseek4.attention.compress_ratios", l,
-                               &v, &cnt) != 0 ||
-        (v != 0 && v != 4 && v != 128)) {
+    /* the MTP block attends its window alone */
+    if (main &&
+        (janas_jns_meta_uint_at(&m->j, "deepseek4.attention.compress_ratios", l,
+                                &v, &cnt) != 0 ||
+         (v != 0 && v != 4 && v != 128))) {
         snprintf(err, err_len, "layer %u: no compression ratio", l);
         return -1;
     }
-    D->ratio = (uint32_t)v;
+    D->ratio = main ? (uint32_t)v : 0;
+    ly->ds4l = D;
     int L = (int)l;
 #define NEED(var, suffix, type, d0, d1)                                        \
-    if (!(var = need(m, L, suffix, type, d0, d1, err, err_len)))               \
+    if (!(var = need(j, L, suffix, type, d0, d1, err, err_len)))               \
         return -1;
     static const char *const part[2] = {"attn", "ffn"};
     for (int s = 0; s < 2; s++) {
@@ -290,7 +299,7 @@ int janas_m_ds4_layer_load(struct janas_llm_model *m, uint32_t l,
     D->router = f32(m, t);
     /* the first layers route by a table of token ids, the others by score
        and bias: as the file has them */
-    if (maybe(m, L, "ffn_gate_tid2eid.weight")) {
+    if (maybe(j, L, "ffn_gate_tid2eid.weight")) {
         NEED(t, "ffn_gate_tid2eid.weight", 26, m->k, 0)
         D->tid2eid = (const int32_t *)data(m, t);
         if (t->dims[1] < m->n_vocab) {
@@ -312,7 +321,7 @@ int janas_m_ds4_layer_load(struct janas_llm_model *m, uint32_t l,
                                       "ffn_up_shexp.weight",
                                       "ffn_down_shexp.weight"};
     for (int p = 0; p < 3; p++) {
-        t = maybe(m, L, sh[p]);
+        t = maybe(j, L, sh[p]);
         uint64_t c = p < 2 ? dm : m->d_ff, r = p < 2 ? m->d_ff : dm;
         if (!t || t->dims[0] != c || t->dims[1] != r ||
             janas_qtype_block_size((int)t->type) == 0) {
@@ -333,13 +342,13 @@ int janas_m_ds4_layer_load(struct janas_llm_model *m, uint32_t l,
     ly->hd = LAT;
     ly->n_kv = 1;
     ly->n_rot = ROT;
-    if (l == m->n_layer - 1) {
+    if (main && l == m->n_layer - 1) {
         char e2[160];
-        if (!(d->head_fn = need(m, -1, "output_hc_fn.weight", 0,
+        if (!(d->head_fn = need(j, -1, "output_hc_fn.weight", 0,
                                 (uint64_t)HC * dm, HC, e2, sizeof e2)) ||
-            !(d->head_base = need(m, -1, "output_hc_base.weight", 0, HC, 0, e2,
+            !(d->head_base = need(j, -1, "output_hc_base.weight", 0, HC, 0, e2,
                                   sizeof e2)) ||
-            !(d->head_scale = need(m, -1, "output_hc_scale.weight", 0, 1, 0, e2,
+            !(d->head_scale = need(j, -1, "output_hc_scale.weight", 0, 1, 0, e2,
                                    sizeof e2))) {
             snprintf(err, err_len, "%s", e2);
             return -1;
@@ -377,6 +386,8 @@ static void seq_free(struct janas_llm_model *m, struct janas_ds4_seq *s)
 {
     if (!s)
         return;
+    if (s->raw)
+        free(s->raw[m->n_layer]);
     for (uint32_t l = 0; l < m->n_layer; l++) {
         if (s->raw)
             free(s->raw[l]);
@@ -446,12 +457,15 @@ static struct janas_ds4_seq *seq_of(struct janas_llm_model *m)
     s->cap = WIN + m->blk + 64;
     s->n_ent = m->n_ctx / 4 + 2;
     uint32_t L = m->n_layer;
-    s->raw = calloc(L, sizeof(float *));
+    /* and the MTP block's window, at index L */
+    s->raw = calloc(L + 1, sizeof(float *));
     s->ca = calloc(L, sizeof(float *));
     s->ent = calloc(L, sizeof(float *));
     s->ixa = calloc(L, sizeof(float *));
     s->ixk = calloc(L, sizeof(float *));
     if (!s->raw || !s->ca || !s->ent || !s->ixa || !s->ixk)
+        goto fail;
+    if (m->mtp && !(s->raw[L] = malloc((size_t)s->cap * LAT * sizeof(float))))
         goto fail;
     for (uint32_t l = 0; l < L; l++) {
         uint32_t R = d->L[l].ratio;
@@ -597,7 +611,7 @@ static void hc_run(struct janas_llm_model *m, const struct ds4_layer *D, int s,
 }
 
 /* The final mix of token j's streams into out: sum of pre_i X_i. */
-static void hc_head(struct janas_llm_model *m, uint32_t j, float *out)
+static void hc_head(struct janas_llm_model *m, uint32_t j, float *out, int mtp)
 {
     struct janas_ds4 *d = m->ds4;
     uint32_t dm = m->d_model, n = HC * dm;
@@ -606,8 +620,9 @@ static void hc_head(struct janas_llm_model *m, uint32_t j, float *out)
     for (uint32_t i = 0; i < n; i++)
         ss += (double)X[i] * X[i];
     float r = 1.0f / sqrtf((float)(ss / n) + m->eps);
-    const float *fn = f32(m, d->head_fn), *base = f32(m, d->head_base),
-                *scale = f32(m, d->head_scale);
+    const float *fn = f32(m, mtp ? d->mtp_head_fn : d->head_fn),
+                *base = f32(m, mtp ? d->mtp_head_base : d->head_base),
+                *scale = f32(m, mtp ? d->mtp_head_scale : d->head_scale);
     float pre[HC];
     for (int k = 0; k < HC; k++)
         pre[k] =
@@ -1015,9 +1030,8 @@ static float softplus(float x)
 void janas_m_ds4_route(struct janas_llm_model *m, const struct layer *ly,
                        uint32_t l, uint32_t n)
 {
-    (void)ly;
-    struct janas_ds4 *d = m->ds4;
-    const struct ds4_layer *D = &d->L[l];
+    (void)l;
+    const struct ds4_layer *D = ly->ds4l;
     uint32_t ne = m->n_expert, k = m->k_use, dm = m->d_model;
     for (uint32_t j = 0; j < n; j++) {
         const float *x = m->xn + (size_t)j * dm;
@@ -1053,7 +1067,114 @@ void janas_m_ds4_route(struct janas_llm_model *m, const struct layer *ly,
     }
 }
 
+/* ---- reading ahead ---- */
+
+static int by_votes(const void *a, const void *b)
+{
+    uint64_t x = *(const uint64_t *)a, y = *(const uint64_t *)b;
+    return (x < y) - (x > y); /* most votes first */
+}
+
+/*
+ * The experts of layer l read ahead, while the work before them goes on.
+ * A layer that routes by a table of token ids (the first three) knows its
+ * experts from the tokens alone: all of them, exactly, at once. The others
+ * may be guessed from the input of the layer before, normalized in xn,
+ * with layer l's own router and bias, where JANAS_PREFETCH asks for it
+ * (below: they cost more than they gave) - for a reply's single token
+ * where the engine found it pays (pf_on), for a block's tokens where it
+ * missed many (pfb_on); the experts most of the block's tokens would
+ * choose first.
+ */
+static void read_ahead(struct janas_llm_model *m, uint32_t l, uint32_t n)
+{
+    struct janas_ds4 *d = m->ds4;
+    const struct ds4_layer *D = &d->L[l];
+    if (!m->cache || !janas_expert_cache_can_prefetch(m->cache) ||
+        m->pf_mode == 0)
+        return;
+    int table = D->tid2eid && m->gtok_tokens;
+    /* the guesses only where asked for (JANAS_PREFETCH=<rank>,<max>): on
+       the whole model they read experts that were not then asked for, and
+       a token took 572 and 559 ms against 476 and 462 without them, the
+       experts found in memory 64.9% against 54.0%; the table's alone, 459
+       and 461 ms, 59.7% (64 tokens, a 9000 MiB cache, 19 Nov 2026) */
+    if (!table && m->pf_mode != 2)
+        return;
+    if (!table && !(n == 1 ? m->pf_on : m->pfb_on))
+        return;
+    uint32_t ne = m->n_expert, dm = m->d_model, k = m->k_use;
+    uint32_t want = table ? k : n == 1 ? m->pf_rank : k;
+    uint32_t votes[4096] = {0};
+    for (uint32_t j = 0; j < n; j++) {
+        if (table) {
+            for (uint32_t i = 0; i < k; i++)
+                votes[D->tid2eid[(size_t)m->gtok_tokens[j] * m->k + i]]++;
+            continue;
+        }
+        const float *x = m->xn + (size_t)j * dm;
+        float sel[4096];
+        for (uint32_t e = 0; e < ne; e++)
+            sel[e] = sqrtf(softplus(
+                         janas_dot_f32(D->router + (size_t)e * dm, x, dm))) +
+                     (D->bias ? D->bias[e] : 0.0f);
+        for (uint32_t i = 0; i < want && i < ne; i++) {
+            uint32_t best = 0;
+            for (uint32_t e = 1; e < ne; e++)
+                if (sel[e] > sel[best])
+                    best = e;
+            votes[best]++;
+            sel[best] = -INFINITY;
+        }
+    }
+    uint64_t key[4096];
+    uint32_t ids[4096], nk = 0;
+    for (uint32_t e = 0; e < ne; e++)
+        if (votes[e])
+            key[nk++] = (uint64_t)votes[e] << 32 | e;
+    qsort(key, nk, sizeof(*key), by_votes);
+    for (uint32_t i = 0; i < nk; i++)
+        ids[i] = (uint32_t)key[i];
+    /* a table's experts are certain: all; a guess: as many as the engine
+       allows a token, or every one a block's tokens chose */
+    size_t max = table || n > 1 ? nk : m->pf_max;
+    janas_expert_cache_prefetch(m->cache, l, ids, nk, max);
+}
+
 /* ---- the layers ---- */
+
+/* One layer on the streams in S: its attention (its latents in the
+   sequence's rings at index ring), its mixture (experts from cache, the
+   file's layer jl, the cache's layer cl); next: the main model's next layer
+   to read ahead for, or UINT32_MAX. */
+static int run_layer(struct janas_llm_model *m, const struct ds4_layer *D,
+                     const struct layer *ly, struct janas_ds4_seq *s,
+                     uint32_t ring, struct janas_expert_cache *cache,
+                     const struct janas_jns_layer *jl, uint32_t cl, uint32_t n,
+                     uint32_t pos0, uint32_t next)
+{
+    uint32_t dm = m->d_model;
+    hc_run(m, D, 0, 0, n, NULL);
+    janas_m_norm_quant(m, f32(m, ly->attn_norm), 0, n);
+    trace_row(m, "attn_norm", m->xn + (size_t)(n - 1) * dm, dm);
+    if (attention(m, D, s, ring, n, pos0, m->x) != 0)
+        return -1;
+    trace_row(m, "attn_out", m->x + (size_t)(n - 1) * dm, dm);
+    hc_run(m, D, 0, 1, n, m->x);
+    hc_run(m, D, 1, 0, n, NULL);
+    janas_m_norm_quant(m, f32(m, ly->ffn_norm), 0, n);
+    memset(m->x, 0, (size_t)n * dm * sizeof(float));
+    /* the next layer's experts, read while this one's are computed, as the
+       other models do (the cache reads ahead one layer at a time; this
+       layer's own, asked ahead before, are settled by it) */
+    if (next != UINT32_MAX)
+        read_ahead(m, next, n);
+    if (janas_m_moe_block(m, ly, cache, jl, cl, n, MOE_ALL) != 0)
+        return -1;
+    trace_row(m, "ffn_out", m->x + (size_t)(n - 1) * dm, dm);
+    hc_run(m, D, 1, 1, n, m->x);
+    return 0;
+}
 
 int janas_m_ds4_layers(struct janas_llm_model *m, uint32_t n, uint32_t pos0)
 {
@@ -1078,25 +1199,15 @@ int janas_m_ds4_layers(struct janas_llm_model *m, uint32_t n, uint32_t pos0)
             memcpy(d->S + ((size_t)j * HC + i) * dm, m->x + (size_t)j * dm,
                    dm * sizeof(float));
     uint32_t nl = d->n_only ? d->n_only : m->n_layer;
+    /* the first layer's experts, known from the tokens, read meanwhile */
+    read_ahead(m, d->n_only ? d->only[0] : 0, n);
     for (uint32_t li = 0; li < nl; li++) {
         uint32_t l = d->n_only ? d->only[li] : li;
-        const struct layer *ly = &m->layers[l];
-        const struct ds4_layer *D = &d->L[l];
-        hc_run(m, D, 0, 0, n, NULL);
-        janas_m_norm_quant(m, f32(m, ly->attn_norm), 0, n);
-        trace_row(m, "attn_norm", m->xn + (size_t)(n - 1) * dm, dm);
-        if (attention(m, D, s, l, n, pos0, m->x) != 0)
+        uint32_t next =
+            li + 1 < nl ? (d->n_only ? d->only[li + 1] : li + 1) : UINT32_MAX;
+        if (run_layer(m, &d->L[l], &m->layers[l], s, l, m->cache,
+                      &m->j.layers[l], l, n, pos0, next) != 0)
             return -1;
-        trace_row(m, "attn_out", m->x + (size_t)(n - 1) * dm, dm);
-        hc_run(m, D, 0, 1, n, m->x);
-        hc_run(m, D, 1, 0, n, NULL);
-        janas_m_norm_quant(m, f32(m, ly->ffn_norm), 0, n);
-        memset(m->x, 0, (size_t)n * dm * sizeof(float));
-        if (janas_m_moe_block(m, ly, m->cache, &m->j.layers[l], l, n,
-                              MOE_ALL) != 0)
-            return -1;
-        trace_row(m, "ffn_out", m->x + (size_t)(n - 1) * dm, dm);
-        hc_run(m, D, 1, 1, n, m->x);
         if (m->trace) {
             const float *v = d->S + (size_t)(n - 1) * HC * dm;
             double nn = 0;
@@ -1106,8 +1217,71 @@ int janas_m_ds4_layers(struct janas_llm_model *m, uint32_t n, uint32_t pos0)
                     l, sqrt(nn), v[0], v[1], v[2], v[3]);
         }
     }
+    /* the streams after the last layer, which the MTP block reads */
+    if (m->mtp && m->hid)
+        memcpy(m->hid, d->S, (size_t)n * HC * dm * sizeof(float));
     /* the streams mixed into x, for the output norm and the head */
     for (uint32_t j = 0; j < n; j++)
-        hc_head(m, j, m->x + (size_t)j * dm);
+        hc_head(m, j, m->x + (size_t)j * dm, 0);
+    return 0;
+}
+
+int janas_m_ds4_mtp_load(struct janas_llm_model *m, char *err, size_t err_len)
+{
+    struct janas_ds4 *d = m->ds4;
+    uint32_t dm = m->d_model;
+    if (!(d->mtp_head_fn = need(&m->mtp_j, -1, "mtp.hc_head_fn.weight", 0,
+                                (uint64_t)HC * dm, HC, err, err_len)) ||
+        !(d->mtp_head_base = need(&m->mtp_j, -1, "mtp.hc_head_base.weight", 0,
+                                  HC, 0, err, err_len)) ||
+        !(d->mtp_head_scale = need(&m->mtp_j, -1, "mtp.hc_head_scale.weight", 0,
+                                   1, 0, err, err_len)))
+        return -1;
+    return 0;
+}
+
+/*
+ * The MTP block (DeepSeek's MTPBlock): the next tokens' embeddings, in x,
+ * normalized (enorm) and projected (e_proj) into each of the main model's
+ * streams after its last layer (hidden, HC x d_model a row), themselves
+ * normalized (hnorm) and projected (h_proj) - one product, [e; h] by
+ * eh_proj -; then a layer as the model's, its attention over its own
+ * window; its streams kept for the next draft (mtp_hid); its own final mix
+ * and norm into xn and xq, rows first .. n - 1, for the shared head.
+ */
+int janas_m_ds4_mtp(struct janas_llm_model *m, const float *hidden, uint32_t n,
+                    uint32_t pos0, uint32_t first)
+{
+    struct janas_ds4 *d = m->ds4;
+    struct janas_ds4_seq *s = seq_of(m);
+    size_t dm = m->d_model, nbc = 2 * dm / JANAS_QK;
+    if (!s || !s->raw[m->n_layer] || pos0 + n > m->n_ctx)
+        return -1;
+    const float *en = f32(m, m->enorm), *hn = f32(m, m->hnorm);
+    float *c = m->cat; /* a row of [embedding; stream] */
+    for (uint32_t j = 0; j < n; j++) {
+        rms_norm(c, m->x + (size_t)j * dm, en, (uint32_t)dm, m->eps);
+        for (uint32_t k = 0; k < HC; k++) {
+            rms_norm(c + dm, hidden + ((size_t)j * HC + k) * dm, hn,
+                     (uint32_t)dm, m->eps);
+            janas_q8k_quantize(c, m->catq + ((size_t)j * HC + k) * nbc,
+                               (uint32_t)(2 * dm));
+        }
+    }
+    struct janas_matvec_task tp = {.type = (int)m->eh_proj->type,
+                                   .w = data(m, m->eh_proj),
+                                   .x = m->catq,
+                                   .y = d->S,
+                                   .rows = dm,
+                                   .cols = 2 * dm,
+                                   .n_vec = (size_t)n * HC};
+    janas_m_products(m, janas_m_gpu(m, 0), &tp, 1);
+    if (run_layer(m, &d->mtpL, &m->mtp_layer, s, m->n_layer, m->mtp_cache,
+                  m->mtp_jl, m->mtp_cl, n, pos0, UINT32_MAX) != 0)
+        return -1;
+    memcpy(m->mtp_hid, d->S, (size_t)n * HC * dm * sizeof(float));
+    for (uint32_t j = first; j < n; j++)
+        hc_head(m, j, m->x + (size_t)j * dm, 1);
+    janas_m_norm_quant(m, f32(m, m->mtp_norm), first, n);
     return 0;
 }

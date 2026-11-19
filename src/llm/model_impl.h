@@ -101,6 +101,8 @@ struct layer {
     uint32_t n_exp;
     const float *exp_bias;
     const struct janas_jns_tensor *lat_down, *lat_up, *sh_up, *sh_down;
+    /* DeepSeek-V4 (model_ds4.c): the layer's own tensors there */
+    struct ds4_layer *ds4l;
 };
 
 enum { JANAS_NH_MAMBA, JANAS_NH_ATTN, JANAS_NH_MOE };
@@ -957,8 +959,16 @@ void janas_m_qsa_shift(struct janas_llm_model *m, uint32_t keep, uint32_t drop,
    tokens normalized in xn (pair_tok, pair_exp, pair_w), from the tokens
    in gtok_tokens where the layer routes by table */
 int janas_m_ds4_params(struct janas_llm_model *m);
-int janas_m_ds4_layer_load(struct janas_llm_model *m, uint32_t l,
-                           struct layer *ly, char *err, size_t err_len);
+int janas_m_ds4_layer_load(struct janas_llm_model *m, const struct janas_jns *j,
+                           uint32_t l, struct layer *ly, char *err,
+                           size_t err_len);
+/* the MTP block's own (its final mix), once its layer is loaded from
+   mtp_j; its pass on the main model's streams after the last layer
+   (hidden, 4 x d_model a row), the tokens' embeddings in x: its rows first
+   .. n - 1 normalized into xn and xq for the head */
+int janas_m_ds4_mtp_load(struct janas_llm_model *m, char *err, size_t err_len);
+int janas_m_ds4_mtp(struct janas_llm_model *m, const float *hidden, uint32_t n,
+                    uint32_t pos0, uint32_t first);
 int janas_m_ds4_alloc(struct janas_llm_model *m);
 void janas_m_ds4_free(struct janas_llm_model *m);
 void janas_m_ds4_seq_free(struct janas_llm_model *m, struct janas_seq *sq);

@@ -548,7 +548,16 @@ part_create(const struct janas_jns *j, uint32_t first, uint32_t n_layer,
     c->n_slots = n_slots;
     c->head = c->tail = NONE;
 
-    c->fd = janas_reopen_read(j->fd, 1);
+    /* O_DIRECT; JANAS_EXPERT_IO=buffered reads through the page cache
+   instead (issue #73's suggestion: the system's free memory a second
+   cache). On the development laptop (ext4, NVMe; DeepSeek-V4-Flash, 64
+   tokens, cold, 19 Nov 2026) a token took 958 ms buffered against
+   484-507 direct with the same 9000 MiB cache and the same 59.7% of
+   experts from it - the reads themselves twice as slow - and 763-841
+   ms buffered with a 2000 MiB cache, the page cache having the rest. A
+   probe, kept for filesystems where O_DIRECT is another thing (ZFS) */
+    const char *eio = getenv("JANAS_EXPERT_IO");
+    c->fd = janas_reopen_read(j->fd, !(eio && !strcmp(eio, "buffered")));
     /* on 2 MB boundaries, for a GPU that imports it (model_load.c
        janas_m_huge_pages) */
     size_t arena_bytes = (used + JANAS_ARENA_GUARD + JANAS_HUGE_PAGE - 1) /

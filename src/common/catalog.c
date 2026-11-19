@@ -309,6 +309,25 @@ const struct janas_model_entry janas_catalog[] = {
          "0276b0697a05075fec8ab076a757205537804ff41dd7e9dadace7c6993763563",
      .ram_gb = 32,
      .fast = "--head 4 --bits 4"},
+    /* DeepSeek's own checkpoint, by hf2jns_ds4 (there is no GGUF of the
+       original weights): its experts MXFP4 bit for bit, the dense FP8
+       matrices Q8_0; and its MTP block, hf2jns_ds4 --mtp. MIT: the
+       converted files may be published (MODELS.md) */
+    {.name = "deepseek-v4-flash",
+     .what = "DeepSeek-V4-Flash, 284B, 13B active, from DeepSeek's own "
+             "weights, with its MTP block",
+     .repo = "deepseek-ai/DeepSeek-V4-Flash",
+     .out = "deepseek-v4-flash.jns",
+     .jns_repo = "prabanta-dev/DeepSeek-V4-Flash-JNS",
+     .jns_gb = 159.09,
+     .flat_sha =
+         "37b0d0b9a74820d2f69886b14e663b363605ab0edb2a2249072ee7230223d87a",
+     .extra = JANAS_EXTRA_HF2JNS,
+     .extra_src = "hf:deepseek-ai/DeepSeek-V4-Flash",
+     .extra_out = "deepseek-v4-flash-mtp.jns",
+     .extra_sha =
+         "8d46e88068b98e520b6ccc0f463d8b4cf53597dd16f72d8a5f665cfd92ec765c",
+     .ram_gb = 32},
     /* NVIDIA's own 24GB GGUF, in one step (no planes: its experts are
        IQ2_XXS); under NVIDIA's OpenMDW-1.1, which lets it be passed on
        with the licence and NVIDIA's notices (MODELS.md) */

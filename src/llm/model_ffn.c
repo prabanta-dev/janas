@@ -784,6 +784,9 @@ int janas_m_moe_block(struct janas_llm_model *m, const struct layer *ly,
         janas_m_ds4_route(m, ly, l, n);
         if (m->route_fn && cache == m->cache)
             m->route_fn(m->route_ctx, l, n, k, m->pair_exp);
+        /* the light experts not in RAM left out, as the others' */
+        if (m->miss_skip > 0 && cache)
+            np = skip_misses(m, cache, l, n, k);
     } else if (k) {
         struct router_job rj = {.m = m,
                                 .w = ly->router16,

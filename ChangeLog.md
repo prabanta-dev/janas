@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+## [2026-11-19] - DeepSeek-V4-Flash in the catalog, with its MTP block
+
+- **`janas-get deepseek-v4-flash`**: DeepSeek's own weights converted, 159 GB with the MTP block, from [`prabanta-dev/DeepSeek-V4-Flash-JNS`](https://huggingface.co/prabanta-dev/DeepSeek-V4-Flash-JNS), checked against their fingerprints (MODELS.md). Meant for machines with 32 GB of memory or more.
+- **DeepSeek-V4-Flash: its multi-token prediction block, and its first layers' experts read ahead.**
+  - `hf2jns_ds4 --mtp` writes the block (`deepseek-v4-flash-mtp.jns`, 3.6 GB) from the official checkpoint, reading only the shard that holds it; the engine finds it beside the model.
+  - Its drafts are right: generating 48 tokens of a chat reply with them gives the same tokens as without, and the first draft is accepted 81-89% of the time.
+    - On a laptop with 30 GB of RAM they help in long replies: 2.2 tok/s against 1.8 over a reply of 200 tokens (1.21x, 87% of the drafts accepted), about even over 48 tokens (1.02x). Two tokens rarely share their experts (6 of 256), so checking a draft costs nearly as much reading from the disk as writing a token. Janas's planner decides how many to make from what a pass costs.
+    - On DeepSeek-V4-Flash `janas-chat` said it left out the light experts not in memory, and did not: it no longer says so, and does not do it by itself either. Asked for with `JANAS_MISS_SKIP`, it costs too much for this model (50 of 64 most likely tokens kept at 3.4 tok/s against 2.0).
+  - The first three layers choose their experts from the token alone, so those experts are read ahead, exactly. A token took 459-461 ms against 470-478 without (64 tokens, a 9000 MiB cache).
+
 ## [2026-11-19] - Every converter in the packages; an unknown GPU API refused
 
 - **The packages carry every converter the documentation names** (issue #73): `hf2jns_ds4` (DeepSeek-V4-Flash, new on 19 November), `hf2jns_vision`, `hf2jns_whisper`, `silero2jns` and `wespeaker2jns`, beside `gguf2jns`, `jns_planes` and `hf2jns_mtp`, on Linux and on Windows.

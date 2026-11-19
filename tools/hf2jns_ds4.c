@@ -324,7 +324,7 @@ static void fp4_to_mxfp4(const uint8_t *w, const uint8_t *sc, uint64_t rows,
 
 /* ---- what is written ---- */
 
-enum { K_COPY, K_BF16_F32, K_FP8_Q8, K_I64_I32, K_BF16_Q8 };
+enum { K_COPY, K_BF16_F32, K_FP8_Q8, K_I64_I32, K_BF16_Q8, K_FP8_HALF };
 
 struct res {
     char name[64];
@@ -333,7 +333,16 @@ struct res {
     uint64_t bytes, offset;
     const struct src *w, *sc;
     int done;
+    /* K_FP8_HALF: half 0 or 1 of each row of the tensor res[of] (two FP8
+       matrices side by side: the MTP block's e_proj and h_proj as eh_proj);
+       the second has no entry of its own in the directory (hidden) */
+    int half, hidden;
+    size_t of;
 };
+
+/* --mtp: the multi-token prediction block (mtp.0) alone, as a file of one
+   layer that the engine opens beside the model */
+static int mtp_mode;
 
 static struct res *res;
 static size_t n_res, cap_res;
@@ -371,6 +380,13 @@ static void add_res(const char *name, const struct src *w, const struct src *sc,
     case K_BF16_F32:
         r->type = T_F32;
         r->bytes = count * 4;
+        break;
+    case K_FP8_HALF:
+        r->dims[0] *= 2; /* the row of the pair */
+        r->type = T_Q8_0;
+        r->bytes = rows * (2 * cols / 32) * 34;
+        if (cols % 32)
+            die("%s: a row not of whole blocks of 32", name);
         break;
     case K_FP8_Q8:
     case K_BF16_Q8:
@@ -438,6 +454,19 @@ static const struct {
     {"hc_head_fn", "output_hc_fn.weight", K_COPY},
     {"hc_head_base", "output_hc_base.weight", K_COPY},
     {"hc_head_scale", "output_hc_scale.weight", K_COPY},
+};
+
+/* --mtp: the block's own tensors (what follows "mtp.0." is as a layer's) */
+static const struct {
+    const char *hf, *gguf;
+    int kind;
+} MTP_GLOBAL[] = {
+    {"mtp.0.enorm.weight", "mtp.enorm.weight", K_BF16_F32},
+    {"mtp.0.hnorm.weight", "mtp.hnorm.weight", K_BF16_F32},
+    {"mtp.0.norm.weight", "mtp.norm.weight", K_BF16_F32},
+    {"mtp.0.hc_head_fn", "mtp.hc_head_fn.weight", K_COPY},
+    {"mtp.0.hc_head_base", "mtp.hc_head_base.weight", K_COPY},
+    {"mtp.0.hc_head_scale", "mtp.hc_head_scale.weight", K_COPY},
 };
 
 /* the expert matrices of a slot: w1 the gate, w3 the up, w2 the down */
@@ -542,7 +571,10 @@ static int expert_of(const char *name, int *l, int *e, int *p)
 {
     int w;
     char tail[16];
-    if (sscanf(name, "layers.%d.ffn.experts.%d.w%d.%15s", l, e, &w, tail) != 4)
+    if (sscanf(name,
+               mtp_mode ? "mtp.%d.ffn.experts.%d.w%d.%15s"
+                        : "layers.%d.ffn.experts.%d.w%d.%15s",
+               l, e, &w, tail) != 4)
         return 0;
     *p = w == 1 ? 0 : w == 3 ? 1 : w == 2 ? 2 : -1;
     return *p >= 0;
@@ -581,6 +613,27 @@ static void convert(const struct src *s, const uint8_t *p)
     const struct res *r = res_of(s);
     if (!r)
         return; /* not written (mtp.*) */
+    if (r->kind == K_FP8_HALF) {
+        /* half of each row of the pair's tensor */
+        const struct src *o = s == r->w ? r->sc : r->w;
+        uint8_t *op = take_held(o);
+        if (!op) {
+            hold(s, p);
+            return;
+        }
+        const uint8_t *wp = s == r->w ? p : op, *sp = s == r->w ? op : p;
+        uint64_t rows = r->w->shape[0], cols = r->w->shape[1];
+        uint64_t hb = cols / 32 * 34;
+        uint8_t *q = xmalloc(rows * hb);
+        fp8_to_q8_0(wp, sp, rows, cols, q);
+        const struct res *t = &res[r->of];
+        for (uint64_t i = 0; i < rows; i++)
+            put(q + i * hb, hb,
+                t->offset + i * 2 * hb + (uint64_t)r->half * hb);
+        free(q);
+        free(op);
+        return;
+    }
     if (r->kind == K_FP8_Q8) {
         const struct src *o = s == r->w ? r->sc : r->w;
         uint8_t *op = take_held(o);
@@ -899,15 +952,18 @@ static void write_meta(const struct janas_json *c, const struct janas_json *tok)
 int main(int argc, char **argv)
 {
     int meta_only = argc == 4 && !strcmp(argv[1], "--tokenizer-only");
-    if (meta_only)
+    mtp_mode = argc == 4 && !strcmp(argv[1], "--mtp");
+    if (meta_only || mtp_mode)
         argv++, argc--;
     if (argc != 3 || strncmp(argv[1], "hf:", 3)) {
         fprintf(stderr,
-                "usage: hf2jns_ds4 [--tokenizer-only] "
+                "usage: hf2jns_ds4 [--tokenizer-only | --mtp] "
                 "hf:<owner>/<repo>[@revision] <out.jns>\n"
                 "  DeepSeek-V4-Flash from its checkpoint on Hugging Face;\n"
                 "  --tokenizer-only: the metadata alone, no weights (a small "
-                "file\n  to check the tokenizer with)\n");
+                "file\n  to check the tokenizer with)\n"
+                "  --mtp: the multi-token prediction block alone, the file "
+                "the\n  engine finds beside the model (<model>-mtp.jns)\n");
         return 2;
     }
     snprintf(repo, sizeof repo, "%s", argv[1] + 3);
@@ -923,7 +979,7 @@ int main(int argc, char **argv)
     struct janas_json_doc *tokd = fetch_json("tokenizer.json");
     struct janas_json_doc *idx = fetch_json("model.safetensors.index.json");
     const struct janas_json *c = janas_json_root(cfg);
-    n_layer = (int)cnum(c, "num_hidden_layers");
+    n_layer = mtp_mode ? 1 : (int)cnum(c, "num_hidden_layers");
     n_expert = (int)cnum(c, "n_routed_experts");
     n_used = (int)cnum(c, "num_experts_per_tok");
     d_model = (int)cnum(c, "hidden_size");
@@ -968,6 +1024,9 @@ int main(int argc, char **argv)
         janas_json_get(janas_json_root(idx), "weight_map");
     for (const struct janas_json *e = wm ? wm->child : NULL; e; e = e->next) {
         const char *f = janas_json_str(e);
+        /* --mtp: only the shards that hold the block */
+        if (mtp_mode && (e->key_n < 4 || memcmp(e->key, "mtp.", 4)))
+            continue;
         int k = 0;
         while (k < n_shards && strcmp(shards[k].path, f))
             k++;
@@ -993,15 +1052,37 @@ int main(int argc, char **argv)
 
     /* the resident tensors, and the experts' slots */
     char name[160], gg[64];
-    for (size_t g = 0; g < sizeof GLOBAL / sizeof *GLOBAL; g++) {
+    for (size_t g = 0; !mtp_mode && g < sizeof GLOBAL / sizeof *GLOBAL; g++) {
         const struct src *s = find_src(GLOBAL[g].hf);
         if (!s)
             die("%s missing", GLOBAL[g].hf);
         add_res(GLOBAL[g].gguf, s, NULL, GLOBAL[g].kind);
     }
+    if (mtp_mode) {
+        /* the block's own: its norms, its final mix, and [e_proj | h_proj]
+           as one matrix of rows of 2 d_model (the engine's eh_proj) */
+        for (size_t g = 0; g < sizeof MTP_GLOBAL / sizeof *MTP_GLOBAL; g++) {
+            const struct src *s = find_src(MTP_GLOBAL[g].hf);
+            if (!s)
+                die("%s missing", MTP_GLOBAL[g].hf);
+            add_res(MTP_GLOBAL[g].gguf, s, NULL, MTP_GLOBAL[g].kind);
+        }
+        const struct src *ep = find_src("mtp.0.e_proj.weight"),
+                         *hp = find_src("mtp.0.h_proj.weight");
+        if (!ep || !hp || !partner(ep) || !partner(hp))
+            die("mtp.0.e_proj or h_proj missing%s", "");
+        add_res("mtp.eh_proj.weight", ep, partner(ep), K_FP8_HALF);
+        size_t first = n_res - 1;
+        add_res("", hp, partner(hp), K_FP8_HALF);
+        res[n_res - 1].half = 1;
+        res[n_res - 1].hidden = 1;
+        res[n_res - 1].of = first;
+        res[first].of = first;
+    }
     for (int l = 0; l < n_layer; l++)
         for (size_t m = 0; m < sizeof MAP / sizeof *MAP; m++) {
-            snprintf(name, sizeof name, "layers.%d.%s", l, MAP[m].hf);
+            snprintf(name, sizeof name, mtp_mode ? "mtp.%d.%s" : "layers.%d.%s",
+                     l, MAP[m].hf);
             const struct src *s = find_src(name);
             if (!s)
                 continue; /* not in every layer (indexer, bias, tid2eid) */
@@ -1058,12 +1139,19 @@ int main(int argc, char **argv)
     uint64_t expert_table = layer_table + sizeof(*layers) * (uint64_t)n_layer;
     uint64_t expert_sums = expert_table + 8ull * n_layer * n_expert;
     uint64_t tensor_dir = expert_sums + 8ull * n_layer * n_expert;
+    size_t n_dir = 0; /* the tensors with an entry of their own */
+    for (size_t i = 0; i < n_res; i++)
+        n_dir += !res[i].hidden;
     uint64_t metadata_offset =
-        align_up(tensor_dir + sizeof(struct janas_jns_tensor) * n_res, ALIGN);
+        align_up(tensor_dir + sizeof(struct janas_jns_tensor) * n_dir, ALIGN);
     uint64_t resident_offset =
         align_up(metadata_offset + metadata_bytes, ALIGN);
     uint64_t pos = resident_offset;
     for (size_t i = 0; i < n_res; i++) {
+        if (res[i].hidden) { /* the second half of another's rows */
+            res[i].offset = res[res[i].of].offset;
+            continue;
+        }
         res[i].offset = pos;
         pos = align_up(pos + res[i].bytes, ALIGN);
     }
@@ -1105,7 +1193,7 @@ int main(int argc, char **argv)
 
     /* the tables, the metadata, the header */
     uint64_t tbl_len =
-        tensor_dir + sizeof(struct janas_jns_tensor) * n_res - layer_table;
+        tensor_dir + sizeof(struct janas_jns_tensor) * n_dir - layer_table;
     uint8_t *tbl = calloc(1, tbl_len);
     if (!tbl)
         die("out of memory%s", "");
@@ -1113,7 +1201,9 @@ int main(int argc, char **argv)
     memcpy(tbl + (expert_table - layer_table), slot_off,
            8ull * n_layer * n_expert);
     memcpy(tbl + (expert_sums - layer_table), sums, 8ull * n_layer * n_expert);
-    for (size_t i = 0; i < n_res; i++) {
+    for (size_t i = 0, k = 0; i < n_res; i++) {
+        if (res[i].hidden)
+            continue;
         struct janas_jns_tensor d = {0};
         snprintf(d.name, sizeof d.name, "%s", res[i].name);
         d.type = (uint32_t)res[i].type;
@@ -1121,7 +1211,7 @@ int main(int argc, char **argv)
         memcpy(d.dims, res[i].dims, sizeof d.dims);
         d.offset = res[i].offset;
         d.bytes = res[i].bytes;
-        memcpy(tbl + (tensor_dir - layer_table) + i * sizeof d, &d, sizeof d);
+        memcpy(tbl + (tensor_dir - layer_table) + k++ * sizeof d, &d, sizeof d);
     }
     uint8_t *mreg = xmalloc(metadata_bytes);
     memcpy(mreg, &n_kv, 8);
@@ -1143,7 +1233,7 @@ int main(int argc, char **argv)
     h.expert_table_offset = expert_table;
     h.expert_sums_offset = expert_sums;
     h.tensor_dir_offset = tensor_dir;
-    h.n_tensor = n_res;
+    h.n_tensor = n_dir;
     h.metadata_offset = metadata_offset;
     h.metadata_bytes = metadata_bytes;
     h.resident_offset = resident_offset;

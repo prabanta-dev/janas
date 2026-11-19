@@ -841,7 +841,7 @@ output:
         td = now(); /* the mix's time is the mixes' */
     } else
         janas_m_norm_quant(m, f32(m, m->out_norm), keep ? 0 : first, n);
-    if (keep && !m->hc_n)
+    if (keep && !m->hc_n && !m->a->ds4) /* DeepSeek-V4's: its streams */
         memcpy(m->hid, m->xn, (size_t)n * dm * sizeof(float));
     uint32_t n_out = n - first;
     if (gather) {
@@ -948,7 +948,10 @@ const float *janas_llm_model_hidden(const struct janas_llm_model *m)
 
 uint32_t janas_llm_model_hidden_width(const struct janas_llm_model *m)
 {
-    return m->hc_n ? m->hc_n * m->d_model : m->d_model;
+    /* qwen4exp's streams, DeepSeek-V4's four */
+    return m->hc_n     ? m->hc_n * m->d_model
+           : m->a->ds4 ? 4 * m->d_model
+                       : m->d_model;
 }
 
 const float *janas_llm_model_normed(const struct janas_llm_model *m)
@@ -1162,13 +1165,18 @@ int janas_llm_mtp_forward(struct janas_llm_model *m, const int32_t *tokens,
     size_t nbd = dm / JANAS_QK, nbc = 2 * dm / JANAS_QK;
     const struct layer *ly = &m->mtp_layer;
     double ta = now();
-    if (m->hc_n) { /* qwen4exp's block, on the residual's streams */
+    if (m->hc_n || m->a->ds4) { /* on the residual's streams */
         uint32_t first = all_logits ? 0 : n - 1;
         for (uint32_t j = 0; j < n; j++)
             embed(m, tokens[j], m->x + (size_t)j * dm);
-        set_rope(m, n, pos0);
-        if (janas_m_hc_mtp(m, hidden, n, pos0, first) != 0)
-            return -1;
+        if (m->a->ds4) {
+            if (janas_m_ds4_mtp(m, hidden, n, pos0, first) != 0)
+                return -1;
+        } else {
+            set_rope(m, n, pos0);
+            if (janas_m_hc_mtp(m, hidden, n, pos0, first) != 0)
+                return -1;
+        }
         m->phase[JANAS_PH_QKV] += now() - ta;
         if (!logits)
             return 0;

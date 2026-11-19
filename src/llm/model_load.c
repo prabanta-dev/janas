@@ -654,7 +654,10 @@ static int load_mtp(struct janas_llm_model *m, const char *path, char *err,
     m->mtp_cl = 0;
     m->mtp_layer.rec = 0;
     m->mtp_layer.slot = m->n_attn; /* the KV slot after the main model's */
-    if (load_layer(m, &m->mtp_j, 0, &m->mtp_layer, err, err_len) != 0 ||
+    if ((m->a->ds4
+             ? janas_m_ds4_layer_load(m, &m->mtp_j, 0, &m->mtp_layer, err,
+                                      err_len)
+             : load_layer(m, &m->mtp_j, 0, &m->mtp_layer, err, err_len)) != 0 ||
         !(m->eh_proj = need(&m->mtp_j, "mtp.eh_proj.weight", T_QUANT, 2 * dm,
                             dm, err, err_len)) ||
         !(m->enorm =
@@ -688,6 +691,9 @@ static int load_mtp(struct janas_llm_model *m, const char *path, char *err,
                           err_len)) ||
         !(m->mtp_norm =
               need(&m->mtp_j, "mtp.norm.weight", T_F32, dm, 0, err, err_len)))
+        return -1;
+    /* DeepSeek-V4's: a final mix of its streams too */
+    if (m->a->ds4 && janas_m_ds4_mtp_load(m, err, err_len) != 0)
         return -1;
     return 0;
 }
@@ -1013,7 +1019,7 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
         struct layer *ly = &m->layers[l];
         ly->rec = m->a->rec && (l + 1) % interval != 0;
         if (m->a->ds4) { /* its state is model_ds4.c's, not the KV cache */
-            if (janas_m_ds4_layer_load(m, l, ly, err, err_len) != 0)
+            if (janas_m_ds4_layer_load(m, &m->j, l, ly, err, err_len) != 0)
                 goto fail;
             continue;
         }
@@ -1282,8 +1288,14 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
      */
     if (o->cache_bytes && m->j.h.experts_bytes) {
         double cover = (double)o->cache_bytes / (double)m->j.h.experts_bytes;
-        /* below MEDIUM only: the caller's floor (min_quality) */
-        if (cover < 0.20 && o->min_quality < JANAS_LLM_QUALITY_MEDIUM) {
+        /* below MEDIUM only: the caller's floor (min_quality). Not for
+   DeepSeek-V4, whose six weights are flatter: against its own
+   logits without it (64 tokens, a 9000 MiB cache, 19 Nov 2026)
+   0.95/k agreed at 50 of 64 most likely tokens for 3.4 tokens/s
+   against 2.0, 0.8/k 55 for 3.0, 0.07 61 for 2.1 - a trade the
+   engine does not make by itself (JANAS_MISS_SKIP still asks) */
+        if (cover < 0.20 && o->min_quality < JANAS_LLM_QUALITY_MEDIUM &&
+            !m->a->ds4) {
             m->miss_skip = (cover < 0.10 ? 0.95f : 0.8f) / (float)m->k;
             m->k_auto = 1;
         }
@@ -1486,7 +1498,7 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
     if (m->mtp) {
         /* qwen4exp: the residual's streams a row, and the block's input a
            stream at a time (model_hc.c janas_m_hc_mtp) */
-        size_t hw = m->hc_n ? m->hc_n : 1;
+        size_t hw = m->hc_n ? m->hc_n : m->a->ds4 ? 4 : 1;
         m->hid = malloc(B * hw * dm * sizeof(float));
         m->mtp_hid = malloc(B * hw * dm * sizeof(float));
         m->cat = malloc(B * 2 * dm * sizeof(float));

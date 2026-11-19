@@ -179,6 +179,19 @@ b2396b2c413af93a471b3f14ff6f0076630cc27f2e8a181cc982ac0d23d91b34  whisper-large-
 5c67c321b7e4dd2397d990bb12cd4ae5cd08db2edd75dbbc71b7aeea139b54c1  nemotron-3.5-bolt-74b-24gb.jns   (gguf2jns)
 ```
 
+**DeepSeek-V4-Flash** (284B parameters, 13B active), from DeepSeek's own checkpoint [`deepseek-ai/DeepSeek-V4-Flash`](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash) (MIT), converted on 19 November 2026 by `hf2jns_ds4`, which reads the checkpoint from Hugging Face by ranges and checks each shard against the SHA-256 the Hub lists. There is no GGUF of the original weights: the conversion is the only way. It changes the weights in these ways, all of them stated:
+- **The routed experts are the same weights to the bit.** They are FP4 (E2M1) with a power-of-two scale per 32, which is MXFP4: the same codes and scale bytes, the nibbles reordered.
+- **The dense matrices are re-quantized.** These are FP8 E4M3 with a scale per 128 x 128 block, and they become Q8_0 (blocks of 32), from each weight's exact value, as llama.cpp's converter does: a re-quantization.
+- **So are the token embeddings and the output head**, BF16 written as Q8_0.
+- **The other tensors are kept or widened:** the router becomes F32, the norms F32, and the hash layers' token-to-expert tables I32 (from I64); the other BF16 and F32 tensors are kept.
+
+The multi-token prediction block is a file of its own (`hf2jns_ds4 --mtp`), its `e_proj` and `h_proj` side by side as one Q8_0 matrix. Both files are published in [`prabanta-dev/DeepSeek-V4-Flash-JNS`](https://huggingface.co/prabanta-dev/DeepSeek-V4-Flash-JNS) with DeepSeek's licence (`janas-get deepseek-v4-flash`). They have been converted once so far.
+
+```
+37b0d0b9a74820d2f69886b14e663b363605ab0edb2a2249072ee7230223d87a  deepseek-v4-flash.jns       (hf2jns_ds4)
+8d46e88068b98e520b6ccc0f463d8b4cf53597dd16f72d8a5f665cfd92ec765c  deepseek-v4-flash-mtp.jns   (hf2jns_ds4 --mtp)
+```
+
 ```
 740185b21d22ceb83a11c3aa62ad5842ef32c70f6096d756bbee85a1e4ec34b8  gemma-4-E2B-it-Q4_K_M.gguf
 1f18e08878df41f377d563b38048d41841c7973ddea845cd9672fcf23cbd864b  gemma-4-e2b-it-q4km.jns   (gguf2jns)
@@ -246,7 +259,7 @@ The same tensors from shards on disk give the same bytes. A private or gated rep
 
 **The converter, always. The weights, only when their licence plainly allows it.** In order:
 
-1. **Models under Apache 2.0, MIT or a similar licence.** Every model Janas supports but two is under **Apache 2.0** and none is gated: Qwen3-Next (including Qwen3-Coder-Next), Qwen3.5, Qwen3.6 and Qwen3.8-27B, Qwen3 MoE and Gemma 4 — checked on their pages, not in their files. NVIDIA's **Nemotron 3.5 Bolt** is under NVIDIA's **OpenMDW-1.1**, which allows anything with the model as long as a copy of the licence and NVIDIA's notices go with it: its converted file carries both. The other is **Qwen3.8-Flash-Next**, under the **Qwen Community License 1.0** (on [its page](https://huggingface.co/Qwen/Qwen3.8-Flash-Next)): use, copies, changes and redistribution are allowed with its notice, but a product above 100 million monthly users or US$ 20 million a month must show the model's name, and a business offering models as a service or an AI work assistant needs a separate licence from Qwen for commercial use. ISTA-DASLab's GGUF of it says Apache 2.0 in its card; the model's page is the licence. Its converted files are published with that notice: [`prabanta-dev/Qwen3.8-Flash-Next-JNS`](https://huggingface.co/prabanta-dev/Qwen3.8-Flash-Next-JNS) carries the Qwen Community License as the model's repository gives it, and `janas-get qwen3.8-flash-next --from-gguf` converts ISTA's GGUF on your machine instead. Converted files of all of them may be published, and when they are, they carry:
+1. **Models under Apache 2.0, MIT or a similar licence.** Every model Janas supports but two is under **Apache 2.0** or **MIT** (DeepSeek-V4-Flash) and none is gated: Qwen3-Next (including Qwen3-Coder-Next), Qwen3.5, Qwen3.6 and Qwen3.8-27B, Qwen3 MoE and Gemma 4 — checked on their pages, not in their files. NVIDIA's **Nemotron 3.5 Bolt** is under NVIDIA's **OpenMDW-1.1**, which allows anything with the model as long as a copy of the licence and NVIDIA's notices go with it: its converted file carries both. The other is **Qwen3.8-Flash-Next**, under the **Qwen Community License 1.0** (on [its page](https://huggingface.co/Qwen/Qwen3.8-Flash-Next)): use, copies, changes and redistribution are allowed with its notice, but a product above 100 million monthly users or US$ 20 million a month must show the model's name, and a business offering models as a service or an AI work assistant needs a separate licence from Qwen for commercial use. ISTA-DASLab's GGUF of it says Apache 2.0 in its card; the model's page is the licence. Its converted files are published with that notice: [`prabanta-dev/Qwen3.8-Flash-Next-JNS`](https://huggingface.co/prabanta-dev/Qwen3.8-Flash-Next-JNS) carries the Qwen Community License as the model's repository gives it, and `janas-get qwen3.8-flash-next --from-gguf` converts ISTA's GGUF on your machine instead. Converted files of all of them may be published, and when they are, they carry:
    - a link to the original model and to its licence;
    - the original `LICENSE` and, where there is one, the `NOTICE`;
    - a statement of what was changed (the list above) and which version of the tools did it;
