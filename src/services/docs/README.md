@@ -38,11 +38,12 @@ A PDF is read by Janas's own code too:
 - **The pages** are walked in their order, each with the resources it inherits. Their text is taken from the content streams and from the forms they draw.
 - **Characters** come through each font's ToUnicode map, or through WinAnsi for a simple font without one.
 - **Spaces and new lines** are found from the glyphs' widths and the text's moves. A gap wider than a fifth of the font's size is a space; a change of line is a new line.
+- **Scanned pages**, pictures without text, are read by a model that sees pictures, when there is one (`ocr_model = ~/models/gemma-4-e2b-it-q4km.jns` in `docs.conf`, or `--ocr-model FILE`; its `.vision.jns` beside it). The page's largest picture goes to it - a JPEG as it is, raw samples of 8 bits, gray or RGB, as a PNG - with a request to write its text as it is, and the reply is the page's text. The model is opened when a page needs it and closed at the end of the indexing round. A PDF indexed earlier without text is read again, once, when such a model is set. Brebus sets the smallest of My models that sees pictures, of a gigabyte or more.
 
 Not read:
 
 - encrypted files (refused, and said so);
-- pages that are only pictures (scanned pages: no OCR yet);
+- pages that are only pictures, without a model that sees pictures, or pictures of a kind not read (fax, JBIG2, CMYK);
 - fonts of two-byte codes without a map;
 - filters other than FlateDecode.
 
@@ -103,6 +104,8 @@ On the development laptop, 25 PDFs at hand, compared word by word with poppler's
 - **Speed:** a paper of 2.2 MB was read in 0.03 s, against 0.11 s for `pdftotext`.
 - **Fuzzing under AddressSanitizer and UBSan:** that paper and a Skia PDF, each mutated 300 times and cut at 200 places, gave no error.
 - **Not read, and said so:** an encrypted PDF.
+
+Scanned pages, 20 November 2026: a page of an Italian lease of seven lines, written as a picture of 1240 x 900 with a slight tilt, blur and specks, saved as a JPEG of quality 70, put in a PDF once as a JPEG and once as raw gray samples. Gemma 4 E2B (Q4_K_M) wrote both back with one mistake, "seicento/cinquanta" for "seicentocinquanta", in 13 s each, the model's opening included. `tests/test_docs.c` writes PNGs of raw samples and reads them back with the engine's decoder, pixel for pixel.
 
 In `janas-chat` with Qwen3-4B (Q4_K_M), on a pipe, the same folder searched by words: "Cerca nei miei documenti cosa dicono di Obsidian e riassumilo." opened the service, called `docs_search` with "Obsidian", and summed up the Obsidian section of `compatibility.md` with its `--allow-origin app://obsidian.md` command. Asked less directly ("Nei miei documenti c'è scritto come collegare Obsidian a janas-server?"), Qwen3-4B did not open the service and answered from its own guesses: a small model's limit.
 

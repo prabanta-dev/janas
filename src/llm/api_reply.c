@@ -22,6 +22,14 @@ int janas_api_is_stop(const janas_llm *llm, int32_t t)
 }
 
 /* Bytes of pend that form whole UTF-8 characters, at most max. */
+/* a reply ended: its metrics, and the model's state written now and then
+   (a server killed keeps what it learned) */
+static void reply_done(janas_llm_chat *c)
+{
+    janas_metrics_reply(c);
+    janas_llm_model_save_state(c->llm->m);
+}
+
 static size_t whole_chars(const char *s, size_t n, size_t max)
 {
     size_t i = 0;
@@ -386,7 +394,7 @@ int32_t janas_llm_chat_next(janas_llm_chat *c, char *buf, int32_t cap,
             c->stats.finish = JANAS_LLM_FINISH_ERROR;
             c->stats.stage = JANAS_LLM_STAGE_DONE;
             janas_api_update_stats(c);
-            janas_metrics_reply(c);
+            reply_done(c);
             return janas_api_fail(JANAS_LLM_EFAIL, "generation failed");
         }
         janas_api_update_stats(c);
@@ -449,7 +457,7 @@ int32_t janas_llm_chat_next(janas_llm_chat *c, char *buf, int32_t cap,
         if (r != 0) {
             c->replying = 0;
             c->stats.stage = JANAS_LLM_STAGE_DONE;
-            janas_metrics_reply(c);
+            reply_done(c);
             return r > 0 ? janas_api_fail(JANAS_LLM_EFULL,
                                           "the context is full (%u "
                                           "tokens)",
@@ -462,7 +470,7 @@ int32_t janas_llm_chat_next(janas_llm_chat *c, char *buf, int32_t cap,
         c->replying = 0;
         c->stats.stage = JANAS_LLM_STAGE_DONE;
         janas_api_update_stats(c);
-        janas_metrics_reply(c);
+        reply_done(c);
         /* a sentence of the gate is not what the model generated: not
            remembered as its turn */
         if (c->nuc_route == JANAS_LLM_ROUTE_SELF)

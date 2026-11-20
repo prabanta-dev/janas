@@ -6,6 +6,11 @@
  * the browser send requests to the loopback address, and a site whose name
  * resolves to 127.0.0.1 could read the answers: the Host must name this
  * daemon, and an Origin, when a browser sends one, must be its own page's.
+ *
+ * Served (brebus --serve), it listens where it is told, over HTTPS when
+ * it has a certificate (mhd_tls.c), and asks for a login (auth.c): every
+ * request but the login's own needs a session; an Origin must be the page
+ * of the Host asked.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,10 +19,17 @@
 
 #include <microhttpd.h>
 #include <netinet/in.h>
+#ifdef _WIN32
+#include <ws2tcpip.h>
+#else
+#include <arpa/inet.h>
+#endif
 
 #include "brebus.h"
 #include "brebus_app_html.h"   /* made by build.sh from app.html */
 #include "brebus_frame_html.h" /* and from frame.html */
+#include "brebus_login_html.h" /* and from login.html */
+#include "common/mhd_tls.h"
 
 static const char CSP[] =
     "default-src 'none'; script-src 'unsafe-inline' 'self'; style-src "
@@ -25,9 +37,15 @@ static const char CSP[] =
     "connect-src 'self'; frame-src 'self'; base-uri 'none'; form-action "
     "'none'; frame-ancestors 'none'";
 
-/* "127.0.0.1:port" or "localhost:port" */
+static int hsts; /* served over HTTPS: browsers told to keep to it */
+
+/* "127.0.0.1:port" or "localhost:port"; served, any name of the machine
+   (the login guards it) */
 static int ours(const struct brebus *b, const char *host)
 {
+    if (b->serve)
+        return host && *host && strlen(host) < 256 &&
+               !strpbrk(host, " /\\;,\"'<>");
     char a[64], c[64];
     snprintf(a, sizeof a, "127.0.0.1:%u", b->port);
     snprintf(c, sizeof c, "localhost:%u", b->port);
@@ -49,6 +67,9 @@ static enum MHD_Result reply(struct MHD_Connection *conn, unsigned status,
     MHD_add_response_header(r, "Referrer-Policy", "no-referrer");
     if (!strncmp(type, "text/html", 9))
         MHD_add_response_header(r, "Content-Security-Policy", CSP);
+    if (hsts)
+        MHD_add_response_header(r, "Strict-Transport-Security",
+                                "max-age=31536000");
     enum MHD_Result ret = MHD_queue_response(conn, status, r);
     MHD_destroy_response(r);
     return ret;
@@ -97,14 +118,34 @@ static enum MHD_Result handler(void *cls, struct MHD_Connection *conn,
             MHD_lookup_connection_value(conn, MHD_HEADER_KIND, "Host");
         const char *origin =
             MHD_lookup_connection_value(conn, MHD_HEADER_KIND, "Origin");
-        char own[2][64];
+        char own[2][300];
         snprintf(own[0], sizeof own[0], "http://127.0.0.1:%u", b->port);
         snprintf(own[1], sizeof own[1], "http://localhost:%u", b->port);
+        if (b->serve && host) /* served: the page of the Host asked */
+            snprintf(own[0], sizeof own[0], "%s://%.250s",
+                     b->tls ? "https" : "http", host),
+                snprintf(own[1], sizeof own[1], "%s", own[0]);
         /* the libraries are anyone's: an artifact's frame, of no origin,
            asks for them too (its fonts with an Origin: null) */
         int lib = !strcmp(method, "GET") && !strncmp(url, "/brebus/lib/", 12);
-        if (!ours(b, host) || (!lib && origin && strcmp(origin, own[0]) &&
-                               strcmp(origin, own[1]))) {
+        /* a user's own Brebus: its front's requests alone, by its token
+           (the front checked the Host, the Origin and the session) */
+        const char *ct = MHD_lookup_connection_value(conn, MHD_HEADER_KIND,
+                                                     "X-Brebus-Child");
+        int child_ok = 0;
+        if (b->child && ct && strlen(ct) == 64) {
+            uint8_t d = 0;
+            for (int k = 0; k < 64; k++)
+                d |= (uint8_t)(ct[k] ^ b->child_token[k]);
+            child_ok = !d;
+        }
+        if (b->child && !child_ok) {
+            static const char no[] = "{\"error\": \"not this Brebus's\"}";
+            return reply(conn, 403, "application/json", no, sizeof no - 1, 1);
+        }
+        if (!b->child &&
+            (!ours(b, host) || (!lib && origin && strcmp(origin, own[0]) &&
+                                strcmp(origin, own[1])))) {
             static const char no[] = "{\"error\": \"not this page's\"}";
             return reply(conn, 403, "application/json", no, sizeof no - 1, 1);
         }
@@ -128,6 +169,181 @@ static enum MHD_Result handler(void *cls, struct MHD_Connection *conn,
         return reply(conn, 413, "application/json", no, sizeof no - 1, 1);
     }
     int get = !strcmp(method, "GET"), post = !strcmp(method, "POST");
+    int models_api =
+        !strncmp(url, "/v1/", 4) || !strncmp(url, "/api/", 5) ||
+        (get && (!strcmp(url, "/monitor") || !strcmp(url, "/monitor/") ||
+                 !strcmp(url, "/monitor/events"))) ||
+        !strcmp(url, "/brebus/server") || !strncmp(url, "/brebus/server/", 15);
+    if (b->child) {
+        /* the models are the front's: there, with this Brebus's token */
+        if (models_api) {
+            char hv[128];
+            snprintf(hv, sizeof hv, "X-Brebus-Child: %s", b->child_token);
+            struct MHD_Response *resp = NULL;
+            unsigned status = 0;
+            if (brebus_proxy_to(b, conn, method, url, r->body.p, r->body.n,
+                                b->front_port, b->front_tls, NULL, hv, &resp,
+                                &status) != 0) {
+                static const char no[] =
+                    "{\"error\": \"the models' Brebus does not answer\"}";
+                return reply(conn, 502, "application/json", no, sizeof no - 1,
+                             1);
+            }
+            enum MHD_Result ret = MHD_queue_response(conn, status, resp);
+            MHD_destroy_response(resp);
+            return ret;
+        }
+        /* what touches the machine itself, an administrator's alone */
+        static const char *const NO[] = {"/brebus/open",
+                                         "/brebus/pick",
+                                         "/brebus/connectors/install",
+                                         "/brebus/connectors/inspect",
+                                         "/brebus/models/remove",
+                                         "/brebus/get/start",
+                                         "/brebus/get/stop",
+                                         "/brebus/python/install",
+                                         "/brebus/python/remove",
+                                         "/brebus/autostart"};
+        for (size_t i = 0; i < sizeof NO / sizeof *NO; i++)
+            if (!strcmp(url, NO[i]) &&
+                (post || !strcmp(url, "/brebus/autostart"))) {
+                static const char no[] =
+                    "{\"error\": \"an administrator's to do on this "
+                    "Brebus\"}";
+                return reply(conn, 403, "application/json", no, sizeof no - 1,
+                             1);
+            }
+    }
+    if (b->serve) {
+        /* a user's own Brebus asking for the models: its token, those
+           routes alone */
+        const char *ct = MHD_lookup_connection_value(conn, MHD_HEADER_KIND,
+                                                     "X-Brebus-Child");
+        if (ct) {
+            if (!models_api || !brebus_child_token_ok(ct)) {
+                static const char no[] = "{\"error\": \"not allowed\"}";
+                return reply(conn, 403, "application/json", no, sizeof no - 1,
+                             1);
+            }
+            goto routes;
+        }
+        /* the login, the one thing served without a session */
+        if (get && !strcmp(url, "/login"))
+            return reply(conn, 200, "text/html; charset=utf-8",
+                         janas_brebus_login_html,
+                         sizeof janas_brebus_login_html - 1, 1);
+        int login = post && !strcmp(url, "/brebus/auth/login"),
+            setup = post && !strcmp(url, "/brebus/auth/setup");
+        if (login || setup) {
+            struct janas_buf o = {0};
+            char ck[256];
+            int st = login ? brebus_auth_login(b, conn, r->body.p, r->body.n,
+                                               &o, ck, sizeof ck)
+                           : brebus_auth_setup(b, conn, r->body.p, r->body.n,
+                                               &o, ck, sizeof ck);
+            struct MHD_Response *rs =
+                MHD_create_response_from_buffer_copy(o.n, o.p ? o.p : "");
+            janas_buf_free(&o);
+            if (!rs)
+                return MHD_NO;
+            MHD_add_response_header(rs, "Content-Type", "application/json");
+            MHD_add_response_header(rs, "Cache-Control", "no-store");
+            if (ck[0])
+                MHD_add_response_header(rs, "Set-Cookie", ck);
+            if (hsts)
+                MHD_add_response_header(rs, "Strict-Transport-Security",
+                                        "max-age=31536000");
+            enum MHD_Result ret = MHD_queue_response(conn, (unsigned)st, rs);
+            MHD_destroy_response(rs);
+            return ret;
+        }
+        char user[64];
+        int admin = 0;
+        if (!brebus_auth_user(conn, user, sizeof user, &admin)) {
+            if (get && (!strcmp(url, "/") || !strcmp(url, "/index.html"))) {
+                struct MHD_Response *rs =
+                    MHD_create_response_from_buffer_static(0, "");
+                if (!rs)
+                    return MHD_NO;
+                MHD_add_response_header(rs, "Location", "/login");
+                enum MHD_Result ret = MHD_queue_response(conn, 302, rs);
+                MHD_destroy_response(rs);
+                return ret;
+            }
+            static const char no[] = "{\"error\": \"log in first\"}";
+            return reply(conn, 401, "application/json", no, sizeof no - 1, 1);
+        }
+        if (post && !strcmp(url, "/brebus/auth/logout")) {
+            brebus_auth_logout(b, conn);
+            char ck[256];
+            brebus_auth_cookie(b, NULL, ck, sizeof ck);
+            struct MHD_Response *rs =
+                MHD_create_response_from_buffer_static(2, "{}");
+            if (!rs)
+                return MHD_NO;
+            MHD_add_response_header(rs, "Content-Type", "application/json");
+            MHD_add_response_header(rs, "Set-Cookie", ck);
+            enum MHD_Result ret = MHD_queue_response(conn, 200, rs);
+            MHD_destroy_response(rs);
+            return ret;
+        }
+        if (post && !strcmp(url, "/brebus/auth/password")) {
+            struct janas_buf o = {0};
+            int st =
+                brebus_auth_password(b, conn, user, r->body.p, r->body.n, &o);
+            return json(conn, (unsigned)st, &o);
+        }
+        if (post && !strcmp(url, "/brebus/auth/end")) {
+            struct janas_buf o = {0};
+            int st = brebus_auth_end_all(b, conn, user, admin, r->body.p,
+                                         r->body.n, &o);
+            return json(conn, (unsigned)st, &o);
+        }
+        if (get && !strcmp(url, "/brebus/auth/logins")) {
+            struct janas_buf o = {0};
+            brebus_auth_logins(b, user, admin, &o);
+            return json(conn, 200, &o);
+        }
+        if (get && !strcmp(url, "/brebus/auth/me")) {
+            struct janas_buf o = {0};
+            janas_buf_puts(&o, "{\"user\": ");
+            janas_json_write_str(&o, user, strlen(user));
+            janas_buf_printf(&o, ", \"admin\": %s}", admin ? "true" : "false");
+            return json(conn, 200, &o);
+        }
+        /* a user who is not an administrator: their own Brebus */
+        if (!admin) {
+            unsigned short port;
+            char tok[65], why[300];
+            if (brebus_child_for(b, user, &port, tok, why, sizeof why) != 0) {
+                struct janas_buf o = {0};
+                janas_buf_puts(&o, "{\"error\": ");
+                janas_json_write_str(&o, why, strlen(why));
+                janas_buf_puts(&o, "}");
+                return json(conn, 503, &o);
+            }
+            /* the page's own name, for the frame's policy there */
+            const char *host =
+                MHD_lookup_connection_value(conn, MHD_HEADER_KIND, "Host");
+            char hx[512];
+            snprintf(hx, sizeof hx,
+                     "X-Brebus-Child: %s\nX-Forwarded-Host: %.250s", tok,
+                     host ? host : "");
+            struct MHD_Response *resp = NULL;
+            unsigned status = 0;
+            if (brebus_proxy_to(b, conn, method, url, r->body.p, r->body.n,
+                                port, 0, NULL, hx, &resp, &status) != 0) {
+                static const char no[] =
+                    "{\"error\": \"your Brebus does not answer\"}";
+                return reply(conn, 502, "application/json", no, sizeof no - 1,
+                             1);
+            }
+            enum MHD_Result ret = MHD_queue_response(conn, status, resp);
+            MHD_destroy_response(resp);
+            return ret;
+        }
+    }
+routes:
     if (get && (!strcmp(url, "/") || !strcmp(url, "/index.html")))
         return reply(conn, 200, "text/html; charset=utf-8",
                      janas_brebus_app_html, sizeof janas_brebus_app_html - 1,
@@ -137,15 +353,24 @@ static enum MHD_Result handler(void *cls, struct MHD_Connection *conn,
            and from the libraries, the page of this Brebus its only parent */
         const char *host =
             MHD_lookup_connection_value(conn, MHD_HEADER_KIND, "Host");
-        char csp[1024];
+        /* a user's own Brebus: the page's name, as its front was asked */
+        const char *fh =
+            b->child ? MHD_lookup_connection_value(conn, MHD_HEADER_KIND,
+                                                   "X-Forwarded-Host")
+                     : NULL;
+        if (fh && *fh && strlen(fh) < 256 && !strpbrk(fh, " /\\;,\"'<>"))
+            host = fh;
+        char csp[2048];
+        const char *sc =
+            b->tls || (b->child && b->front_tls) ? "https" : "http";
         snprintf(csp, sizeof csp,
                  "default-src 'none'; script-src 'unsafe-inline' "
-                 "'unsafe-eval' http://%s/brebus/lib/; style-src "
-                 "'unsafe-inline' http://%s/brebus/lib/; font-src data: "
-                 "http://%s/brebus/lib/; img-src data: blob:; media-src data: "
+                 "'unsafe-eval' %s://%s/brebus/lib/; style-src "
+                 "'unsafe-inline' %s://%s/brebus/lib/; font-src data: "
+                 "%s://%s/brebus/lib/; img-src data: blob:; media-src data: "
                  "blob:; worker-src blob:; connect-src 'none'; form-action "
-                 "'none'; base-uri 'none'; frame-ancestors http://%s",
-                 host, host, host, host);
+                 "'none'; base-uri 'none'; frame-ancestors %s://%s",
+                 sc, host, sc, host, sc, host, sc, host);
         struct MHD_Response *rs = MHD_create_response_from_buffer_static(
             sizeof janas_brebus_frame_html - 1, janas_brebus_frame_html);
         if (!rs)
@@ -211,7 +436,7 @@ static enum MHD_Result handler(void *cls, struct MHD_Connection *conn,
         return json(conn, rc ? 400 : 200, &o);
     }
     if (post && !strcmp(url, "/brebus/server/stop")) {
-        brebus_server_stop(b, &o);
+        brebus_server_stop(b, r->body.p, r->body.n, &o);
         return json(conn, 200, &o);
     }
     if (get && !strcmp(url, "/brebus/chats/search")) {
@@ -611,26 +836,58 @@ static enum MHD_Result handler(void *cls, struct MHD_Connection *conn,
 
 int brebus_http_start(struct brebus *b, char *why, size_t wn)
 {
+    /* where: 127.0.0.1, or the address --listen gave (IPv4 or IPv6) */
     struct sockaddr_in a = {.sin_family = AF_INET,
                             .sin_port = htons(b->port),
                             .sin_addr.s_addr = htonl(INADDR_LOOPBACK)};
-    b->mhd =
-        MHD_start_daemon(MHD_USE_INTERNAL_POLLING_THREAD |
-                             MHD_USE_THREAD_PER_CONNECTION | MHD_USE_ERROR_LOG,
-                         b->port, NULL, NULL, handler, b, MHD_OPTION_SOCK_ADDR,
-                         &a, MHD_OPTION_NOTIFY_COMPLETED, completed, NULL,
-                         MHD_OPTION_CONNECTION_LIMIT, 64u,
-                         MHD_OPTION_CONNECTION_TIMEOUT, 600u, MHD_OPTION_END);
+    struct sockaddr_in6 a6 = {.sin6_family = AF_INET6,
+                              .sin6_port = htons(b->port)};
+    struct sockaddr *sa = (struct sockaddr *)&a;
+    int v6 = 0;
+    if (b->listen[0] && inet_pton(AF_INET, b->listen, &a.sin_addr) != 1) {
+        if (inet_pton(AF_INET6, b->listen, &a6.sin6_addr) != 1) {
+            snprintf(why, wn, "%s is not an IP address to listen on",
+                     b->listen);
+            return -1;
+        }
+        sa = (struct sockaddr *)&a6;
+        v6 = 1;
+    }
+    char where[96];
+    snprintf(where, sizeof where, v6 ? "[%s]:%u" : "%s:%u",
+             b->listen[0] ? b->listen : "127.0.0.1", b->port);
+    unsigned flags = MHD_USE_INTERNAL_POLLING_THREAD |
+                     MHD_USE_THREAD_PER_CONNECTION | MHD_USE_ERROR_LOG |
+                     (v6 ? MHD_USE_IPv6 : 0);
+    if (b->tls) /* no socket of its own: mhd_tls.c hands it connections */
+        b->mhd = MHD_start_daemon(
+            flags | MHD_USE_NO_LISTEN_SOCKET | MHD_USE_ITC, 0, NULL, NULL,
+            handler, b, MHD_OPTION_NOTIFY_COMPLETED, completed, NULL,
+            MHD_OPTION_CONNECTION_LIMIT, 64u, MHD_OPTION_CONNECTION_TIMEOUT,
+            600u, MHD_OPTION_END);
+    else
+        b->mhd = MHD_start_daemon(
+            flags, b->port, NULL, NULL, handler, b, MHD_OPTION_SOCK_ADDR, sa,
+            MHD_OPTION_NOTIFY_COMPLETED, completed, NULL,
+            MHD_OPTION_CONNECTION_LIMIT, 64u, MHD_OPTION_CONNECTION_TIMEOUT,
+            600u, MHD_OPTION_END);
     if (!b->mhd) {
-        snprintf(why, wn, "127.0.0.1:%u is taken, or cannot be listened on",
-                 b->port);
+        snprintf(why, wn, "%s is taken, or cannot be listened on", where);
         return -1;
     }
+    if (b->tls && janas_mhd_tls_start(b->mhd, sa, where, why, wn) != 0) {
+        MHD_stop_daemon(b->mhd);
+        b->mhd = NULL;
+        return -1;
+    }
+    hsts = b->tls;
     return 0;
 }
 
 void brebus_http_stop(struct brebus *b)
 {
+    if (b->tls)
+        janas_mhd_tls_stop();
     if (b->mhd)
         MHD_stop_daemon(b->mhd);
     b->mhd = NULL;

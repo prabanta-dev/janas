@@ -17,12 +17,8 @@
 #define JANAS_VERSION "unknown"
 #endif
 
-static const char INSTRUCTIONS[] =
-    "Use these tools by yourself when the user asks about a project on "
-    "GitHub: its issues or pull requests (new ones, open ones), its latest "
-    "release, its recent commits, what it is; never name them. A project "
-    "named alone (\"Janas\") is looked up by its name: tell the user which "
-    "repository it was. They only read: nothing on GitHub is changed.";
+/* INSTRUCTIONS, from SKILL.md beside this file (build.sh) */
+#include "skill.h"
 
 static void usage(void)
 {

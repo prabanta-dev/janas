@@ -17,15 +17,8 @@
 #define JANAS_VERSION "unknown"
 #endif
 
-static const char INSTRUCTIONS[] =
-    "Use these tools by yourself when the user asks about a git repository "
-    "on this computer: what has changed, the latest commits, the branches, "
-    "a diff; never name them. With no repository named, leave it out: the "
-    "tool takes the one janas-chat runs in. To commit, pull, push or "
-    "switch branch, only when the user asked for it: then call the tool at "
-    "once, without asking first, since the user is asked to confirm each "
-    "of these calls. Write a commit's message from the diff, in the "
-    "language of the repository's earlier commits.";
+/* INSTRUCTIONS, from SKILL.md beside this file (build.sh) */
+#include "skill.h"
 
 static void usage(void)
 {

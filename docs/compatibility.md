@@ -8,6 +8,8 @@ All the trials below ran on the development laptop (Intel Core Ultra 9 185H, 32 
 |---|---|---|---|---|---|
 | [AnythingLLM](https://anythingllm.com) Desktop | 1.19.0 | Ollama | chat, streamed; a document embedded with `--embedding-model` and asked about; the agent, with a tool call | works | 14 Nov 2026 |
 | [Obsidian](https://obsidian.md) with [Copilot for Obsidian](https://github.com/logancyang/obsidian-copilot) | 1.15.1, Copilot 4.0.20 | OpenAI (Copilot's "Ollama" provider) | the model listed and verified, a question in Copilot's chat | works with `--allow-origin app://obsidian.md`, and Janas from the release of 15 November 2026 on (below) | 14 Nov 2026 |
+| [opencode](https://opencode.ai) | 1.19.6 | OpenAI | `opencode run`: a bug in a file found, the file read and edited | works (below) | 20 Nov 2026 |
+| [Hermes Agent](https://hermes-agent.nousresearch.com) | git 9f476774 | OpenAI | `hermes -z`: the same bug found and fixed in a file | works (below) | 20 Nov 2026 |
 | [Zed](https://zed.dev) | 1.28.1 | Ollama | the Agent panel: a question about a file of the project, the model calling Zed's tool to read it | works; the first message is slow (below) | 14 Nov 2026 |
 | [Continue](https://www.continue.dev) (VSCodium, VS Code) | 2.0.0 | Ollama | chat, edits, completion at the cursor, its command-line agent | works ([editor.md](editor.md#continue-vscodium-vs-code)) | Nov 2026 |
 | [Cline](https://cline.bot) | 4.1.26 | Ollama | agent tasks with tools | works ([editor.md](editor.md#cline-vscodium-vs-code)) | Nov 2026 |
@@ -37,6 +39,50 @@ janas-server qwen3-4b.jns --port 11434 --think off --allow-origin app://obsidian
 ```
 
 Without it Copilot says "Connection error" and the server's answer, which Copilot does not show, says which option lets it in. Janas from the release of 13 November 2026 and earlier still fails with the option: the browser's preliminary request (CORS) was allowed two headers only, and the JavaScript client Copilot uses sends more of its own. From the release of 15 November 2026 the server allows the headers such a page asks for. Asked "Name three Italian islands", Qwen3-4B answered through it in about 5 s.
+
+## opencode
+
+opencode takes a model of an OpenAI-compatible server as a provider of its own, in `~/.config/opencode/opencode.json` (or an `opencode.json` in the project): the model's name is the one `janas-server` gives in `/v1/models`, the file's name without `.jns` unless `--name` sets another.
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "janas": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Janas",
+      "options": { "baseURL": "http://127.0.0.1:8080/v1", "apiKey": "none" },
+      "models": { "gemma-4-12b-it-q4km": { "name": "Gemma 4 12B on Janas" } }
+    }
+  },
+  "model": "janas/gemma-4-12b-it-q4km"
+}
+```
+
+```sh
+janas-server gemma-4-12b-it-q4km.jns --ctx 32768
+```
+
+Tried with `opencode run` in a project holding a `calc.py` whose `add` returned `a - b`, asked to make it return the sum. Gemma 4 12B read the file, called opencode's edit tool and changed the one line to `return a + b`, in 223 s on the laptop, most of it the reading of opencode's long instructions. Qwen3-4B, asked the same, read the file and wrote the right line above the wrong one, which stayed in the file after it, in 140 s: a working `add`, an untidy edit, a small model's limit. `--ctx 32768` gives room to opencode's instructions and its tools.
+
+## Hermes Agent
+
+Hermes Agent, Nous Research's agent, takes any OpenAI-compatible server as its `custom` provider, in `~/.hermes/config.yaml`. It wants a context of 64,000 tokens or more:
+
+```yaml
+model:
+  default: "gemma-4-12b-it-q4km"
+  provider: "custom"
+  base_url: "http://127.0.0.1:8080/v1"
+  api_key: "none"
+  context_length: 65536
+```
+
+```sh
+janas-server gemma-4-12b-it-q4km.jns --ctx 65536
+```
+
+Tried with its source from GitHub installed in a virtual environment of Python 3.14 (its dependencies are declared for 3.14 and later), with `hermes -z` and `--yolo` (no question before its tools run), in a project holding a `calc.py` whose `add` returned `a - b`, asked to make it return the sum: Gemma 4 12B read the file, changed the one line to `return a + b` and said what it had changed, in 314 s on the laptop.
 
 ## Zed
 

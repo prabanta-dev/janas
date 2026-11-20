@@ -749,6 +749,39 @@ static const struct remote {
      "Microsoft's documentation (no sign-in)"},
 };
 
+const char *brebus_connector_about(const char *name, const char *url)
+{
+    static char about[600];
+    for (size_t i = 0; url && *url && i < sizeof REMOTE / sizeof *REMOTE; i++)
+        if (!strcmp(REMOTE[i].url, url)) {
+            snprintf(about, sizeof about, "%s: %s", REMOTE[i].title,
+                     REMOTE[i].about);
+            return about;
+        }
+    /* an extension installed here: its manifest's description */
+    char cfg[4096], root[4200], mf[4500], why[160];
+    size_t n = 0;
+    uint8_t *t = NULL;
+    if (name && !strpbrk(name, "/\\") && name[0] != '.' &&
+        paths(cfg, sizeof cfg, root, sizeof root) == 0) {
+        snprintf(mf, sizeof mf, "%s/%s/manifest.json", root, name);
+        t = slurp(mf, 1 << 20, &n);
+    }
+    struct janas_json_doc *d =
+        t ? janas_json_parse((const char *)t, n, why, sizeof why) : NULL;
+    const struct janas_json *r = d ? janas_json_root(d) : NULL;
+    const char *ds =
+        r ? janas_json_str(janas_json_get(r, "description")) : NULL;
+    const char *dn =
+        r ? janas_json_str(janas_json_get(r, "display_name")) : NULL;
+    if (ds && *ds)
+        snprintf(about, sizeof about, "%.100s: %.450s", dn && *dn ? dn : name,
+                 ds);
+    janas_json_free(d);
+    free(t);
+    return ds && *ds ? about : NULL;
+}
+
 void brebus_connectors_catalog(struct brebus *b, struct janas_buf *out)
 {
     (void)b;

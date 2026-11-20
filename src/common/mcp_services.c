@@ -33,6 +33,8 @@ const struct janas_service JANAS_SERVICES[] = {
                "electricity, the cheapest fuel near a place"},
     {"quakes", "earthquakes: the latest near a place or where the user is, "
                "the strongest in the world, one in detail"},
+    {"skills", "the user's skills: instructions for particular tasks, "
+               "with their scripts, run in a cage"},
     {"system", "this computer itself, when the user asks about it: how it "
                "is (memory, processor, disks, battery, temperatures), what "
                "fills a folder, the programs running, the errors, the "

@@ -551,5 +551,10 @@ const char *janas_llm_model_gpu_why(const struct janas_llm_model *m);
 
 /* The expert cache, for statistics and warm-up. */
 struct janas_expert_cache *janas_llm_model_cache(struct janas_llm_model *m);
+/* What the model learns of its use - the experts' profile, the tuner's
+   state - written to its files at most every few minutes, between
+   replies, so that a server killed keeps it (issue #75): it was written
+   only when the model was closed. */
+void janas_llm_model_save_state(struct janas_llm_model *m);
 
 #endif

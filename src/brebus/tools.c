@@ -31,6 +31,7 @@
 #include "common/mcp_config.h"
 #include "common/mcp_oauth.h"
 #include "common/mcp_services.h"
+#include "common/model_scan.h"
 #include "janas/mcp.h"
 
 struct janas_buf;
@@ -117,6 +118,22 @@ static int embedders(const struct brebus *b, char names[][128], int max)
 
 /* the one chosen: settings.json's _docs.embedding ("none": words only),
    else the first there is; "" for none */
+/* The model that reads the pictures of scanned pages for janas-docs: the
+   smallest of My models that sees pictures, but those below a gigabyte
+   (Qwen3.5-0.8B, a model for the engine's tests, misreads them); "" with
+   none. */
+static void ocr_chosen(struct brebus *b, char *out, size_t cap)
+{
+    static struct janas_model_file m[JANAS_MODELS_MAX];
+    int n = janas_models_scan(b->models_dir, m, JANAS_MODELS_MAX), at = -1;
+    for (int i = 0; i < n; i++)
+        if (m[i].bytes >= ((uint64_t)1 << 30) &&
+            brebus_model_sees(b->models_dir, m[i].name) &&
+            (at < 0 || m[i].bytes < m[at].bytes))
+            at = i;
+    snprintf(out, cap, "%s", at >= 0 ? m[at].path : "");
+}
+
 static void embedder_chosen(struct brebus *b, char *out, size_t cap)
 {
     static char names[16][128];
@@ -189,6 +206,11 @@ int brebus_tools_start(struct brebus *b)
         fprintf(cf, "# written by Brebus\n");
         if (emb[0])
             fprintf(cf, "embedding_model = %s/%s.jns\n", b->models_dir, emb);
+        /* and the pictures of scanned pages, read by a model that sees */
+        static char ocr[4400];
+        ocr_chosen(b, ocr, sizeof ocr);
+        if (ocr[0])
+            fprintf(cf, "ocr_model = %s\n", ocr);
         fclose(cf);
     }
     FILE *f = fopen(list, "w");
@@ -256,9 +278,14 @@ static void list_of(janas_mcp *m, struct janas_buf *o, int *first)
     *first = 0;
 }
 
+/* the services listed again when mcp.json changed (tools_mu held) */
+static void svc_fresh(struct brebus *b);
+
 void brebus_tools_list(struct brebus *b, struct janas_buf *out)
 {
     pthread_mutex_lock(&b->tools_mu);
+    /* a server added to mcp.json meanwhile (a connector) is offered now */
+    svc_fresh(b);
     janas_buf_puts(out, "{\"tools\": [");
     int first = 1;
     list_of(b->docs, out, &first);
@@ -460,7 +487,8 @@ int brebus_folders_set(struct brebus *b, const char *body, size_t n,
         /* a folder or a file there is, by its full path, outside the
            workspace (which is reached already) */
         if (!janas_path_real(s, real) || stat(real, &st) != 0 ||
-            strchr(real, JANAS_PATH_LIST_SEP) || janas_path_root(real)) {
+            strchr(real, JANAS_PATH_LIST_SEP) || janas_path_root(real) ||
+            !brebus_confined(b, real)) {
             bad = 1;
             continue;
         }
@@ -623,6 +651,11 @@ static void svc_scan(struct brebus *b)
         const char *n = JANAS_SERVICES[k].name;
         if (!strcmp(n, "docs") || !strcmp(n, "files"))
             continue; /* the workspace's own, always (above) */
+        if (!strcmp(n, "skills"))
+            continue; /* Brebus's own janas__skill (skills.c) */
+        /* a user's own Brebus: not the services that read the machine */
+        if (b->root[0] && (!strcmp(n, "system") || !strcmp(n, "git")))
+            continue;
         brebus_service_exe(b, n, exe, sizeof exe);
         if (access(exe, X_OK) != 0)
             continue;
@@ -642,6 +675,10 @@ static void svc_scan(struct brebus *b)
             if (strstr(t, " (disabled)"))
                 continue;
             char *sp = strstr(t, " (http)");
+            /* a user's own Brebus: servers over HTTP alone, never a command
+               run on the machine */
+            if (b->root[0] && !sp)
+                continue;
             if (sp)
                 *sp = 0;
             struct svc *s = &svcs[n_svc++];
@@ -737,13 +774,18 @@ static int svc_start(struct brebus *b, struct svc *s)
                : -1;
 }
 
+static void svc_fresh(struct brebus *b)
+{
+    if (!n_svc || cfg_changed() != cfg_time)
+        svc_scan(b);
+}
+
 /* the list for the page: the services, on or off, opened or not */
 void brebus_services_get(struct brebus *b, struct janas_buf *out)
 {
     pthread_mutex_lock(&b->tools_mu);
     /* listed again when the user's mcp.json changed meanwhile */
-    if (!n_svc || cfg_changed() != cfg_time)
-        svc_scan(b);
+    svc_fresh(b);
     janas_buf_puts(out, "{\"services\": [");
     for (int i = 0; i < n_svc; i++) {
         janas_buf_puts(out, i ? ", {\"name\": " : "{\"name\": ");
@@ -783,8 +825,13 @@ static void svc_tools(struct janas_buf *out, int *first, struct janas_buf *cat)
     for (int i = 0; i < n_svc; i++)
         if (svcs[i].on) {
             names[n] = svcs[i].name;
-            abouts[n++] = svcs[i].user ? "a server of the user's"
-                                       : janas_service_about(svcs[i].name);
+            /* a connector of Brebus's catalog says what it is about */
+            const char *c =
+                svcs[i].user ? brebus_connector_about(svcs[i].name, svcs[i].url)
+                             : NULL;
+            abouts[n++] = c              ? c
+                          : svcs[i].user ? "a server of the user's"
+                                         : janas_service_about(svcs[i].name);
         }
     if (!n)
         return;

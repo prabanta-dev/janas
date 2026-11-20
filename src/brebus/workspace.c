@@ -189,6 +189,11 @@ int brebus_ws_open(struct brebus *b, const char *path, int create, char *why,
         );
         return -1;
     }
+    if (!brebus_confined(b, path)) {
+        snprintf(why, wn, "a project of yours is in your own folder, %s",
+                 b->root);
+        return -1;
+    }
     if (create && janas_mkdirs(path) != 0) {
         snprintf(why, wn, "cannot make %s", path);
         return -1;
@@ -235,6 +240,8 @@ int brebus_ws_new(struct brebus *b, char *why, size_t wn)
     localtime_r(&t, &tm);
     strftime(day, sizeof day, "%Y-%m-%d", &tm);
     snprintf(base, sizeof base, "%s/Brebus", docs);
+    if (b->root[0]) /* a user's Brebus: their own folder */
+        snprintf(base, sizeof base, "%s", b->root);
     for (int i = 1; i < 1000; i++) {
         if (i == 1)
             snprintf(path, sizeof path, "%s/%s", base, day);
@@ -261,7 +268,7 @@ void brebus_ws_status(struct brebus *b, struct janas_buf *out)
     documents(docs, sizeof docs);
     janas_buf_puts(out, ", \"new_in\": ");
     snprintf(rp, sizeof rp, "%s/Brebus", docs);
-    str(out, rp);
+    str(out, b->root[0] ? b->root : rp);
     janas_buf_printf(out, ", \"window\": %s, \"windows\": %s",
                      brebus_window_on() ? "true" : "false",
 #ifdef _WIN32

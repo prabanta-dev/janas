@@ -11,6 +11,7 @@
 #define JANAS_BREBUS_H
 
 #include <stddef.h>
+#include <stdint.h>
 
 #include "common/paths.h"
 #include "llm/json.h"
@@ -39,9 +40,45 @@ struct brebus_get {
 
 struct janas_mcp;
 
+#define BREBUS_LOADED 4    /* models loaded at once, at most */
+#define BREBUS_USERS 64    /* accounts of Brebus served (users.c) */
+#define BREBUS_RECOVERY 10 /* recovery codes of an account */
+
+/* an account (users.c): its password as PBKDF2-HMAC-SHA256, its second
+   factor's secret, its recovery codes as their SHA-256 */
+struct brebus_user {
+    char name[64];
+    int admin;
+    uint8_t salt[16], hash[32];
+    uint32_t iters;
+    char totp[40]; /* base32 */
+    int totp_on;
+    uint8_t rec[BREBUS_RECOVERY][32];
+    int n_rec;
+};
+
 struct brebus {
     unsigned short port; /* where it listens, on 127.0.0.1 */
-    void *mhd;           /* the HTTP daemon */
+    /* served beyond its own window (--serve): where it listens, whether
+       over HTTPS, whether a login is asked (always when served) and a
+       second factor (when it listens beyond this computer) */
+    int serve, tls, need_2fa;
+    char listen[64];
+    /* a user's own Brebus (brebus --child, children.c): the token every
+       request must carry, the front Brebus's port (and whether over
+       HTTPS) for the models, the folder its projects must be in */
+    int child, front_tls;
+    /* served to the users of the system (--users system): their
+       passwords and groups checked by janas-brebus-helper, which starts
+       each one's Brebus as them */
+    int sys_users;
+    unsigned short front_port;
+    char child_token[65];
+    char root[4096];
+    char cert[4300]; /* the certificate served (a child trusts it) */
+    struct brebus_user users[BREBUS_USERS];
+    int n_users;
+    void *mhd; /* the HTTP daemon */
     char models_dir[4096];
     char bin_dir[4096];  /* where brebus is: janas-server beside it */
     char data_dir[4096]; /* ~/.local/share/janas/brebus */
@@ -49,16 +86,20 @@ struct brebus {
                             under mu */
     char suffix[16];     /* a sanitizer's build: brebus-asan starts
                             janas-server-asan */
-    /* the model's server (server.c): a janas-server of its own */
+    /* the models' servers (server.c): a janas-server of its own for each
+       model loaded, up to BREBUS_LOADED at once */
     pthread_mutex_t mu;
-    struct janas_proc srv;
-    int srv_on;
-    unsigned short srv_port;
-    char srv_model[256];
+    struct brebus_srv {
+        struct janas_proc proc;
+        int on;
+        unsigned short port; /* Brebus's port plus one plus its place */
+        char model[256];
+        time_t used; /* when a request last went to it */
+    } srv[BREBUS_LOADED];
+    int srv_cur; /* the place used last, -1 with none */
     char srv_err[512];
     char srv_last[256]; /* the model unloaded after a quiet while: loaded
                            again by the page at the next message */
-    time_t srv_used;    /* when the page last asked the model */
     char srv_key[256];  /* the key its clients send, or "" */
     int srv_lan;        /* reachable from the local network */
     int srv_tls;        /* it speaks HTTPS, with Brebus's certificate */
@@ -70,6 +111,76 @@ struct brebus {
     char embedding[128]; /* janas-docs's embedding model, "": words only */
 };
 
+/* users.c: the accounts. brebus_random: n random bytes, 0, or -1.
+   brebus_users_load: users.json read. brebus_user_add: an account made, or
+   its password set anew (its second factor kept): 0, or -1 with the
+   reason. brebus_user_check: 1 when name and password are right, the
+   account into out. brebus_user_recovery_use: 1 when code is one of the
+   account's recovery codes, spent now. brebus_user_totp_on: the second
+   factor kept (secret, base32) and ten recovery codes made into codes.
+   brebus_totp_secret: a new one; brebus_totp_check: 1 when code is the
+   secret's at now, or a step either side; brebus_totp_code: the code at
+   now. */
+int brebus_random(void *p, size_t n);
+int brebus_users_load(struct brebus *b);
+int brebus_users_count(struct brebus *b);
+int brebus_user_add(struct brebus *b, const char *name, const char *pw,
+                    int admin, char *why, size_t wn);
+int brebus_user_check(struct brebus *b, const char *name, const char *pw,
+                      struct brebus_user *out);
+/* a user of the system, their password and groups checked by the helper:
+   1 with their account (made for their second factor, no password of
+   its own) into out, 0 */
+int brebus_user_system(struct brebus *b, const char *name, const char *pw,
+                       struct brebus_user *out);
+int brebus_user_recovery_use(struct brebus *b, const char *name,
+                             const char *code);
+int brebus_user_totp_on(struct brebus *b, const char *name, const char *secret,
+                        char codes[BREBUS_RECOVERY][12]);
+int brebus_totp_secret(char out[33]);
+int brebus_totp_check(const char *secret, const char *code, time_t now);
+int brebus_totp_code(const char *secret, time_t now, char out[7]);
+
+/* auth.c: the login of Brebus served. brebus_auth_user: 1 when the
+   request carries a live session, its user and role filled. login and
+   setup: the answer into out and the cookie to set into set_cookie (""
+   for none), their HTTP status returned. */
+struct MHD_Connection;
+void brebus_client_ip(struct MHD_Connection *conn, char *out, size_t n);
+int brebus_auth_user(struct MHD_Connection *conn, char *user, size_t un,
+                     int *admin);
+void brebus_auth_cookie(struct brebus *b, const char *tok, char *out, size_t n);
+int brebus_auth_login(struct brebus *b, struct MHD_Connection *conn,
+                      const char *body, size_t n, struct janas_buf *out,
+                      char *set_cookie, size_t cn);
+int brebus_auth_setup(struct brebus *b, struct MHD_Connection *conn,
+                      const char *body, size_t n, struct janas_buf *out,
+                      char *set_cookie, size_t cn);
+void brebus_auth_logout(struct brebus *b, struct MHD_Connection *conn);
+/* a password changed by its user ({old, new}), their other sessions
+   ended; sessions ended ({user}: an administrator's for another, else
+   one's own but this one); the last logins (an administrator: everyone's).
+   The HTTP status returned, the answer in out. */
+int brebus_auth_password(struct brebus *b, struct MHD_Connection *conn,
+                         const char *user, const char *body, size_t n,
+                         struct janas_buf *out);
+int brebus_auth_end_all(struct brebus *b, struct MHD_Connection *conn,
+                        const char *user, int admin, const char *body, size_t n,
+                        struct janas_buf *out);
+void brebus_auth_logins(struct brebus *b, const char *user, int admin,
+                        struct janas_buf *out);
+
+/* children.c: a user's own Brebus, started when there is none: its port
+   and token (0), or -1 with the reason; whether a token is one of the
+   children's; all of them stopped; whether a path is one the user of this
+   Brebus may use (always, but in a user's own Brebus: their folder and
+   their data) */
+int brebus_child_for(struct brebus *b, const char *user, unsigned short *port,
+                     char tok[65], char *why, size_t wn);
+int brebus_child_token_ok(const char *tok);
+void brebus_children_stop(void);
+int brebus_confined(const struct brebus *b, const char *path);
+
 /* http.c: the daemon on 127.0.0.1:port; 0, or -1 with the reason */
 int brebus_http_start(struct brebus *b, char *why, size_t wn);
 void brebus_http_stop(struct brebus *b);
@@ -77,16 +188,30 @@ void brebus_http_stop(struct brebus *b);
 /* api.c: the answers of GET /brebus/<what>, JSON into out: 0, or -1 for a
    question there is not */
 int brebus_api(struct brebus *b, const char *what, struct janas_buf *out);
+/* whether the model name of dir sees pictures: a .vision.jns beside it */
+int brebus_model_sees(const char *dir, const char *name);
 
-/* server.c: the model's server started (model: a name of My models, with
-   options as JSON, may be NULL), stopped, and how it stands, as JSON into
-   out; the starts and stops 0, or -1 with the reason in out */
+/* server.c: a model's server started (model: a name of My models, with
+   options as JSON, may be NULL; a model loaded already is only made the
+   one used now), stopped (the one the body names, or all), and how they
+   stand, as JSON into out; the starts and stops 0, or -1 with the reason
+   in out */
 int brebus_server_start(struct brebus *b, const char *body, size_t n,
                         struct janas_buf *out);
-int brebus_server_stop(struct brebus *b, struct janas_buf *out);
+int brebus_server_stop(struct brebus *b, const char *body, size_t n,
+                       struct janas_buf *out);
 void brebus_server_status(struct brebus *b, struct janas_buf *out);
-/* the port of the model's server, 0 when none runs */
-unsigned short brebus_server_port(struct brebus *b);
+/* the port of the server of the model named (else of the one used last),
+   0 when none runs; its scheme (tls) and key with it; that server noted
+   as used now */
+unsigned short brebus_server_route(struct brebus *b, const char *model,
+                                   int *tls, char *key, size_t kn);
+/* Brebus's own certificate and key (made when there is none, or it is old
+   or for other names), their paths into cert and key: 0, or -1 */
+int brebus_certificate(struct brebus *b, char *cert, char *key, size_t n,
+                       char *err, size_t en);
+/* whether the model named is loaded: 1, or 0 */
+int brebus_server_loaded(struct brebus *b, const char *model);
 
 /* get.c: a model of the catalog downloaded (body: {"model": name,
    "bytes": its size when the page knows it}), several at once; stopped,
@@ -249,6 +374,10 @@ int brebus_connector_remove(struct brebus *b, const char *body, size_t n,
 /* The remote connectors a click adds ({"remote": [...]}, each said added
    when mcp.json has it); one added ({"id"}); one of them taken out */
 void brebus_connectors_catalog(struct brebus *b, struct janas_buf *out);
+/* what a connector is about: one of the catalog by its url ("Notion:
+   your pages and databases"), an extension installed by its name (its
+   manifest's description); NULL for another */
+const char *brebus_connector_about(const char *name, const char *url);
 int brebus_connector_add_remote(struct brebus *b, const char *body, size_t n,
                                 struct janas_buf *out);
 int brebus_connector_drop(struct brebus *b, const char *body, size_t n,
@@ -364,6 +493,11 @@ int brebus_python_remove(void);
    queue and its status, -1 when no server runs or it cannot be reached */
 struct MHD_Connection;
 struct MHD_Response;
+int brebus_proxy_to(struct brebus *b, struct MHD_Connection *conn,
+                    const char *method, const char *url, const char *body,
+                    size_t n, unsigned short port, int tls, const char *key,
+                    const char *extra, struct MHD_Response **resp,
+                    unsigned *status);
 int brebus_proxy(struct brebus *b, struct MHD_Connection *conn,
                  const char *method, const char *url, const char *body,
                  size_t n, struct MHD_Response **resp, unsigned *status);

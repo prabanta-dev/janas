@@ -33,11 +33,13 @@ int main(void)
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "common/image.h"
 #include "services/docs/chunks.c"
 #include "services/docs/embed.c"
 #include "services/docs/extract.c"
 #include "services/docs/html.c"
 #include "services/docs/index.c"
+#include "services/docs/ocr.c"
 #include "services/docs/office.c"
 #include "services/docs/pdf.c"
 #include "services/docs/roots.c"
@@ -584,6 +586,36 @@ static void make_pdf(int encrypted)
                      encrypted ? " /Encrypt 20 0 R" : "");
 }
 
+/* the PNG ocr.c gives the model for a PDF's raw samples, read back by the
+   engine's decoder: the same pixels, gray and RGB, and rows that together
+   take more than one stored block */
+static void pngs(void)
+{
+    static const uint32_t W[] = {3, 16000}; /* RGB 16000 x 2: two blocks */
+    for (int ch = 1; ch <= 3; ch += 2)
+        for (int k = 0; k < 2; k++) {
+            uint32_t w = W[k], h = 2;
+            size_t n = (size_t)w * h * (size_t)ch;
+            uint8_t *px = malloc(n);
+            for (size_t i = 0; px && i < n; i++)
+                px[i] = (uint8_t)(i * 37 + 11);
+            struct janas_buf o = {0};
+            struct janas_image im = {0};
+            char why[160] = "";
+            int ok = px && dz_png(px, w, h, ch, &o) == 0 &&
+                     janas_image_decode(o.p, o.n, &im, why, sizeof why) == 0 &&
+                     im.w == (int)w && im.h == (int)h;
+            for (size_t i = 0; ok && i < (size_t)w * h; i++)
+                for (int c = 0; c < 3 && ok; c++)
+                    ok = im.rgb[i * 3 + c] ==
+                         px[i * (size_t)ch + (ch == 3 ? c : 0)];
+            CHECK(ok, "a PNG of %u x %u, %d channels: %s", w, h, ch, why);
+            janas_image_free(&im);
+            janas_buf_free(&o);
+            free(px);
+        }
+}
+
 static void pdfs(void)
 {
     make_pdf(0);
@@ -1097,6 +1129,7 @@ int main(void)
     documents();
     more_formats();
     pdfs();
+    pngs();
     pieces();
     answers();
     const char *h = getenv("HOME");

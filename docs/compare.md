@@ -30,7 +30,7 @@ As of **19 November 2026**, for Brebus v2026.11.19. Updated every week.
 | Models bigger than memory | ✓ experts streamed from the SSD | — mmap only | ◐ MoE experts kept on GPU | — | — | — |
 | GPU | ◐ Vulkan; CUDA and HIP (ROCm) written, to be tried on a card; Metal with macOS | ✓ CUDA, Vulkan, ROCm, Metal, MLX | ✓ CUDA, Vulkan, Metal, MLX | ✓ CUDA, Vulkan, ROCm, Metal, MLX | ✓ CUDA, Vulkan, Metal | ◐ not named |
 | NPU | ◐ Intel: Linux; Windows built, to be tried; chosen by Janas or by you | ◐ Apple Neural Engine, prompt only | — | — | ✓ AMD XDNA2, Qualcomm | — |
-| Several models loaded | — one at a time, unloaded when idle (next) | ✓ JIT, TTL, auto-evict | ✓ | ✓ | ✓ | ✓ |
+| Several models loaded | ✓ up to four, each loaded when chosen, the least used unloaded first when memory is short; unloaded when idle | ✓ JIT, TTL, auto-evict | ✓ | ✓ | ✓ | ✓ |
 
 ## Chat
 
@@ -42,7 +42,7 @@ As of **19 November 2026**, for Brebus v2026.11.19. Updated every week.
 | Export | ✓ Markdown, text, PDF | ✓ PDF, Markdown, text | — | — | ◐ logs | ✓ |
 | Edit, regenerate, branch | ✓ edit and ask again; replies paged; a branch from any reply; duplicate | ◐ regenerate, paged | ✓ branches | — | — | ✓ branches, split chats |
 | Formulas, diagrams | ✓ KaTeX, Mermaid | ✓ LaTeX, Mermaid | ◐ LaTeX | ◐ LaTeX | — | ✓ LaTeX, Mermaid |
-| Documents (RAG) | ✓ PDF, Office, LibreOffice, EPUB, web; words and meaning; no OCR | ✓ PDF, docx, txt | ✓ + xlsx, pptx | ◐ drop text or PDF | ✓ + OCR | ✓ |
+| Documents (RAG) | ✓ PDF, Office, LibreOffice, EPUB, web; words and meaning; scanned pages read by a model that sees | ✓ PDF, docx, txt | ✓ + xlsx, pptx | ◐ drop text or PDF | ✓ + OCR | ✓ |
 | Pictures (vision) | ✓ | ✓ | ✓ + video, audio | ✓ | ✓ | ✓ |
 | Dictation | ✓ Whisper on this computer | B | — | — | ✓ | — |
 | Read aloud | ✓ system voices | B | — | ◐ CLI and API only | ✓ | — |
@@ -66,8 +66,8 @@ As of **19 November 2026**, for Brebus v2026.11.19. Updated every week.
 | Without a window | ✓ at login, model loaded | ✓ daemon | ◐ | ✓ | — | — |
 | CLI, SDK | ✓ janas-*; C, FreeBASIC, Node.js | ✓ lms; TS, Python | ◐ separate CLI | ✓ CLI; SDKs | ◐ API | — |
 | Other devices | — | ✓ LM Link, iPhone app | — | ◐ cloud | ✓ mobile | ✓ |
-| Plugins | ◐ skills in Claude's format, tried without a model yet; MCP services | ✓ | ✓ extensions | — | ✓ skills | ◐ |
-| Connectors (services, desktop apps) | ◐ 13 web services a click each, OAuth; .mcpb extensions; not yet tried with a real service | ◐ MCP by hand, OAuth | ◐ MCP, OAuth | — | ◐ MCP | ◐ MCP, OAuth |
+| Plugins | ✓ skills in Claude's format; MCP services | ✓ | ✓ extensions | — | ✓ skills | ◐ |
+| Connectors (services, desktop apps) | ◐ 13 web services a click each, OAuth; .mcpb extensions; tried with Microsoft Learn and an extension of a Node server, a sign-in not yet | ◐ MCP by hand, OAuth | ◐ MCP, OAuth | — | ◐ MCP | ◐ MCP, OAuth |
 
 ## Sources
 

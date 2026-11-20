@@ -1,0 +1,5 @@
+#%PAM-1.0
+# Brebus served to the users of this machine (brebus --serve --users
+# system): the same checks as a login. Install as /etc/pam.d/brebus.
+@include common-auth
+@include common-account

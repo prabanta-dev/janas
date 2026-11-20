@@ -276,7 +276,7 @@ async function moveConv(at) {
 $("#modelbtn").onclick = () => {
   const names = Object.keys(modelInfo).filter((n) => !n.startsWith("__")).sort();
   const items = names.map((n) => ({label: n, icon: "model", on: server.running && server.model === n,
-    note: `${gib(modelInfo[n].bytes)}${modelInfo[n].vision ? " · sees pictures" : ""}`,
+    note: `${gib(modelInfo[n].bytes)}${modelInfo[n].vision ? " · sees pictures" : ""}${isLoaded(n) && server.model !== n ? " · loaded" : ""}`,
     run: () => useModel(n)}));
   /* no Unload here: the chat needs a model (My models and Server have it) */
   items.push("-", {label: "Other models…", icon: "compass", note: "Discover", run: () => show("discover")});
@@ -284,8 +284,10 @@ $("#modelbtn").onclick = () => {
 };
 async function useModel(name) {
   if (server.running && server.model === name) return;
-  $("#loaded").textContent = "loading " + name + "…";
-  ctxOf = {}; /* loaded anew: its context asked again */
+  if (!isLoaded(name)) {
+    $("#loaded").textContent = "loading " + name + "…";
+    delete ctxOf[name]; /* loaded anew: its context asked again */
+  }
   const r = await fetch("/brebus/server/start", {method: "POST",
     body: JSON.stringify({model: name, ...(settings[name] || {})})});
   const j = await r.json().catch(() => ({}));
@@ -303,7 +305,7 @@ $("#modelset").onclick = async () => {
     buttons: [{label: "Close", value: "ok", primary: true}]});
   if (changed && server.running && server.model === name &&
       await yes("Load it again now, to use them?", "Settings saved", "Load again")) {
-    await fetch("/brebus/server/stop", {method: "POST", body: "{}"});
+    await fetch("/brebus/server/stop", {method: "POST", body: JSON.stringify({model: name})});
     await useModel(name);
   }
 };

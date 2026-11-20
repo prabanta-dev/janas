@@ -143,7 +143,7 @@ function fileState(file) {
      catalog's qwen3-0.6b-q4km */
   const key = (s) => s.replace(/^.*\//, "").replace(/\.(gguf|jns)$/i, "").toLowerCase().replace(/[^a-z0-9]/g, "");
   const name = Object.keys(modelInfo).find((n) => key(n) === key(file)) || "";
-  if (name && server.running && server.model === name)
+  if (name && isLoaded(name))
     return {label: "Loaded here", cls: "fits", final: true, tip: "Converted, checked and running now."};
   if (name)
     return {label: "Converted here", cls: "fits", final: true, tip: "Converted and checked: it is in My models."};
@@ -182,7 +182,9 @@ async function getStatus() {
   if (going) { getting = true; getTimer = setTimeout(() => getStatus().catch(() => {}), 1000); return; }
   if (getting) { getting = false; await mine(); await status(); }
 }
-let server = {running: false};
+let server = {running: false, loaded: []};
+/* a model among those loaded (several may be, each with its server) */
+const isLoaded = (name) => (server.loaded || []).some((l) => l.model === name);
 let ctxOf = {}; /* the context each model was loaded with, by its name */
 async function status() {
   server = await ask("server");
@@ -210,15 +212,19 @@ async function status() {
        ${server.lan_url ? `<dt>On the local network</dt><dd><code>${esc(server.lan_url)}</code>, <code>${esc(base(server.lan_url))}</code></dd>` : ""}
        ${server.https ? `<dt>Certificate</dt><dd>Brebus's own, its fingerprint (SHA-256): <code class="fp">${esc(server.fingerprint)}</code></dd>` : ""}
        <dt>Key</dt><dd>${server.api_key ? "<code>" + esc(server.api_key) + "</code>" : "none"}</dd>
-       <dt>Engine monitor</dt><dd><a href="/monitor" target="_blank" rel="noopener">open it</a>: the reply being written, the engine's memory and devices</dd>`
+       <dt>Engine monitor</dt><dd><a href="/monitor" target="_blank" rel="noopener">open it</a>: the reply being written, the engine's memory and devices</dd>
+       ${(server.loaded || []).length > 1 ? `<dt>Loaded</dt><dd>${server.loaded.map((l) => `<div class="ldone"><b>${esc(l.model)}</b> <code>${esc(l.url)}</code>${l.lan_url ? ` <code>${esc(l.lan_url)}</code>` : ""} <button class="act quiet unl" data-m="${esc(l.model)}" title="Unload it, freeing its memory">Unload</button></div>`).join("")}<span class="note">The chat uses the one it names; each has its own address for programs.</span></dd>` : ""}`
     : `<dt>State</dt><dd>off${server.error ? " - " + esc(server.error) : ""}</dd>
        <dt>To start it</dt><dd>choose a model under the chat's field, or load one in My models</dd>`;
+  for (const b of $("#srv").querySelectorAll("button.unl"))
+    b.onclick = () => unload(b.dataset.m);
   for (const b of document.querySelectorAll("button.load"))
   {
-    const on = server.running && b.dataset.m === server.model;
-    b.textContent = on ? "Loaded" : "Load";
-    b.disabled = on; /* loaded already: nothing to load */
-    b.title = on ? "This is the model loaded now" : "Load it: the chat and other programs use it";
+    const cur = server.running && b.dataset.m === server.model, on = isLoaded(b.dataset.m);
+    b.textContent = cur ? "Loaded" : on ? "Use" : "Load";
+    b.disabled = cur; /* the one used now: nothing to load */
+    b.title = cur ? "This is the model used now" : on ? "Loaded already: use it now, at once"
+      : "Load it: the chat and other programs use it";
   }
 }
 /* the server's own settings, under "_server" with the models' ones */
@@ -229,6 +235,7 @@ function srvForm() {
   f.api_key.value = v.api_key || "";
   f.origins.value = (v.origins || []).join("\n");
   f.ttl.value = v.ttl || "";
+  f.max_loaded.value = v.max_loaded || "";
 }
 async function srvSave() {
   const f = $("#srvset");
@@ -236,11 +243,14 @@ async function srvSave() {
   const key = f.api_key.value.trim();
   if (key && !/^[\x21-\x7e]{8,199}$/.test(key)) { say("A key is 8 or more letters, digits or signs, no spaces."); return; }
   if (f.lan.checked && !key && !await yes("Without a key anyone on this network can use the model.", "No key", "Go on")) return;
-  settings._server = {lan: f.lan.checked, https: f.https.checked, api_key: key, origins, ttl: +f.ttl.value || 0};
+  const most = Math.min(4, Math.max(0, Math.round(+f.max_loaded.value || 0)));
+  settings._server = {lan: f.lan.checked, https: f.https.checked, api_key: key, origins, ttl: +f.ttl.value || 0, max_loaded: most};
   await fetch("/brebus/settings", {method: "POST", body: JSON.stringify(settings)});
   if (server.running && await yes("Saved. Start the model's server again now, to use them?", "Settings", "Start again")) {
-    const b = document.querySelector(`button.load[data-m="${CSS.escape(server.model)}"]`);
-    if (b) await loadModel(server.model, b);
+    const name = server.model;
+    await fetch("/brebus/server/stop", {method: "POST", body: "{}"}); /* all: they answer alike */
+    const b = document.querySelector(`button.load[data-m="${CSS.escape(name)}"]`);
+    if (b) await loadModel(name, b);
   }
   $("#srvnote").textContent = server.running ? "" : "Saved: used at the next Load.";
 }
@@ -260,8 +270,9 @@ async function loadModel(name, btn) {
   else remember(name);
   await status();
 }
-async function unload() {
-  await fetch("/brebus/server/stop", {method: "POST", body: "{}"});
+async function unload(name) {
+  /* the one named, else all */
+  await fetch("/brebus/server/stop", {method: "POST", body: name ? JSON.stringify({model: name}) : "{}"});
   await status();
 }
 

@@ -103,6 +103,9 @@
     <h3>Settings</h3>
     <div class="card">
       <form id="srvset" class="srvset plainset" onsubmit="return false">
+        <label>Models loaded at once, at most
+          <input name="max_loaded" type="number" min="1" max="4" step="1" placeholder="as many as fit (4)">
+          <span class="note">A model chosen while others are loaded is loaded beside them when the memory free holds it, so going back to one is at once; when it does not, the ones used least lately are unloaded first. A model larger than half the memory runs alone. 1 keeps one at a time.</span></label>
         <label>Free the memory when the chat is idle for this many minutes
           <input name="ttl" type="number" min="0" step="5" placeholder="0: never">
           <span class="note">The model is unloaded after so long without a message, and loaded again with the next one (a few seconds). 0 keeps it loaded.</span></label>
@@ -164,6 +167,13 @@
         <dt>Licence</dt><dd>GNU GPL 3.0 or later: free to use, study, share and change; whoever shares it shares the source too.</dd>
         <dt>Source</dt><dd><a href="https://github.com/prabanta-dev/janas" target="_blank" rel="noopener">github.com/prabanta-dev/janas</a></dd>
       </dl>
+    </div>
+    <div id="acct" hidden>
+      <h3>Your account</h3>
+      <p class="note">Brebus served from this machine: who is logged in, and the last logins.</p>
+      <div class="card"><dl id="acctme"></dl>
+        <p><button class="act quiet" id="logout">Log out</button> <button class="act quiet" id="newpw">Change the password</button> <button class="act quiet" id="endall" title="End your sessions in the other browsers">Log out elsewhere</button></p>
+        <ul class="note" id="logins"></ul></div>
     </div>
     <h3>This computer</h3>
     <p class="note">What Janas sees of it, and how it is doing now.</p>

@@ -12,6 +12,7 @@
 #include "vectors.h"
 
 #include "common/devices.h"
+#include "common/mhd_tls.h"
 #include "common/sandbox.h"
 #include "common/env_names.h"
 #include "common/sock.h"
@@ -507,7 +508,8 @@ int main(int argc, char **argv)
     }
     if (c->tls_cert) {
         char terr[300];
-        if (srv_tls_setup(c->tls_cert, c->tls_key, terr, sizeof terr) != 0) {
+        if (janas_mhd_tls_setup(c->tls_cert, c->tls_key, terr, sizeof terr) !=
+            0) {
             fprintf(stderr, "janas-server: %s\n", terr);
             return 2;
         }

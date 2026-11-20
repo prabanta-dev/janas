@@ -1847,6 +1847,13 @@ __attribute__((constructor)) static void dot_kernels_init(void)
     dot80_impl = sdot ? q8_0_dot_sdot : q8_0_dot_neon;
     dotnl_impl = sdot ? iq4nl_dot_sdot : iq4nl_dot_neon;
     dot40_impl = sdot ? q4_0_dot_sdot : q4_0_dot_neon;
+    dotmx_impl = sdot ? mxfp4_dot_sdot : mxfp4_dot_neon;
+    dotxs_impl = sdot ? iq4xs_dot_sdot : iq4xs_dot_neon;
+    dot50_impl = sdot ? q5_0_dot_sdot : q5_0_dot_neon;
+    dot41_impl = sdot ? q4_1_dot_sdot : q4_1_dot_neon;
+    dot51_impl = sdot ? q5_1_dot_sdot : q5_1_dot_neon;
+    dot2k_impl = sdot ? q2k_dot_sdot : q2k_dot_neon;
+    dot3_impl = sdot ? q3k_dot_sdot : q3k_dot_neon;
     dot_name = sdot ? "neon-sdot" : "neon";
 #endif
 }

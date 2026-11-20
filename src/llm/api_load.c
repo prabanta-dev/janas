@@ -386,6 +386,12 @@ static int32_t load_ids(janas_llm_chat *c, uint32_t reply_off)
         janas_llm_session_reset(c->s); /* a recurrent state: from the start */
         same = 0;
     }
+    /* what is reported cached is what is computed: a prompt kept while it
+       was still being read (its client gone) matches by its tokens but is
+       read again from where it stopped, and a ring that cannot go back
+       reads it all again (issue #75) */
+    uint32_t kv = (uint32_t)janas_llm_session_computed(c->s);
+    uint32_t cached = same < kv ? same : kv;
     janas_llm_session_stats(c->s, &c->st0);
     janas_expert_cache_stats(janas_llm_model_cache(c->llm->m), &c->cs0);
     c->t_send = janas_api_now();
@@ -400,7 +406,7 @@ static int32_t load_ids(janas_llm_chat *c, uint32_t reply_off)
         return janas_api_fail(JANAS_LLM_ENOMEM, "out of memory");
     c->dropped = 0;
     c->loaded = (uint32_t)c->n_ids;
-    if (janas_api_begin_reply(c, reply_off, (uint32_t)c->n_ids, same) != 0)
+    if (janas_api_begin_reply(c, reply_off, (uint32_t)c->n_ids, cached) != 0)
         return janas_api_fail(JANAS_LLM_ENOMEM, "out of memory");
     /* the prompt is kept once read, which janas_llm_chat_next does a block
        at a time: reading it here would leave the caller without word for

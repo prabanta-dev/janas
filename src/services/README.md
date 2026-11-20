@@ -12,6 +12,7 @@ A service of Janas is a program that brings data of the world - flights, the wea
 | [`janas-maps`](maps/README.md) | a route by car, bike or on foot, step by step; journeys by public transport; what is near a place; where an address is | none |
 | [`janas-prices`](prices/README.md) | for information: currencies, crypto-assets, shares, inflation, central banks' rates, electricity, the cheapest fuel near a place | none; a free one of your own for shares |
 | [`janas-quakes`](quakes/README.md) | the earthquakes near a place or where you are, the strongest in the world, one in detail | none |
+| [`janas-skills`](skills/README.md) | your skills, in the format of Claude's: listed, read, their scripts run in a cage without network, each run asked of you | none; nothing reaches the network |
 | [`janas-system`](system/README.md) | this computer: how it is (memory, processor, disks, battery, temperatures), what fills a directory, the programs running, the errors, the updates, the network | none; nothing reaches the network |
 | [`janas-weather`](weather/README.md) | the weather now (a model's and a station's), the forecast, the sea and its waves, the warnings in force | none |
 | [`janas-wiki`](wiki/README.md) | Wikipedia's search, its pages as text, the pages about what lies around a place | none |
@@ -21,7 +22,7 @@ What every service does the same way:
 - **Reading by default.** Every tool only reads, but those of `janas-git` that commit, pull, push or switch branch and those of `janas-files` that write, edit or make a folder; they say so, and nothing that throws work away is offered.
 - **Facts already worked out.** The answers are text for the model, with places, distances and times already computed and put into words, so that the model telling them has nothing to compute; what is not known is said to be not known.
 - **Open data first.** Questions about an area or a list are answered from open sources only; a source with a small quota (a key of yours) is kept for questions about one thing.
-- **It says when to use it.** A service tells the client's model when its tools apply: a question on the subject is enough, the tools need not be named, and the model is told not to name them in its answers.
+- **It says when to use it.** A service tells the client's model when its tools apply: a question on the subject is enough, the tools need not be named, and the model is told not to name them in its answers. These instructions are the service's `SKILL.md`, beside its code: a skill in the format of Claude's, built into the service and given to every MCP client as the server's instructions, and in the packages under `skills/janas-<service>/` for an assistant that takes skills.
 - **Keys stay put.** A key is read from the service's file under `~/.config/janas/` or from a variable of its environment, and never printed, not even in an error.
 - **Behind a proxy.** A service that reaches the network takes the proxy from the environment as curl does (`https_proxy`/`HTTPS_PROXY`, `http_proxy`, `all_proxy`/`ALL_PROXY`, `no_proxy`/`NO_PROXY`), an `http://` one with a user and password if given.
 - **Only what was asked.** A service's tools are used for its subject when the user asks about it, and never because of another's answer: no weather or flights for the town a page names, unless the user asks for them.

@@ -19,6 +19,7 @@
 #include "llm/json.h"
 #include "common/mcp_config.h"
 #include "common/mcp_services.h"
+#include "common/mcp_skills.h"
 #include "common/mcp_tls.h"
 #include "janas/llm.h"
 #include "common/sysinfo.h"
@@ -197,12 +198,22 @@ void mcpc_defer(int on)
 static void catalog(FILE *f)
 {
     const char **names = calloc(n_servers + 1, sizeof *names);
+    const char **abouts = calloc(n_servers + 1, sizeof *abouts);
     size_t n = 0;
-    for (size_t i = 0; names && i < n_servers; i++)
-        if (servers[i].own)
+    /* the skills' service is about the skills there are: each named */
+    struct janas_buf sk = {0};
+    for (size_t i = 0; names && abouts && i < n_servers; i++)
+        if (servers[i].own) {
+            if (!strcmp(servers[i].name, "skills")) {
+                janas_skills_about(&sk);
+                abouts[n] = sk.n && !sk.oom ? sk.p : NULL;
+            }
             names[n++] = servers[i].name;
+        }
     struct janas_buf o = {0};
-    janas_services_catalog(&o, names, NULL, n);
+    janas_services_catalog(&o, names, abouts, n);
+    janas_buf_free(&sk);
+    free(abouts);
     if (!o.oom && o.n)
         fwrite(o.p, 1, o.n, f);
     janas_buf_free(&o);
@@ -489,6 +500,9 @@ int mcpc_start_services(void)
             snprintf(path, sizeof path, "%s/janas-%s%s", self,
                      JANAS_SERVICES[i].name, suffix);
         if (taken || stat(path, &st) != 0 || !(st.st_mode & S_IXUSR))
+            continue;
+        /* the skills' service, only for one who has some */
+        if (!strcmp(JANAS_SERVICES[i].name, "skills") && !janas_skills_any())
             continue;
         const char *argv[] = {path};
         janas_mcp *m = NULL;

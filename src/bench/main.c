@@ -660,10 +660,12 @@ int main(int argc, char **argv)
     out("\n         (the configuration the engine chose for each kind of "
         "pass, as it runs in a chat)");
     if (has_mtp && drafted && drafted_s)
-        out("\nMTP:     drafts kept %.0f%% greedy, %.0f%% sampled (all "
-            "configurations)",
+        out("\nMTP:     drafts kept %.0f%% greedy (%llu of %llu), %.0f%% "
+            "sampled (%llu of %llu), all configurations",
             100.0 * (double)accepted / (double)drafted,
-            100.0 * (double)accepted_s / (double)drafted_s);
+            (unsigned long long)accepted, (unsigned long long)drafted,
+            100.0 * (double)accepted_s / (double)drafted_s,
+            (unsigned long long)accepted_s, (unsigned long long)drafted_s);
     out("\nchoices: %s\n", tune);
     /* what the card did: a tester's report has to tell, without the card
        here, where a discrete GPU's time went */

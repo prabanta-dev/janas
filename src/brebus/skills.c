@@ -24,6 +24,8 @@
 
 #include "brebus.h"
 #include "common/catalog.h"
+#include "common/mcp_skills.h"
+#include "common/paths.h"
 #include "janas/mcp.h"
 
 #define MAX_SKILLS 64
@@ -37,25 +39,6 @@ struct skill {
 static void str(struct janas_buf *o, const char *s)
 {
     janas_json_write_str(o, s, strlen(s));
-}
-
-/* the folder of every chat's skills, beside mcp.json; -1 with none */
-static int user_dir(char *out, size_t n)
-{
-    char cfg[4096];
-    int32_t len = 0;
-    if (janas_mcp_config_path(cfg, sizeof cfg, &len) != JANAS_MCP_OK)
-        return -1;
-    char *sl = strrchr(cfg, '/');
-#ifdef _WIN32
-    char *bs = strrchr(cfg, '\\');
-    if (!sl || (bs && bs > sl))
-        sl = bs;
-#endif
-    if (!sl)
-        return -1;
-    *sl = 0;
-    return snprintf(out, n, "%s/skills", cfg) < (int)n ? 0 : -1;
 }
 
 /* a file whole, at most max bytes and a NUL; NULL when it cannot be read */
@@ -75,55 +58,12 @@ static char *slurp(const char *path, size_t max, size_t *n)
     return b;
 }
 
-/* a value of the frontmatter, its quotes off */
-static void value(const char *v, size_t vn, char *out, size_t cap)
-{
-    while (vn && (*v == ' ' || *v == '\t'))
-        v++, vn--;
-    while (vn && (v[vn - 1] == ' ' || v[vn - 1] == '\r'))
-        vn--;
-    if (vn >= 2 && (v[0] == '"' || v[0] == '\'') && v[vn - 1] == v[0])
-        v++, vn -= 2;
-    snprintf(out, cap, "%.*s", (int)(vn < cap ? vn : cap - 1), v);
-}
-
 /* a skill's name and description from its SKILL.md: 0, or -1 with none */
 static int read_skill(const char *dir, const char *folder, struct skill *s)
 {
-    char p[4400];
-    snprintf(p, sizeof p, "%s/SKILL.md", dir);
-    char *t = slurp(p, 65536, NULL);
-    if (!t)
-        return -1;
-    snprintf(s->name, sizeof s->name, "%s", folder);
-    s->about[0] = 0;
     snprintf(s->dir, sizeof s->dir, "%s", dir);
-    if (!strncmp(t, "---", 3)) {
-        char *line = strchr(t, '\n');
-        while (line) {
-            line++;
-            char *nl = strchr(line, '\n');
-            size_t ln = nl ? (size_t)(nl - line) : strlen(line);
-            if (ln >= 3 && !strncmp(line, "---", 3))
-                break;
-            char *c = memchr(line, ':', ln);
-            if (c) {
-                size_t kn = (size_t)(c - line);
-                if (kn == 4 && !strncmp(line, "name", 4))
-                    value(c + 1, ln - kn - 1, s->name, sizeof s->name);
-                else if (kn == 11 && !strncmp(line, "description", 11))
-                    value(c + 1, ln - kn - 1, s->about, sizeof s->about);
-            }
-            line = nl;
-        }
-    }
-    free(t);
-    /* a name a tool's argument may carry: letters, digits, - _ . */
-    for (char *c = s->name; *c; c++)
-        if (!((*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z') ||
-              (*c >= '0' && *c <= '9') || *c == '-' || *c == '_' || *c == '.'))
-            *c = '-';
-    return 0;
+    return janas_skill_info(dir, folder, s->name, sizeof s->name, s->about,
+                            sizeof s->about);
 }
 
 static int scan_dir(const char *root, int project, struct skill *out, int n,
@@ -158,7 +98,7 @@ static int scan(struct brebus *b, struct skill *out, int max)
         n = scan_dir(dir, 1, out, n, max);
     }
     int own = n;
-    if (user_dir(dir, sizeof dir) == 0)
+    if (janas_skills_dir(dir, sizeof dir) == 0)
         n = scan_dir(dir, 0, out, n, max);
     /* the user's skills a project's of the same name hides */
     for (int i = own; i < n; i++)
@@ -208,7 +148,7 @@ void brebus_skills_get(struct brebus *b, struct janas_buf *out)
                          is_off(b, s[i].name) ? "false" : "true");
     }
     char dir[4200] = "";
-    user_dir(dir, sizeof dir);
+    janas_skills_dir(dir, sizeof dir);
     janas_buf_puts(out, "], \"dir\": ");
     str(out, dir);
     janas_buf_puts(out, "}");
@@ -273,7 +213,12 @@ int brebus_skills_call(struct brebus *b, const char *args, size_t n,
         snprintf(p, sizeof p, "%s/%s", k->dir,
                  file && *file ? file : "SKILL.md");
         size_t len = 0;
-        char *c = slurp(p, MAX_READ, &len);
+        /* where it says, not by a link out of the skill's folder */
+        char rd[4096], rp[4096];
+        char *c = janas_path_real(k->dir, rd) && janas_path_real(p, rp) &&
+                          janas_path_in(rp, rd)
+                      ? slurp(p, MAX_READ, &len)
+                      : NULL;
         if (!c)
             janas_buf_printf(&t, "The skill %s has no file %s.", k->name,
                              file && *file ? file : "SKILL.md");
@@ -358,7 +303,6 @@ static int remove_tree(const char *dir, int depth)
 int brebus_skills_add(struct brebus *b, const char *body, size_t n,
                       struct janas_buf *out)
 {
-    (void)b;
     char err[200], dst[4400], root[4200];
     struct janas_json_doc *d =
         n ? janas_json_parse(body, n, err, sizeof err) : NULL;
@@ -373,9 +317,11 @@ int brebus_skills_add(struct brebus *b, const char *body, size_t n,
 #endif
     folder = folder ? folder + 1 : src;
     int rc = -1;
-    if (!src || !*src || read_skill(src, folder, &s) != 0)
+    if (src && !brebus_confined(b, src))
+        snprintf(err, sizeof err, "a skill of your own folder");
+    else if (!src || !*src || read_skill(src, folder, &s) != 0)
         snprintf(err, sizeof err, "no SKILL.md in that folder");
-    else if (user_dir(root, sizeof root) != 0)
+    else if (janas_skills_dir(root, sizeof root) != 0)
         snprintf(err, sizeof err, "no folder for the skills");
     else {
         snprintf(dst, sizeof dst, "%s/%s", root, s.name);

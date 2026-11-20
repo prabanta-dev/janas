@@ -18,13 +18,8 @@
 #define JANAS_VERSION "unknown"
 #endif
 
-static const char INSTRUCTIONS[] =
-    "Use these tools by yourself when the user asks about a price or a "
-    "figure of money: what a currency is worth, a crypto-asset, a share, "
-    "inflation, a central bank's rates, electricity, the cheapest fuel near "
-    "a place; never name them. The figures are for information only: never "
-    "advise buying or selling. With no place or country named, leave it "
-    "out: the tool takes where the user is; say which place.";
+/* INSTRUCTIONS, from SKILL.md beside this file (build.sh) */
+#include "skill.h"
 
 static void usage(void)
 {

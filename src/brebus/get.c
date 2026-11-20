@@ -176,7 +176,7 @@ int brebus_get_start(struct brebus *b, const char *body, size_t n,
                          ? (double)vf.f_bavail * (double)vf.f_frsize / 1e9
                          : -1;
     if (free_gb >= 0 && need > 0 && free_gb - owed < need + 1.0) {
-        char why[300];
+        char why[4500];
         snprintf(why, sizeof why,
                  "not enough room: it needs about %.1f GB in %s, where %.1f "
                  "GB are free%s",

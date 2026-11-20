@@ -1055,8 +1055,10 @@ static int32_t send_turn(janas_llm_chat *c, const char *text, size_t n,
         if (bad)
             return janas_api_fail(JANAS_LLM_ENOMEM, "out of memory");
     }
+    /* cached: what is computed of what came before, not its length */
+    uint32_t kv = (uint32_t)janas_llm_session_computed(c->s);
     if (janas_api_begin_reply(c, at + (uint32_t)reply_off,
-                              at + (uint32_t)c->n_ids, at) != 0)
+                              at + (uint32_t)c->n_ids, kv < at ? kv : at) != 0)
         return janas_api_fail(JANAS_LLM_ENOMEM, "out of memory");
     return JANAS_LLM_OK;
 }

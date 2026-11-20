@@ -347,7 +347,13 @@ void dz_index_round(struct dz_index *x)
     size_t todo = 0;
     for (size_t i = 0; i < w.n; i++) {
         long at = dz_index_find(x, w.f[i].path, NULL);
-        if (at >= 0 && x->f[at].mtime == w.f[i].mtime &&
+        /* a PDF that gave no text is read again, once a run, when there
+           is a model to read its pages' pictures: it may be scanned */
+        int again = at >= 0 && !x->f[at].n_chunk && !x->f[at].retried &&
+                    dz_ocr_on() && dz_kind(w.f[i].path) == DZ_PDF;
+        if (again)
+            x->f[at].retried = 1;
+        if (at >= 0 && !again && x->f[at].mtime == w.f[i].mtime &&
             x->f[at].size == w.f[i].size) {
             free(w.f[i].path);
             w.f[i].path = NULL;
@@ -372,6 +378,7 @@ void dz_index_round(struct dz_index *x)
         struct dz_file f;
         char why[256] = "";
         int rc = read_doc(&w.f[i], &f, why, sizeof why);
+        f.retried = 1; /* read in this run */
         pthread_mutex_lock(&x->mu);
         if (rc == 1) {
             char s[PATH_MAX];
@@ -396,6 +403,7 @@ void dz_index_round(struct dz_index *x)
         free(w.f[i].path);
     free(w.f);
 
+    dz_ocr_rest(); /* its memory back until a page needs it */
     int ready = dz_embed_state(x->emb, NULL, 0, NULL);
     pthread_mutex_lock(&x->mu);
     match_source(x, x->emb); /* the server may have come up meanwhile */

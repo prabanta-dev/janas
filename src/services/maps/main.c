@@ -17,15 +17,8 @@
 #define JANAS_VERSION "unknown"
 #endif
 
-static const char INSTRUCTIONS[] =
-    "Use these tools by yourself when the user asks how to get somewhere, "
-    "how far or how long, by car, bike, on foot or by public transport, "
-    "where a place or an address is, or what is near (fuel, a pharmacy, a "
-    "cash machine...); never name them. Give places with their town. With "
-    "no start named, give none: the tool takes where the user is; tell the "
-    "user which place, and that it may be off. Times by road are without "
-    "traffic; public transport is from the timetables. Never ask the other "
-    "services for anything the user did not ask for.";
+/* INSTRUCTIONS, from SKILL.md beside this file (build.sh) */
+#include "skill.h"
 
 static void usage(void)
 {

@@ -17,13 +17,8 @@
 #define JANAS_VERSION "unknown"
 #endif
 
-static const char INSTRUCTIONS[] =
-    "Use these tools by yourself when the user asks about this computer: "
-    "how it is or why it is slow, the disks and their space, what fills a "
-    "folder, which programs use the processor or the memory, whether a "
-    "program is running, the errors, the updates, the network; never name "
-    "them. They only read: to change something (stop a program, install "
-    "updates), tell the user how to do it.";
+/* INSTRUCTIONS, from SKILL.md beside this file (build.sh) */
+#include "skill.h"
 
 static void usage(void)
 {

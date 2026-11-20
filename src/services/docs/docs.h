@@ -102,6 +102,20 @@ int dz_rtf_text(const char *r, size_t n, struct janas_buf *out, char *why,
 void dz_unescape(const char *s, size_t n, struct janas_buf *out);
 /* The text of a PDF (pdf.c) added to out: 0, or -1 with the reason (not a
    PDF, encrypted, no text in it). */
+/* ocr.c: the text of the picture of a page (a PNG or a JPEG), read by a
+   model that sees pictures (dz_ocr_set: its file, "" for none). dz_ocr_on:
+   whether one is set (and did not fail to open). dz_ocr_image: its text
+   appended to out, 0, or -1 with the reason. dz_ocr_rest: the model
+   closed until a page needs it again. dz_png: w x h samples of ch (1 or
+   3) bytes as a PNG, appended to o: 0, or -1. */
+void dz_ocr_set(const char *model);
+int dz_ocr_on(void);
+int dz_ocr_image(const uint8_t *img, size_t n, struct janas_buf *out, char *why,
+                 size_t wn);
+void dz_ocr_rest(void);
+int dz_png(const uint8_t *px, uint32_t w, uint32_t h, int ch,
+           struct janas_buf *o);
+
 int dz_pdf_text(const uint8_t *p, size_t n, struct janas_buf *out, char *why,
                 size_t wn);
 /* The kind of document a file's name says. */
@@ -183,6 +197,7 @@ struct dz_file {
     int64_t mtime, size;
     uint32_t n_chunk;
     struct dz_chunk *c;
+    int retried; /* read again in this run (a PDF without text), not kept */
 };
 
 struct dz_index {

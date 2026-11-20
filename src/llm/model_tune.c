@@ -466,7 +466,7 @@ void janas_m_profile_write(const struct janas_llm_model *m)
             c[k] /= 2;
     char path[1024], tmp[1100];
     if (profile_path(m, path, sizeof(path), 1) == 0) {
-        snprintf(tmp, sizeof(tmp), "%s.new", path);
+        snprintf(tmp, sizeof(tmp), "%s.%d", path, (int)getpid());
         FILE *f = fopen(tmp, "wb");
         if (f) {
             struct expert_profile h = {
@@ -485,4 +485,29 @@ void janas_m_profile_write(const struct janas_llm_model *m)
         }
     }
     free(c);
+}
+
+#define SAVE_EVERY 300 /* seconds between two writes while in use */
+
+void janas_m_save_state(struct janas_llm_model *m, int force)
+{
+    time_t now = time(NULL);
+    if (!force && now - m->saved_at < SAVE_EVERY)
+        return;
+    m->saved_at = now;
+    if (m->tune_key[0])
+        janas_tuner_save(&m->tuner, m->tune_key);
+    if (m->use_count) {
+        janas_m_profile_write(m);
+        /* written: the next write adds only what comes after */
+        memset(m->use_count, 0,
+               (size_t)m->j.h.n_layer * m->j.h.n_expert *
+                   sizeof(*m->use_count));
+    }
+}
+
+void janas_llm_model_save_state(struct janas_llm_model *m)
+{
+    if (m)
+        janas_m_save_state(m, 0);
 }

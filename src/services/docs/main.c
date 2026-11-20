@@ -21,15 +21,8 @@
 #define JANAS_VERSION "unknown"
 #endif
 
-static const char INSTRUCTIONS[] =
-    "Use these tools by yourself when the user asks about what their own "
-    "documents say - notes, letters, contracts, manuals, papers - or "
-    "about something only they would have written down; never name the "
-    "tools. docs_search gives the passages that answer best, each with "
-    "its document: answer from them, say which document each fact comes "
-    "from, and read a document with docs_read when its passages are not "
-    "enough. If nothing is found, say so rather than guess. docs_status "
-    "says which folders are indexed and how far.";
+/* INSTRUCTIONS, from SKILL.md beside this file (build.sh) */
+#include "skill.h"
 
 static void usage(void)
 {
@@ -37,6 +30,7 @@ static void usage(void)
         stderr,
         "usage: janas-docs [--server URL [--key KEY] | --embedding-model "
         "FILE]\n"
+        "                  [--ocr-model FILE]\n"
         "                  [--index | --search TEXT]\n"
         "       janas-docs --text FILE\n"
         "An MCP server over stdio: a client starts it and calls its tools,\n"
@@ -55,6 +49,10 @@ static void usage(void)
         "server_key = when it wants one), or one janas-docs opens itself\n"
         "(--embedding-model, or embedding_model = there), such as\n"
         "qwen3-embedding-0.6b-q8.jns from janas-get.\n"
+        "A PDF's pages without text, scanned, are read from their\n"
+        "pictures by a model that sees them, with its .vision.jns beside\n"
+        "it (--ocr-model, or ocr_model = in docs.conf), such as\n"
+        "gemma-4-e2b-it-q4km.jns from janas-get.\n"
         "  --index        index now, say what is there, and end\n"
         "  --search TEXT  search the index as it is, and end\n"
         "  --text FILE    the text read from one document, as indexed\n"
@@ -78,7 +76,7 @@ static void mkdirs(char *p)
 int main(int argc, char **argv)
 {
     const char *server = NULL, *key = NULL, *model = NULL, *search = NULL,
-               *one = NULL;
+               *one = NULL, *ocr = NULL;
     int index_only = 0;
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i], *v = i + 1 < argc ? argv[i + 1] : NULL;
@@ -88,6 +86,8 @@ int main(int argc, char **argv)
             key = v, i++;
         else if (!strcmp(a, "--embedding-model") && v)
             model = v, i++;
+        else if (!strcmp(a, "--ocr-model") && v)
+            ocr = v, i++;
         else if (!strcmp(a, "--search") && v)
             search = v, i++;
         else if (!strcmp(a, "--index"))
@@ -99,7 +99,8 @@ int main(int argc, char **argv)
             return !strcmp(a, "-h") || !strcmp(a, "--help") ? 0 : 2;
         }
     }
-    if (one) { /* a document's text, as the index reads it */
+    dz_ocr_set(ocr); /* --text reads scanned pages too, with --ocr-model */
+    if (one) {       /* a document's text, as the index reads it */
         struct janas_buf t = {0};
         char why[256];
         if (dz_extract(one, &t, why, sizeof why) != 0) {
@@ -120,7 +121,7 @@ int main(int argc, char **argv)
     }
     /* the settings file, for what the command line did not say */
     static const char *const NAMES[] = {"server", "server_key",
-                                        "embedding_model"};
+                                        "embedding_model", "ocr_model"};
     char conf[PATH_MAX + 64], cs[1024], ck[512], cm[PATH_MAX], why[256];
     static char cm_home[2 * PATH_MAX];
     const char *own_conf = getenv("JANAS_DOCS_CONF"); /* an app's own */
@@ -129,17 +130,17 @@ int main(int argc, char **argv)
     else
         snprintf(conf, sizeof conf, "%s/.config/janas/docs.conf", c.roots.home);
     if (!server && !model &&
-        janas_conf_get(conf, NAMES, 3, "server", cs, sizeof cs, why,
+        janas_conf_get(conf, NAMES, 4, "server", cs, sizeof cs, why,
                        sizeof why))
         server = cs;
     if (why[0])
         fprintf(stderr, "janas-docs: %s\n", why);
     if (server && !key &&
-        janas_conf_get(conf, NAMES, 3, "server_key", ck, sizeof ck, why,
+        janas_conf_get(conf, NAMES, 4, "server_key", ck, sizeof ck, why,
                        sizeof why))
         key = ck;
     if (!server && !model &&
-        janas_conf_get(conf, NAMES, 3, "embedding_model", cm, sizeof cm, why,
+        janas_conf_get(conf, NAMES, 4, "embedding_model", cm, sizeof cm, why,
                        sizeof why)) {
         model = cm;
         if (cm[0] == '~' && cm[1] == '/') {
@@ -147,6 +148,18 @@ int main(int argc, char **argv)
             model = cm_home;
         }
     }
+    /* the model that reads the pictures of scanned pages */
+    char co[PATH_MAX];
+    static char co_home[2 * PATH_MAX];
+    if (!ocr && janas_conf_get(conf, NAMES, 4, "ocr_model", co, sizeof co, why,
+                               sizeof why)) {
+        ocr = co;
+        if (co[0] == '~' && co[1] == '/') {
+            snprintf(co_home, sizeof co_home, "%s%s", c.roots.home, co + 1);
+            ocr = co_home;
+        }
+    }
+    dz_ocr_set(ocr);
     /* a server's indexing gives way to the programs the user is using - a
        chat's model first: the threads made from here on (the embedding
        model's among them) take this priority */

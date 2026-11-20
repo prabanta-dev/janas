@@ -295,14 +295,6 @@ struct srv {
     janas_llm_speech *speech;  /* --speech-model, or NULL */
     pthread_mutex_t speech_mu; /* one transcription at a time */
 };
-
-struct sockaddr;
-/* tls.c: the certificate and key read (0, or -1 with the reason), the
-   listener of HTTPS on addr, and its end */
-int srv_tls_setup(const char *cert, const char *key, char *err, size_t err_len);
-int srv_tls_start(struct srv *s, const struct sockaddr *addr, char *err,
-                  size_t err_len);
-void srv_tls_stop(void);
 /* Listening on addr (the port inside it), and no longer. */
 int srv_http_start(struct srv *s, const struct sockaddr *addr, char *err,
                    size_t err_len);

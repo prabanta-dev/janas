@@ -512,6 +512,7 @@ struct janas_llm_model {
     int n_out;
     int warm_use;        /* preload the most used experts, and count them */
     uint32_t *use_count; /* experts used this session, n_layer * n_expert */
+    time_t saved_at;     /* the profile and the tuner last written */
     uint64_t head_before, head_after; /* output head requantized (head_bits) */
     /* the head's type in the file (BF16 30, F16 1) when rewritten as Q8_0 at
        load (head16_to_q8_0), else 0; and the bytes before and after */
@@ -840,6 +841,8 @@ void janas_m_products(struct janas_llm_model *m, struct janas_gpu *g,
                       const struct janas_matvec_task *t, size_t n);
 uint32_t *janas_m_profile_read(const struct janas_llm_model *m, size_t *used);
 void janas_m_profile_write(const struct janas_llm_model *m);
+/* the profile and the tuner written, now and then while in use */
+void janas_m_save_state(struct janas_llm_model *m, int force);
 void janas_m_norm_quant(struct janas_llm_model *m, const float *w,
                         uint32_t first, uint32_t n);
 void janas_m_residual(struct janas_llm_model *m, uint32_t n);

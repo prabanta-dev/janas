@@ -72,8 +72,46 @@ function show(id) {
 }
 for (const b of document.querySelectorAll("nav button[data-s]"))
   b.addEventListener("click", () => { show(b.dataset.s); if (b.dataset.s === "machine") machineNow(); });
+/* Info's account, when Brebus is served with a login (404 in its own
+   window, where there is none) */
+async function account() {
+  let me;
+  try { me = await ask("auth/me"); } catch (e) { return; }
+  if (!me || !me.user) return;
+  $("#acct").hidden = false;
+  $("#acctme").innerHTML = `<dt>Logged in as</dt><dd>${esc(me.user)}${me.admin ? " (administrator)" : ""}</dd>`;
+  try {
+    const l = (await ask("auth/logins")).logins || [];
+    $("#logins").innerHTML = l.slice(0, 10).map((x) => `<li class="mono">${esc(x)}</li>`).join("");
+  } catch (e) {}
+}
+$("#logout").onclick = async () => {
+  await fetch("/brebus/auth/logout", {method: "POST", body: "{}"});
+  location.replace("/login");
+};
+$("#endall").onclick = async () => {
+  const r = await fetch("/brebus/auth/end", {method: "POST", body: "{}"});
+  say(r.ok ? "Your other sessions are ended." : "Not done.");
+  account();
+};
+$("#newpw").onclick = async () => {
+  const d = await dialog({title: "Change the password",
+    html: `<label>The password now <input type="password" class="pw0" autocomplete="current-password"></label>
+           <label>The new one, 12 characters or more <input type="password" class="pw1" autocomplete="new-password"></label>
+           <label>The new one again <input type="password" class="pw2" autocomplete="new-password"></label>
+           <p class="note">Your sessions in other browsers end.</p>`,
+    read: (box) => ({old: box.querySelector(".pw0").value, a: box.querySelector(".pw1").value, b: box.querySelector(".pw2").value}),
+    buttons: [{label: "Change it", value: "ok", primary: true}, {label: "Cancel", value: "no"}]});
+  if (d.button !== "ok") return;
+  if (d.form.a !== d.form.b) { say("The two new passwords differ."); return; }
+  const r = await fetch("/brebus/auth/password", {method: "POST", body: JSON.stringify({old: d.form.old, new: d.form.a})});
+  const j = await r.json().catch(() => ({}));
+  say(r.ok ? "Password changed." : j.error || "Not changed.");
+  account();
+};
 /* Info's live lines: the memory free now, the model loaded */
 async function machineNow() {
+  account();
   try {
     const m = await ask("machine");
     await status();

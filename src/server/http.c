@@ -10,6 +10,7 @@
 #include "server.h"
 #include "server_monitor_html.h" /* made by build.sh from monitor.html */
 #include "server_test_html.h"    /* and test.html */
+#include "common/mhd_tls.h"
 
 #include <microhttpd.h>
 #include <stdarg.h>
@@ -634,7 +635,9 @@ int srv_http_start(struct srv *s, const struct sockaddr *addr, char *err,
                  (unsigned)s->cfg.port);
         return -1;
     }
-    if (tls && srv_tls_start(s, addr, err, err_len) != 0) {
+    char where[300];
+    snprintf(where, sizeof where, "%s:%u", s->cfg.host, (unsigned)s->cfg.port);
+    if (tls && janas_mhd_tls_start(s->mhd, addr, where, err, err_len) != 0) {
         MHD_stop_daemon(s->mhd);
         s->mhd = NULL;
         return -1;
@@ -645,7 +648,7 @@ int srv_http_start(struct srv *s, const struct sockaddr *addr, char *err,
 void srv_http_stop(struct srv *s)
 {
     if (s->cfg.tls_cert)
-        srv_tls_stop();
+        janas_mhd_tls_stop();
     if (s->mhd) {
         /* the requests running answered first, for 2 s at most: their
            replies are cut short and new ones refused by the engine

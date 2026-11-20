@@ -364,6 +364,8 @@ int brebus_attach(struct brebus *b, const char *body, size_t n,
         !S_ISREG(st.st_mode))
         return fail(out, "a file of this computer by its full path, or a "
                          "web address");
+    if (!brebus_confined(b, real))
+        return fail(out, "a file of your own folder, or a web address");
     if (info) { /* its size, for the page to ask copy or read in place */
         janas_buf_printf(out, "{\"bytes\": %lld, \"inside\": %s}",
                          (long long)st.st_size,

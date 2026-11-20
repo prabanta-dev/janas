@@ -171,6 +171,21 @@ long janas_http_head_parse(const char *p, size_t n, struct janas_http_head *h)
                         (unsigned char)v[i] > 0x7e)
                         h->www_auth[0] = 0;
             }
+        } else if ((v = header_value(line, ln, "Content-Security-Policy",
+                                     &vn)) ||
+                   (v = header_value(line, ln, "Content-Disposition", &vn))) {
+            /* "Content-S..." or "Content-D...", in any case */
+            int is_csp = line[8] == 'S' || line[8] == 's';
+            char *to = is_csp ? h->csp : h->disposition;
+            size_t cap = is_csp ? sizeof h->csp : sizeof h->disposition;
+            if (vn < cap) {
+                memcpy(to, v, vn);
+                to[vn] = 0;
+                for (size_t i = 0; i < vn; i++) /* printable ASCII only */
+                    if ((unsigned char)v[i] < 0x20 ||
+                        (unsigned char)v[i] > 0x7e)
+                        to[0] = 0;
+            }
         } else if ((v = header_value(line, ln, "Mcp-Session-Id", &vn))) {
             if (vn < sizeof(h->session)) {
                 memcpy(h->session, v, vn);

@@ -24,6 +24,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "common/image.h"
 #include "common/inflate.h"
 #include "docs.h"
 
@@ -483,6 +484,7 @@ struct doc {
     int unreadable;      /* strings of fonts that could not be read */
     unsigned char *seen; /* pages and forms already read */
     struct font *fonts;
+    int ocr_pages; /* pages read from their pictures (ocr.c) */
 };
 
 static struct obj *slot(struct doc *d, double num)
@@ -1213,6 +1215,82 @@ static void content(struct doc *d, const uint8_t *b, size_t n, struct pv *res,
 }
 
 /* the pages from the tree's node v, with the resources they inherit */
+/* The components of an image's colour space: 1 (gray), 3 (RGB), 0 for
+   one not read here (CMYK, indexed, a pattern...). */
+static int components(struct doc *d, struct pv *cs)
+{
+    cs = resolve(d, cs);
+    if (is_name(cs, "DeviceGray") || is_name(cs, "G") || is_name(cs, "CalGray"))
+        return 1;
+    if (is_name(cs, "DeviceRGB") || is_name(cs, "RGB") || is_name(cs, "CalRGB"))
+        return 3;
+    if (cs->t == PV_ARR && cs->n >= 2 &&
+        is_name(resolve(d, cs->items[0]), "ICCBased")) {
+        struct obj *o = obj_of(d, cs->items[1]);
+        double k = o ? num_of(d, get(o->v, "N"), 0) : 0;
+        return k == 1 || k == 3 ? (int)k : 0;
+    }
+    return 0;
+}
+
+/* A page without text: its largest picture read by the model that sees
+   pictures (ocr.c), its text the page's. A JPEG is given as it is; raw
+   samples of 8 bits, gray or RGB, as a PNG; other pictures (fax, JBIG2,
+   CMYK) are not read. */
+static void page_picture(struct doc *d, struct pv *res)
+{
+    struct pv *dict = resolve(d, get(res, "XObject"));
+    struct obj *best = NULL;
+    double area = 200.0 * 200.0; /* smaller: an ornament, not a page */
+    for (size_t i = 0; dict->t == PV_DICT && i < dict->n; i++) {
+        struct obj *o = obj_of(d, dict->items[2 * i + 1]);
+        if (!o || !o->data ||
+            !is_name(resolve(d, get(o->v, "Subtype")), "Image"))
+            continue;
+        double a = num_of(d, get(o->v, "Width"), 0) *
+                   num_of(d, get(o->v, "Height"), 0);
+        if (a > area)
+            area = a, best = o;
+    }
+    if (!best)
+        return;
+    struct pv *f = resolve(d, get(best->v, "Filter"));
+    if (f->t == PV_ARR && f->n == 1)
+        f = resolve(d, f->items[0]);
+    struct janas_buf png = {0}, t = {0};
+    const uint8_t *img = NULL;
+    size_t n = 0;
+    uint8_t *raw = NULL;
+    if (is_name(f, "DCTDecode") || is_name(f, "DCT")) {
+        img = best->data, n = best->dn;
+    } else {
+        double w = num_of(d, get(best->v, "Width"), 0),
+               h = num_of(d, get(best->v, "Height"), 0),
+               bpc = num_of(d, get(best->v, "BitsPerComponent"), 0);
+        int ch = components(d, get(best->v, "ColorSpace"));
+        struct pv *dp = resolve(d, get(best->v, "DecodeParms"));
+        if (dp->t == PV_ARR && dp->n == 1)
+            dp = resolve(d, dp->items[0]);
+        int predicted = num_of(d, get(dp, "Predictor"), 1) > 1;
+        long rn = bpc == 8 && ch && !predicted && w <= JANAS_IMAGE_MAX_SIDE &&
+                          h <= JANAS_IMAGE_MAX_SIDE
+                      ? stream_bytes(d, best, &raw)
+                      : -1;
+        if (rn >= (long)(w * h * ch) &&
+            dz_png(raw, (uint32_t)w, (uint32_t)h, ch, &png) == 0)
+            img = (const uint8_t *)png.p, n = png.n;
+    }
+    char why[300];
+    if (img && dz_ocr_image(img, n, &t, why, sizeof why) == 0 && t.n) {
+        janas_buf_put(d->out, t.p, t.n);
+        janas_buf_put(d->out, "\n\n", 2);
+        d->ocr_pages++;
+    }
+    free(raw);
+    janas_buf_free(&png);
+    janas_buf_free(&t);
+}
+
 static void pages(struct doc *d, struct pv *ref, struct pv *res, int depth,
                   int *count)
 {
@@ -1260,8 +1338,8 @@ static void pages(struct doc *d, struct pv *ref, struct pv *res, int depth,
         janas_buf_put(&all, "\n", 1);
         free(b);
     }
+    size_t before = d->out->n;
     if (all.n && !all.oom) {
-        size_t before = d->out->n;
         content(d, (const uint8_t *)all.p, all.n, res, 0);
         if (d->out->n > before) {
             while (d->out->n && (d->out->p[d->out->n - 1] == ' ' ||
@@ -1270,6 +1348,8 @@ static void pages(struct doc *d, struct pv *ref, struct pv *res, int depth,
             janas_buf_put(d->out, "\n\n", 2);
         }
     }
+    if (d->out->n == before && dz_ocr_on())
+        page_picture(d, res);
     janas_buf_free(&all);
 }
 
@@ -1334,9 +1414,15 @@ int dz_pdf_text(const uint8_t *p, size_t n, struct janas_buf *out, char *why,
             snprintf(why, wn,
                      d.unreadable ? "its fonts give no characters (no "
                                     "ToUnicode map): its text cannot be read"
-                     : count      ? "no text: pictures of pages, perhaps "
-                                    "scanned"
-                                  : "no pages found");
+                     : count
+                         ? dz_ocr_on()
+                               ? "no text: pictures of pages that the model "
+                                 "reading them found no text in, or of a "
+                                 "kind not read (fax, JBIG2, CMYK)"
+                               : "no text: pictures of pages, perhaps "
+                                 "scanned (a model that sees pictures "
+                                 "reads them: ocr_model in docs.conf)"
+                         : "no pages found");
             rc = -1;
         }
     }

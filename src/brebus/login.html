@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Brebus · log in</title>
+<style>
+  :root { --bg: #f6f5f2; --fg: #1d1d1b; --dim: #6b6a65; --card: #fff; --line: #dcdad4; --acc: #2f6f5e; --bad: #a33; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161615; --fg: #e9e7e1; --dim: #9b9990; --card: #1f1f1d; --line: #34332f; --acc: #6fb59f; --bad: #e07a7a; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--bg); color: var(--fg);
+         font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; padding: 16px; }
+  main { width: 100%; max-width: 380px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 24px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p { margin: 8px 0; color: var(--dim); }
+  label { display: block; margin: 12px 0 4px; font-weight: 600; }
+  input { width: 100%; padding: 10px; font: inherit; color: inherit; background: transparent; border: 1px solid var(--line); border-radius: 8px; }
+  button { margin-top: 16px; width: 100%; padding: 10px; font: inherit; font-weight: 600; color: #fff; background: var(--acc); border: 0; border-radius: 8px; cursor: pointer; }
+  code { font: 14px ui-monospace, monospace; word-break: break-all; }
+  .err { color: var(--bad); min-height: 1.5em; }
+  .codes { columns: 2; font: 14px ui-monospace, monospace; margin: 8px 0; }
+  [hidden] { display: none; }
+</style>
+</head>
+<body>
+<!--
+  login.html - the login of Brebus served beyond its own window (brebus
+  --serve): name and password, then the authenticator's code; at a first
+  login, where a second factor is required, its setup - the secret to give
+  the authenticator, a code from it to confirm, then ten recovery codes
+  shown once. Every answer comes from /brebus/auth/... (auth.c).
+-->
+<main>
+  <h1>Brebus</h1>
+  <form id="step1">
+    <label for="name">Name</label>
+    <input id="name" autocomplete="username" required>
+    <label for="pw">Password</label>
+    <input id="pw" type="password" autocomplete="current-password" required>
+    <div id="codebox" hidden>
+      <label for="code">Code of your authenticator</label>
+      <input id="code" inputmode="numeric" autocomplete="one-time-code" placeholder="123456, or a recovery code">
+    </div>
+    <button>Log in</button>
+  </form>
+  <form id="step2" hidden>
+    <p>This Brebus asks for a second factor. Add this account to an authenticator app (Aegis, Google Authenticator, 1Password, Bitwarden...) with the secret below, or by the address, then type the code it shows.</p>
+    <label>Secret</label>
+    <code id="secret"></code>
+    <label>Address for the app</label>
+    <code id="uri"></code>
+    <label for="code2">Code it shows</label>
+    <input id="code2" inputmode="numeric" autocomplete="one-time-code" required>
+    <button>Confirm</button>
+  </form>
+  <div id="step3" hidden>
+    <p>Second factor set. These recovery codes let you in when the authenticator is not at hand, each once. Keep them somewhere safe: they are not shown again.</p>
+    <div class="codes" id="codes"></div>
+    <button id="go">Go on to Brebus</button>
+  </div>
+  <p class="err" id="err"></p>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+let setup = "";
+async function post(path, body) {
+  const r = await fetch(path, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  return {ok: r.ok, j: await r.json().catch(() => ({}))};
+}
+$("step1").onsubmit = async (e) => {
+  e.preventDefault();
+  $("err").textContent = "";
+  const {ok, j} = await post("/brebus/auth/login", {name: $("name").value, password: $("pw").value, code: $("code").value.trim()});
+  if (j.need === "code") { $("codebox").hidden = false; $("code").focus(); return; }
+  if (j.setup) {
+    setup = j.setup;
+    $("secret").textContent = j.secret.replace(/(.{4})/g, "$1 ").trim();
+    $("uri").textContent = j.uri;
+    $("step1").hidden = true; $("step2").hidden = false; $("code2").focus();
+    return;
+  }
+  if (ok) { location.replace("/"); return; }
+  $("err").textContent = j.error || "not logged in";
+};
+$("step2").onsubmit = async (e) => {
+  e.preventDefault();
+  $("err").textContent = "";
+  const {ok, j} = await post("/brebus/auth/setup", {setup, code: $("code2").value.trim()});
+  if (!ok) { $("err").textContent = j.error || "not confirmed"; return; }
+  $("codes").textContent = "";
+  for (const c of j.recovery || []) { const d = document.createElement("div"); d.textContent = c; $("codes").append(d); }
+  $("step2").hidden = true; $("step3").hidden = false;
+};
+$("go").onclick = () => location.replace("/");
+$("name").focus();
+</script>
+</body>
+</html>

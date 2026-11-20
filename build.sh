@@ -244,8 +244,10 @@ c_string() {
     printf '"%s"' "$(printf '%s' "$1" | LC_ALL=C tr -cd '[:print:]' |
         sed 's/[\\"]/\\&/g')"
 }
-# the version in reports (janas-bench)
-VERSION="$(git describe --always --dirty 2>/dev/null || echo unknown)"
+# the version in reports (janas-bench): --tags, as the releases' tags are
+# light ones (without it git describe took the last annotated tag, and
+# v2026.11.19.3 said v2026.11.18-6-g75f29a2: issue #73)
+VERSION="$(git describe --tags --always --dirty 2>/dev/null || echo unknown)"
 CFLAGS+=(-DJANAS_VERSION="$(c_string "$VERSION")")
 
 # Throw away what this variant made, and only what this variant made: the
@@ -721,6 +723,9 @@ while IFS= read -r src; do
     # the TLS layer reads Mbed TLS's headers, as the system's: their
     # warnings are not Janas's to fix
     [ "$src" = src/common/mcp_tls.c ] && extra=("${MBEDTLS_INC[@]/#-I/-isystem}")
+    # HTTPS in front of libmicrohttpd: its headers too
+    [ "$src" = src/common/mhd_tls.c ] &&
+        extra=("${MBEDTLS_INC[@]/#-I/-isystem}" "${TP_INC[@]}")
     compile "$src" "$obj" "${CFLAGS[@]}" "${extra[@]}"
 done < <(sort <<<"$lib_list")
 rm -f "$OBJ/libjanas.a"
@@ -735,6 +740,7 @@ if [ "$VARIANT" = release ]; then
         case "$o" in
         */common_mcp_*.o) mcp_objs+=("$o") ;;
         */common_hf_*.o) ;; # for the tools, with libjanas.a only
+        */common_mhd_*.o) ;; # for the programs that serve, the same
         # what the services share (src/services/common/): theirs only
         */services_*.o) ;;
         # the JSON reader and the strict reading of words, the sockets and
@@ -852,9 +858,9 @@ for src in tests/*.c tools/*.c src/*/main.c src/services/*/main.c; do
             [ -n "$c" ] || continue
             obj=$(objname "$c")
             own+=("$obj")
-            # the server's HTTPS reads Mbed TLS's headers, as the system's
             extra=()
-            [ "$c" = src/server/tls.c ] &&
+            # Brebus's accounts hash with Mbed TLS's PSA, as the system's
+            [ "$c" = src/brebus/users.c ] &&
                 extra=("${MBEDTLS_INC[@]/#-I/-isystem}")
             # Brebus's window on Windows reads WebView2's header, as the
             # system's (src/third_party/webview2)
@@ -863,13 +869,41 @@ for src in tests/*.c tools/*.c src/*/main.c src/services/*/main.c; do
             compile "$c" "$obj" "${CFLAGS[@]}" "${TP_INC[@]}" "${extra[@]}"
         done < <(sort <<<"$own_list")
     fi
+    # a service's instructions for the model are its SKILL.md, a skill in
+    # Claude's format, without its frontmatter: skill.h, its INSTRUCTIONS
+    skill=()
+    if [ "$(basename "$src")" = main.c ] && [ -f "$dir/SKILL.md" ]; then
+        sk="$OBJ/skill/$(basename "$dir")"
+        skill=(-I"$sk")
+        if [ ! -f "$sk/skill.h" ] || [ "$dir/SKILL.md" -nt "$sk/skill.h" ]; then
+            mkdir -p "$sk"
+            if ! awk -v src="$dir/SKILL.md" '
+                NR == 1 && /^---/ { fm = 1; next }
+                fm && /^---/ { fm = 0; next }
+                fm { next }
+                { gsub(/\\/, "\\\\"); gsub(/"/, "\\\""); l[++n] = $0 }
+                END {
+                    while (n && l[n] == "") n--
+                    for (s = 1; s <= n && l[s] == ""; s++) ;
+                    if (s > n) exit 1
+                    print "/* made by build.sh from " src " */"
+                    print "static const char INSTRUCTIONS[] ="
+                    for (i = s; i <= n; i++)
+                        printf "    \"%s%s\"%s\n", l[i], i < n ? "\\n" : "", i < n ? "" : ";"
+                }' "$dir/SKILL.md" >"$sk/skill.h"; then
+                rm -f "$sk/skill.h"
+                echo "build.sh: no instructions in $dir/SKILL.md" >&2
+                exit 2
+            fi
+        fi
+    fi
     echo "LD  $exe"
     start=("${START[@]}")
     # brebus.exe on Windows: a window's program, no console; its own icon
     [ "$OS" = windows ] && [ "$src" = src/brebus/main.c ] &&
         start=("$OBJ/win_start.o" "$OBJ/brebus_res.o" -mwindows)
-    "$CC" "${CFLAGS[@]}" "${TP_INC[@]}" "$src" "${own[@]}" "${start[@]}" \
-        "$OBJ/libjanas.a" "${THIRD[@]}" "${LDSTATIC[@]}" "${LDLIBS[@]}" -o "$exe"
+    "$CC" "${CFLAGS[@]}" "${TP_INC[@]}" "${skill[@]}" "$src" "${own[@]}" \
+        "${start[@]}" "$OBJ/libjanas.a" "${THIRD[@]}" "${LDSTATIC[@]}" "${LDLIBS[@]}" -o "$exe"
 done
 
 if [ "$ACTION" = test ]; then

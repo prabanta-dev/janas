@@ -368,7 +368,9 @@ int brebus_export(struct brebus *b, const char *body, size_t n,
     if (brebus_ws_path(b, ws, sizeof ws) == 0) {
         snprintf(dir, sizeof dir, "%s/exports", ws);
         janas_mkdirs(dir);
-    } else
+    } else if (b->root[0]) /* a user's Brebus: their own folder */
+        snprintf(dir, sizeof dir, "%s", b->root);
+    else
         downloads(dir, sizeof dir);
     int fd = -1;
     for (int i = 1; i < 100 && fd < 0; i++) {

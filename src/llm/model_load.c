@@ -1477,6 +1477,7 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
         const char *w = getenv("JANAS_WARM");
         size_t used = 0;
         m->warm_use = w ? atoi(w) != 0 : o->warm != 0;
+        m->saved_at = time(NULL); /* the first write while in use: later */
         uint32_t *counts = m->warm_use ? janas_m_profile_read(m, &used) : NULL;
         if (m->warm_use) {
             m->use_count = calloc((size_t)m->j.h.n_layer * m->j.h.n_expert,
@@ -1608,10 +1609,8 @@ void janas_llm_model_free(struct janas_llm_model *m)
         return;
     if (m->caller_pinned)
         janas_cpus_restore(m->caller_cpus);
-    if (m->tune_key[0])
-        janas_tuner_save(&m->tuner, m->tune_key);
+    janas_m_save_state(m, 1);
     if (m->use_count) {
-        janas_m_profile_write(m);
         free(m->use_count);
         m->use_count = NULL;
     }

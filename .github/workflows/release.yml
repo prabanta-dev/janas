@@ -79,16 +79,21 @@ jobs:
           P="$PACKAGE/janas"
           mkdir -p "$P/services" "$P/lib" "$P/include/janas" "$P/docs" "$P/node"
           for f in janas-chat janas-server janas-get janas-setup janas-bench janas-mcp brebus \
+                   janas-brebus-helper \
                    gguf2jns jns_planes hf2jns_mtp hf2jns_ds4 hf2jns_vision hf2jns_whisper \
                    silero2jns wespeaker2jns jns_check vkcheck gpu_check; do
             install -m 755 "$B/$f" "$P/"
           done
+          # Brebus served to the users of the system: its PAM service
+          install -m 644 dist/brebus.pam "$P/brebus.pam"
           for s in src/services/*/; do
             s=$(basename "$s")
             [ "$s" = common ] && continue
             install -m 755 "$B/janas-$s" "$P/services/"
             # each service's page, its links made to point beside it
             install -m 644 "src/services/$s/README.md" "$P/services/janas-$s.md"
+            # its instructions for the model, a skill in Claude's format
+            install -Dm 644 "src/services/$s/SKILL.md" "$P/skills/janas-$s/SKILL.md"
           done
           sed -E 's#\(([a-z]+)/README\.md\)#(janas-\1.md)#g' \
             src/services/README.md > "$P/services/README.md"
@@ -280,6 +285,8 @@ jobs:
             [ -f "$B/janas-$s.exe" ] || continue
             install -m 755 "$B/janas-$s.exe" "$P/services/"
             install -m 644 "src/services/$s/README.md" "$P/services/janas-$s.md"
+            # its instructions for the model, a skill in Claude's format
+            install -Dm 644 "src/services/$s/SKILL.md" "$P/skills/janas-$s/SKILL.md"
           done
           sed -E 's#\(([a-z]+)/README\.md\)#(janas-\1.md)#g' \
             src/services/README.md > "$P/services/README.md"

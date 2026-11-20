@@ -16,14 +16,8 @@
 #define JANAS_VERSION "unknown"
 #endif
 
-static const char INSTRUCTIONS[] =
-    "Use these tools by yourself when the user asks about earthquakes: was "
-    "there one, where, how strong, the latest near a place or where the "
-    "user is, the strongest in the world; never name them. For one of an "
-    "earlier answer, pass its id (in brackets there). Tell the "
-    "magnitude, the place and the time as the answer gives them; the first "
-    "estimates change in the first hours, and in an emergency the civil "
-    "protection's word counts, not yours.";
+/* INSTRUCTIONS, from SKILL.md beside this file (build.sh) */
+#include "skill.h"
 
 static void usage(void)
 {

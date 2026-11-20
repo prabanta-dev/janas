@@ -1,13 +1,14 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
    Copyright (C) 2026 Maurizio Cammalleri */
 /*
- * tls.c - HTTPS for janas-server (--tls-cert, --tls-key), on the Mbed TLS
- * the MCP client already carries. libmicrohttpd would want GnuTLS for it;
- * instead the server listens itself, a thread for each connection does the
- * handshake and then carries the bytes between the TLS session and one end
- * of a pair of sockets, whose other end libmicrohttpd is handed
- * (MHD_add_connection) as if a client had connected in clear. Everything
- * above - the requests, the streams, the origins - is the same.
+ * mhd_tls.c - HTTPS for a libmicrohttpd daemon (janas-server's --tls-cert,
+ * --tls-key; Brebus's), on the Mbed TLS the MCP client already carries.
+ * libmicrohttpd would want GnuTLS for it; instead the server listens itself, a
+ * thread for each connection does the handshake and then carries the bytes
+ * between the TLS session and one end of a pair of sockets, whose other end
+ * libmicrohttpd is handed (MHD_add_connection) as if a client had connected in
+ * clear. Everything above - the requests, the streams, the origins - is the
+ * same.
  *
  * Mbed TLS has no threading of its own here: every call to it takes the
  * process's one lock (janas_tls_lock), the waits never inside it.
@@ -15,7 +16,7 @@
  * On Windows, which has no socketpair, the pair is two ends of a connection
  * over the loopback, made for each client; the sockets go through sock.h.
  */
-#include "server.h"
+#include "common/mhd_tls.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -88,8 +89,8 @@ static mbedtls_pk_context key;
 static int listen_fd = -1;
 static pthread_t acceptor;
 static volatile int stopping;
-static _Atomic int active; /* connections being served */
-static struct srv *server;
+static _Atomic int active;         /* connections being served */
+static struct MHD_Daemon *daemon_; /* the one the connections are handed */
 
 static void why(int rc, char *err, size_t err_len, const char *what)
 {
@@ -115,8 +116,8 @@ static int same_key(const mbedtls_pk_context *pub,
                : -1;
 }
 
-int srv_tls_setup(const char *cert, const char *keyfile, char *err,
-                  size_t err_len)
+int janas_mhd_tls_setup(const char *cert, const char *keyfile, char *err,
+                        size_t err_len)
 {
     janas_tls_lock();
     int rc = janas_tls_crypto() == 0 ? 0 : -1;
@@ -221,7 +222,7 @@ static void *serve(void *arg)
         rc = 0;
     }
     if (rc != 0 || stopping || sock_pair(sp) != 0 ||
-        MHD_add_connection(server->mhd, (MHD_socket)sp[0],
+        MHD_add_connection(daemon_, (MHD_socket)sp[0],
                            (struct sockaddr *)&c->peer, c->peer_len) != MHD_YES)
         goto done;
     sp[0] = -1; /* libmicrohttpd's now */
@@ -316,10 +317,10 @@ static void *accept_main(void *arg)
     return NULL;
 }
 
-int srv_tls_start(struct srv *s, const struct sockaddr *addr, char *err,
-                  size_t err_len)
+int janas_mhd_tls_start(struct MHD_Daemon *mhd, const struct sockaddr *addr,
+                        const char *where, char *err, size_t err_len)
 {
-    server = s;
+    daemon_ = mhd;
     socklen_t len = addr->sa_family == AF_INET6
                         ? (socklen_t)sizeof(struct sockaddr_in6)
                         : (socklen_t)sizeof(struct sockaddr_in);
@@ -330,8 +331,8 @@ int srv_tls_start(struct srv *s, const struct sockaddr *addr, char *err,
                    sizeof one);
     if (listen_fd < 0 || bind(listen_fd, addr, len) != 0 ||
         listen(listen_fd, 64) != 0) {
-        snprintf(err, err_len, "cannot listen on %s:%u: %s", s->cfg.host,
-                 (unsigned)s->cfg.port, strerror(errno));
+        snprintf(err, err_len, "cannot listen on %s: %s", where,
+                 strerror(errno));
         if (listen_fd >= 0)
             janas_sock_close(listen_fd);
         listen_fd = -1;
@@ -347,7 +348,7 @@ int srv_tls_start(struct srv *s, const struct sockaddr *addr, char *err,
     return 0;
 }
 
-void srv_tls_stop(void)
+void janas_mhd_tls_stop(void)
 {
     if (listen_fd < 0)
         return;

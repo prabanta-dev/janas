@@ -47,7 +47,7 @@ static void machine(struct janas_buf *o)
 /* whether a model sees pictures: a .vision.jns beside it whose name is a
    prefix of its (qwen3.5-0.8b.vision.jns serves qwen3.5-0.8b-q4km), as the
    engine finds it (src/llm/api_image.c) */
-static int sees(const char *dir, const char *name)
+int brebus_model_sees(const char *dir, const char *name)
 {
     DIR *d = opendir(dir);
     struct dirent *e;
@@ -105,7 +105,7 @@ static void models(struct brebus *b, struct janas_buf *o)
                          "\"recurrent\": %d, \"coder\": %d, \"vision\": %d}",
                          (unsigned long long)m[i].bytes, m[i].ctx, m[i].fim,
                          m[i].recurrent, m[i].coder,
-                         sees(b->models_dir, m[i].name));
+                         brebus_model_sees(b->models_dir, m[i].name));
     }
     janas_buf_puts(o, "]}");
 }
@@ -143,9 +143,7 @@ int brebus_model_remove(struct brebus *b, const char *name, char *why,
         snprintf(why, wn, "no model named so in %s", b->models_dir);
         return -1;
     }
-    pthread_mutex_lock(&b->mu);
-    int busy = b->srv_on && !strcmp(b->srv_model, name);
-    pthread_mutex_unlock(&b->mu);
+    int busy = brebus_server_loaded(b, name);
     if (busy) {
         snprintf(why, wn, "%s is loaded: unload it first", name);
         return -1;
