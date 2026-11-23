@@ -467,6 +467,15 @@ void janas_sandbox_main(int argc, char **argv)
         mount("tmpfs", p, "tmpfs", MS_NOSUID | MS_NODEV | MS_NOEXEC | MS_RDONLY,
               "mode=0555,size=4k") != 0)
         die(".brebus");
+    /* /tmp in memory, before the paths below: one of them under /tmp (a
+       skill where $TMPDIR is /tmp) would be covered by it */
+    char opt[64];
+    snprintf(p, sizeof p, "%s/tmp", root);
+    make_dirs(p);
+    snprintf(opt, sizeof opt, "mode=1777,size=%llu",
+             (unsigned long long)(tmp ? tmp : (uint64_t)256 << 20));
+    if (mount("tmpfs", p, "tmpfs", MS_NOSUID | MS_NODEV, opt) != 0)
+        die("/tmp");
     /* more paths, read-only where they are */
     for (int i = 0; i < n_ro; i++) {
         struct stat st;
@@ -480,14 +489,6 @@ void janas_sandbox_main(int argc, char **argv)
         snprintf(src, sizeof src, "/proc/self/fd/%d", ro_fd[i]);
         bind(src, p, 0);
     }
-    /* /tmp in memory */
-    char opt[64];
-    snprintf(p, sizeof p, "%s/tmp", root);
-    make_dirs(p);
-    snprintf(opt, sizeof opt, "mode=1777,size=%llu",
-             (unsigned long long)(tmp ? tmp : (uint64_t)256 << 20));
-    if (mount("tmpfs", p, "tmpfs", MS_NOSUID | MS_NODEV, opt) != 0)
-        die("/tmp");
     /* /dev: a few devices */
     snprintf(p, sizeof p, "%s/dev", root);
     make_dirs(p);
