@@ -18,10 +18,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 
+#include "services/common/private.h"
 #include "brebus.h"
 #ifdef _WIN32
 #include <windows.h>
@@ -60,8 +62,22 @@ static void str(struct janas_buf *o, const char *s)
     janas_json_write_str(o, s, strlen(s));
 }
 
+/* a file or folder of the home's private ones (.ssh, .gnupg, keys,
+   tokens, Brebus's own data...), as janas-files judges them */
+static int private_file(const char *real)
+{
+    const char *h = getenv("HOME");
+    char home[4096];
+#ifdef _WIN32
+    if (!h)
+        h = getenv("USERPROFILE");
+#endif
+    return h && janas_path_real(h, home) && janas_private_path(home, real);
+}
+
 /* the folders added to be read, from .brebus/workspace.json */
-static int read_only(const char *ws, char dirs[][4096], int max)
+static int read_only(struct brebus *b, const char *ws, char dirs[][4096],
+                     int max)
 {
     char p[4300], err[160];
     snprintf(p, sizeof p, "%s/.brebus/workspace.json", ws);
@@ -83,11 +99,16 @@ static int read_only(const char *ws, char dirs[][4096], int max)
              a && a->type == JANAS_JSON_ARRAY ? a->child : NULL;
          e && n < max; e = e->next) {
         const char *s = janas_json_str(e);
+        /* checked again as brebus_folders_set checks them: the file is
+           in the workspace, and what runs there may have written it */
         struct stat st;
+        char real[4096];
         if (s && janas_path_abs(s) && strlen(s) < 4096 &&
             !strchr(s, JANAS_PATH_LIST_SEP) && !strchr(s, '\n') &&
-            stat(s, &st) == 0)
-            snprintf(dirs[n++], 4096, "%s", s);
+            janas_path_real(s, real) && stat(real, &st) == 0 &&
+            !strchr(real, JANAS_PATH_LIST_SEP) && !janas_path_root(real) &&
+            brebus_confined(b, real) && !private_file(real))
+            snprintf(dirs[n++], 4096, "%s", real);
     }
     janas_json_free(d);
     janas_buf_free(&f);
@@ -188,7 +209,7 @@ int brebus_tools_start(struct brebus *b)
     static char ro[MAX_RO][4096];
     pthread_mutex_lock(&b->tools_mu);
     stop_locked(b);
-    int n = read_only(ws, ro, MAX_RO);
+    int n = read_only(b, ws, ro, MAX_RO);
     /* janas-docs: its list of folders and its index in .brebus/ */
     char cfg[4200], data[4200], list[4300], exe[4300];
     snprintf(cfg, sizeof cfg, "%s/.brebus/config/janas", ws);
@@ -453,8 +474,8 @@ void brebus_folders_get(struct brebus *b, struct janas_buf *out)
 {
     char ws[4096];
     static char ro[MAX_RO][4096];
-    int n =
-        brebus_ws_path(b, ws, sizeof ws) == 0 ? read_only(ws, ro, MAX_RO) : 0;
+    int n = brebus_ws_path(b, ws, sizeof ws) == 0 ? read_only(b, ws, ro, MAX_RO)
+                                                  : 0;
     janas_buf_puts(out, "{\"read_only\": [");
     for (int i = 0; i < n; i++) {
         janas_buf_puts(out, i ? ", " : "");
@@ -534,10 +555,11 @@ int brebus_file(struct brebus *b, const char *path, struct janas_buf *out,
     /* under the workspace (not its .brebus/), or one of its folders */
     size_t wl = strlen(ws);
     int in = janas_path_in(real, ws) && strncmp(real + wl, "/.brebus/", 9);
-    int n = read_only(ws, ro, MAX_RO);
+    int n = read_only(b, ws, ro, MAX_RO);
     for (int i = 0; i < n && !in; i++)
         in = !strcmp(real, ro[i]) || janas_path_in(real, ro[i]);
-    if (!in)
+    /* never a private file (keys, passwords, tokens), as janas-files */
+    if (!in || private_file(real))
         return -1;
     FILE *f = fopen(real, "rb");
     if (!f)
@@ -562,6 +584,24 @@ int brebus_open_path(struct brebus *b, const char *path)
     size_t wl = strlen(ws);
     if (!janas_path_in(real, ws) || !strncmp(real + wl, "/.brebus/", 9))
         return -1;
+    /* a document, never a program: what the model wrote is opened to be
+       read, not run (the system would run a .exe, a .bat, a .desktop, a
+       script marked to run) */
+    static const char *const run[] = {
+        ".exe", ".bat",     ".cmd",     ".com", ".scr",      ".pif", ".msi",
+        ".msp", ".ps1",     ".psm1",    ".vbs", ".vbe",      ".js",  ".jse",
+        ".wsf", ".wsh",     ".hta",     ".lnk", ".url",      ".reg", ".cpl",
+        ".jar", ".desktop", ".sh",      ".run", ".appimage", ".deb", ".rpm",
+        ".py",  ".pl",      ".command", ".app"};
+    const char *dot = strrchr(real, '.');
+    for (size_t i = 0; dot && i < sizeof run / sizeof *run; i++)
+        if (!strcasecmp(dot, run[i]))
+            return -1;
+#ifndef _WIN32
+    struct stat xs;
+    if (stat(real, &xs) != 0 || (S_ISREG(xs.st_mode) && (xs.st_mode & 0111)))
+        return -1;
+#endif
     /* the system's own program for it: a page as a file of its own, never
        with Brebus's origin */
 #ifdef _WIN32
@@ -885,7 +925,9 @@ static void svc_read_only(struct janas_buf *out, int *k)
                 ok = ln == tn && !strncmp(l, t, tn);
                 l += ln + (l[ln] == '\n');
             }
-            if (svcs[i].user ? ro == 1 || ok : ro != 0) {
+            /* a server over the network is not believed on its own word:
+               its "only reads" may be what sends the chat's data away */
+            if (svcs[i].user ? (ro == 1 && !svcs[i].url[0]) || ok : ro != 0) {
                 char full[256];
                 snprintf(full, sizeof full, "%s%s", svcs[i].prefix, t);
                 janas_buf_puts(out, (*k)++ ? ", " : "");
@@ -1033,11 +1075,21 @@ void brebus_oauth_callback(struct brebus *b, const char *state,
                            const char *code, const char *error,
                            struct janas_buf *html)
 {
-    char name[128] = "", err[400] = "";
+    char name[128] = "", err[400] = "", e[201];
     int rc = -1;
-    if (error && *error)
-        snprintf(err, sizeof err, "the server answered: %.200s", error);
-    else
+    if (error && *error) {
+        /* OAuth's error codes: letters, digits, _ . - alone (anything
+           else in a page's address is someone else's, not the server's) */
+        size_t k = 0;
+        for (const char *c = error; *c && k + 1 < sizeof e; c++)
+            e[k++] = (*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z') ||
+                             (*c >= '0' && *c <= '9') || *c == '_' ||
+                             *c == '.' || *c == '-'
+                         ? *c
+                         : '?';
+        e[k] = 0;
+        snprintf(err, sizeof err, "the server answered: %s", e);
+    } else
         rc =
             janas_oauth_finish(state, code, name, sizeof name, err, sizeof err);
     if (rc == 0) { /* opened again, with the token, when the model asks */
@@ -1051,19 +1103,33 @@ void brebus_oauth_callback(struct brebus *b, const char *state,
         }
         pthread_mutex_unlock(&b->tools_mu);
     }
+    /* the message as text, every sign of HTML written as an entity: no
+       script in this page at all (it is reached by any page's link) */
     struct janas_buf t = {0};
-    janas_json_write_str(&t, rc ? err : name, strlen(rc ? err : name));
+    for (const char *c = rc ? err : name; *c; c++) {
+        if (*c == '<')
+            janas_buf_puts(&t, "&lt;");
+        else if (*c == '>')
+            janas_buf_puts(&t, "&gt;");
+        else if (*c == '&')
+            janas_buf_puts(&t, "&amp;");
+        else if (*c == '"')
+            janas_buf_puts(&t, "&quot;");
+        else if (*c == '\'')
+            janas_buf_puts(&t, "&#39;");
+        else
+            janas_buf_put(&t, c, 1);
+    }
     janas_buf_printf(html,
                      "<!doctype html><meta charset=\"utf-8\"><title>Brebus</"
                      "title><style>body{font:16px system-ui,sans-serif;"
                      "margin:15vh auto;max-width:34em;padding:0 16px;color:"
                      "#222;background:#f6f5f2}@media(prefers-color-scheme:"
                      "dark){body{color:#e8e6e1;background:#17181a}}</style>"
-                     "<h1>%s</h1><p id=\"m\"></p><p>You can close this %s "
-                     "and go back to Brebus.</p><script>document."
-                     "getElementById(\"m\").textContent=%s;</script>",
-                     rc ? "Not signed in" : "Signed in", "tab",
-                     t.p ? t.p : "\"\"");
+                     "<h1>%s</h1><p>%.*s</p><p>You can close this %s and go "
+                     "back to Brebus.</p>",
+                     rc ? "Not signed in" : "Signed in", (int)t.n,
+                     t.p ? t.p : "", "tab");
     janas_buf_free(&t);
 }
 

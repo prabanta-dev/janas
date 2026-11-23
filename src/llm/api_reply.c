@@ -356,6 +356,26 @@ static void close_reasoning(janas_llm_chat *c)
     c->i_forced = 0;
 }
 
+/*
+ * The room the answer keeps while the model reasons: what it may take
+ * (max_answer), else an eighth of the context, 256 to 2048 tokens, never
+ * more than half of it. Reasoning with no budget used to go on until the
+ * context was full - a model that went round in circles, which reasoning
+ * at temperature 0 does, ended the request with "the context is full" and
+ * no answer (Qwen3.5-9B, 23 Nov 2026: 8171 tokens of reasoning for "what
+ * is your name"). Closed here, it answers with the room left.
+ */
+static uint32_t answer_room(const janas_llm_chat *c)
+{
+    uint32_t n = c->llm->n_ctx;
+    uint32_t r = c->p.max_answer > 0 ? (uint32_t)c->p.max_answer + 32 : n / 8;
+    if (r < 256)
+        r = 256;
+    if (c->p.max_answer <= 0 && r > 2048)
+        r = 2048;
+    return r < n / 2 ? r : n / 2;
+}
+
 int32_t janas_llm_chat_next(janas_llm_chat *c, char *buf, int32_t cap,
                             int32_t *len)
 {
@@ -448,9 +468,11 @@ int32_t janas_llm_chat_next(janas_llm_chat *c, char *buf, int32_t cap,
         } else if (got) {
             c->reply_tokens++;
             take(c, t);
-            if (c->in_think && c->p.max_reasoning > 0 &&
-                c->stats.reasoning_tokens >= (uint32_t)c->p.max_reasoning &&
-                c->i_forced >= c->n_forced)
+            if (c->in_think && c->i_forced >= c->n_forced &&
+                ((c->p.max_reasoning > 0 &&
+                  c->stats.reasoning_tokens >= (uint32_t)c->p.max_reasoning) ||
+                 janas_llm_session_length(c->s) + answer_room(c) >=
+                     c->llm->n_ctx))
                 close_reasoning(c);
         }
         janas_api_update_stats(c);

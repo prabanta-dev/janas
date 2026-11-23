@@ -232,7 +232,11 @@ struct srv_job {
     struct janas_llm_chat_stats st;               /* of the first reply */
     uint32_t prompt_tokens;                       /* of every prompt, once */
     uint32_t completion_tokens, reasoning_tokens; /* of all of them */
-    uint32_t queue_pos;       /* requests ahead of it, while it waits */
+    uint32_t queue_pos; /* requests ahead of it, while it waits */
+    /* the prompt being read: tokens read of how many (0 of 0 when it is
+       not being read), for a stream to tell its client while no token
+       comes - and to find, writing, that the client has gone */
+    uint32_t read_done, read_total;
     int low;                  /* a batch's: every other request goes first */
     const _Atomic int *watch; /* its submitter's (srv_engine_watch): 1 stops
                                  it as cancel does */
@@ -248,6 +252,9 @@ void srv_engine_stop(struct srv_engine *e);
    connection waits for a whole reply that no one will read; the batches'
    and the evals' go on (their workers stop them where they resume). */
 void srv_engine_cancel_clients(struct srv_engine *e);
+/* every client's reply under way or waiting stopped, the server going on:
+   how many (POST /janas/cancel, for the program that runs it - Brebus) */
+int srv_engine_cancel_all(struct srv_engine *e);
 /* Whether an embedding model is open, and the length of its vectors. */
 int32_t srv_engine_embed_dim(const struct srv_engine *e);
 /* The model's description (janas_llm_describe), for /v1/models. */

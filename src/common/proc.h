@@ -16,6 +16,7 @@ struct janas_proc {
     intptr_t id;  /* 0: none. POSIX its pid, Windows its process's handle */
     intptr_t job; /* Windows: the job object; 0 elsewhere */
     unsigned long pid;
+    int adopted; /* POSIX: not a child of this process (janas_proc_adopt) */
 };
 
 /* A group of its own: the terminal's Ctrl-C does not reach it, and
@@ -38,6 +39,15 @@ int janas_proc_start(struct janas_proc *p, const char *const argv[],
                      const char *const env[], const char *dir, int fd_in,
                      int fd_out, int fd_err, int flags, char *err,
                      size_t err_len);
+
+/*
+ * A process this one did not start (one of an earlier run, found by its
+ * pid), followed as if it had: waited for, killed (its group too when
+ * group, as JANAS_PROC_GROUP started it). On Windows it is put in a job of
+ * this process's, so that it ends with it. 0, or -1 when there is no such
+ * process to follow.
+ */
+int janas_proc_adopt(struct janas_proc *p, unsigned long pid, int group);
 
 /*
  * Waits up to timeout_ms (-1: as long as it takes, 0: only looks) for it

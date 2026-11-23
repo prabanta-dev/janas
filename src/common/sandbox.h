@@ -33,6 +33,9 @@ struct janas_sandbox_cfg {
     uint64_t mem_bytes;    /* address space; 0: 2 GiB */
     uint64_t file_bytes;   /* largest file written; 0: 1 GiB */
     uint64_t tmp_bytes;    /* the /tmp in memory; 0: 256 MiB */
+    uint64_t data_quota;   /* the most the cage's code writes to the data's
+                              disk while it lives (the disk's free space
+                              watched from outside); 0: 4 GiB */
 };
 
 struct janas_sandbox {

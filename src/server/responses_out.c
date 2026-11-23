@@ -583,12 +583,20 @@ long resp_stream_next(void *ctx, char *buf, size_t cap)
             end = produce(x);
         }
         if (end == 0 && x->n_pend == 0) {
+            /* a keep-alive after 5 s with nothing sent, however often the
+               engine woke this meanwhile (a long prompt read wakes it at
+               every block): writing is how a client gone is noticed */
             struct timespec t;
             clock_gettime(CLOCK_REALTIME, &t);
-            t.tv_sec += 5;
-            int rc = pthread_cond_timedwait(&j->cv, &j->mu, &t);
+            t.tv_sec += 1;
+            pthread_cond_timedwait(&j->cv, &j->mu, &t);
             end = produce(x);
-            if (x->n_pend == 0 && rc == ETIMEDOUT) {
+            struct timespec m;
+            clock_gettime(CLOCK_MONOTONIC, &m);
+            double now = m.tv_sec * 1e3 + m.tv_nsec / 1e6;
+            if (!x->last_ms)
+                x->last_ms = now;
+            if (x->n_pend == 0 && now - x->last_ms >= 5000) {
                 char *p = realloc(x->pend, 16);
                 if (p) {
                     x->pend = p;
@@ -596,6 +604,11 @@ long resp_stream_next(void *ctx, char *buf, size_t cap)
                     x->n_pend = 14;
                 }
             }
+        }
+        if (x->n_pend) {
+            struct timespec m;
+            clock_gettime(CLOCK_MONOTONIC, &m);
+            x->last_ms = m.tv_sec * 1e3 + m.tv_nsec / 1e6;
         }
         if (end < 0)
             x->done_sent = 1;

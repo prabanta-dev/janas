@@ -242,7 +242,13 @@ int dz_xlsx_text(const uint8_t *p, size_t n, struct janas_buf *out, char *why,
             snprintf(why, wn, "no xl/workbook.xml: not an Excel workbook");
         return -1;
     }
-    static struct rel r[MAX_PARTS];
+    /* each call its own (the index and a tool read at once) */
+    struct rel *r = calloc(MAX_PARTS, sizeof *r);
+    if (!r) {
+        free(rl);
+        snprintf(why, wn, "out of memory");
+        return -1;
+    }
     int nr =
         of_part(p, n, "xl/_rels/workbook.xml.rels", &rl, &rln, why, wn) == 0
             ? of_rels(rl, rln, r, MAX_PARTS)
@@ -275,8 +281,9 @@ int dz_xlsx_text(const uint8_t *p, size_t n, struct janas_buf *out, char *why,
     why[0] = 0;
     const char *q = wb, *end = wb + wbn;
     int sheets = 0;
-    for (const char *t;
-         sheets < MAX_PARTS && (t = of_find_tag(q, end, "sheet")); sheets++) {
+    for (const char *t; sheets < MAX_PARTS && out->n < DZ_TEXT_MAX &&
+                        (t = of_find_tag(q, end, "sheet"));
+         sheets++) {
         const char *e = of_tag_end(t, end);
         char name[256] = "", rid[64] = "", file[512];
         of_attr(t, e, "name", name, sizeof name);
@@ -304,7 +311,8 @@ int dz_xlsx_text(const uint8_t *p, size_t n, struct janas_buf *out, char *why,
         dz_unescape(name, strlen(name), out);
         janas_buf_puts(out, "\n");
         const char *rp = x, *rend = x + xn;
-        for (const char *row; (row = of_find_tag(rp, rend, "row"));) {
+        for (const char *row;
+             out->n < DZ_TEXT_MAX && (row = of_find_tag(rp, rend, "row"));) {
             const char *re = of_tag_end(row, rend);
             if (re[-2] == '/') { /* an empty row */
                 rp = re;
@@ -319,7 +327,8 @@ int dz_xlsx_text(const uint8_t *p, size_t n, struct janas_buf *out, char *why,
             if (!stop)
                 break;
             int last = -1; /* the column of the last cell written */
-            for (const char *c; (c = of_find_tag(re, stop, "c"));) {
+            for (const char *c;
+                 out->n < DZ_TEXT_MAX && (c = of_find_tag(re, stop, "c"));) {
                 const char *ce = of_tag_end(c, stop);
                 char ref[16] = "", type[16] = "";
                 of_attr(c, ce, "r", ref, sizeof ref);
@@ -371,6 +380,7 @@ int dz_xlsx_text(const uint8_t *p, size_t n, struct janas_buf *out, char *why,
     }
     free(wb);
     free(rl);
+    free(r);
     free(ss);
     free(at);
     janas_buf_free(&strs);
@@ -396,7 +406,13 @@ int dz_pptx_text(const uint8_t *p, size_t n, struct janas_buf *out, char *why,
                      "no ppt/presentation.xml: not a PowerPoint presentation");
         return -1;
     }
-    static struct rel r[MAX_PARTS];
+    /* each call its own (the index and a tool read at once) */
+    struct rel *r = calloc(MAX_PARTS, sizeof *r);
+    if (!r) {
+        free(rl);
+        snprintf(why, wn, "out of memory");
+        return -1;
+    }
     int nr = of_part(p, n, "ppt/_rels/presentation.xml.rels", &rl, &rln, why,
                      wn) == 0
                  ? of_rels(rl, rln, r, MAX_PARTS)
@@ -404,8 +420,8 @@ int dz_pptx_text(const uint8_t *p, size_t n, struct janas_buf *out, char *why,
     why[0] = 0;
     const char *q = pr, *end = pr + prn;
     int slide = 0;
-    for (const char *t;
-         slide < MAX_PARTS && (t = of_find_tag(q, end, "p:sldId"));) {
+    for (const char *t; slide < MAX_PARTS && out->n < DZ_TEXT_MAX &&
+                        (t = of_find_tag(q, end, "p:sldId"));) {
         const char *e = of_tag_end(t, end);
         char rid[64] = "", file[512];
         of_attr(t, e, "r:id", rid, sizeof rid);
@@ -428,7 +444,8 @@ int dz_pptx_text(const uint8_t *p, size_t n, struct janas_buf *out, char *why,
             out->n--;
         janas_buf_printf(out, "%s## Slide %d\n", out->n ? "\n\n" : "", ++slide);
         const char *ap = x, *aend = x + xn;
-        for (const char *para; (para = of_find_tag(ap, aend, "a:p"));) {
+        for (const char *para;
+             out->n < DZ_TEXT_MAX && (para = of_find_tag(ap, aend, "a:p"));) {
             const char *pe = of_tag_end(para, aend);
             if (pe[-2] == '/') {
                 ap = pe;
@@ -452,6 +469,7 @@ int dz_pptx_text(const uint8_t *p, size_t n, struct janas_buf *out, char *why,
     }
     free(pr);
     free(rl);
+    free(r);
     while (out->n && out->p[out->n - 1] == '\n')
         out->n--;
     if (out->oom) {

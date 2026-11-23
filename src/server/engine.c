@@ -481,7 +481,12 @@ static int one_piece(struct srv_engine *e, struct slot *s)
         return 0;
     }
     int think = janas_llm_chat_thinking(c);
+    struct janas_llm_chat_stats rs = {.size = sizeof rs};
+    int reading = janas_llm_chat_stats(c, &rs) == JANAS_LLM_OK &&
+                  rs.stage == JANAS_LLM_STAGE_INPUT;
     pthread_mutex_lock(&j->mu);
+    j->read_done = reading ? rs.input_done : 0;
+    j->read_total = reading ? rs.input_tokens : 0;
     int bad =
         take_calls(c, ch) != 0 || take_tokens(e->llm, c, j, ch, &s->seen) != 0;
     if (len > 0 && think)
@@ -1127,17 +1132,42 @@ struct srv_engine *srv_engine_start(const struct srv_config *cfg, char *err,
     return e;
 }
 
-/* A client's job ended because the server stops: an error that says so,
-   for the client still there. */
-static void cancel_job(struct srv_job *j)
+/* A client's job ended because the server stops, or because it was asked
+   (why): an error that says so, for the client still there. */
+static void cancel_job_why(struct srv_job *j, const char *why)
 {
     pthread_mutex_lock(&j->mu);
     j->cancel = 1;
     if (j->err == JANAS_LLM_OK) {
         j->err = JANAS_LLM_EFAIL;
-        snprintf(j->errmsg, sizeof(j->errmsg), "the server is stopping");
+        snprintf(j->errmsg, sizeof(j->errmsg), "%s", why);
     }
     pthread_mutex_unlock(&j->mu);
+}
+
+static void cancel_job(struct srv_job *j)
+{
+    cancel_job_why(j, "the server is stopping");
+}
+
+int srv_engine_cancel_all(struct srv_engine *e)
+{
+    if (!e)
+        return 0;
+    static const char why[] = "cancelled: the program that runs this server "
+                              "asked for its work to stop";
+    int n = 0;
+    pthread_mutex_lock(&e->mu);
+    if (e->running && !e->running->low)
+        cancel_job_why(e->running, why), n++;
+    for (int i = 0; i < e->n_slots; i++)
+        if (e->in_slot[i] && !e->in_slot[i]->low && e->in_slot[i] != e->running)
+            cancel_job_why(e->in_slot[i], why), n++;
+    for (struct srv_job *j = e->head; j; j = j->next)
+        if (!j->low)
+            cancel_job_why(j, why), n++;
+    pthread_mutex_unlock(&e->mu);
+    return n;
 }
 
 void srv_engine_cancel_clients(struct srv_engine *e)

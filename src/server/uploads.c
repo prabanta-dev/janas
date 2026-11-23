@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <time.h>
 #include <unistd.h>
 #include <yyjson.h>
@@ -273,6 +274,24 @@ int srv_uploads_part(struct srv_req *r)
     else if (u->got + data->n > u->bytes)
         ret = bad(r, "The parts would pass the bytes the upload was created "
                      "with.");
+    /* the parts of every pending upload, and the disk beside them: within
+       what the files kept may take, a margin left free */
+    uint64_t pending = 0;
+    for (size_t i = 0; ret == -1 && i < n_ups; i++)
+        if (ups[i].status == PENDING)
+            pending += ups[i].got;
+    struct statvfs vs;
+    uint64_t avail = statvfs(parts_dir, &vs) == 0
+                         ? (uint64_t)vs.f_bavail * (uint64_t)vs.f_frsize
+                         : 0;
+    if (ret == -1 && pending + data->n > SRV_FILES_MAX)
+        ret = srv_reply_error(r, 507, "server_error", NULL,
+                              "the pending uploads would pass %llu GiB: "
+                              "complete or cancel some",
+                              (unsigned long long)(SRV_FILES_MAX >> 30));
+    else if (ret == -1 && avail < data->n + SRV_FILES_DISK_FREE)
+        ret = srv_reply_error(r, 507, "server_error", NULL,
+                              "not enough disk for this part");
     int64_t now = (int64_t)time(NULL);
     if (ret == -1) {
         part_path(path, sizeof path, id);

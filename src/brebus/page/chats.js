@@ -5,9 +5,12 @@
 /* conversations, a file each in Brebus's data folder */
 let convs = [], cur = null;
 const newId = () => Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+/* what a chat is doing now, never kept: a summary being written */
+const CONV_NOW = new Set(["compacting"]);
 async function saveConv(c) {
   c.updated = Date.now();
-  await fetch("/brebus/chats/" + c.id, {method: "POST", body: JSON.stringify(c)});
+  await fetch("/brebus/chats/" + c.id, {method: "POST",
+    body: JSON.stringify(c, (k, v) => CONV_NOW.has(k) ? undefined : v)});
   refreshTree(); /* its title, its place among the newest */
 }
 async function readConvs() {
@@ -27,6 +30,9 @@ async function openConv(id) {
   followLog = true; /* a chat opened at its end */
   const r = await fetch("/brebus/chats/" + id);
   cur = r.ok ? await r.json() : null;
+  /* a chat saved while it was being summarized, by a Brebus before this
+     one: nothing is being written now */
+  if (cur) for (const k of CONV_NOW) delete cur[k];
   /* its tools allowed always: those unused for longer than the user allows
      ask again (Settings, Services) */
   if (cur && cur.approvals) {
@@ -34,9 +40,8 @@ async function openConv(id) {
     for (const [k, a] of Object.entries(cur.approvals))
       if (age === 0 || (age > 0 && Date.now() - (a.used || 0) > age * 1000)) delete cur.approvals[k];
   }
-  /* the chat used last, opened again at the next start */
-  if (cur) try { localStorage.setItem("brebus.last", JSON.stringify({ws: ws.path, id: cur.id})); } catch (e) {}
   listConvs(); drawLog();
+  if (typeof thinkButton === "function") thinkButton();
 }
 /* the chats of every recent workspace, searched as the user types */
 let searchTimer = null;
@@ -77,10 +82,11 @@ function listConvs() {
 }
 function newConv() {
   followLog = true;
+  /* written, and listed, with its first message (sendAsk) */
   cur = {id: newId(), title: "", model: "", system: "", messages: [], updated: Date.now()};
-  convs.unshift({id: cur.id, title: "", model: "", updated: cur.updated, messages: 0});
   show("chat");
   listConvs(); drawLog();
+  if (typeof thinkButton === "function") thinkButton();
 }
 /* a new chat of no project: in the free chats' place */
 async function newFree() {
@@ -91,6 +97,7 @@ async function renameConv() {
   const t = await input("A title for this chat", cur.title || "");
   if (t === null) return;
   cur.title = t.trim();
+  delete cur.autoTitle; /* the user's: no title of the model's over it */
   await saveConv(cur);
   const e = convs.find((c) => c.id === cur.id); if (e) e.title = cur.title;
   listConvs(); refreshTree();
@@ -147,6 +154,14 @@ async function branchConv(c, upto, where) {
     return;
   }
   await saveConv(n);
+  /* the artifacts written in the messages it takes keep the data they had
+     saved (window.storage) as they were at that point; the later ones'
+     stay behind */
+  const titles = [...new Set(n.messages.filter((m) => m.role === "assistant" && m.content)
+    .flatMap((m) => artParts(m.content)).filter((p) => p.art && !p.art.open).map((p) => p.art.title))];
+  if (titles.length)
+    await fetch("/brebus/artifact-store/copy", {method: "POST",
+      body: JSON.stringify({from: c.id, to: n.id, titles, upto: n.messages.length})}).catch(() => {});
   convs.unshift({id: n.id, title: n.title, model: n.model || "", updated: n.updated, messages: n.messages.length});
   await openConv(n.id);
 }
@@ -211,6 +226,7 @@ async function artShowFile(path, title) {
     const p = document.createElement("p"); p.className = "note";
     p.textContent = `${title}: not found in the workspace (${path})`; body.append(p);
   }
+  artZoomApply();
 }
 /* the pictures a reply names, by their paths */
 function picRefs(text) {
@@ -221,23 +237,21 @@ function picRefs(text) {
   }
   return out;
 }
+/* a reply's text: a picture it names from the workspace a card that opens
+   it beside the chat, where the Markdown puts it (inside a list, a table) */
 function renderText(el, text) {
-  let at = 0;
-  for (const m of text.matchAll(PICTURE)) {
-    const path = wsFile(m[2]);
-    if (!path) continue;
-    if (m.index > at) { const t = document.createElement("div"); render(t, text.slice(at, m.index)); el.append(t); }
-    const title = m[1] || m[2].split(/[\\/]/).pop();
+  render(el, text, {image: (src, alt) => {
+    if (!/\.(?:png|jpe?g|gif|webp|svg|bmp)$/i.test(src)) return null;
+    const path = wsFile(src);
+    if (!path) return null;
+    const title = alt || src.split(/[\\/]/).pop();
     const c = document.createElement("button");
     c.className = "artcard";
-    c.innerHTML = `<span>🖼</span><span><b>${esc(title)}</b><br><small>${esc(m[2])} · open it beside the chat</small></span>`;
+    c.innerHTML = `<span>🖼</span><span><b>${esc(title)}</b><br><small>${esc(src)} · open it beside the chat</small></span>`;
     c.title = "Open it beside the chat";
     c.onclick = () => artShowFile(path, title);
-    el.append(c);
-    at = m.index + m[0].length;
-  }
-  if (at === 0) return render(el, text);
-  if (at < text.length) { const t = document.createElement("div"); render(t, text.slice(at)); el.append(t); }
+    return c;
+  }});
 }
 
 function bubble(m) {
@@ -246,8 +260,9 @@ function bubble(m) {
   if (m.think) {
     const t = document.createElement("details");
     t.className = "think";
-    t.innerHTML = "<summary>Reasoning</summary><div class=\"thinktext\"></div>";
-    t.lastChild.textContent = m.think;
+    /* Markdown, as the model writes it there too */
+    t.innerHTML = "<summary>Reasoning</summary><div class=\"thinktext text\"></div>";
+    renderText(t.lastChild, m.think);
     keepOpen(t, m);
     d.append(t);
   }
@@ -278,6 +293,20 @@ function bubble(m) {
       }
     }
     if (!parts.length && m.tool_calls) body.textContent = "…";
+    /* the reply being written and nothing of it yet: a sign it works */
+    else if (!parts.length && m.think && busy && cur && m === cur.messages.at(-1)) {
+      /* reasoning, folded: still a sign it works, its seconds and the line
+         it is writing; a click opens it */
+      const line = m.think.trim().split("\n").filter((x) => x.trim()).at(-1) || "";
+      const s = Math.max(0, Math.round((Date.now() - (m.thinkAt || m.t)) / 1000));
+      body.className = "reasoning";
+      body.title = "Open the reasoning";
+      body.innerHTML = `<span class="working" role="status" aria-label="Reasoning">${PINTA}</span><span class="reading">Reasoning… ${s} s</span><span class="thinkline"></span>`;
+      body.lastChild.textContent = line.length > 160 ? "…" + line.slice(-160) : line;
+      body.onclick = () => { const t = d.querySelector("details.think"); if (t) t.open = true; };
+    } else if (!parts.length && busy && cur && m === cur.messages.at(-1))
+      /* the five points of Prabanta's pintadera, swelling in turn */
+      body.innerHTML = `<span class="working" role="status" aria-label="Thinking" title="Thinking">${PINTA}</span>${m.reading && m.reading.total ? `<span class="reading">Reading your message… ${Math.floor(100 * m.reading.done / m.reading.total)}%</span>` : ""}`;
   } else body.textContent = m.content || "";
   d.append(body);
   if (m.attached && m.attached.length) {
@@ -294,10 +323,6 @@ function bubble(m) {
     pre.style.whiteSpace = "pre-wrap"; pre.textContent = m.found;
     f.append(pre); d.append(f);
   }
-  if (m.speed) {
-    const s = document.createElement("div");
-    s.className = "speed"; s.textContent = m.speed; d.append(s);
-  }
   return d;
 }
 /* a reply being written, drawn again in place: its reasoning's box kept,
@@ -308,7 +333,7 @@ function redraw(el, m) {
   const old = el.querySelector(":scope > details.think");
   const now = fresh.querySelector(":scope > details.think");
   if (!old || !now) return el.replaceWith(fresh);
-  old.querySelector(".thinktext").textContent = m.think;
+  renderText(old.querySelector(".thinktext"), m.think);
   now.remove();
   while (old.nextSibling) old.nextSibling.remove();
   while (old.previousSibling) old.previousSibling.remove();
@@ -320,11 +345,21 @@ function drawLog() {
   const log = $("#log");
   log.innerHTML = "";
   const ms = cur ? cur.messages : [];
+  const sum = summaryNow();
   ms.forEach((m, k) => {
-    const d = bubble(m);
-    /* each message's own actions, small, shown under the pointer: copy;
-       a question changed and asked again; a reply read aloud, written
-       again (the last one), its versions paged through */
+    if (sum && k === sum.upto) log.append(summaryLine());
+    const box = bubble(m);
+    /* a turn: the message's box and, under it, outside it, its line - the
+       buttons and what is known of it (when, how fast) - the box as wide
+       as the line at least */
+    const turn = document.createElement("div");
+    turn.className = "turn " + m.role;
+    turn.append(box);
+    const d = document.createElement("div");
+    d.className = "msgfoot";
+    /* each message's own actions: copy; a question changed and asked
+       again, gone back to, or taken to a new chat; a reply read aloud,
+       written again (the last one), its versions paged through */
     const act = (ic, title, run) => {
       const b = document.createElement("button");
       b.type = "button"; b.className = "msgico"; b.title = title;
@@ -345,13 +380,19 @@ function drawLog() {
       if (navigator.clipboard) navigator.clipboard.writeText(m.content || "").then(done).catch(old);
       else old();
     };
-    if (m.role === "user" && !busy) {
-      const bar = document.createElement("div");
-      bar.className = "msgacts";
-      const c = act("copy", "Copy this message", () => copy(c));
-      bar.append(c);
-      if (!cur.archived) bar.append(act("pencil", "Change this message and ask again from it", () => editMessage(k)));
-      d.append(bar);
+    if (m.role === "user") {
+      if (m.t) d.append(when(m.t));
+      if (!busy) {
+        const bar = document.createElement("div");
+        bar.className = "msgacts";
+        const c = act("copy", "Copy this message", () => copy(c));
+        bar.append(c);
+        if (!cur.archived) {
+          bar.append(act("pencil", "Change this message and ask again from it", () => editMessage(k)));
+          bar.append(act("restore", "Go back to here: this message and what follows are taken away, its words put back in the field", () => rewindTo(k)));
+        }
+        d.append(bar);
+      }
     }
     if (m.role === "assistant" && m.content && !busy) {
       const bar = document.createElement("div");
@@ -359,8 +400,10 @@ function drawLog() {
       const c = act("copy", "Copy this reply", () => copy(c));
       bar.append(c);
       if (!cur.archived) bar.append(act("branch", "A new chat with the conversation up to this reply, to go on another way", () => branchConv(cur, k)));
+      if (!cur.archived && server.running && !(summaryNow() && k < cur.summary.upto))
+        bar.append(act("fold", "Summarize up to here: the model reads a summary in place of these messages, to make room", () => summarizeTo(k)));
       if ("speechSynthesis" in window)
-        bar.append(act("speakOn", "Read this reply aloud (again: stop)", () => {
+        bar.append(act("speakLoud", "Read this reply aloud (again: stop)", () => {
           if (speechSynthesis.speaking) { speechSynthesis.cancel(); return; }
           speakReply(m, true);
         }));
@@ -380,11 +423,60 @@ function drawLog() {
         n.textContent = `${m.vi + 1}/${m.variants.length}`;
         bar.append(prev, n, next);
       }
-      bar.append(act("restore", "Write this reply again; the earlier ones are kept", regenerate));
     }
-    log.append(d);
+    /* a reply's buttons first, then how fast it came and when */
+    if (m.role === "assistant" && (m.speed || m.t)) {
+      const info = document.createElement("span");
+      info.className = "msginfo";
+      if (m.speed) info.append(m.speed);
+      if (m.speed && m.t) info.append(" · ");
+      if (m.t) info.append(when(m.t));
+      d.append(info);
+    }
+    if (d.childNodes.length) turn.append(d);
+    log.append(turn);
   });
+  if (sum && sum.upto === ms.length) log.append(summaryLine());
+  const busyLine = compactingLine();
+  if (busyLine) log.append(busyLine);
   if (followLog) log.scrollTop = log.scrollHeight;
+}
+/* how long ago, in words: now, 5 min ago, 3 h ago, 2 days ago (its title
+   the date and time); the words kept up to date every half minute */
+function agoText(t) {
+  const s = Math.max(0, (Date.now() - t) / 1000);
+  if (s < 45) return "now";
+  if (s < 3600) return Math.round(s / 60) + " min ago";
+  if (s < 86400) return Math.round(s / 3600) + " h ago";
+  const d = Math.round(s / 86400);
+  return d === 1 ? "1 day ago" : d + " days ago";
+}
+function when(t) {
+  const e = document.createElement("span");
+  e.className = "msgwhen";
+  e.dataset.t = t;
+  e.textContent = agoText(t);
+  e.title = new Date(t).toLocaleString();
+  return e;
+}
+setInterval(() => {
+  for (const e of document.querySelectorAll(".msgwhen")) put(e, "textContent", agoText(+e.dataset.t));
+}, 30000);
+/* back to message k: it and what follows go, its words in the field */
+async function rewindTo(k) {
+  if (busy) return;
+  const m = cur.messages[k];
+  const after = cur.messages.length - k;
+  if (!await yes(`This message and the ${after - 1} after it are taken away; its words go back in the field. A branch first keeps them, if you want them.`, "Go back to here?", "Go back")) return;
+  cur.messages = cur.messages.slice(0, k);
+  await saveConv(cur);
+  /* its artifacts' saved data as they were then */
+  await fetch("/brebus/artifact-store/rewind", {method: "POST",
+    body: JSON.stringify({chat: cur.id, upto: k})}).catch(() => {});
+  drawLog();
+  $("#ask").value = m.content || "";
+  growAsk();
+  $("#ask").focus();
 }
 /* while a reply is written, the chat follows it to its end only as long as
    the user stays there: scrolled up to read, it is left where it is */
@@ -408,7 +500,13 @@ function sendButton() {
   b.title = busy ? "Stop (Esc)" : rec ? "Stop recording: what you said is written in the field"
     : mic ? "Dictate: speak, then click again" : "Send (Enter)";
   b.setAttribute("aria-label", busy ? "Stop" : mic ? "Dictate" : "Send");
-  b.disabled = false;
+  /* a model being loaded, with no reply under way: nothing to send to yet */
+  const loading = !!modelLoading && !busy;
+  const ask = $("#ask");
+  if (!ask.dataset.hint) ask.dataset.hint = ask.placeholder;
+  ask.disabled = loading;
+  ask.placeholder = loading ? $("#loaded").textContent || "Loading the model…" : ask.dataset.hint;
+  b.disabled = loading;
 }
 function growAsk() {
   const t = $("#ask");
@@ -493,16 +591,46 @@ function drawChips() {
     b.onclick = () => { pending.splice(+b.dataset.i, 1); drawChips(); };
 }
 const kb = (n) => n < 1e6 ? (n / 1024).toFixed(0) + " KB" : (n / 1048576).toFixed(1) + " MB";
+/* files of the browser's computer sent to Brebus, kept in the
+   workspace's sources/ and attached */
+async function uploadFiles(files) {
+  if (!ws.path) { wsShow(true); return; }
+  for (const f of files) {
+    $("#attach").textContent = "…";
+    const r = await fetch("/brebus/upload?name=" + encodeURIComponent(f.name), {method: "POST", body: f});
+    const j = await r.json().catch(() => ({}));
+    $("#attach").textContent = "+";
+    if (!r.ok) { say((j.error || "not sent") + ": " + f.name); continue; }
+    pending.push(j); drawChips();
+  }
+}
+$("#upfile").onchange = () => { const f = [...$("#upfile").files]; $("#upfile").value = ""; uploadFiles(f); };
+/* a file dropped on the chat: sent and attached */
+for (const el of [$("#log"), $("#form")]) {
+  el.addEventListener("dragover", (e) => { if (e.dataTransfer?.types?.includes("Files")) e.preventDefault(); });
+  el.addEventListener("drop", (e) => {
+    if (!e.dataTransfer?.files?.length) return;
+    e.preventDefault();
+    uploadFiles([...e.dataTransfer.files]).catch((x) => say(x.message));
+  });
+}
 async function attach() {
   if (!ws.path) { wsShow(true); return; }
   let src;
-  if (ws.window) {
+  if (!ws.window) {
+    /* from a browser: a file of this computer is sent; one of the machine
+       Brebus runs on is chosen there, or a web address given */
+    const d = await dialog({title: "Attach", text: "A file of this computer is sent to Brebus and kept in the workspace's sources/. Or one of the computer Brebus runs on, by its path or chosen there, or a web address.",
+      input: "", buttons: [{label: "Send a file…", value: "up", primary: true}, {label: "OK", value: "ok"}, {label: "Choose there…", value: "browse", beside: true}, {label: "Cancel", value: "no"}]});
+    if (d.button === "no") return;
+    if (d.button === "up") { $("#upfile").click(); return; }
+    src = d.button === "browse" ? await pick(true, "Attach a file") : d.value;
+  } else if (ws.window) {
     const d = await dialog({title: "Attach", text: "A file of this computer, by its full path, or a web address (downloaded into the workspace's sources/).",
-      input: "", buttons: [{label: "OK", value: "ok", primary: true}, {label: "Browse…", value: "browse"}, {label: "Cancel", value: "no"}]});
+      input: "", buttons: [{label: "OK", value: "ok", primary: true}, {label: "Browse…", value: "browse", beside: true}, {label: "Cancel", value: "no"}]});
     if (d.button === "no") return;
     src = d.button === "browse" ? await pick(true, "Attach a file") : d.value;
-  } else
-    src = await input("Attach", "", "A file of this computer, by its full path, or a web address (downloaded into the workspace's sources/).");
+  }
   src = (src || "").trim();
   if (!src) return;
   let mode = "copy";

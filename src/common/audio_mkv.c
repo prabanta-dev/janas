@@ -240,6 +240,8 @@ static int read_block(const uint8_t *file, const uint8_t *p, uint64_t n,
                 c = *p++;
                 s += (size_t)c;
             } while (c == 255);
+            if (total > (size_t)(end - p) || s > (size_t)(end - p) - total)
+                return -1;
             sizes[i] = s;
             total += s;
         }
@@ -248,6 +250,10 @@ static int read_block(const uint8_t *file, const uint8_t *p, uint64_t n,
         if (vint(p, end, 1, &s, &l) != 0)
             return -1;
         p += l;
+        /* every size within the bytes left (an "unknown" vint, all ones,
+           is no size) */
+        if (s > (uint64_t)(end - p))
+            return -1;
         sizes[0] = (size_t)s;
         total = (size_t)s;
         for (int i = 1; i < count - 1; i++) {
@@ -257,7 +263,8 @@ static int read_block(const uint8_t *file, const uint8_t *p, uint64_t n,
             p += l;
             int64_t diff = (int64_t)raw - (((int64_t)1 << (7 * l - 1)) - 1);
             int64_t next = (int64_t)sizes[i - 1] + diff;
-            if (next < 0)
+            if (next < 0 || total > (size_t)(end - p) ||
+                (uint64_t)next > (uint64_t)((size_t)(end - p) - total))
                 return -1;
             sizes[i] = (size_t)next;
             total += (size_t)next;
@@ -362,8 +369,8 @@ static int vorbis_headers(const uint8_t *p, size_t n, struct ogg_packets *o)
 
 static int concat_decode(const uint8_t *head, size_t hn, const uint8_t *d,
                          const struct mframes *f,
-                         int (*dec)(const uint8_t *, size_t,
-                                    struct audio_out *, char *, size_t),
+                         int (*dec)(const uint8_t *, size_t, struct audio_out *,
+                                    char *, size_t),
                          struct audio_out *ao, char *why, size_t wn)
 {
     size_t total = hn;
@@ -464,8 +471,8 @@ static int pcm_decode(const struct mtrack *t, const uint8_t *d,
     return audio_put(ao, pcm, at, why, wn);
 }
 
-int janas_audio_mkv(const uint8_t *d, size_t n, struct audio_out *ao,
-                    char *why, size_t wn)
+int janas_audio_mkv(const uint8_t *d, size_t n, struct audio_out *ao, char *why,
+                    size_t wn)
 {
     if (n < 4 || memcmp(d, "\x1a\x45\xdf\xa3", 4))
         return 1;
@@ -603,8 +610,8 @@ int janas_audio_mkv(const uint8_t *d, size_t n, struct audio_out *ao,
             snprintf(why, wn, "a Matroska track of FLAC without its header");
             goto end;
         }
-        rc = concat_decode(t.priv, t.priv_len, d, &f, janas_audio_flac, ao,
-                           why, wn);
+        rc = concat_decode(t.priv, t.priv_len, d, &f, janas_audio_flac, ao, why,
+                           wn);
     } else if (!strncmp(c, "A_AAC", 5)) {
         struct aac_cfg cfg;
         uint8_t asc[8];
@@ -638,10 +645,10 @@ int janas_audio_mkv(const uint8_t *d, size_t n, struct audio_out *ao,
     if (rc == 0 && strcmp(c, "A_OPUS") && (t.codec_delay || f.discard > 0)) {
         uint64_t skip =
             (t.codec_delay * ao->rate + 500000000ull) / 1000000000ull;
-        uint64_t cut =
-            f.discard > 0
-                ? ((uint64_t)f.discard * ao->rate + 500000000ull) / 1000000000ull
-                : 0;
+        uint64_t cut = f.discard > 0
+                           ? ((uint64_t)f.discard * ao->rate + 500000000ull) /
+                                 1000000000ull
+                           : 0;
         uint64_t kept = audio_out_kept(ao);
         if (skip + cut >= kept) {
             snprintf(why, wn, "a Matroska track without sound");

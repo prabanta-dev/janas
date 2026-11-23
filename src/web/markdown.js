@@ -4,20 +4,18 @@
  * markdown.js - the Markdown a model writes, shown as the web pages of
  * Janas show it: janas-server's chat page (/test) and Brebus's. build.sh
  * puts it into each page where it says <!--#include web/markdown.js-->,
- * with web/markdown.css for its looks (the page sets --md-accent,
- * --md-code, --md-code-bg, --md-dim, --md-line). Its rules are janas-chat's
- * (src/chat/markdown.h): render(el, text) fills el with text's blocks.
- */
-/*
- * The marks a model writes, shown instead of printed, with janas-chat's own
- * rules (src/chat/markdown.h), ported here character for character:
- * **bold**, *italic*, _italic_, `code`, fenced blocks, headings, bullets.
- * A star opens only when something follows it and closes only when
- * something came before, and never inside a word: 2*3 is a product. An
- * underscore counts only alone and at the edge of a word, so snake_case and
- * __init__ stay as they are. At the end of the text a mark still held is
- * decided, not printed. Whatever the model writes goes in as text, never as
- * markup.
+ * after web/md_entities.js and web/md_parse.js (the reading: CommonMark
+ * 0.31.2 and GitHub's extensions), with web/markdown.css for its looks (the
+ * page sets --md-accent, --md-code, --md-code-bg, --md-dim, --md-line,
+ * --md-pre-bg). render(el, text, opts) fills el with text's blocks.
+ *
+ * Whatever the model writes goes in as text, never as markup: the page
+ * builds every element itself. Raw HTML is shown as the text it is, but
+ * for <br> and the plain tags of text without attributes (<sup>2</sup>,
+ * <kbd>Ctrl</kbd>...), drawn as they mean. A line break inside a paragraph
+ * is a line break, as GitHub shows comments: a model writes lines meaning
+ * them. Pictures of the web are not loaded (opts.image decides the others).
+ * A link opens only to http and https, asked about first.
  */
 /* A link's click: asked about first, then opened in a tab of its own that
    is not told where it came from. */
@@ -34,336 +32,172 @@ async function openLink(e) {
     window.open(url, "_blank", "noopener,noreferrer");
 }
 
-/* [text](http…) and addresses written out: only http and https, never a
-   javascript: or data: address. */
-const LINKS = /\[([^\]\n]+)\]\((https?:\/\/[^\s()<>]+)\)|(https?:\/\/[^\s<>()\[\]"']*[^\s<>()\[\]"'.,;:!?])/g;
+const MD_PLAIN_TAGS = /^(?:b|i|u|s|em|strong|del|ins|sub|sup|kbd|mark|small|code|abbr|q|cite|var|samp)$/;
+const MD_BR = /^<br[ \t\n]*\/?>$/i;
 
-function renderInline(el, text) {
-  let fence = false, info = false, bold = false, ital = false, mono = false,
-      strike = false, heading = 0, bol = true, last = "", pend = "",
-      pendBol = false,
-      indent = "", run = "", pre = null, afterFence = false;
-  const flushRun = () => {
-    if (!run) return;
-    if (pre) {
-      pre.appendChild(document.createTextNode(run));
-    } else if (bold || ital || mono || heading || strike) {
-      /* a heading keeps its level: the terminal can only make it bold, a
-         page can make # larger than ## and ## larger than the rest */
-      const sp = document.createElement("span");
-      sp.className = (bold ? "b " : "") + (ital ? "i " : "") +
-                     (mono ? "m " : "") + (strike ? "s " : "") +
-                     (heading ? "h" + Math.min(heading, 6) : "");
-      sp.textContent = run;
-      el.appendChild(sp);
-    } else {
-      el.appendChild(document.createTextNode(run));
-    }
-    run = "";
-  };
-  const write = (t) => { run += t; };
-  const style = (f) => { flushRun(); f(); };
-  const flushIndent = () => { write(indent); indent = ""; };
-  const flushPend = () => { flushIndent(); write(pend); pend = ""; };
-  const endLine = () => style(() => {
-    heading = 0;
-    ital = bold = mono = strike = false;
-  });
-  /* a link: its own element, in the style of the text around it */
-  const link = (label, url) => {
-    flushRun();
-    const a = document.createElement("a");
-    a.className = "link";
-    a.textContent = label;
-    a.href = url;
-    a.title = url;
-    a.rel = "noopener noreferrer nofollow";
-    a.addEventListener("click", openLink);
-    if (bold || ital || heading || strike) {
-      const sp = document.createElement("span");
-      sp.className = (bold ? "b " : "") + (ital ? "i " : "") +
-                     (strike ? "s " : "") +
-                     (heading ? "h" + Math.min(heading, 6) : "");
-      sp.appendChild(a);
-      el.appendChild(sp);
-    } else {
-      el.appendChild(a);
-    }
-    last = label.slice(-1);
-    bol = false;
-  };
-  const isAlnum = (c) => /[0-9A-Za-z]/.test(c);
-
-  function byte(c) {
-    if (afterFence) {
-      afterFence = false;
-      if (c === "\n") { bol = true; last = ""; return; }
-    }
-    if (c === "\n" && info) { info = false; bol = true; last = ""; return; }
-    if (info) { /* the language named after the fence, kept for colours */
-      if (pre && /[\w+#.-]/.test(c)) pre.dataset.lang = (pre.dataset.lang || "") + c;
-      return;
-    }
-    if (pend) {
-      pend += c || "\u0000"; /* the end counts, as the 0 does in C */
-      if (pend[0] === "~") { /* ~~struck~~, attached as the stars are */
-        if (pend.length === 2 && c === "~") return;
-        const tildes = pend.length - 1;
-        pend = "";
-        if (tildes === 2) {
-          const opens = !strike && c && c !== " " && c !== "\t";
-          const closes = strike && last && last !== " " && last !== "\t";
-          if (opens || closes) style(() => { strike = opens; });
-          else { write("~~"); last = "~"; }
-        } else {
-          write("~");
-          last = "~";
-        }
-        if (c) byte(c);
-        return;
-      }
-      if (pend[0] === "_") {
-        pend = "";
-        if (c === "_") { write("__"); last = "_"; return; } /* a run: text */
-        const opens = !ital && c && c !== " " && c !== "\t" && c !== "\n" &&
-                      !isAlnum(last);
-        const closes = ital && last && last !== " " && last !== "\t" &&
-                       !isAlnum(c);
-        if (opens || closes) {
-          style(() => { ital = opens; });
-        } else {
-          write("_");
-          last = "_";
-        }
-        if (c) byte(c);
-        return;
-      }
-      if (pend[0] === "`") {
-        if (pend.length === 2 && c === "`") return;
-        if (pend.length === 3 && c === "`") { /* a fence */
-          pend = "";
-          indent = "";
-          flushRun();
-          fence = !fence;
-          if (fence) {
-            pre = document.createElement("pre");
-            el.appendChild(pre);
-            info = true; /* the language named after it */
-          } else {
-            /* a block is a box of its own on a page: the line break that
-               ends its last line, and the one after the closing fence,
-               would only add an empty line */
-            const t = pre.lastChild;
-            if (t && t.nodeValue.endsWith("\n"))
-              t.nodeValue = t.nodeValue.slice(0, -1);
-            pre = null;
-            afterFence = true;
+/* <br>, and <sup>…</sup> and the like (no attributes) around inlines of
+   one parent: as they mean, in the tree */
+function mdPlainTags(doc) {
+  mdWalk(doc, (n) => {
+    let open = [];
+    for (let c = n.first; c;) {
+      const next = c.next;
+      if (c.t === "htmlspan") {
+        let m;
+        if (MD_BR.test(c.lit)) {
+          c.t = "hardbreak";
+        } else if ((m = c.lit.match(/^<([A-Za-z]+)>$/)) && MD_PLAIN_TAGS.test(m[1].toLowerCase())) {
+          open.push({name: m[1].toLowerCase(), node: c});
+        } else if ((m = c.lit.match(/^<\/([A-Za-z]+)[ \t\n]*>$/))) {
+          const name = m[1].toLowerCase();
+          let k = open.length - 1;
+          while (k >= 0 && open[k].name !== name) k--;
+          if (k >= 0) {
+            const o = open[k].node, tag = mdNode("tag");
+            tag.name = name;
+            for (let x = o.next; x && x !== c;) {
+              const nx = x.next;
+              mdUnlink(x);
+              mdAppend(tag, x);
+              x = nx;
+            }
+            mdInsertAfter(o, tag);
+            mdUnlink(o);
+            mdUnlink(c);
+            open.length = k;
           }
-          return;
         }
-        const ticks = pend.length - 1;
-        pend = "";
-        for (let k = 0; k < ticks; k++) style(() => { mono = !mono; });
-        if (c) byte(c);
-        return;
       }
-      if (pend[0] === "*") {
-        if (pendBol && pend.length === 2 && c === " ") {
-          pend = "";
-          write("\u2022 ");
-          return;
-        }
-        if (pend.length === 2 && c === "*") return;
-        const stars = pend.length - 1;
-        const opens = c && c !== " " && c !== "\t" && !isAlnum(last);
-        const closes = last && last !== " " && last !== "\t";
-        pend = "";
-        const on = stars === 2 ? bold : ital;
-        if (!on && opens) {
-          style(() => { if (stars === 2) bold = true; else ital = true; });
-        } else if (on && closes) {
-          style(() => { if (stars === 2) bold = false; else ital = false; });
-        } else {
-          write("*".repeat(stars));
-          last = "*";
-        }
-        if (c) byte(c);
-        return;
-      }
-      if (pend[0] === "#") {
-        if (c === "#" && pend.length < 7) return;
-        const hashes = pend.length - 1;
-        pend = "";
-        if (c === " ") { style(() => { heading = hashes; }); return; }
-        write("#".repeat(hashes)); /* all of them */
-        if (c) byte(c);
-        return;
-      }
-      if (pend[0] === "-" || pend[0] === "+") {
-        const lead = pend[0];
-        pend = "";
-        if (c === " ") { write("\u2022 "); return; }
-        write(lead);
-        if (c) byte(c);
-        return;
-      }
-      pend = pend.slice(0, -1);
-      flushPend();
-      if (!c) return;
+      c = next;
     }
-    if (c === "\n") {
-      endLine();
-      indent = "";
-      write("\n");
-      bol = true;
-      last = "";
-      return;
-    }
-    if (fence) { /* inside a block only the closing fence is a mark */
-      if (bol && c === "`") { pend = c; pendBol = true; bol = false; return; }
-      if (c === " " || c === "\t") {
-        if (bol && indent.length < 16) { indent += c; last = c; return; }
-      } else {
-        bol = false;
-      }
-      flushIndent();
-      last = c;
-      write(c);
-      return;
-    }
-    if (bol && (c === "#" || c === "-" || c === "+" || c === "*")) {
-      flushIndent();
-      pend = c;
-      pendBol = true;
-      bol = false;
-      return;
-    }
-    if (c === "*" || c === "`" || c === "~" || (c === "_" && last !== "_")) {
-      if (c !== "`") flushIndent();
-      pend = c;
-      pendBol = false;
-      bol = false;
-      return;
-    }
-    if (c === " " || c === "\t") {
-      if (bol && indent.length < 16) { indent += c; last = c; return; }
-    } else {
-      bol = false;
-    }
-    flushIndent();
-    last = c;
-    write(c);
-  }
-
-  const at = new Map();
-  for (const m of text.matchAll(LINKS))
-    at.set(m.index, { end: m.index + m[0].length, label: m[1] || m[3],
-                      url: m[2] || m[3] });
-  for (let i = 0; i < text.length; i++) {
-    const k = at.get(i);
-    if (k && !fence && !mono && !pend && !info) {
-      flushIndent();
-      link(k.label, k.url);
-      i = k.end - 1;
-      continue;
-    }
-    byte(text[i]);
-  }
-  if (pend) byte(""); /* the end: what is held back is decided, not printed */
-  flushIndent();
-  endLine();
-  flushRun();
+  });
 }
 
-/* A table's row: its cells, without the outer bars. */
-function cells(line) {
-  let t = line.trim();
-  if (t.startsWith("|")) t = t.slice(1);
-  if (t.endsWith("|")) t = t.slice(0, -1);
-  return t.split("|").map((c) => c.trim());
+function mdPlainText(n) {
+  let s = "";
+  mdWalk(n, (c) => {
+    if (c.t === "text" || c.t === "codespan" || c.t === "math") s += c.lit;
+    else if (c.t === "softbreak" || c.t === "hardbreak") s += " ";
+  });
+  return s;
 }
-
-/*
- * A reply: its blocks first - quotes (> ...) and tables (| ... |), which
- * the terminal cannot draw but a page can - and the rest through the
- * machine above. Nothing inside a fenced block is a quote or a table.
- */
-/* A fenced block opened with an indent (inside a list item) loses that
-   indent from all its lines: the code as it is written, not as it sits. */
-function dedentFences(text) {
-  const out = [];
-  let cut = -1;
-  for (const line of text.split("\n")) {
-    const m = line.match(/^([ \t]*)(```|~~~)/);
-    if (cut < 0) {
-      if (m) cut = m[1].replace(/\t/g, "    ").length;
-      out.push(m ? line.slice(m[1].length) : line);
-    } else {
-      let k = 0;
-      while (k < cut && (line[k] === " " || line[k] === "\t")) k++;
-      out.push(line.slice(k));
-      if (m) cut = -1;
-    }
-  }
-  return out.join("\n");
+function mdLink(href, title) {
+  const a = document.createElement("a");
+  a.className = "link";
+  a.href = href;
+  a.title = title || href;
+  a.rel = "noopener noreferrer nofollow";
+  a.addEventListener("click", openLink);
+  return a;
 }
+const mdOpens = (href) => /^https?:\/\//i.test(href);
 
-function render(el, text) {
-  el.textContent = "";
-  text = dedentFences(text);
-  const blocks = [];
-  let fence = false, cur = null;
-  const put = (type, line) => {
-    if (!cur || cur.type !== type) blocks.push(cur = { type, lines: [] });
-    cur.lines.push(line);
+/* the tree into el, element by element */
+function mdDom(doc, el, opts) {
+  const stack = [el];
+  const top = () => stack[stack.length - 1];
+  const add = (x) => { top().appendChild(x); return x; };
+  const open = (tag, cls) => {
+    const x = document.createElement(tag);
+    if (cls) x.className = cls;
+    return add(x);
   };
-  for (const line of text.split("\n")) {
-    if (line.trim().startsWith("```")) {
-      put("text", line);
-      fence = !fence;
-    } else if (!fence && /^\s*>/.test(line)) {
-      put("quote", line.replace(/^\s*>\s?/, ""));
-    } else if (!fence && /^\s*\|.*\|\s*$/.test(line)) {
-      put("table", line);
-    } else {
-      put("text", line);
+  const text = (s) => add(document.createTextNode(s));
+  const tight = (n) => n.parent.t === "item" && n.parent.parent && n.parent.parent.tight;
+  mdWalk(doc, (n) => {
+    let into = null; /* where n's children go */
+    switch (n.t) {
+    case "para": into = tight(n) ? top() : open("p"); break;
+    case "heading": into = open("h" + n.level); break;
+    case "hr": open("hr"); break;
+    case "code": {
+      const pre = open("pre");
+      const lang = (n.info || "").split(/[ \t\n]+/)[0];
+      if (lang) pre.dataset.lang = lang;
+      pre.textContent = n.lit.replace(/\n$/, "");
+      break;
     }
-  }
-  for (const b of blocks) {
-    if (b.type === "quote") {
-      const q = document.createElement("div");
-      q.className = "quote";
-      render(q, b.lines.join("\n"));
-      el.appendChild(q);
-    } else if (b.type === "table") {
-      const rows = b.lines.map(cells);
-      const sep = rows.length > 1 &&
-        rows[1].every((c) => /^:?-+:?$/.test(c));
-      const align = sep ? rows[1].map((c) => c.endsWith(":")
-        ? (c.startsWith(":") ? "center" : "right") : "") : [];
-      const wrap = document.createElement("div");
-      wrap.className = "table";
-      const table = document.createElement("table");
-      rows.forEach((r, i) => {
-        if (sep && i === 1) return;
-        const tr = document.createElement("tr");
-        r.forEach((c, j) => {
-          const td = document.createElement(sep && i === 0 ? "th" : "td");
-          if (align[j]) td.style.textAlign = align[j];
-          renderInline(td, c);
-          tr.appendChild(td);
-        });
-        table.appendChild(tr);
-      });
-      wrap.appendChild(table);
-      el.appendChild(wrap);
-    } else {
-      /* quotes and tables are boxes with margins of their own: the empty
-         lines around them would only add to one side */
-      const t = blocks.length > 1
-        ? b.lines.join("\n").replace(/^\n+|\n+$/g, "")
-        : b.lines.join("\n");
-      if (t) renderInline(el, t);
+    case "html":
+      if (/^(?:[ \t\n]*<br[ \t\n]*\/?>)+[ \t\n]*$/i.test(n.lit)) {
+        for (let k = n.lit.match(/<br/gi).length; k > 0; k--) open("br");
+      } else open("div", "rawhtml").textContent = n.lit;
+      break;
+    case "quote": into = open("blockquote"); break;
+    case "list":
+      into = open(n.ordered ? "ol" : "ul", n.tight ? "" : "loose");
+      if (n.ordered && n.start !== 1) into.start = n.start;
+      break;
+    case "item":
+      into = open("li");
+      if (n.task !== null && n.task !== undefined) {
+        into.className = "task";
+        const box = document.createElement("input");
+        box.type = "checkbox";
+        box.disabled = true;
+        box.checked = n.task;
+        into.appendChild(box);
+      }
+      break;
+    case "table": {
+      const wrap = open("div", "table");
+      into = document.createElement("table");
+      wrap.appendChild(into);
+      break;
     }
-  }
+    case "tr": {
+      const t = top();
+      let sec = t.lastChild;
+      if (n.head || !sec || sec.tagName !== "TBODY") {
+        sec = document.createElement(n.head ? "thead" : "tbody");
+        t.appendChild(sec);
+      }
+      into = document.createElement("tr");
+      sec.appendChild(into);
+      break;
+    }
+    case "td":
+      into = open(n.parent.head ? "th" : "td");
+      if (n.align) into.style.textAlign = n.align;
+      break;
+    case "text": text(n.lit); break;
+    case "softbreak": case "hardbreak": open("br"); break;
+    case "codespan": open("code").textContent = n.lit; break;
+    case "htmlspan": text(n.lit); break;
+    /* as written: KaTeX reads it there (decorate, in Brebus) */
+    case "math": open("span", "math").textContent = n.src; break;
+    case "em": case "strong": case "del": into = open(n.t); break;
+    case "tag": into = open(n.name); break;
+    case "link":
+      if (mdOpens(n.href)) into = add(mdLink(n.href, n.title));
+      else {
+        into = open("span", "link off");
+        into.title = n.href;
+      }
+      break;
+    case "image": {
+      const alt = mdPlainText(n);
+      let src = n.href;
+      try { src = decodeURI(n.href); } catch (e) { /* as it is */ }
+      const own = opts.image ? opts.image(src, alt, n.title) : null;
+      if (own) add(own);
+      else {
+        const a = mdOpens(n.href) ? add(mdLink(n.href, n.title)) : open("span", "link off");
+        a.classList.add("pic");
+        if (!mdOpens(n.href)) a.title = src;
+        a.textContent = "\u{1F5BC} " + (alt || src);
+      }
+      stack.push(top());
+      return false;
+    }
+    }
+    stack.push(into || top());
+    return into !== null;
+  }, () => stack.pop());
+}
+
+function render(el, text, opts) {
+  el.textContent = "";
+  const doc = mdParse(text || "", {math: true});
+  mdPlainTags(doc);
+  mdDom(doc, el, opts || {});
 }

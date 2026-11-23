@@ -4,22 +4,37 @@
    the page where app.html includes it. */
 /* each model's settings, kept by Brebus, used when it is loaded */
 let settings = {};
+const CTX_OWN = 16384; /* janas-server's context when none is asked */
+/* the contexts to choose from: 4,096 tokens and each double, up to the
+   most the model was trained for, that one too (40,960...), 1,048,576 at
+   most (Brebus's own bound); 262,144 when the model does not say */
+function ctxSizes(max) {
+  const top = max >= 512 ? Math.min(max, 1 << 20) : 262144, out = [];
+  for (let n = 4096; n < top; n *= 2) out.push(n);
+  out.push(top);
+  return out;
+}
+/* "32,768 tokens (about 25,000 words)": a word of English is about 4/3 of
+   a token, two figures of it */
+function ctxText(n) {
+  const w = n * 0.75, p = Math.pow(10, Math.max(0, Math.floor(Math.log10(w)) - 1));
+  return `${n.toLocaleString()} tokens (about ${(Math.round(w / p) * p).toLocaleString()} words)`;
+}
 function setForm(x) {
   const v = settings[x.name] || {};
-  const sizes = [[4096, "short: about 3,000 words"], [8192, "about 6,000 words"], [16384, "about 12,000 words"],
-                 [32768, "about 25,000 words"], [65536, "long: about 50,000 words"], [131072, "very long: about 100,000 words"]]
-    .filter(([n]) => !x.context || n <= x.context);
-  const other = v.context && !sizes.some(([n]) => n === v.context);
+  const sizes = ctxSizes(x.context);
+  const other = v.context && !sizes.includes(v.context);
+  const most = sizes[sizes.length - 1];
   return `<form class="setf plain" data-m="${esc(x.name)}" onsubmit="return false">
     <label>How much of the chat it keeps in mind
-      <select name="context"><option value="">chosen by Brebus, from this computer's memory</option>
-        ${sizes.map(([n, t]) => `<option value="${n}"${v.context === n ? " selected" : ""}>${t}</option>`).join("")}
-        ${other ? `<option value="${v.context}" selected>${v.context.toLocaleString()} tokens</option>` : ""}</select>
-      <span class="note">More is remembered with more, but it takes more memory and the first answer of a long chat comes later. When it is full, the oldest messages are forgotten (the ring under the field shows how full it is).</span></label>
-    <label>Think before answering
-      <select name="think"><option value="">as the model does by itself</option><option value="on"${v.think === true ? " selected" : ""}>yes</option>
-        <option value="off"${v.think === false ? " selected" : ""}>no</option></select>
-      <span class="note">Some models can reason step by step before they answer: better on hard questions, slower on every one. The reasoning is shown, folded, above the answer.</span></label>
+      <select name="context"><option value="">${ctxText(Math.min(CTX_OWN, most))}: Janas's own</option>
+        ${sizes.map((n) => `<option value="${n}"${v.context === n ? " selected" : ""}>${ctxText(n)}${
+          n === x.context ? ": the most this model takes" : ""}</option>`).join("")}
+        ${other ? `<option value="${v.context}" selected>${ctxText(v.context)}</option>` : ""}</select>
+      <span class="note">More is remembered with more, but it takes more memory and the first answer of a long chat comes later. When it fills up, the earlier messages are summarized to make room (the ring under the field shows how full it is).</span></label>
+    <label${x.thinks === false || x.thinks === 0 ? " hidden" : ""}>Think before answering
+      <select name="think"><option value="">no</option><option value="on"${v.think === true ? " selected" : ""}>yes</option></select>
+      <span class="note">Some models can reason step by step before they answer: better on hard questions, slower on every one. The reasoning is shown, folded, above the answer. This is how a new chat starts; the brain under the chat's field turns it on or off for that chat, at any message. Other programs choose with each request.</span></label>
     <details><summary>Advanced</summary>
       ${[["prompt_on", "Where it reads your message", "the message and the documents given with it, before it answers"],
          ["drafts_on", "Where it checks its guesses", "words guessed ahead, checked a few at a time, to answer faster"],
@@ -154,29 +169,73 @@ function fileState(file) {
    any goes on */
 let getting = false, getTimer = 0;
 async function getModel(name, bytes) {
+  /* got again: its ended boxes may show again */
+  for (const k of [...dlClosed]) if (k.startsWith(name + "\u0000")) { dlClosed.delete(k); dlFading.delete(k); }
+  /* its buttons off at once, before the first status comes back */
+  for (const b of document.querySelectorAll("button.get, button.vget"))
+    if ((b.dataset.m || b.dataset.s) === name) { b.disabled = true; b.textContent = "Getting…"; }
   const r = await fetch("/brebus/get/start", {method: "POST", body: JSON.stringify({model: name, bytes: bytes || 0})});
   const j = await r.json();
-  if (!r.ok) { say(j.error || "it did not start"); return; }
+  if (!r.ok) { say(j.error || "it did not start"); getStatus(); return; }
   getStatus();
 }
+/* the ended downloads' boxes closed (by their X, or by themselves after a
+   while), by model and outcome; a new Get of that model shows it again */
+const dlClosed = new Set(), dlFading = new Map();
+let dlLast = "";
 async function getStatus() {
   const all = (await ask("get")).downloads || [];
   const box = $("#dl");
-  box.hidden = !all.length;
-  box.innerHTML = all.map((g) => {
+  const key = (g) => g.model + "\u0000" + g.code;
+  const shown = all.filter((g) => g.running || !dlClosed.has(key(g)));
+  box.hidden = !shown.length;
+  const html = shown.map((g) => {
     if (g.running) {
       const bar = g.total_gb ? `${g.done_gb.toFixed(2)} of ${g.total_gb.toFixed(2)} GB (${g.percent}%), ${g.mb_s} MB/s` : "";
       const step = g.step.startsWith(g.model + ": ") ? g.step.slice(g.model.length + 2) : g.step;
-      return `<div class="dlone"><b>${esc(g.model)}</b>: ${esc(step || "starting")}
+      /* the bar the whole width; under it the figures on the left, Stop on
+         the right, its edge the bar's: the figures change, it stays */
+      return `<div class="dlone"><div><b>${esc(g.model)}</b>: ${esc(step || "starting")}</div>
         <progress max="100" value="${g.percent}"></progress>
-        <span class="mono">${esc(bar)}</span> <button class="act quiet dlstop" data-m="${esc(g.model)}" title="Stop the download: Get again goes on from where it stopped">Stop</button></div>`;
+        <div class="dlrow"><span class="mono">${esc(bar)}</span><button class="act quiet dlstop" data-m="${esc(g.model)}" title="Stop the download: Get again goes on from where it stopped">Stop</button></div></div>`;
     }
-    return `<div class="dlone">${g.code === 0 ? `<b>${esc(g.model)}</b> is ready: load it in My models.`
+    const k = key(g);
+    return `<div class="dlone dlend${dlFading.get(k) === "fade" ? " fading" : ""}" data-k="${esc(k)}"><span>${g.code === 0 ? `<b>${esc(g.model)}</b> is ready: load it in My models.`
       : g.code === -2 ? `<b>${esc(g.model)}</b>: stopped. Get it again to go on from where it was.`
-      : `<b>${esc(g.model)}</b> did not download: ${esc(g.said || "janas-get ended with " + g.code)}`}</div>`;
+      : `<b>${esc(g.model)}</b> did not download: ${esc(g.said || "janas-get ended with " + g.code)}`}</span><button class="act quiet dlx" title="Close" aria-label="Close">×</button></div>`;
   }).join("");
-  for (const b of box.querySelectorAll(".dlstop"))
-    b.onclick = async () => { await fetch("/brebus/get/stop", {method: "POST", body: JSON.stringify({model: b.dataset.m})}); getStatus(); };
+  /* drawn again only when something in it changed: a box redrawn under the
+     pointer loses its tooltip (and its hover) every second */
+  if (html !== dlLast) {
+    dlLast = html;
+    box.innerHTML = html;
+    for (const b of box.querySelectorAll(".dlstop"))
+      b.onclick = async () => { await fetch("/brebus/get/stop", {method: "POST", body: JSON.stringify({model: b.dataset.m})}); getStatus(); };
+    for (const b of box.querySelectorAll(".dlx"))
+      b.onclick = () => { dlClosed.add(b.closest(".dlend").dataset.k); getStatus(); };
+  }
+  /* an ended one closes by itself: ten seconds, then a second's fading */
+  for (const g of shown)
+    if (!g.running && !dlFading.has(key(g))) {
+      const k = key(g);
+      dlFading.set(k, "wait");
+      setTimeout(() => {
+        dlFading.set(k, "fade");
+        const el = [...box.querySelectorAll(".dlend")].find((e) => e.dataset.k === k);
+        if (el) el.classList.add("fading");
+        setTimeout(() => { dlClosed.add(k); getStatus().catch(() => {}); }, 1000);
+      }, 10000);
+    }
+  /* a Get whose download goes on: off, saying so (a second click would
+     start it twice); on again when it ends */
+  const busyNames = new Set(all.filter((g) => g.running).map((g) => g.model));
+  for (const b of document.querySelectorAll("button.get, button.vget")) {
+    const name = b.dataset.m || b.dataset.s;
+    if (!name) continue; /* in My models already: off for good */
+    const on = busyNames.has(name);
+    put(b, "disabled", on);
+    put(b, "textContent", on ? "Getting…" : "Get");
+  }
   const going = all.some((g) => g.running);
   clearTimeout(getTimer);
   if (going) { getting = true; getTimer = setTimeout(() => getStatus().catch(() => {}), 1000); return; }
@@ -197,34 +256,38 @@ async function status() {
     } catch (e) {}
   server.context = server.running ? ctxOf[server.model] || 0 : 0;
   if (typeof ctxRing === "function") ctxRing();
+  if (typeof readReasons === "function") readReasons();
   /* the model under the chat: the one running, or the one that will be */
   const next = nextModel(), known = Object.keys(modelInfo).length > 0;
-  $("#modelbtn").firstChild.textContent = server.running ? server.model
-    : next || (known ? "Choose a model" : "…");
+  /* written only when it changes: rewriting what the pointer is over, even
+     with the same words, hides its tooltip until the pointer leaves */
+  put($("#modelbtn").firstChild, "textContent", server.running ? server.model
+    : next || (known ? "Choose a model" : "…"));
   $("#modelbtn").classList.toggle("off", !server.running);
   if (!modelLoading)
-    $("#loaded").textContent = server.running ? "" : next ? "loads with your message" : "";
+    put($("#loaded"), "textContent", server.running ? "" : next ? "loads with your message" : "");
   $("#modelset").hidden = !(server.running || next);
   const base = (u) => u.replace(/\/v1$/, "");
-  $("#srv").innerHTML = server.running
+  const srvHtml = server.running
     ? `<dt>Model</dt><dd>${esc(server.model)}</dd>
        <dt>Address for programs</dt><dd><code>${esc(server.url)}</code> <span class="note">for those that speak OpenAI's language (most); <code>${esc(base(server.url))}</code> for those that speak Ollama's or Anthropic's</span></dd>
        ${server.lan_url ? `<dt>On the local network</dt><dd><code>${esc(server.lan_url)}</code>, <code>${esc(base(server.lan_url))}</code></dd>` : ""}
        ${server.https ? `<dt>Certificate</dt><dd>Brebus's own, its fingerprint (SHA-256): <code class="fp">${esc(server.fingerprint)}</code></dd>` : ""}
        <dt>Key</dt><dd>${server.api_key ? "<code>" + esc(server.api_key) + "</code>" : "none"}</dd>
        <dt>Engine monitor</dt><dd><a href="/monitor" target="_blank" rel="noopener">open it</a>: the reply being written, the engine's memory and devices</dd>
-       ${(server.loaded || []).length > 1 ? `<dt>Loaded</dt><dd>${server.loaded.map((l) => `<div class="ldone"><b>${esc(l.model)}</b> <code>${esc(l.url)}</code>${l.lan_url ? ` <code>${esc(l.lan_url)}</code>` : ""} <button class="act quiet unl" data-m="${esc(l.model)}" title="Unload it, freeing its memory">Unload</button></div>`).join("")}<span class="note">The chat uses the one it names; each has its own address for programs.</span></dd>` : ""}`
+       ${(server.loaded || []).length > 1 ? `<dt>Loaded</dt><dd>${server.loaded.map((l) => `<div class="ldone"><span><b>${esc(l.model)}</b> <code>${esc(l.url)}</code>${l.lan_url ? ` <code>${esc(l.lan_url)}</code>` : ""}</span> <button class="act quiet unl" data-m="${esc(l.model)}" title="Unload it, freeing its memory">Unload</button></div>`).join("")}<span class="note">The chat uses the one it names; each has its own address for programs.</span></dd>` : ""}`
     : `<dt>State</dt><dd>off${server.error ? " - " + esc(server.error) : ""}</dd>
        <dt>To start it</dt><dd>choose a model under the chat's field, or load one in My models</dd>`;
-  for (const b of $("#srv").querySelectorAll("button.unl"))
-    b.onclick = () => unload(b.dataset.m);
+  if (put($("#srv"), "innerHTML", srvHtml))
+    for (const b of $("#srv").querySelectorAll("button.unl"))
+      b.onclick = () => unload(b.dataset.m);
   for (const b of document.querySelectorAll("button.load"))
   {
     const cur = server.running && b.dataset.m === server.model, on = isLoaded(b.dataset.m);
-    b.textContent = cur ? "Loaded" : on ? "Use" : "Load";
-    b.disabled = cur; /* the one used now: nothing to load */
-    b.title = cur ? "This is the model used now" : on ? "Loaded already: use it now, at once"
-      : "Load it: the chat and other programs use it";
+    put(b, "textContent", cur ? "In use" : on ? "Use" : "Load");
+    put(b, "disabled", cur); /* the one used now: nothing to load */
+    put(b, "title", cur ? "The model the chat uses now" : on ? "Loaded already: use it now, at once"
+      : "Load it: the chat and other programs use it");
   }
 }
 /* the server's own settings, under "_server" with the models' ones */
@@ -260,15 +323,19 @@ $("#genkey").onclick = () => {
   $("#srvset").api_key.value = "jns-" + Array.from(a, (x) => x.toString(16).padStart(2, "0")).join("");
 };
 
-async function loadModel(name, btn) {
+function loadModel(name, btn) {
   btn.disabled = true; btn.textContent = "Loading…";
-  const r = await fetch("/brebus/server/start", {method: "POST",
-    body: JSON.stringify({model: name, ...(settings[name] || {})})});
-  const j = await r.json();
-  btn.disabled = false;
-  if (!r.ok) say(j.error || "it did not start");
-  else remember(name);
-  await status();
+  return whileLoading(async () => {
+    if (!isLoaded(name)) $("#loaded").textContent = "Loading " + name + "…";
+    sendButton();
+    const r = await fetch("/brebus/server/start", {method: "POST",
+      body: JSON.stringify({model: name, ...(settings[name] || {})})});
+    const j = await r.json().catch(() => ({}));
+    btn.disabled = false;
+    if (!r.ok) say(j.error || "it did not start");
+    else remember(name);
+    await status();
+  });
 }
 async function unload(name) {
   /* the one named, else all */

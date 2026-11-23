@@ -133,6 +133,20 @@ int janas_proc_wait(struct janas_proc *p, int timeout_ms, int *code)
         return -1;
     pid_t pid = (pid_t)p->id;
     int st = 0;
+    if (p->adopted) /* not a child: there is no status to wait for, only
+                       whether it is still there */
+        for (int waited = 0;; waited += 10) {
+            if (kill(pid, 0) != 0 && errno == ESRCH) {
+                if (code)
+                    *code = -1;
+                memset(p, 0, sizeof(*p));
+                return 1;
+            }
+            if (timeout_ms >= 0 && waited >= timeout_ms)
+                return 0;
+            struct timespec t = {0, 10 * 1000 * 1000};
+            nanosleep(&t, NULL);
+        }
     for (int waited = 0;; waited += 10) {
         pid_t r = waitpid(pid, &st, timeout_ms < 0 ? 0 : WNOHANG);
         if (r < 0 && errno == EINTR)
@@ -150,6 +164,18 @@ int janas_proc_wait(struct janas_proc *p, int timeout_ms, int *code)
         struct timespec t = {0, 10 * 1000 * 1000};
         nanosleep(&t, NULL);
     }
+}
+
+int janas_proc_adopt(struct janas_proc *p, unsigned long pid, int group)
+{
+    memset(p, 0, sizeof(*p));
+    if (!pid || (kill((pid_t)pid, 0) != 0 && errno == ESRCH))
+        return -1;
+    p->id = (intptr_t)pid;
+    p->pid = pid;
+    p->job = group; /* its group's leader: killed with its group */
+    p->adopted = 1;
+    return 0;
 }
 
 void janas_proc_kill(struct janas_proc *p, int hard)

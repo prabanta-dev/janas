@@ -26,6 +26,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -39,6 +40,9 @@
 #include "common/sock.h"
 
 #define HANDSHAKE_MS 30000
+/* connections in their handshake or served at once: past them a new one
+   is closed at once (each is a thread) */
+#define MAX_TLS_CONN 256
 
 /* a socket made not to block */
 static void no_block(int fd)
@@ -195,10 +199,16 @@ static int put_all(int fd, const unsigned char *p, size_t n)
     return 0;
 }
 
+static double mono_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1000.0 + ts.tv_nsec / 1e6;
+}
+
 static void *serve(void *arg)
 {
-    struct conn *c = arg;
-    active++;
+    struct conn *c = arg; /* counted in active by accept_main */
     mbedtls_ssl_context ssl;
     int sp[2] = {-1, -1};
     janas_tls_lock();
@@ -206,8 +216,9 @@ static void *serve(void *arg)
     int rc = mbedtls_ssl_setup(&ssl, &conf);
     mbedtls_ssl_set_bio(&ssl, &c->fd, bio_send, bio_recv, NULL);
     janas_tls_unlock();
-    /* the handshake, the waits outside the lock */
-    int waited = 0;
+    /* the handshake, the waits outside the lock, HANDSHAKE_MS in all
+       however slowly the bytes come */
+    double until = mono_ms() + HANDSHAKE_MS;
     while (rc == 0 && !stopping) {
         janas_tls_lock();
         rc = mbedtls_ssl_handshake(&ssl);
@@ -217,7 +228,8 @@ static void *serve(void *arg)
         struct pollfd pf = {
             .fd = c->fd,
             .events = rc == MBEDTLS_ERR_SSL_WANT_READ ? POLLIN : POLLOUT};
-        if (poll(&pf, 1, 500) == 0 && (waited += 500) >= HANDSHAKE_MS)
+        poll(&pf, 1, 500);
+        if (mono_ms() >= until)
             break;
         rc = 0;
     }
@@ -297,18 +309,36 @@ static void *accept_main(void *arg)
         if (!c)
             continue;
         c->peer_len = sizeof c->peer;
+#ifdef __linux__
+        /* not inherited by the programs this process starts */
+        c->fd = accept4(listen_fd, (struct sockaddr *)&c->peer, &c->peer_len,
+                        SOCK_CLOEXEC);
+#else
         c->fd =
             (int)accept(listen_fd, (struct sockaddr *)&c->peer, &c->peer_len);
+#endif
         if (c->fd < 0) {
+            int e = errno;
+            free(c);
+            /* out of descriptors: the waiting one stays, so wait a little
+               rather than spin on it */
+            if (e == EMFILE || e == ENFILE || e == ENOBUFS || e == ENOMEM)
+                usleep(100000);
+            continue;
+        }
+        if (active >= MAX_TLS_CONN) {
+            janas_sock_close(c->fd);
             free(c);
             continue;
         }
         no_block(c->fd);
+        active++;
         pthread_t t;
         pthread_attr_t at;
         pthread_attr_init(&at);
         pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
         if (pthread_create(&t, &at, serve, c) != 0) {
+            active--;
             janas_sock_close(c->fd);
             free(c);
         }

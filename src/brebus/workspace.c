@@ -210,6 +210,13 @@ int brebus_ws_open(struct brebus *b, const char *path, int create, char *why,
                  real);
         return -1;
     }
+    /* the folder found, checked again: a link put in the path between the
+       first look and this one leads nowhere else */
+    if (!brebus_confined(b, real)) {
+        snprintf(why, wn, "a project of yours is in your own folder, %s",
+                 b->root);
+        return -1;
+    }
     snprintf(sub, sizeof sub, "%s/.brebus/chats", real);
     if (janas_mkdirs(sub) != 0 || access(real, W_OK) != 0) {
         snprintf(why, wn, "cannot write in %s", real);

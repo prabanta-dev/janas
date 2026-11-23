@@ -215,6 +215,13 @@ static void sof(struct jpg *j, const uint8_t *d, size_t len)
         if (c->v > j->vmax)
             j->vmax = c->v;
     }
+    /* each component's sampling a divisor of the largest (1, 2, 4 with 4;
+       1, 3 with 3...): the planes are scaled up by whole factors */
+    for (int i = 0; i < j->nc; i++)
+        if (j->hmax % j->c[i].h || j->vmax % j->c[i].v) {
+            j->err = "a sampling this decoder does not take";
+            return;
+        }
     j->mcux = (j->w + 8 * j->hmax - 1) / (8 * j->hmax);
     j->mcuy = (j->h + 8 * j->vmax - 1) / (8 * j->vmax);
     /* every block costs at least a bit of entropy-coded data: a header

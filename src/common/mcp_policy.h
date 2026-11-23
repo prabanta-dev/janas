@@ -28,8 +28,13 @@ struct janas_net_policy {
    address inside an IPv6 one (mapped, NAT64, 6to4) judged as itself. */
 int janas_addr_public(const struct sockaddr *sa);
 
+/* The process's own policy, when its environment says one
+   (JANAS_NET_PUBLIC_ONLY=1, JANAS_NET_ALLOW="host:port,..."): a served
+   user's Brebus is given it. NULL otherwise. */
+const struct janas_net_policy *janas_net_default(void);
+
 /* Whether a connection to host:port at address sa may be made (p NULL:
-   any). */
+   the process's own policy, or any). */
 int janas_net_allowed(const struct janas_net_policy *p, const char *host,
                       const char *port, const struct sockaddr *sa);
 

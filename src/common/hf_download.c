@@ -92,7 +92,7 @@ int janas_hf_download(const char *repo, const char *rev, const char *path,
                       void (*progress)(uint64_t, uint64_t, void *), void *arg,
                       char *err, size_t err_len)
 {
-    int fd = open(out_path, O_RDWR | O_CREAT | O_CLOEXEC, 0644);
+    int fd = open(out_path, O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0644);
     if (fd < 0) {
         snprintf(err, err_len, "cannot write %s", out_path);
         return -1;

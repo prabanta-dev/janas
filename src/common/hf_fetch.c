@@ -14,6 +14,9 @@
 
 #define TIMEOUT_MS 60000
 #define MAX_REDIRECTS 8
+/* the most one answer brings into memory (a range of tensors, a header):
+   a server that sends more, or no end, is cut off */
+#define HF_GET_MAX ((int64_t)4 << 30)
 /* neighbouring tensors are read in one request: a Qwen3-Next block is
    1,500 of them, each a TLS connection of its own otherwise */
 #define JOIN_GAP (1u << 20)
@@ -93,6 +96,11 @@ static int get_url(const char *url, const int64_t *from, const int64_t *to,
             continue;
         }
         int64_t want = from ? *to - *from : -1;
+        if (from && (*from > *to || want > HF_GET_MAX)) {
+            snprintf(err, err_len, "%s: a range of no sense asked", u.host);
+            janas_http_close(&h);
+            return -1;
+        }
         if (st != (from ? 206 : 200) ||
             (from && h.head.length >= 0 && h.head.length != want)) {
             snprintf(err, err_len,
@@ -107,8 +115,14 @@ static int get_url(const char *url, const int64_t *from, const int64_t *to,
         }
         size_t before = out->n;
         int r;
+        /* a body without its length said is read to HF_GET_MAX at most */
         while ((r = janas_http_body(&h, out, TIMEOUT_MS)) == 1)
-            ;
+            if (out->n - before > (size_t)HF_GET_MAX) {
+                janas_http_close(&h);
+                snprintf(err, err_len, "%s: an answer past %d MiB", u.host,
+                         (int)(HF_GET_MAX >> 20));
+                return -1;
+            }
         janas_http_close(&h);
         if (r != 0 || out->oom ||
             (want >= 0 && (int64_t)(out->n - before) != want)) {
@@ -270,12 +284,20 @@ int janas_hf_fetch_tensors(const char *repo, const char *rev,
             if (!w)
                 goto oom;
             wants = w;
-            wants[n_want++] = (struct want){
-                .name = e,
-                .entry = e,
-                .shard = k,
-                .begin = (uint64_t)janas_json_num(off->child, -1),
-                .end = (uint64_t)janas_json_num(off->child->next, -1)};
+            /* offsets a file can have: whole, from 0 to 2^53, in order */
+            double b0 = janas_json_num(off->child, -1),
+                   b1 = janas_json_num(off->child->next, -1);
+            if (!(b0 >= 0 && b1 >= b0 && b1 <= 9007199254740992.0 &&
+                  b0 == (double)(uint64_t)b0 && b1 == (double)(uint64_t)b1)) {
+                snprintf(err, err_len, "%.*s: offsets of no sense",
+                         (int)e->key_n, e->key);
+                goto done;
+            }
+            wants[n_want++] = (struct want){.name = e,
+                                            .entry = e,
+                                            .shard = k,
+                                            .begin = (uint64_t)b0,
+                                            .end = (uint64_t)b1};
         }
     }
     if (n_want == 0) {

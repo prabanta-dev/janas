@@ -75,7 +75,7 @@ static int fresh(const char *dir, const char *name, char *path, size_t cap)
             snprintf(path, cap, "%s/%s%s", dir, stem, ext);
         else
             snprintf(path, cap, "%s/%s (%d)%s", dir, stem, i, ext);
-        int fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0644);
+        int fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0644);
         if (fd >= 0 || errno != EEXIST)
             return fd;
     }
@@ -223,10 +223,14 @@ static int copy_file(const char *from, int to_fd)
     return bad || r < 0 ? -1 : 0;
 }
 
-/* a web address downloaded into sources/: 0 with its path, or -1 */
-static int download(const char *url, const char *dir, char *path, size_t cap,
-                    char *why, size_t wn)
+/* a web address downloaded into sources/: 0 with its path, or -1. The
+   address asked may be of this machine or its network when public is 0
+   (Brebus's owner, in its window, asking); where a redirect leads, never:
+   another site does not send Brebus to this machine's servers */
+static int download(const char *url, int public, const char *dir, char *path,
+                    size_t cap, char *why, size_t wn)
 {
+    static const struct janas_net_policy pub = {.public_only = 1};
     static char at[8800];
     snprintf(at, sizeof at, "%s", url);
     struct janas_http h;
@@ -235,6 +239,8 @@ static int download(const char *url, const char *dir, char *path, size_t cap,
     for (int hop = 0; hop < 6 && !ok; hop++) {
         if (janas_url_parse(at, &u, why, wn) != 0)
             return -1;
+        if (hop || public)
+            u.policy = &pub;
         const char *hdr[] = {"User-Agent: Brebus (Janas)", "Accept: */*"};
         if (janas_http_request(&h, &u, "GET", hdr, 2, NULL, 0, 30000, NULL, why,
                                wn) != 0)
@@ -353,7 +359,10 @@ int brebus_attach(struct brebus *b, const char *body, size_t n,
         }
         if (janas_mkdirs(dir) != 0)
             return fail(out, "cannot make sources/");
-        if (download(source, dir, path, sizeof path, why, sizeof why) != 0)
+        /* a user served, or a user's own Brebus: addresses of the
+           Internet alone */
+        if (download(source, b->serve || b->child, dir, path, sizeof path, why,
+                     sizeof why) != 0)
             return fail(out, why);
         answer(b, path, out);
         return 0;
@@ -410,6 +419,41 @@ int brebus_attach(struct brebus *b, const char *body, size_t n,
     if (bad) {
         remove(path);
         return fail(out, "it could not be copied (disk full?)");
+    }
+    answer(b, path, out);
+    return 0;
+}
+
+int brebus_upload(struct brebus *b, const char *name, const char *data,
+                  size_t n, struct janas_buf *out)
+{
+    char ws[4096], dir[4200], path[4600], safe[300];
+    if (brebus_ws_path(b, ws, sizeof ws) != 0)
+        return fail(out, "no workspace");
+    /* its name's last part, made safe: never a path */
+    const char *base = name ? strrchr(name, '/') : NULL;
+    base = base ? base + 1 : name;
+    const char *bs = base ? strrchr(base, '\\') : NULL;
+    base = bs ? bs + 1 : base;
+    safe_name(base && *base ? base : "upload", safe, sizeof safe);
+    snprintf(dir, sizeof dir, "%s/sources", ws);
+    if (janas_mkdirs(dir) != 0)
+        return fail(out, "cannot make sources/");
+    int fd = fresh(dir, safe, path, sizeof path);
+    if (fd < 0)
+        return fail(out, "cannot write in sources/");
+    int bad = 0;
+    for (size_t at = 0; at < n && !bad;) {
+        ssize_t w = write(fd, data + at, n - at);
+        if (w <= 0)
+            bad = 1;
+        else
+            at += (size_t)w;
+    }
+    bad |= close(fd) != 0;
+    if (bad) {
+        remove(path);
+        return fail(out, "it could not be written (disk full?)");
     }
     answer(b, path, out);
     return 0;

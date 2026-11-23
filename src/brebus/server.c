@@ -60,6 +60,8 @@ static int fail(struct janas_buf *out, const char *why)
 /* the server answers its models' list: ready */
 static int answers(unsigned short port, const char *key, int tls)
 {
+    if (!brebus_port_mine(port)) /* the key to no one else's server */
+        return 0;
     char url[64], err[128];
     snprintf(url, sizeof url, "%s://127.0.0.1:%u/v1/models",
              tls ? "https" : "http", port);
@@ -221,6 +223,38 @@ int brebus_certificate(struct brebus *b, char *cert, char *key, size_t n,
     return 0;
 }
 
+/* b->mu held: the models' servers running, written to servers.json in
+   the data folder (pid, port, model each), for the next Brebus to find
+   them still there - after a crash, or a Brebus closed while one worked */
+static void record_locked(struct brebus *b)
+{
+    char p[4300], tmp[4400];
+    snprintf(p, sizeof p, "%s/servers.json", b->data_dir);
+    snprintf(tmp, sizeof tmp, "%s.new", p);
+    struct janas_buf o = {0};
+    janas_buf_puts(&o, "{\"servers\": [");
+    for (int i = 0, k = 0; i < BREBUS_LOADED; i++) {
+        const struct brebus_srv *v = &b->srv[i];
+        if (!v->on || !v->ready || !v->proc.pid)
+            continue;
+        janas_buf_printf(&o,
+                         "%s{\"slot\": %d, \"pid\": %lu, \"port\": %u, "
+                         "\"model\": ",
+                         k++ ? ", " : "", i, v->proc.pid, v->port);
+        janas_json_write_str(&o, v->model, strlen(v->model));
+        janas_buf_puts(&o, "}");
+    }
+    janas_buf_puts(&o, "]}\n");
+    int fd =
+        o.oom ? -1 : open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+    int bad = fd < 0 || write(fd, o.p, o.n) != (ssize_t)o.n;
+    if (fd >= 0)
+        bad |= close(fd) != 0;
+    if (bad || rename(tmp, p) != 0)
+        remove(tmp);
+    janas_buf_free(&o);
+}
+
 static void stop_locked(struct brebus *b, int i)
 {
     struct brebus_srv *v = &b->srv[i];
@@ -234,6 +268,7 @@ static void stop_locked(struct brebus *b, int i)
     }
     v->on = 0;
     v->model[0] = 0;
+    record_locked(b);
 }
 
 /* the place of the model loaded, -1 when it is not */
@@ -249,11 +284,12 @@ static int loaded(struct brebus *b, const char *name)
 static int current(struct brebus *b)
 {
     int c = b->srv_cur;
-    if (c >= 0 && c < BREBUS_LOADED && b->srv[c].on)
+    if (c >= 0 && c < BREBUS_LOADED && b->srv[c].on && b->srv[c].ready)
         return c;
     c = -1;
     for (int i = 0; i < BREBUS_LOADED; i++)
-        if (b->srv[i].on && (c < 0 || b->srv[i].used > b->srv[c].used))
+        if (b->srv[i].on && b->srv[i].ready &&
+            (c < 0 || b->srv[i].used > b->srv[c].used))
             c = i;
     return c;
 }
@@ -426,7 +462,12 @@ int brebus_server_start(struct brebus *b, const char *body, size_t n,
         argv[k++] = "--parallel";
         argv[k++] = par_s;
     }
-    if (ctx >= 512) {
+    /* never more than the model was trained for; and its most, when that is
+       less than janas-server's own 16384 */
+    if (m[at].ctx >= 512 &&
+        (ctx > m[at].ctx || (ctx < 512 && m[at].ctx < 16384)))
+        ctx = m[at].ctx;
+    if (ctx >= 512 && ctx <= (1 << 20)) {
         snprintf(ctx_s, sizeof ctx_s, "%d", (int)ctx);
         argv[k++] = "--ctx";
         argv[k++] = ctx_s;
@@ -463,7 +504,12 @@ int brebus_server_start(struct brebus *b, const char *body, size_t n,
     int fd = open(logp, O_WRONLY | O_CREAT | O_TRUNC, 0600);
     /* the key in its environment, or none: not one Brebus was started with */
     snprintf(env_key, sizeof env_key, "JANAS_API_KEY=%s", b->srv_key);
-    const char *env[] = {env_key, api_ok ? env_api : NULL, NULL};
+    /* it ends with this Brebus however this one ends (Linux; on Windows
+       the Job Object does) */
+    static char env_parent[40];
+    snprintf(env_parent, sizeof env_parent, "JANAS_PARENT_PID=%lu",
+             (unsigned long)getpid());
+    const char *env[] = {env_key, env_parent, api_ok ? env_api : NULL, NULL};
     int rc =
         janas_proc_start(&v->proc, argv, env, NULL, -1, fd, fd,
                          JANAS_PROC_GROUP | BREBUS_NO_CONSOLE, err, sizeof err);
@@ -475,6 +521,7 @@ int brebus_server_start(struct brebus *b, const char *body, size_t n,
         return fail(out, err);
     }
     v->on = 1;
+    v->ready = 0;
     snprintf(v->model, sizeof v->model, "%s", m[at].name);
     v->used = time(NULL);
     b->srv_cur = slot;
@@ -485,10 +532,20 @@ int brebus_server_start(struct brebus *b, const char *body, size_t n,
     snprintf(skey, sizeof skey, "%s", b->srv_key);
     int stls = b->srv_tls;
     pthread_mutex_unlock(&b->mu);
-    /* ready when it answers; a large model takes a while to open */
+    /* ready when it answers; a large model takes a while to open. Loaded
+       is said of it then, not before: a server that never answers is no
+       model the chat may be pointed at */
+    int up = 0;
     for (int i = 0; i < 600; i++) {
-        if (answers(sport, skey, stls))
+        if (answers(sport, skey, stls)) {
+            pthread_mutex_lock(&b->mu);
+            if (v->on && v->port == sport) {
+                v->ready = up = 1;
+                record_locked(b);
+            }
+            pthread_mutex_unlock(&b->mu);
             break;
+        }
         int code;
         pthread_mutex_lock(&b->mu);
         int gone = v->on && v->port == sport &&
@@ -503,6 +560,17 @@ int brebus_server_start(struct brebus *b, const char *body, size_t n,
         if (gone)
             return fail(out, b->srv_err);
         usleep(200000);
+    }
+    if (!up) { /* two minutes and no answer: stopped, and said */
+        pthread_mutex_lock(&b->mu);
+        if (v->on && v->port == sport) {
+            stop_locked(b, slot);
+            snprintf(b->srv_err, sizeof b->srv_err,
+                     "%s did not answer in two minutes: see %.400s", m[at].name,
+                     logp);
+        }
+        pthread_mutex_unlock(&b->mu);
+        return fail(out, b->srv_err);
     }
     out->n = 0;
     brebus_server_status(b, out);
@@ -568,7 +636,7 @@ void brebus_server_status(struct brebus *b, struct janas_buf *out)
     /* and every model loaded, each at its own address */
     janas_buf_puts(out, ", \"loaded\": [");
     for (int i = 0, k = 0; i < BREBUS_LOADED; i++) {
-        if (!b->srv[i].on)
+        if (!b->srv[i].on || !b->srv[i].ready) /* starting: not loaded yet */
             continue;
         janas_buf_puts(out, k++ ? ", {\"model\": " : "{\"model\": ");
         str(out, b->srv[i].model);
@@ -608,7 +676,7 @@ unsigned short brebus_server_route(struct brebus *b, const char *model,
     unsigned short p = 0;
     if (i >= 0) {
         reap_locked(b, i);
-        if (b->srv[i].on) {
+        if (b->srv[i].on && b->srv[i].ready) { /* one that answers alone */
             p = b->srv[i].port;
             b->srv[i].used = time(NULL); /* for the unloading after a while */
             b->srv_cur = i;
@@ -618,6 +686,18 @@ unsigned short brebus_server_route(struct brebus *b, const char *model,
     snprintf(key, kn, "%s", b->srv_key);
     pthread_mutex_unlock(&b->mu);
     return p;
+}
+
+int brebus_server_unload_idle(struct brebus *b, const char *model)
+{
+    pthread_mutex_lock(&b->mu);
+    int i = loaded(b, model), rc = 0;
+    if (i >= 0 && i == b->srv_cur)
+        rc = -1; /* the one the chat uses */
+    else if (i >= 0)
+        stop_locked(b, i);
+    pthread_mutex_unlock(&b->mu);
+    return rc;
 }
 
 int brebus_server_loaded(struct brebus *b, const char *model)
@@ -760,4 +840,140 @@ void brebus_server_choices(struct brebus *b, struct janas_buf *out)
     janas_buf_puts(out, "}");
     janas_json_free(doc);
     janas_buf_free(&in);
+}
+
+/* the replies a model's server writes, or reads the prompt of, stopped
+   (POST /janas/cancel); the server stays */
+static void cancel_on(unsigned short port, const char *key, int tls)
+{
+    char url[96], auth[320], err[200];
+    snprintf(url, sizeof url, "%s://127.0.0.1:%u/janas/cancel",
+             tls ? "https" : "http", port);
+    snprintf(auth, sizeof auth, "Authorization: Bearer %s", key);
+    const char *hdr[] = {auth};
+    struct janas_url u;
+    struct janas_http h;
+    if (janas_url_parse(url, &u, err, sizeof err) == 0 &&
+        janas_http_request(&h, &u, "POST", hdr, key[0] ? 1 : 0, "{}", 2, 5000,
+                           NULL, err, sizeof err) == 0)
+        janas_http_close(&h);
+}
+
+void brebus_server_cancel_all(struct brebus *b)
+{
+    unsigned short ports[BREBUS_LOADED];
+    int n = 0, tls;
+    char key[256];
+    pthread_mutex_lock(&b->mu);
+    for (int i = 0; i < BREBUS_LOADED; i++)
+        if (b->srv[i].on && b->srv[i].ready)
+            ports[n++] = b->srv[i].port;
+    snprintf(key, sizeof key, "%s", b->srv_key);
+    tls = b->srv_tls;
+    pthread_mutex_unlock(&b->mu);
+    for (int i = 0; i < n; i++)
+        cancel_on(ports[i], key, tls);
+}
+
+/* pid's program the janas-server beside this Brebus: 1, or 0 */
+static int our_server(const struct brebus *b, unsigned long pid)
+{
+    char want[4300];
+    snprintf(want, sizeof want, "%s/janas-server%s", b->bin_dir, b->suffix);
+#ifdef _WIN32
+    HANDLE h =
+        OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, (DWORD)pid);
+    char got[4300];
+    DWORD n = sizeof got;
+    int ok = h && QueryFullProcessImageNameA(h, 0, got, &n);
+    if (h)
+        CloseHandle(h);
+    if (!ok)
+        return 0;
+    for (char *c = got; *c; c++)
+        if (*c == '\\')
+            *c = '/';
+    for (char *c = want; *c; c++)
+        if (*c == '\\')
+            *c = '/';
+    return !_stricmp(got, want);
+#else
+    char link[64], got[4300], real[4300];
+    snprintf(link, sizeof link, "/proc/%lu/exe", pid);
+    ssize_t n = readlink(link, got, sizeof got - 1);
+    if (n <= 0 || !realpath(want, real))
+        return 0;
+    got[n] = 0;
+    return !strcmp(got, real);
+#endif
+}
+
+void brebus_server_adopt(struct brebus *b)
+{
+    char p[4300], err[200];
+    snprintf(p, sizeof p, "%s/servers.json", b->data_dir);
+    FILE *f = fopen(p, "rb");
+    if (!f)
+        return;
+    struct janas_buf t = {0};
+    char buf[4096];
+    size_t r;
+    while ((r = fread(buf, 1, sizeof buf, f)) > 0 && t.n < (1 << 20))
+        janas_buf_put(&t, buf, r);
+    fclose(f);
+    struct janas_json_doc *d =
+        t.n ? janas_json_parse(t.p, t.n, err, sizeof err) : NULL;
+    janas_buf_free(&t);
+    const struct janas_json *a =
+        d ? janas_json_get(janas_json_root(d), "servers") : NULL;
+    pthread_mutex_lock(&b->mu);
+    /* the settings they were started with, as a start reads them */
+    char origins[MAX_ORIGINS][256], key_now[256];
+    int lan, tls, n_origins;
+    server_settings(b, &lan, &tls, key_now, sizeof key_now, origins,
+                    &n_origins);
+    snprintf(b->srv_key, sizeof b->srv_key, "%s", key_now);
+    b->srv_lan = lan;
+    b->srv_tls = 0;
+    if (tls) {
+        static char cert[4300], key[4300];
+        if (brebus_certificate(b, cert, key, sizeof cert, err, sizeof err) == 0)
+            b->srv_tls = 1;
+    }
+    for (const struct janas_json *e =
+             a && a->type == JANAS_JSON_ARRAY ? a->child : NULL;
+         e; e = e->next) {
+        double slot = janas_json_num(janas_json_get(e, "slot"), -1),
+               pid = janas_json_num(janas_json_get(e, "pid"), 0),
+               port = janas_json_num(janas_json_get(e, "port"), 0);
+        const char *model = janas_json_str(janas_json_get(e, "model"));
+        if (slot < 0 || slot >= BREBUS_LOADED || pid < 1 || !model ||
+            strlen(model) >= sizeof b->srv[0].model ||
+            port != b->port + 1 + slot || b->srv[(int)slot].on)
+            continue;
+        struct brebus_srv *v = &b->srv[(int)slot];
+        /* only a janas-server of this Brebus's, still there */
+        if (!our_server(b, (unsigned long)pid) ||
+            janas_proc_adopt(&v->proc, (unsigned long)pid, 1) != 0)
+            continue;
+        if (!answers((unsigned short)port, b->srv_key, b->srv_tls)) {
+            /* ours, but deaf (other settings, or stuck): it goes */
+            janas_proc_kill(&v->proc, 1);
+            janas_proc_wait(&v->proc, 3000, NULL);
+            memset(&v->proc, 0, sizeof v->proc);
+            continue;
+        }
+        v->on = v->ready = 1;
+        v->port = (unsigned short)port;
+        snprintf(v->model, sizeof v->model, "%s", model);
+        v->used = time(NULL);
+        b->srv_cur = (int)slot;
+        /* what it was writing for a Brebus of before: stopped */
+        cancel_on(v->port, b->srv_key, b->srv_tls);
+        fprintf(stderr, "brebus: %s's server, still there, taken up again\n",
+                model);
+    }
+    record_locked(b);
+    pthread_mutex_unlock(&b->mu);
+    janas_json_free(d);
 }

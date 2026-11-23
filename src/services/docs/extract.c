@@ -10,6 +10,9 @@
  * through pdf.c. Anything else is not a document here.
  */
 #include <stdio.h>
+#include <unistd.h>
+#include <limits.h>
+#include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
@@ -130,11 +133,27 @@ int dz_extract(const char *path, struct janas_buf *text, char *why, size_t wn)
         snprintf(why, wn, "not a kind of document read here");
         return -1;
     }
-    FILE *f = fopen(path, "rb");
+    /* the file named, not a link put in its place; and on Linux the very
+       file the checks were made on: a folder of the path swapped for a
+       link after them leads the descriptor elsewhere, and is refused */
+    int fd = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    FILE *f = fd >= 0 ? fdopen(fd, "rb") : NULL;
     if (!f) {
+        if (fd >= 0)
+            close(fd);
         snprintf(why, wn, "cannot be opened");
         return -1;
     }
+#ifdef __linux__
+    char self[64], at[PATH_MAX];
+    snprintf(self, sizeof self, "/proc/self/fd/%d", fd);
+    ssize_t an = readlink(self, at, sizeof at - 1);
+    if (path[0] == '/' && (an <= 0 || (at[an] = 0, strcmp(at, path)))) {
+        fclose(f);
+        snprintf(why, wn, "changed while being opened");
+        return -1;
+    }
+#endif
     struct stat st;
     if (fstat(fileno(f), &st) != 0 || !S_ISREG(st.st_mode) ||
         st.st_size > DZ_MAX_FILE) {

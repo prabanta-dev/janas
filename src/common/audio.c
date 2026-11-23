@@ -16,6 +16,12 @@ int audio_put(struct audio_out *o, const float *x, size_t n, char *why,
               size_t wn)
 {
     if (!o->told) {
+        /* the rates of sound people record: 1 Hz would make a second of
+           a file hours of resampling, 1 MHz the same the other way */
+        if (o->rate < 1000 || o->rate > 384000) {
+            snprintf(why, wn, "a sample rate of %u Hz, not taken", o->rate);
+            return -1;
+        }
         if (o->sink->rate && o->sink->rate(o->sink->user, o->rate) != 0) {
             snprintf(why, wn, "stopped");
             return -1;
@@ -51,8 +57,7 @@ void audio_out_trim(struct audio_out *o, uint64_t skip, uint64_t keep)
 
 int janas_audio_decode_sink(const void *data, size_t n,
                             const struct janas_audio_sink *sink,
-                            struct janas_audio_info *info, char *why,
-                            size_t wn)
+                            struct janas_audio_info *info, char *why, size_t wn)
 {
     memset(info, 0, sizeof *info);
     const uint8_t *d = data;
@@ -68,11 +73,10 @@ int janas_audio_decode_sink(const void *data, size_t n,
         d += len;
         n -= len;
     }
-    static int (*const decoders[])(const uint8_t *, size_t,
-                                   struct audio_out *, char *, size_t) = {
-        janas_audio_wav,  janas_audio_flac, janas_audio_ogg,
-        janas_audio_mp4,  janas_audio_adts, janas_audio_mkv,
-        janas_audio_mpeg};
+    static int (*const decoders[])(const uint8_t *, size_t, struct audio_out *,
+                                   char *, size_t) = {
+        janas_audio_wav,  janas_audio_flac, janas_audio_ogg, janas_audio_mp4,
+        janas_audio_adts, janas_audio_mkv,  janas_audio_mpeg};
     for (size_t i = 0; i < sizeof decoders / sizeof *decoders; i++) {
         struct audio_out o = {.sink = sink, .total = UINT64_MAX};
         int rc = decoders[i](d, n, &o, why, wn);
@@ -152,8 +156,8 @@ int janas_audio_decode_max(const void *data, size_t n, struct janas_audio *a,
 int janas_audio_decode(const void *data, size_t n, struct janas_audio *a,
                        char *why, size_t wn)
 {
-    int rc = janas_audio_decode_max(data, n, a, JANAS_AUDIO_MAX_SAMPLES, why,
-                                    wn);
+    int rc =
+        janas_audio_decode_max(data, n, a, JANAS_AUDIO_MAX_SAMPLES, why, wn);
     if (rc > 0)
         snprintf(why, wn, "a sound longer than this reads in memory");
     return rc ? -1 : 0;

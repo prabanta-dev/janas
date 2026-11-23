@@ -66,6 +66,30 @@ static int by_name(const void *a, const void *b)
                   ((const struct janas_model_file *)b)->name);
 }
 
+/* the engine's reading (src/llm/api.c, find_format_in), in short: Gemma 4
+   with <|channel>, <channel|>, <|think|> and a template that turns it on;
+   DeepSeek with <think> and </think>; ChatML with them and a template that
+   turns it on. The others do not reason. */
+static int thinks(const struct janas_jns *j)
+{
+    size_t cap = (size_t)1 << 17;
+    char *t = malloc(cap);
+    if (!t)
+        return 0;
+    if (janas_jns_meta_str(j, "tokenizer.chat_template", t, cap) != 0)
+        t[0] = 0;
+    int on = strstr(t, "enable_thinking") != NULL, r;
+    if (has_token(j, "<|turn>") && strstr(t, "<|turn>"))
+        r = on && has_token(j, "<|channel>") && has_token(j, "<channel|>") &&
+            has_token(j, "<|think|>");
+    else if (has_token(j, "<｜User｜>"))
+        r = has_token(j, "<think>") && has_token(j, "</think>");
+    else
+        r = on && has_token(j, "<think>") && has_token(j, "</think>");
+    free(t);
+    return r;
+}
+
 int janas_models_scan(const char *dir, struct janas_model_file *out, int max)
 {
     DIR *d = opendir(dir);
@@ -97,6 +121,7 @@ int janas_models_scan(const char *dir, struct janas_model_file *out, int max)
         m->fim = has_token(&j, "<|fim_prefix|>") &&
                  has_token(&j, "<|fim_suffix|>") &&
                  has_token(&j, "<|fim_middle|>");
+        m->thinks = chat && thinks(&j);
         janas_jns_close(&j);
         if (!chat)
             continue;

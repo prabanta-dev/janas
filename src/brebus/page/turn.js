@@ -8,6 +8,9 @@ async function streamTurn(reply, withTools) {
   const calls = [];
   const body = {model: server.model, stream: true, stream_options: {include_usage: true},
                 messages: apiMessages().slice(0, -1)};
+  /* reasoning: the chat's choice (the button under the field), else the
+     model's setting, else off; a model that cannot be told ignores it */
+  body.chat_template_kwargs = {enable_thinking: thinkNow()};
   const p = cur.params || {};
   if (p.temperature !== undefined) body.temperature = p.temperature;
   if (p.top_p !== undefined) body.top_p = p.top_p;
@@ -19,9 +22,9 @@ async function streamTurn(reply, withTools) {
       ? $("#usecode").checked : $("#usetools").checked);
   const r = await fetch("/v1/chat/completions", {method: "POST", signal: busy.signal,
     headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
-  if (!r.ok) { reply.content = "(" + r.status + ") " + await r.text(); return []; }
+  if (!r.ok) { reply.content = "(" + r.status + ") " + await r.text(); reply.failed = true; return []; }
   const rd = r.body.getReader(), dec = new TextDecoder();
-  let buf = "";
+  let buf = "", sawDone = false, srvErr = "";
   try {
     for (;;) {
       const {done, value} = await rd.read();
@@ -31,18 +34,23 @@ async function streamTurn(reply, withTools) {
       while ((i = buf.indexOf("\n\n")) >= 0) {
         const ev2 = buf.slice(0, i); buf = buf.slice(i + 2);
         for (const line of ev2.split("\n")) {
+          /* the server's word while it reads a long prompt: how far */
+          const rd = /^: reading (\d+)\/(\d+)/.exec(line);
+          if (rd) { reply.reading = {done: +rd[1], total: +rd[2]}; continue; }
           if (!line.startsWith("data:")) continue;
           const data = line.slice(5).trim();
-          if (data === "[DONE]") continue;
+          if (data === "[DONE]") { sawDone = true; continue; }
           try {
             const j = JSON.parse(data);
+            /* an error the server sent in the stream itself */
+            if (j.error) srvErr = typeof j.error === "string" ? j.error : j.error.message || JSON.stringify(j.error);
             if (j.usage) {
               tokens = j.usage.completion_tokens || 0;
               /* the memory the chat fills now */
               reply.ctx = (j.usage.prompt_tokens || 0) + tokens;
             }
             const d = j.choices?.[0]?.delta || {};
-            if (d.reasoning_content) reply.think += d.reasoning_content;
+            if (d.reasoning_content) { if (!reply.thinkAt) reply.thinkAt = Date.now(); reply.think += d.reasoning_content; }
             if (d.content) reply.content += d.content;
             for (const tc of d.tool_calls || []) {
               const k = tc.index ?? calls.length;
@@ -54,7 +62,9 @@ async function streamTurn(reply, withTools) {
             if (d.content || d.reasoning_content) { pieces++; if (!t1) t1 = performance.now(); }
           } catch (e) {}
         }
-        const last = $("#log").lastElementChild;
+        /* the last message's box, in its turn (box and its line under) */
+        const turn = $("#log").lastElementChild;
+        const last = turn && (turn.querySelector(":scope > .msg") || turn);
         if (last) redraw(last, reply);
         if (followLog) $("#log").scrollTop = $("#log").scrollHeight;
       }
@@ -62,6 +72,16 @@ async function streamTurn(reply, withTools) {
   } catch (err) {
     reply.speed = err.name === "AbortError" ? `stopped after ${pieces} pieces` : "failed: " + err.message;
     throw err;
+  }
+  delete reply.reading; /* the prompt's reading, over */
+  /* nothing came, or an error did: said, not left as an empty answer (and
+     kept out of what the model is sent next time) */
+  if (srvErr || (!sawDone && !reply.content && !reply.think && !calls.length)) {
+    reply.content = srvErr ? "(error) " + srvErr
+      : "(no answer) the model's server ended the reply without a word: it may have stopped (see My models, Server)";
+    reply.failed = true;
+    await status().catch(() => {});
+    return [];
   }
   const t2 = performance.now();
   if (tokens > 1 && t1)
@@ -118,10 +138,24 @@ function bestFit() {
   return Object.keys(modelInfo).filter((n) => !n.startsWith("__") && modelInfo[n].bytes <= room)
     .sort((a, b) => modelInfo[b].bytes - modelInfo[a].bytes)[0] || "";
 }
-let modelLoading = null; /* one start at a time: Brebus's own, a message's */
+let modelLoading = null; /* one start at a time: Brebus's own, a message's,
+                             a model chosen under the field or in My models */
+/* a model's start, run: the field and its button off until it is over,
+   as at Brebus's start; one after the other */
+function whileLoading(run) {
+  const p = (modelLoading || Promise.resolve()).catch(() => {}).then(run).finally(() => {
+    if (modelLoading === p) modelLoading = null;
+    /* the words under the chat and the field change together */
+    if (server.running) $("#loaded").textContent = "";
+    sendButton();
+  });
+  modelLoading = p;
+  sendButton();
+  return p;
+}
+/* a model running for a message: true when there is one */
 function ensureModel() {
-  if (!modelLoading) modelLoading = startModel().finally(() => { modelLoading = null; });
-  return modelLoading;
+  return modelLoading ? modelLoading.then(() => server.running) : whileLoading(startModel);
 }
 async function startModel() {
   /* asked anew: the server may have been stopped from elsewhere */
@@ -130,6 +164,7 @@ async function startModel() {
   const name = nextModel();
   if (!name) { say("Get a model first, in My models."); return false; }
   $("#loaded").textContent = "Loading " + name + "…";
+  sendButton(); /* the field says so, and waits */
   ctxOf = {};
   const r = await fetch("/brebus/server/start", {method: "POST",
     body: JSON.stringify({model: name, ...(settings[name] || {})})});
@@ -162,7 +197,7 @@ async function runTurn(um, keep) {
     for (let round = 0; round < 7; round++) {
       /* the tools' rounds spent: the last one answers with what it has */
       const lastRound = round === 6;
-      const reply = {role: "assistant", content: "", think: ""};
+      const reply = {role: "assistant", content: "", think: "", t: Date.now()};
       cur.messages.push(reply); drawLog();
       const calls = await streamTurn(reply, withTools && !lastRound);
       if ($("#useart").checked || /<artifact\b/.test(reply.content)) await artSave(reply);
@@ -185,7 +220,8 @@ async function runTurn(um, keep) {
         /* a tool of the user's servers may be allowed always in this chat,
            for the server it was given to; Janas's own that change something
            are asked every time */
-        const srv = (tools.servers || []).find((s) => name.startsWith(s.prefix));
+        /* the longest prefix: "a__x" is server a's, "a___x" server a_'s */
+        const srv = (tools.servers || []).filter((s) => name.startsWith(s.prefix)).sort((x, y) => y.prefix.length - x.prefix.length)[0];
         const ap = srv && cur.approvals && cur.approvals[name];
         const good = ap && ap.ident === srv.ident && ap.version === srv.version;
         let ok = only_reads || good;
@@ -235,19 +271,73 @@ async function runTurn(um, keep) {
 async function sendAsk(ev) {
   ev.preventDefault();
   if (busy) { stopReply(); return; }
+  /* the start's own chat opened first: a message sent before would go to a
+     chat the start then replaces, its reply written into the new one */
+  await booted;
   const text = $("#ask").value.trim();
+  /* a title being asked is let finish (a few words): a request cut short
+     while the model reads it left janas-server's next reply wrong */
+  if (text && titleRun) await titleRun;
   if (!text) { if (ev.type === "submit") dictate(); return; }
   if (!ws.path) { wsShow(true); return; }
   if (!await ensureModel()) return;
   if (!cur) newConv();
-  const um = {role: "user", content: text};
+  else await compactIfFull(); /* room made first, the field kept meanwhile */
+  const um = {role: "user", content: text, t: Date.now()};
   if (pending.length) { um.attached = pending; pending = []; drawChips(); }
   cur.messages.push(um);
-  if (!cur.title) cur.title = text.slice(0, 40);
+  if (!cur.title) { cur.title = provisionalTitle(text); cur.autoTitle = true; }
   cur.model = server.model;
-  const e = convs.find((c) => c.id === cur.id); if (e) e.title = cur.title;
+  let e = convs.find((c) => c.id === cur.id);
+  if (!e) convs.unshift(e = {id: cur.id, title: "", model: cur.model, updated: Date.now(), messages: 0});
+  e.title = cur.title;
   $("#ask").value = ""; growAsk();
   listConvs(); drawLog();
   await runTurn(um);
+  if (cur && cur.autoTitle && cur.messages.filter((m) => m.role === "user").length === 1) modelTitle(cur);
+}
+/* a chat's title until the model gives one: the first sentence of its
+   first message, without marks, at most eight words */
+function provisionalTitle(text) {
+  let t = text.replace(/```[\s\S]*?(```|$)/g, " ").replace(/[`*_#>\[\]]/g, "").replace(/\s+/g, " ").trim();
+  const s = t.match(/^.{8,}?[.?!;:](?=\s|$)/);
+  if (s) t = s[0].replace(/[.;:]$/, "");
+  const w = t.split(" ");
+  if (w.length > 8) t = w.slice(0, 8).join(" ") + "…";
+  if (t.length > 60) t = t.slice(0, 60).replace(/\s+\S*$/, "") + "…";
+  return t || "New chat";
+}
+/* after the first reply, while the model is free: a title of a few words
+   from it, unless the user named the chat; a message sent meanwhile waits
+   for it (sendAsk) */
+const TITLE_ASK = "Give this conversation a title of 2 to 6 words, in the language the user writes in. " +
+  "Answer with the title alone: no quotes, no full stop.";
+let titleRun = null;
+function modelTitle(c) {
+  if (busy || !server.running || titleRun) return;
+  titleRun = askTitle(c).finally(() => { titleRun = null; });
+}
+async function askTitle(c) {
+  const q = c.messages.find((m) => m.role === "user");
+  const a = c.messages.find((m) => m.role === "assistant" && m.content && !m.failed);
+  if (!q || !a) return;
+  const clip = (t) => t.replace(/<artifact\b[^>]*title="([^"]*)"[\s\S]*?(<\/artifact>|$)/gi, '[artifact "$1"]').slice(0, 1500);
+  try {
+    const r = await fetch("/v1/chat/completions", {method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({model: server.model, max_tokens: 24, temperature: 0.2,
+        chat_template_kwargs: {enable_thinking: false},
+        messages: [{role: "system", content: TITLE_ASK},
+                   {role: "user", content: `User: ${clip(userContent(q))}\n\nAssistant: ${clip(a.content)}`}]})});
+    const j = await r.json().catch(() => ({}));
+    const t = (j.choices?.[0]?.message?.content || "").replace(/<think>[\s\S]*?<\/think>/g, "")
+      .trim().split("\n")[0].replace(/^["'«“*#\s]+|["'»”*.\s]+$/g, "").trim();
+    if (!r.ok || !t || t.length > 80 || !c.autoTitle) return;
+    c.title = t; delete c.autoTitle;
+    const e = convs.find((x) => x.id === c.id); if (e) e.title = t;
+    await saveConv(c);
+    listConvs();
+  } catch (e) {
+  }
 }
 

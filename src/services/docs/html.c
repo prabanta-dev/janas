@@ -371,8 +371,8 @@ int dz_epub_text(const uint8_t *p, size_t n, struct janas_buf *out, char *why,
         dir[0] = 0;
     const char *end = opf + on, *q = opf;
     int chapters = 0;
-    for (const char *ir;
-         chapters < MAX_CHAPTERS && (ir = ht_next_tag(q, end, "itemref", &te));
+    for (const char *ir; chapters < MAX_CHAPTERS && out->n < DZ_TEXT_MAX &&
+                         (ir = ht_next_tag(q, end, "itemref", &te));
          chapters++) {
         q = te;
         char idref[256];

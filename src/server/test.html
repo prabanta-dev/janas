@@ -131,6 +131,8 @@ function headers() {
   return h;
 }
 
+<!--#include web/md_entities.js-->
+<!--#include web/md_parse.js-->
 <!--#include web/markdown.js-->
 
 function add(role) {
@@ -291,19 +293,29 @@ const SAMPLE = [
   "# Heading 1", "## Heading 2", "### Heading 3", "#### Heading 4",
   "##### Heading 5", "###### Heading 6", "",
   "Plain text, **bold**, *italic*, _italic too_, ***bold italic***, " +
-  "**_bold italic too_**, ~~struck~~ and `inline code`.",
-  "Left alone: snake_case_name, __init__, 2*3, a lone * and ~ too.", "",
-  "- a bullet", "+ another", "* and a third, with **bold** in it",
-  "1. a numbered line", "2. and the next", "",
-  "> A quote, with *italic* in it,", "> over two lines.", "",
+  "~~struck~~, `inline code`, H<sub>2</sub>O and x<sup>2</sup>, <kbd>Ctrl</kbd>.",
+  "Left alone: snake_case_name, 2*3, a lone * and ~ too; \\*escaped\\* stars.",
+  "A line break within a paragraph,", "shown as the model wrote it.", "",
+  "- a bullet", "  - nested, with **bold** in it", "    1. and numbered inside",
+  "- another", "- and a third", "",
+  "3. a numbered list from 3", "4. and the next", "",
+  "- [x] a task done", "- [ ] and one to do", "",
+  "> A quote, with *italic* in it,", "> over two lines.", ">",
+  "> > and one quoted inside it.", "",
   "| Left | Right | Centre |", "|:-----|------:|:------:|",
-  "| alpha | 10 | *yes* |", "| beta | 200 | `no` |", "",
-  "A [link written as Markdown](https://www.gnu.org/licenses/gpl-3.0.html) " +
-  "and one written out: https://github.com/prabanta-dev/janas - both ask " +
-  "before they open.", "",
+  "| alpha | 10 | *yes* |", "| beta \\| gamma | 200 | `no` |", "",
+  "A [link written as Markdown](https://www.gnu.org/licenses/gpl-3.0.html \"GPL\"), " +
+  "one by [reference][gpl], one written out: https://github.com/prabanta-dev/janas, " +
+  "and www.commonmark.org - all ask before they open.", "",
+  "[gpl]: https://www.gnu.org/licenses/gpl-3.0.html", "",
+  "A formula: $e^{i\\pi} + 1 = 0$, money stays money: $5 to $10.", "",
+  "---", "",
   "```c", "/* a fenced block: nothing in it is a mark */",
   "int main(void) { return 2*3; } // | not a table |", "> not a quote",
-  "```", "The end, in **bold**"
+  "```", "",
+  "    an indented block, code too", "",
+  "<div>Raw HTML is shown as the text it is.</div>", "",
+  "The end, in **bold**"
 ].join("\n");
 
 $("sample").addEventListener("click", () => {

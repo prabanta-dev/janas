@@ -9,6 +9,8 @@
 #include <dirent.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <unistd.h>
+#include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -139,6 +141,35 @@ int sk_within(const char *dir, const char *p)
            janas_path_in(rp, rd);
 }
 
+/* p opened for reading when it is in dir: its real path opened, no link
+   followed at its end, and on Linux the file opened checked to be that
+   path (a folder swapped for a link after the check is refused) */
+static FILE *open_within(const char *dir, const char *p)
+{
+    char rd[4096], rp[4096];
+    if (!janas_path_real(dir, rd) || !janas_path_real(p, rp) ||
+        !janas_path_in(rp, rd))
+        return NULL;
+    int fd = open(rp, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0)
+        return NULL;
+#ifdef __linux__
+    char self[64], at[4096];
+    snprintf(self, sizeof self, "/proc/self/fd/%d", fd);
+    ssize_t an = readlink(self, at, sizeof at - 1);
+    if (an <= 0 || (at[an] = 0, strcmp(at, rp))) {
+        close(fd);
+        return NULL;
+    }
+#endif
+    struct stat st;
+    FILE *f =
+        fstat(fd, &st) == 0 && S_ISREG(st.st_mode) ? fdopen(fd, "rb") : NULL;
+    if (!f)
+        close(fd);
+    return f;
+}
+
 static int t_list(const struct sk_ctx *c, const struct janas_json *args,
                   struct janas_buf *b)
 {
@@ -197,7 +228,7 @@ static int t_read(const struct sk_ctx *c, const struct janas_json *args,
                        "skill's folder.");
     char p[4600];
     snprintf(p, sizeof p, "%s/%s", k->dir, file && *file ? file : "SKILL.md");
-    FILE *f = sk_within(k->dir, p) ? fopen(p, "rb") : NULL;
+    FILE *f = open_within(k->dir, p);
     char *txt = f ? malloc(MAX_READ + 1) : NULL;
     size_t len = txt ? fread(txt, 1, MAX_READ, f) : 0;
     if (f)

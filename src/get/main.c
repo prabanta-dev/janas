@@ -281,6 +281,34 @@ static int from_hf(const char *spec, const char *dir, int keep)
     const char *path = b + 1;
     char local[4096], out[4200];
     get_local(local, sizeof(local), dir, path);
+    /* a file of that name there already is someone's model: never taken
+       for a part of this one, nor written over */
+    struct stat st;
+    if (stat(local, &st) == 0) {
+        fprintf(stderr,
+                "janas-get: %s is there already: remove it, or download into "
+                "another folder (--dir)\n",
+                local);
+        return 1;
+    }
+    /* a part left by a download of another repository: not this one's */
+    char part[4200], from[4300], was[600] = "";
+    snprintf(part, sizeof part, "%s.part", local);
+    snprintf(from, sizeof from, "%s.part.from", local);
+    FILE *ff = fopen(from, "r");
+    if (ff) {
+        if (!fgets(was, sizeof was, ff))
+            was[0] = 0;
+        fclose(ff);
+        was[strcspn(was, "\n")] = 0;
+    }
+    if (strcmp(was, repo) != 0)
+        remove(part);
+    ff = fopen(from, "w");
+    if (ff) {
+        fprintf(ff, "%s\n", repo);
+        fclose(ff);
+    }
     size_t pl = strlen(path);
     if (pl > 4 && strcmp(path + pl - 4, ".jns") == 0) {
         printf("== %s: downloading (not in the catalog: checked against the "
@@ -288,6 +316,7 @@ static int from_hf(const char *spec, const char *dir, int keep)
                path);
         if (get_fetch(repo, path, dir, NULL, 0) != 0)
             return 1;
+        remove(from);
         printf("\nReady: %s (no fingerprint to compare: not in MODELS.md)\n"
                "Chat with it: janas-chat %s\n",
                local, local);
@@ -301,10 +330,20 @@ static int from_hf(const char *spec, const char *dir, int keep)
         if (*c >= 'A' && *c <= 'Z')
             *c = (char)(*c - 'A' + 'a');
     strcat(out, ".jns");
+    if (stat(out, &st) == 0) {
+        fprintf(stderr,
+                "janas-get: %s is there already: remove it, or download into "
+                "another folder (--dir)\n",
+                out);
+        return 1;
+    }
     printf("== %s: downloading (not in the catalog: checked against the "
            "SHA-256 Hugging Face lists)\n",
            path);
-    if (get_fetch(repo, path, dir, NULL, 0) != 0 || convert(local, out) != 0)
+    if (get_fetch(repo, path, dir, NULL, 0) != 0)
+        return 1;
+    remove(from);
+    if (convert(local, out) != 0)
         return 1;
     if (!keep)
         remove(local);

@@ -18,6 +18,7 @@ const ICON = {
   export: '<path d="M12 4v11M8 8l4-4 4 4"/><path d="M5 13v5.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V13"/>',
   window: '<rect x="3.5" y="5" width="17" height="14" rx="1.5"/><path d="M3.5 9h17M13 13h4v3"/>',
   restore: '<path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3L4.5 9"/><path d="M4.5 4.5V9H9"/>',
+  rewind: '<path d="M11 6.5l-6 5.5 6 5.5"/><path d="M19 6.5l-6 5.5 6 5.5"/>',
   trash: '<path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 12.5h9l1-12.5"/>',
   model: '<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/>',
   unload: '<path d="M12 4v9M8 9l4 4 4-4"/><path d="M5 19.5h14"/>',
@@ -25,7 +26,13 @@ const ICON = {
   gear: GEAR,
   mic: '<rect x="9" y="3.5" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v2.5"/>',
   speakOff: '<path d="M4.5 9.5h3l4.5-4v13l-4.5-4h-3z"/><path d="M15.5 9.5l5 5M20.5 9.5l-5 5"/>',
+  /* a brain: two halves, their folds */
+  brain: '<path d="M12 5.5a3 3 0 0 0-5.6-1.3A3 3 0 0 0 4 8.5a3 3 0 0 0 .6 4.9A3.2 3.2 0 0 0 7 18.5a3 3 0 0 0 5 1z"/><path d="M12 5.5a3 3 0 0 1 5.6-1.3A3 3 0 0 1 20 8.5a3 3 0 0 1-.6 4.9 3.2 3.2 0 0 1-2.4 5.1 3 3 0 0 1-5 1z"/><path d="M8 9.5c1.2 0 2 .8 2 2M16 9.5c-1.2 0-2 .8-2 2M7.5 15c1 0 1.8-.4 2.3-1M16.5 15c-1 0-1.8-.4-2.3-1"/>',
   speakOn: '<path d="M4.5 9.5h3l4.5-4v13l-4.5-4h-3z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>',
+  /* two arrows meeting at a line: summarized */
+  fold: '<path d="M12 3v6M9 6l3 3 3-3M12 21v-6M9 18l3-3 3 3M4 12h16"/>',
+  /* a loudspeaker at full volume: three waves */
+  speakLoud: '<path d="M3.5 9.5h3l4.5-4v13l-4.5-4h-3z"/><path d="M14 10a2.8 2.8 0 0 1 0 4M16.5 7.5a6.3 6.3 0 0 1 0 9M19 5a9.8 9.8 0 0 1 0 14"/>',
   file: '<path d="M6.5 3.5h7l4 4v13h-11z"/><path d="M13.5 3.5v4h4"/>',
   art: '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 9h16M9 9v11"/>',
   branch: '<circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="7" r="2"/><path d="M6 7v10"/><path d="M18 9c0 5-12 3-12 8"/>',
@@ -205,6 +212,7 @@ function chatMenu(at) {
     {label: "Rename", icon: "pencil", run: renameConv},
     {label: "Move to…", icon: "move", note: ws.free ? "a project" : "another project, or the free chats", run: () => moveConv(at)},
     {label: "Duplicate", icon: "copy", note: "a copy to take another way", run: () => branchConv(cur)},
+    {label: "Compact now", icon: "fold", note: "the earlier messages summarized, to make room", run: compactNow},
     {label: "Export", icon: "export", note: "Markdown, text or PDF", run: exportConv},
     {label: "In a new window", icon: "window", run: () => window.open("/#chat/" + cur.id, "_blank")},
     "-",
@@ -282,18 +290,21 @@ $("#modelbtn").onclick = () => {
   items.push("-", {label: "Other models…", icon: "compass", note: "Discover", run: () => show("discover")});
   popMenu($("#modelbtn"), items, true);
 };
-async function useModel(name) {
+function useModel(name) {
   if (server.running && server.model === name) return;
-  if (!isLoaded(name)) {
-    $("#loaded").textContent = "loading " + name + "…";
-    delete ctxOf[name]; /* loaded anew: its context asked again */
-  }
-  const r = await fetch("/brebus/server/start", {method: "POST",
-    body: JSON.stringify({model: name, ...(settings[name] || {})})});
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok) say(j.error || name + " did not start");
-  else remember(name);
-  await status();
+  return whileLoading(async () => {
+    if (!isLoaded(name)) {
+      $("#loaded").textContent = "Loading " + name + "…";
+      delete ctxOf[name]; /* loaded anew: its context asked again */
+    }
+    sendButton(); /* the field says so, and waits */
+    const r = await fetch("/brebus/server/start", {method: "POST",
+      body: JSON.stringify({model: name, ...(settings[name] || {})})});
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) say(j.error || name + " did not start");
+    else remember(name);
+    await status();
+  });
 }
 /* the model's settings, in a dialog of their own */
 $("#modelset").onclick = async () => {
@@ -450,6 +461,45 @@ $("#speak").onclick = () => {
   speakButton();
 };
 speakButton();
+
+/* ---- reasoning before the answer, for this chat: beside the voice, for
+   a model that can be told (its capabilities, /api/show); a chat starts
+   as the model's setting has it (off unless yes), and changes it at any
+   message, at once: it goes with each request ---- */
+const reasonsOf = {};
+function thinkNow() {
+  if (cur && cur.think !== undefined) return cur.think;
+  const s = settings[server.model];
+  return !!(s && s.think === true);
+}
+function thinkButton() {
+  const b = $("#thinkbtn"), can = server.running && reasonsOf[server.model];
+  put(b, "hidden", !can);
+  if (!can) return;
+  const on = thinkNow();
+  put(b, "innerHTML", icon("brain"));
+  b.setAttribute("aria-pressed", on ? "true" : "false");
+  put(b, "title", on ? "The model reasons before it answers, in this chat: slower, better on hard questions. Click to stop"
+                     : "Let the model reason before it answers, in this chat: slower, better on hard questions");
+}
+async function readReasons() {
+  const name = server.running && server.model;
+  if (name && !(name in reasonsOf))
+    try {
+      const r = await fetch("/api/show", {method: "POST", headers: {"Content-Type": "application/json"},
+                                          body: JSON.stringify({model: name})});
+      const j = await r.json();
+      if (r.ok) reasonsOf[name] = (j.capabilities || []).includes("thinking");
+    } catch (e) {}
+  thinkButton();
+}
+$("#thinkbtn").onclick = async () => {
+  await booted; /* the start's own chat, not one it replaces */
+  if (!cur) newConv();
+  cur.think = !thinkNow();
+  thinkButton();
+  if (cur.messages.length) await saveConv(cur); /* a new chat: with its first message */
+};
 /* a reply's words, without its marks, its code or its artifacts */
 function speakReply(m, asked) {
   if (!(speakOn || asked) || !m || !m.content || !("speechSynthesis" in window)) return;
@@ -470,10 +520,7 @@ function speakReply(m, asked) {
 /* ---- how much of the model's memory the chat fills: its last reply's
    tokens, of the context the model was loaded with ---- */
 function ctxRing() {
-  const used = cur ? [...cur.messages].reverse().find((m) => m.ctx)?.ctx || 0 : 0;
-  const name = server.running ? server.model : nextModel();
-  const size = (settings[name] && +settings[name].context) || server.context ||
-               (modelInfo[name] && modelInfo[name].context) || 0;
+  const used = ctxUsed(), size = ctxSize();
   const f = size ? Math.min(1, used / size) : 0;
   const r = $("#ctxring");
   r.querySelector(".fg").style.strokeDashoffset = String(53.4 * (1 - f));
@@ -483,7 +530,7 @@ function ctxRing() {
   r.ariaLabel = !used ? "The model's memory of this chat: nothing used yet"
     : `The model's memory of this chat: ${used.toLocaleString()} of ${size ? size.toLocaleString() : "?"} tokens` +
       (size ? ` (${Math.round(f * 100)}%)` : "") +
-      (f >= 0.9 ? ". Nearly full: the earliest messages will be forgotten; a new chat starts afresh." : "");
+      (f >= COMPACT_AT ? ". Nearly full: the earlier messages will be summarized before the next one is sent." : "");
 }
 
 /* ---- dictation: the field empty, the send button is a microphone; the
@@ -550,10 +597,8 @@ $("#monbtn").onclick = () => window.open("/monitor", "_blank", "noopener");
   ring.addEventListener("mouseenter", () => {
     clearTimeout(leave);
     if (pop) return;
-    const used = cur ? [...cur.messages].reverse().find((m) => m.ctx)?.ctx || 0 : 0;
+    const used = ctxUsed(), size = ctxSize();
     const name = server.running ? server.model : nextModel();
-    const size = (settings[name] && +settings[name].context) || server.context ||
-                 (modelInfo[name] && modelInfo[name].context) || 0;
     const f = size ? Math.min(1, used / size) : 0;
     const words = (n) => "about " + Math.round(n * 0.75).toLocaleString() + " words";
     pop = document.createElement("div");
@@ -565,9 +610,9 @@ $("#monbtn").onclick = () => window.open("/monitor", "_blank", "noopener");
         ${size ? `<dt>Left</dt><dd>${Math.max(0, size - used).toLocaleString()} tokens, ${words(Math.max(0, size - used))}</dd>` : ""}
         <dt>Model</dt><dd>${esc(name || "none")}</dd></dl>
       <p>Everything the model reads counts: your messages, its replies, the documents found, the tools' results. ${
-        f >= 0.9 ? "It is nearly full: the earliest messages will be forgotten. A new chat starts afresh."
-        : f >= 0.7 ? "Past 90% the earliest messages start to be forgotten."
-        : "When it fills up, the earliest messages are forgotten first."} The room is set in the model's settings (the gear).</p>`;
+        f >= COMPACT_AT ? "It is nearly full: before your next message the earlier ones are summarized, and the model reads the summary in their place."
+        : f >= 0.7 ? "At 80% the earlier messages are summarized, to make room."
+        : "When it fills up, the earlier messages are summarized to make room (Compact now, in the chat's menu, does it at once)."} The room is set in the model's settings (the gear).</p>`;
     document.body.append(pop);
     const r = ring.getBoundingClientRect();
     pop.style.left = Math.max(8, Math.min(r.left + r.width / 2 - 140, innerWidth - 288)) + "px";

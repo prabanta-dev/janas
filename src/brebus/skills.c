@@ -255,7 +255,9 @@ static int copy_tree(const char *from, const char *to, int depth)
         struct stat st;
         snprintf(a, sizeof a, "%s/%s", from, e->d_name);
         snprintf(z, sizeof z, "%s/%s", to, e->d_name);
-        if (stat(a, &st) != 0)
+        /* links are not copied: a skill is its own files, not what a link
+           in it points to */
+        if (lstat(a, &st) != 0 || S_ISLNK(st.st_mode))
             continue;
         if (S_ISDIR(st.st_mode)) {
             rc = copy_tree(a, z, depth + 1);
@@ -291,7 +293,8 @@ static int remove_tree(const char *dir, int depth)
         char p[4400];
         struct stat st;
         snprintf(p, sizeof p, "%s/%s", dir, e->d_name);
-        if (stat(p, &st) == 0 && S_ISDIR(st.st_mode))
+        /* a link is removed, never followed */
+        if (lstat(p, &st) == 0 && S_ISDIR(st.st_mode))
             remove_tree(p, depth + 1);
         else
             remove(p);

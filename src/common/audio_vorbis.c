@@ -234,7 +234,11 @@ static int cb_setup(struct cb *c, struct vbr *b)
     int bits = (int)vb(b, 4) + 1, seq = (int)vb(b, 1);
     long nv =
         type == 1 ? lookup1(c->entries, c->dim) : (long)c->entries * c->dim;
-    if (nv <= 0 || nv > (1 << 26))
+    /* the vectors a book holds: libvorbis' largest are some ten thousand
+       of 8 or fewer; a million is far past them, and a few bytes of
+       header saying more would take gigabytes */
+    if (nv <= 0 || nv > (1 << 26) ||
+        (uint64_t)c->entries * (uint64_t)c->dim > (1u << 20))
         return -1;
     uint32_t *mul = malloc(sizeof(uint32_t) * (size_t)nv);
     c->vq = malloc(sizeof(float) * (size_t)c->entries * (size_t)c->dim);

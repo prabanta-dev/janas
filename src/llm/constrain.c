@@ -84,7 +84,10 @@ static int is_stop(const struct janas_constraint *c, int32_t t)
 
 static int is_special(const struct janas_constraint *c, int32_t t)
 {
-    return c->special[t >> 3] >> (t & 7) & 1;
+    /* a model may have more outputs than its tokenizer has tokens: those
+       past them are no special token */
+    return t >= 0 && (uint32_t)t < janas_tokenizer_n_vocab(c->tok) &&
+           (c->special[t >> 3] >> (t & 7) & 1);
 }
 
 /* Whether token t may come next in match m. */

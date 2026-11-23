@@ -42,6 +42,7 @@ struct resp {
     char item_think[40], item_text[40];
     char *pend;
     size_t n_pend, off;
+    double last_ms; /* when bytes were last given to the client */
     /* tools of type mcp (responses_mcp.c): the servers; the output items of
        the rounds over (a JSON array, NULL: none), the job's own among them
        once consumed; how many of them the stream has told; the counts of

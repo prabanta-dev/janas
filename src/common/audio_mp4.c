@@ -98,6 +98,7 @@ struct track {
     /* the samples */
     size_t *off, *len;
     size_t count, cap;
+    size_t bytes; /* of the samples, the file's at most */
     uint64_t total_duration;
     /* the edit list */
     int64_t media_time;   /* -1: none */
@@ -108,8 +109,16 @@ struct track {
     uint32_t trex_duration, trex_size;
 };
 
-static int add_sample(struct track *t, size_t off, size_t len)
+static int add_sample(struct track *t, size_t off, size_t len, size_t fn)
 {
+    /* an empty sample is none; samples are the file's bytes, not more of
+       them than it has (counts and overlaps of a tiny file would make
+       gigabytes) */
+    if (!len)
+        return 0;
+    if (len > fn - (t->bytes < fn ? t->bytes : fn) || t->bytes >= fn)
+        return -1;
+    t->bytes += len;
     if (t->count == t->cap) {
         size_t c = t->cap ? t->cap * 2 : 1024;
         size_t *o = realloc(t->off, sizeof(size_t) * c);
@@ -318,7 +327,7 @@ static int read_stbl(struct track *t, const uint8_t *p, size_t n,
                 }
                 if (off > fn || len > fn - off)
                     return t->count ? 0 : -1; /* a file cut short */
-                if (add_sample(t, (size_t)off, len) != 0)
+                if (add_sample(t, (size_t)off, len, (size_t)fn) != 0)
                     return -1;
                 off += len;
             }
@@ -336,7 +345,8 @@ static int read_trak(struct track *t, const uint8_t *p, size_t n,
         child(mdia.body, mdia.len, TAG("hdlr"), &hdlr) != 0 || hdlr.len < 12 ||
         be32(hdlr.body + 8) != TAG("soun"))
         return 1;
-    if (child(p, n, TAG("tkhd"), &tkhd) == 0 && tkhd.len >= 16)
+    if (child(p, n, TAG("tkhd"), &tkhd) == 0 &&
+        tkhd.len >= (tkhd.len && tkhd.body[0] == 1 ? 24u : 16u))
         t->track_id = be32(tkhd.body + (tkhd.body[0] == 1 ? 20 : 12));
     if (child(mdia.body, mdia.len, TAG("mdhd"), &mdhd) == 0 && mdhd.len >= 24)
         t->timescale = be32(mdhd.body + (mdhd.body[0] == 1 ? 20 : 12));
@@ -434,6 +444,9 @@ static int read_moof(struct track *t, const uint8_t *moof, size_t n,
                          (fl & 0x400 ? 4 : 0) + (fl & 0x800 ? 4 : 0);
             if (r > tr.len || (per && cnt > (tr.len - r) / per))
                 return -1;
+            /* samples of no size each, by the run's count alone: none */
+            if (!(fl & 0x200) && !def_size)
+                cnt = 0;
             for (uint32_t i = 0; i < cnt; i++) {
                 const uint8_t *e = tr.body + r + per * i;
                 uint32_t size = def_size;
@@ -447,7 +460,7 @@ static int read_moof(struct track *t, const uint8_t *moof, size_t n,
                     size = be32(e);
                 if (off > fn || size > fn - off)
                     return 0;
-                if (add_sample(t, (size_t)off, size) != 0)
+                if (add_sample(t, (size_t)off, size, (size_t)fn) != 0)
                     return -1;
                 off += size;
             }
@@ -661,8 +674,8 @@ static int mp4_pcm(const struct track *t, const uint8_t *d,
     return audio_put(ao, pcm, at, why, wn);
 }
 
-int janas_audio_mp4(const uint8_t *d, size_t n, struct audio_out *ao,
-                    char *why, size_t wn)
+int janas_audio_mp4(const uint8_t *d, size_t n, struct audio_out *ao, char *why,
+                    size_t wn)
 {
     struct box ftyp;
     if (box_at(d, n, &ftyp) != 0 ||
@@ -683,7 +696,8 @@ int janas_audio_mp4(const uint8_t *d, size_t n, struct audio_out *ao,
             break; /* a box cut short at the end */
         if (b.type == TAG("moov") && !found) {
             struct box mvhd, mvex, trex;
-            if (child(b.body, b.len, TAG("mvhd"), &mvhd) == 0 && mvhd.len >= 20)
+            if (child(b.body, b.len, TAG("mvhd"), &mvhd) == 0 &&
+                mvhd.len >= (mvhd.len && mvhd.body[0] == 1 ? 24u : 20u))
                 t.movie_timescale =
                     be32(mvhd.body + (mvhd.body[0] == 1 ? 20 : 12));
             const uint8_t *q = b.body;

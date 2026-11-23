@@ -729,14 +729,16 @@ static int frame_ok(const uint8_t *d, size_t n, size_t at, struct mpa_hdr *h)
 
 /* Xing, Info or VBRI in the first frame: 1 when it is that frame, with
    LAME's encoder delay and padding when it says them */
-static int vbr_frame(const uint8_t *f, const struct mpa_hdr *h, int *delay,
-                     int *padding)
+static int vbr_frame(const uint8_t *f, size_t left, const struct mpa_hdr *h,
+                     int *delay, int *padding)
 {
     size_t side = h->lsf ? (h->ch == 1 ? 9 : 17) : (h->ch == 1 ? 17 : 32);
     size_t x = 4 + side;
-    if (h->layer != 3 || h->size < x + 8)
+    /* the frame's bytes there are: a frame cut by the file's end too */
+    size_t size = (size_t)h->size < left ? (size_t)h->size : left;
+    if (h->layer != 3 || size < x + 8)
         return 0;
-    if (h->size >= 36 + 4 && !memcmp(f + 36, "VBRI", 4))
+    if (size >= 36 + 4 && !memcmp(f + 36, "VBRI", 4))
         return 1;
     if (memcmp(f + x, "Xing", 4) && memcmp(f + x, "Info", 4))
         return 0;
@@ -744,7 +746,7 @@ static int vbr_frame(const uint8_t *f, const struct mpa_hdr *h, int *delay,
                      (uint32_t)f[x + 6] << 8 | f[x + 7];
     size_t t = x + 8 + (flags & 1 ? 4 : 0) + (flags & 2 ? 4 : 0) +
                (flags & 4 ? 100 : 0) + (flags & 8 ? 4 : 0);
-    if (t + 24 <= h->size &&
+    if (t + 24 <= size &&
         (!memcmp(f + t, "LAME", 4) || !memcmp(f + t, "Lavf", 4) ||
          !memcmp(f + t, "Lavc", 4))) {
         uint32_t v =
@@ -755,8 +757,8 @@ static int vbr_frame(const uint8_t *f, const struct mpa_hdr *h, int *delay,
     return 1;
 }
 
-int janas_audio_mpeg(const uint8_t *d, size_t n, struct audio_out *o,
-                     char *why, size_t wn)
+int janas_audio_mpeg(const uint8_t *d, size_t n, struct audio_out *o, char *why,
+                     size_t wn)
 {
     struct mpa_hdr h;
     size_t at = 0;
@@ -775,7 +777,7 @@ int janas_audio_mpeg(const uint8_t *d, size_t n, struct audio_out *o,
     }
     l3_init(l3);
     int rate = h.rate, layer = h.layer, delay = -1, padding = 0;
-    if (vbr_frame(d + at, &h, &delay, &padding))
+    if (vbr_frame(d + at, n - at, &h, &delay, &padding))
         at += h.size;
     float out[1152];
     size_t got = 0;

@@ -73,8 +73,18 @@ static int trusted_host(const char *h, const char *listen)
 int srv_origin_check(const struct srv_config *c, const char *origin,
                      const char *host)
 {
-    if (!origin)
-        return SRV_ORIGIN_NONE; /* not a browser's page: a program */
+    if (!origin) {
+        /* not a browser's page, or one of the same origin by name: a
+           browser leaves Origin out of a GET of its own site, so without
+           a key the name asked must be one only this machine answers to
+           (a rebinding site's GET would read every answer) */
+        char hh[256], hp[8];
+        if ((!c->api_key || !*c->api_key) && host &&
+            (split(host, strlen(host), hh, sizeof hh, hp, sizeof hp) != 0 ||
+             !trusted_host(hh, c->host)))
+            return SRV_ORIGIN_REFUSED;
+        return SRV_ORIGIN_NONE; /* a program */
+    }
     for (int i = 0; i < c->n_allow_origin; i++)
         if (!strcmp(c->allow_origin[i], "*") ||
             !strcasecmp(c->allow_origin[i], origin))

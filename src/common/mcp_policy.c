@@ -7,7 +7,10 @@
 #include "common/mcp_policy.h"
 
 #include <netinet/in.h>
+#include <pthread.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 #include <sys/socket.h>
@@ -124,9 +127,37 @@ static int entry_names(const char *e, const char *host, const char *port)
     return !p || !strcmp(p, port);
 }
 
+/* the process's own, from its environment: JANAS_NET_PUBLIC_ONLY=1 and
+   JANAS_NET_ALLOW, comma separated */
+static struct janas_net_policy env_p;
+static char env_allow[1024], *env_list[16];
+static pthread_once_t env_once = PTHREAD_ONCE_INIT;
+
+static void env_read(void)
+{
+    const char *on = getenv("JANAS_NET_PUBLIC_ONLY");
+    if (!on || strcmp(on, "1"))
+        return;
+    env_p.public_only = 1;
+    const char *a = getenv("JANAS_NET_ALLOW");
+    snprintf(env_allow, sizeof env_allow, "%s", a ? a : "");
+    for (char *s = env_allow, *sv = NULL, *t = strtok_r(s, ",", &sv);
+         t && env_p.n_allow < 16; t = strtok_r(NULL, ",", &sv))
+        env_list[env_p.n_allow++] = t;
+    env_p.allow = env_list;
+}
+
+const struct janas_net_policy *janas_net_default(void)
+{
+    pthread_once(&env_once, env_read);
+    return env_p.public_only ? &env_p : NULL;
+}
+
 int janas_net_allowed(const struct janas_net_policy *p, const char *host,
                       const char *port, const struct sockaddr *sa)
 {
+    if (!p)
+        p = janas_net_default();
     if (!p || !p->public_only || janas_addr_public(sa))
         return 1;
     for (size_t i = 0; i < p->n_allow; i++)

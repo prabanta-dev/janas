@@ -13,6 +13,7 @@
  * as a PNG, written here: its pixels stored, not compressed - it lives in
  * memory for one call.
  */
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,6 +23,9 @@
 
 static char model_path[4096];
 static janas_llm *llm;
+/* the index and a tool's call read pictures at once: one model, used by
+   one at a time, not closed under the other */
+static pthread_mutex_t llm_mu = PTHREAD_MUTEX_INITIALIZER;
 static int broken; /* it would not open: not tried again in this run */
 
 static const char PROMPT[] =
@@ -63,8 +67,20 @@ static int open_model(char *why, size_t wn)
     return 0;
 }
 
+static int ocr_locked(const uint8_t *img, size_t n, struct janas_buf *out,
+                      char *why, size_t wn);
+
 int dz_ocr_image(const uint8_t *img, size_t n, struct janas_buf *out, char *why,
                  size_t wn)
+{
+    pthread_mutex_lock(&llm_mu);
+    int rc = ocr_locked(img, n, out, why, wn);
+    pthread_mutex_unlock(&llm_mu);
+    return rc;
+}
+
+static int ocr_locked(const uint8_t *img, size_t n, struct janas_buf *out,
+                      char *why, size_t wn)
 {
     if (!dz_ocr_on() || open_model(why, wn) != 0)
         return -1;
@@ -105,9 +121,11 @@ int dz_ocr_image(const uint8_t *img, size_t n, struct janas_buf *out, char *why,
 
 void dz_ocr_rest(void)
 {
+    pthread_mutex_lock(&llm_mu);
     if (llm)
         janas_llm_close(llm);
     llm = NULL;
+    pthread_mutex_unlock(&llm_mu);
 }
 
 /* ---- a PNG of raw samples, its deflate blocks stored ---- */

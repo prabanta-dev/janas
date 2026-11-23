@@ -845,6 +845,12 @@ for src in tests/*.c tools/*.c src/*/main.c src/services/*/main.c; do
         echo "build.sh: no sources match $src" >&2
         exit 2
     fi
+    # the setuid helper of Brebus: release only (a sanitizer's runtime
+    # reads its options from the caller's environment, as root)
+    if [ "$src" = src/brebus-helper/main.c ] && [ "$VARIANT" != release ]; then
+        rm -f "$BIN/janas-brebus-helper$SUFFIX$EXE"
+        continue
+    fi
     exe="$BIN/$(basename "${src%.c}")$SUFFIX$EXE"
     own=()
     if [ "$(basename "$src")" = main.c ]; then
@@ -902,6 +908,9 @@ for src in tests/*.c tools/*.c src/*/main.c src/services/*/main.c; do
     # brebus.exe on Windows: a window's program, no console; its own icon
     [ "$OS" = windows ] && [ "$src" = src/brebus/main.c ] &&
         start=("$OBJ/win_start.o" "$OBJ/brebus_res.o" -mwindows)
+    # the setuid helper: its tables read only before it runs
+    [ "$OS" = linux ] && [ "$src" = src/brebus-helper/main.c ] &&
+        start+=(-Wl,-z,relro,-z,now)
     "$CC" "${CFLAGS[@]}" "${TP_INC[@]}" "${skill[@]}" "$src" "${own[@]}" \
         "${start[@]}" "$OBJ/libjanas.a" "${THIRD[@]}" "${LDSTATIC[@]}" "${LDLIBS[@]}" -o "$exe"
 done

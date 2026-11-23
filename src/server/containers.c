@@ -154,6 +154,7 @@ int srv_container_files_content(struct srv_req *r)
 
 #include "common/pysession.h"
 #include "common/sandbox.h"
+#include "common/sysinfo.h"
 #include "files_store.h"
 #include "llm/json.h"
 #include "multipart.h"
@@ -162,6 +163,11 @@ int srv_container_files_content(struct srv_req *r)
 #define CELL_SECONDS 120
 #define DEFAULT_MINUTES 20
 #define MAX_FILES 2000
+#define MAX_SESSIONS 16
+/* a container's files, all of them: past them its session ends and no
+   more code runs in it until some are removed */
+#define CONTAINER_BYTES ((int64_t)4 << 30)
+#define CONTAINER_ENTRIES 100000
 
 static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t reaper_cv = PTHREAD_COND_INITIALIZER;
@@ -234,8 +240,18 @@ static int open_under(const char *cid, const char *rel, int flags)
     int dir = parent_under(cid, rel, &leaf);
     if (dir < 0)
         return -1;
-    int fd = openat(dir, leaf, flags | O_NOFOLLOW | O_CLOEXEC, 0644);
+    /* a regular file alone: a FIFO left by code in the cage would block
+       its opener (under the containers' lock) for ever */
+    int fd =
+        openat(dir, leaf, flags | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK, 0644);
     close(dir);
+    struct stat st;
+    if (fd >= 0 && (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode))) {
+        close(fd);
+        return -1;
+    }
+    if (fd >= 0)
+        fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) & ~O_NONBLOCK);
     return fd;
 }
 
@@ -388,6 +404,52 @@ static void walk_dir(int dir, const char *prefix, struct walk *w, int depth)
     closedir(d);
 }
 
+/* the bytes and entries under dir, each counted, to the limits and no
+   further (the walk itself is bounded) */
+static void measure(int dir, int64_t *bytes, int64_t *entries, int depth)
+{
+    DIR *d = fdopendir(dir);
+    if (!d) {
+        close(dir);
+        return;
+    }
+    struct dirent *e;
+    while ((e = readdir(d)) && *bytes <= CONTAINER_BYTES &&
+           *entries <= CONTAINER_ENTRIES) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, ".."))
+            continue;
+        struct stat st;
+        if (fstatat(dirfd(d), e->d_name, &st, AT_SYMLINK_NOFOLLOW) != 0)
+            continue;
+        (*entries)++;
+        *bytes += (int64_t)st.st_blocks * 512;
+        if (S_ISDIR(st.st_mode)) {
+            if (depth >= 32) { /* deeper is no data of anyone's */
+                *entries = CONTAINER_ENTRIES + 1;
+                break;
+            }
+            int sub = openat(dirfd(d), e->d_name,
+                             O_DIRECTORY | O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+            if (sub >= 0)
+                measure(sub, bytes, entries, depth + 1);
+        }
+    }
+    closedir(d);
+}
+
+/* the container's files past its share of the disk (mu held) */
+static int over_quota(const char *cid)
+{
+    char p[4600];
+    path_of(p, sizeof p, cid, "data");
+    int dir = open(p, O_DIRECTORY | O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    if (dir < 0)
+        return 0;
+    int64_t bytes = 0, entries = 0;
+    measure(dir, &bytes, &entries, 0);
+    return bytes > CONTAINER_BYTES || entries > CONTAINER_ENTRIES;
+}
+
 /* The index brought up to what is in data/ (mu held): new files get ids
    (source as given), gone ones go. Those new or changed since the index
    was last brought up are listed in changed (ids), images first. 0, or
@@ -466,6 +528,7 @@ struct kernel {
     struct janas_sandbox sb;
     pthread_mutex_t run; /* one piece of code at a time */
     int refs;            /* the list's, and each piece of code's (mu) */
+    uint64_t mem;        /* its address space's limit */
     struct kernel *next;
 };
 
@@ -499,9 +562,30 @@ static void kernel_drop(struct kernel *k)
 static struct kernel *kernel_of(const char *cid, int64_t mem, char *why,
                                 size_t n)
 {
-    for (struct kernel *k = kernels; k; k = k->next)
+    int live = 0;
+    uint64_t taken = 0;
+    for (struct kernel *k = kernels; k; k = k->next) {
         if (!strcmp(k->cid, cid))
             return k;
+        live++;
+        taken += k->mem;
+    }
+    /* sessions at once, and their memory: within what the machine has
+       free beside the model (a client asks for 64g as easily as 1g) */
+    uint64_t want = (uint64_t)mem + ((uint64_t)1 << 30); /* + the runtime */
+    uint64_t avail = janas_mem_available();
+    if (live >= MAX_SESSIONS) {
+        snprintf(why, n, "%d sessions of code run already: try when one ends",
+                 MAX_SESSIONS);
+        return NULL;
+    }
+    if (avail && taken + want > avail / 2) {
+        snprintf(why, n,
+                 "not memory enough for this session's %lld MiB: half of "
+                 "what is free, %llu MiB, is the most all of them take",
+                 (long long)(want >> 20), (unsigned long long)(avail >> 21));
+        return NULL;
+    }
     struct kernel *k = calloc(1, sizeof(*k));
     if (!k) {
         snprintf(why, n, "out of memory");
@@ -511,11 +595,11 @@ static struct kernel *kernel_of(const char *cid, int64_t mem, char *why,
     pthread_mutex_init(&k->run, NULL);
     char data[4400];
     path_of(data, sizeof data, cid, "data");
-    struct janas_sandbox_cfg c = {
-        .data_dir = data,
-        .mem_bytes = (uint64_t)mem + ((uint64_t)1 << 30), /* + the runtime */
-        .file_bytes = (uint64_t)512 << 20,
-        .tmp_bytes = (uint64_t)256 << 20};
+    k->mem = want;
+    struct janas_sandbox_cfg c = {.data_dir = data,
+                                  .mem_bytes = want,
+                                  .file_bytes = (uint64_t)512 << 20,
+                                  .tmp_bytes = (uint64_t)256 << 20};
     const char *py =
         server->cfg.code_python ? server->cfg.code_python : "/usr/bin/python3";
     char *argv[] = {(char *)py, "-I", "-c", (char *)JANAS_PY_DRIVER, NULL};
@@ -566,6 +650,13 @@ int srv_container_run(struct srv *s, const char *id, const char *code,
     yyjson_doc_free(m);
     touch(id);
     sync_index(id, "user", NULL, NULL); /* what was there before */
+    if (over_quota(id)) {
+        pthread_mutex_unlock(&mu);
+        out->error = strdup("the container's files take more than 4 GiB or "
+                            "100,000 entries: remove some before running "
+                            "more code");
+        return 0;
+    }
     struct kernel *k =
         kernel_of(id, mem > 0 ? mem : (int64_t)1 << 30, why, sizeof why);
     if (k)
@@ -609,6 +700,16 @@ int srv_container_run(struct srv *s, const char *id, const char *code,
     yyjson_mut_val *changed = yyjson_mut_arr(cd);
     sync_index(id, "assistant", cd, changed);
     touch(id);
+    if (over_quota(id)) { /* its session ends: no more written by it */
+        for (struct kernel *q = kernels; q; q = q->next)
+            if (q == k) {
+                kernel_drop(k);
+                break;
+            }
+        if (!out->error)
+            out->error = strdup("the container's files passed 4 GiB or "
+                                "100,000 entries: its session ended");
+    }
     size_t nc = yyjson_mut_arr_size(changed);
     if (nc) {
         out->file_id = calloc(nc, sizeof(*out->file_id));

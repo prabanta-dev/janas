@@ -15,6 +15,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
+#include <sys/utsname.h>
 #include <sys/socket.h>
 
 #include <microhttpd.h>
@@ -39,17 +41,87 @@ static const char CSP[] =
 
 static int hsts; /* served over HTTPS: browsers told to keep to it */
 
-/* "127.0.0.1:port" or "localhost:port"; served, any name of the machine
-   (the login guards it) */
+/* served: a name a site cannot make its own by rebinding it to this
+   machine - an address, localhost, this machine's name, one given with
+   --host-name */
+static int served_name(const struct brebus *b, const char *host)
+{
+    char h[256];
+    size_t n;
+    if (host[0] == '[') {
+        const char *e = strchr(host, ']');
+        return e && (e[1] == 0 || e[1] == ':');
+    }
+    n = strcspn(host, ":");
+    if (!n || n >= sizeof h)
+        return 0;
+    memcpy(h, host, n);
+    h[n] = 0;
+    if (strspn(h, "0123456789.") == n || !strcasecmp(h, "localhost"))
+        return 1;
+    struct utsname u;
+    if (uname(&u) == 0) {
+        size_t m = strlen(u.nodename);
+        if (!strcasecmp(h, u.nodename) ||
+            (n == m + 6 && !strncasecmp(h, u.nodename, m) &&
+             !strcasecmp(h + m, ".local")))
+            return 1;
+    }
+    for (const char *s = b->names; *s;) {
+        size_t k = strcspn(s, ",");
+        if (k == n && !strncasecmp(s, h, n))
+            return 1;
+        s += k + (s[k] == ',');
+    }
+    return 0;
+}
+
+/* "127.0.0.1:port" or "localhost:port"; served, a name of the machine
+   (the login guards it, served_name the name) */
 static int ours(const struct brebus *b, const char *host)
 {
     if (b->serve)
         return host && *host && strlen(host) < 256 &&
-               !strpbrk(host, " /\\;,\"'<>");
+               !strpbrk(host, " /\\;,\"'<>") && served_name(b, host);
     char a[64], c[64];
     snprintf(a, sizeof a, "127.0.0.1:%u", b->port);
     snprintf(c, sizeof c, "localhost:%u", b->port);
     return host && (!strcmp(host, a) || !strcmp(host, c));
+}
+
+/* what a user's own Brebus may ask of the models' server: the models,
+   their answers, their state - not what the server keeps (its files,
+   stored replies, conversations, shared by every user) nor stopping a
+   model others use */
+static int child_route(const char *method, const char *url)
+{
+    static const char *const get[] = {
+        "/v1/models",      "/api/tags",      "/api/ps",
+        "/api/version",    "/monitor",       "/monitor/",
+        "/monitor/events", "/brebus/server", "/brebus/server/choices"};
+    static const char *const post[] = {"/v1/chat/completions",
+                                       "/v1/completions",
+                                       "/v1/embeddings",
+                                       "/v1/messages",
+                                       "/v1/responses",
+                                       "/v1/audio/transcriptions",
+                                       "/v1/audio/translations",
+                                       "/v1/audio/speech",
+                                       "/api/chat",
+                                       "/api/generate",
+                                       "/api/embed",
+                                       "/api/embeddings",
+                                       "/api/show",
+                                       "/brebus/server/start"};
+    int g = !strcmp(method, "GET");
+    const char *const *l = g ? get : post;
+    size_t n = g ? sizeof get / sizeof *get : sizeof post / sizeof *post;
+    if (!g && strcmp(method, "POST"))
+        return 0;
+    for (size_t i = 0; i < n; i++)
+        if (!strcmp(url, l[i]))
+            return 1;
+    return 0;
 }
 
 static enum MHD_Result reply(struct MHD_Connection *conn, unsigned status,
@@ -76,12 +148,18 @@ static enum MHD_Result reply(struct MHD_Connection *conn, unsigned status,
 }
 
 #define MAX_BODY (32u << 20)
+#define MAX_UPLOAD (512u << 20) /* a file sent from a browser */
 
 /* a request's body, gathered as it comes */
 struct req {
     struct janas_buf body;
     int too_big;
+    size_t cap; /* the most of a body taken */
 };
+
+/* before a login, a body as large as a login's (a request of no one is
+   not kept in memory by the megabyte) */
+#define MAX_ANON (64 << 10)
 
 static void completed(void *cls, struct MHD_Connection *conn, void **state,
                       enum MHD_RequestTerminationCode why)
@@ -152,12 +230,20 @@ static enum MHD_Result handler(void *cls, struct MHD_Connection *conn,
         struct req *r = calloc(1, sizeof(*r));
         if (!r)
             return MHD_NO;
+        r->cap = !strcmp(url, "/brebus/upload") ? MAX_UPLOAD : MAX_BODY;
+        if (b->serve && !b->child) {
+            char who[128];
+            int adm = 0;
+            if (!(ct && brebus_child_token_ok(ct)) &&
+                !brebus_auth_user(conn, who, sizeof who, &adm))
+                r->cap = MAX_ANON;
+        }
         *state = r;
         return MHD_YES;
     }
     struct req *r = *state;
     if (*upload_n) { /* more of the body */
-        if (r->body.n + *upload_n > MAX_BODY)
+        if (r->body.n + *upload_n > r->cap)
             r->too_big = 1;
         else
             janas_buf_put(&r->body, upload, *upload_n);
@@ -220,7 +306,8 @@ static enum MHD_Result handler(void *cls, struct MHD_Connection *conn,
         const char *ct = MHD_lookup_connection_value(conn, MHD_HEADER_KIND,
                                                      "X-Brebus-Child");
         if (ct) {
-            if (!models_api || !brebus_child_token_ok(ct)) {
+            if (!models_api || !child_route(method, url) ||
+                !brebus_child_token_ok(ct)) {
                 static const char no[] = "{\"error\": \"not allowed\"}";
                 return reply(conn, 403, "application/json", no, sizeof no - 1,
                              1);
@@ -273,6 +360,15 @@ static enum MHD_Result handler(void *cls, struct MHD_Connection *conn,
             static const char no[] = "{\"error\": \"log in first\"}";
             return reply(conn, 401, "application/json", no, sizeof no - 1, 1);
         }
+        /* the role as it is now: an account removed, demoted or taken out
+           of its group is so at once, not at its next login */
+        int role = brebus_user_role(b, user);
+        if (role < 0) {
+            static const char no[] =
+                "{\"error\": \"this account may no longer use Brebus\"}";
+            return reply(conn, 401, "application/json", no, sizeof no - 1, 1);
+        }
+        admin = role == 1;
         if (post && !strcmp(url, "/brebus/auth/logout")) {
             brebus_auth_logout(b, conn);
             char ck[256];
@@ -369,7 +465,9 @@ routes:
                  "'unsafe-inline' %s://%s/brebus/lib/; font-src data: "
                  "%s://%s/brebus/lib/; img-src data: blob:; media-src data: "
                  "blob:; worker-src blob:; connect-src 'none'; form-action "
-                 "'none'; base-uri 'none'; frame-ancestors %s://%s",
+                 "'none'; base-uri 'none'; frame-ancestors %s://%s; "
+                 "sandbox allow-scripts allow-forms allow-modals "
+                 "allow-downloads",
                  sc, host, sc, host, sc, host, sc, host);
         struct MHD_Response *rs = MHD_create_response_from_buffer_static(
             sizeof janas_brebus_frame_html - 1, janas_brebus_frame_html);
@@ -503,6 +601,21 @@ routes:
         return reply(conn, get ? 404 : 400, "application/json", no,
                      sizeof no - 1, 1);
     }
+    if (post && !strcmp(url, "/brebus/upload")) {
+        const char *nm =
+            MHD_lookup_connection_value(conn, MHD_GET_ARGUMENT_KIND, "name");
+        int rc =
+            brebus_upload(b, nm, r->body.p ? r->body.p : "", r->body.n, &o);
+        return json(conn, rc ? 400 : 200, &o);
+    }
+    if (get && !strcmp(url, "/brebus/dirs")) {
+        const char *p =
+            MHD_lookup_connection_value(conn, MHD_GET_ARGUMENT_KIND, "path");
+        const char *f =
+            MHD_lookup_connection_value(conn, MHD_GET_ARGUMENT_KIND, "files");
+        brebus_dirs(b, p, f && *f == '1', &o);
+        return json(conn, 200, &o);
+    }
     if (post && !strcmp(url, "/brebus/attach")) {
         int rc = brebus_attach(b, r->body.p, r->body.n, &o);
         return json(conn, rc ? 400 : 200, &o);
@@ -541,6 +654,23 @@ routes:
         janas_json_write_str(&o, path, strlen(path));
         janas_buf_puts(&o, "}");
         return json(conn, 200, &o);
+    }
+    if (post && !strcmp(url, "/brebus/zoom")) {
+        /* {"zoom": 1.1} - the window's page drawn larger or smaller */
+        char err[160];
+        struct janas_json_doc *d =
+            r->body.n ? janas_json_parse(r->body.p, r->body.n, err, sizeof err)
+                      : NULL;
+        double z =
+            d ? janas_json_num(janas_json_get(janas_json_root(d), "zoom"), 0)
+              : 0;
+        janas_json_free(d);
+        if (brebus_window_zoom(z) != 0) {
+            static const char no[] =
+                "{\"error\": \"no window, or no such zoom\"}";
+            return reply(conn, 501, "application/json", no, sizeof no - 1, 1);
+        }
+        return reply(conn, 200, "application/json", "{}", 2, 1);
     }
     if (get && !strcmp(url, "/brebus/hf/check")) {
         int rc = brebus_hf_check(
@@ -749,6 +879,14 @@ routes:
                               : "{\"ok\": true}");
         return json(conn, rc ? 400 : 200, &o);
     }
+    if (post && !strcmp(url, "/brebus/artifact-store/rewind")) {
+        int rc = brebus_artifact_store_rewind(b, r->body.p, r->body.n, &o);
+        return json(conn, rc ? 400 : 200, &o);
+    }
+    if (post && !strcmp(url, "/brebus/artifact-store/copy")) {
+        int rc = brebus_artifact_store_copy(b, r->body.p, r->body.n, &o);
+        return json(conn, rc ? 400 : 200, &o);
+    }
     if (post && !strcmp(url, "/brebus/artifact-store")) {
         int rc = brebus_artifact_store(b, r->body.p, r->body.n, &o);
         return json(conn, rc ? 400 : 200, &o);
@@ -859,18 +997,21 @@ int brebus_http_start(struct brebus *b, char *why, size_t wn)
     unsigned flags = MHD_USE_INTERNAL_POLLING_THREAD |
                      MHD_USE_THREAD_PER_CONNECTION | MHD_USE_ERROR_LOG |
                      (v6 ? MHD_USE_IPv6 : 0);
+    /* served beyond this computer: no one address takes every connection
+       (its users' Brebus, at 127.0.0.1, are not counted so) */
+    unsigned per_ip = b->serve && b->need_2fa ? 16u : 0u;
     if (b->tls) /* no socket of its own: mhd_tls.c hands it connections */
         b->mhd = MHD_start_daemon(
             flags | MHD_USE_NO_LISTEN_SOCKET | MHD_USE_ITC, 0, NULL, NULL,
             handler, b, MHD_OPTION_NOTIFY_COMPLETED, completed, NULL,
             MHD_OPTION_CONNECTION_LIMIT, 64u, MHD_OPTION_CONNECTION_TIMEOUT,
-            600u, MHD_OPTION_END);
+            600u, MHD_OPTION_PER_IP_CONNECTION_LIMIT, per_ip, MHD_OPTION_END);
     else
         b->mhd = MHD_start_daemon(
             flags, b->port, NULL, NULL, handler, b, MHD_OPTION_SOCK_ADDR, sa,
             MHD_OPTION_NOTIFY_COMPLETED, completed, NULL,
             MHD_OPTION_CONNECTION_LIMIT, 64u, MHD_OPTION_CONNECTION_TIMEOUT,
-            600u, MHD_OPTION_END);
+            600u, MHD_OPTION_PER_IP_CONNECTION_LIMIT, per_ip, MHD_OPTION_END);
     if (!b->mhd) {
         snprintf(why, wn, "%s is taken, or cannot be listened on", where);
         return -1;

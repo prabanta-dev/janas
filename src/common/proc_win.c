@@ -334,6 +334,37 @@ int janas_proc_wait(struct janas_proc *p, int timeout_ms, int *code)
     return 1;
 }
 
+int janas_proc_adopt(struct janas_proc *p, unsigned long pid, int group)
+{
+    (void)group;
+    memset(p, 0, sizeof(*p));
+    HANDLE h =
+        OpenProcess(SYNCHRONIZE | PROCESS_TERMINATE |
+                        PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SET_QUOTA,
+                    FALSE, (DWORD)pid);
+    if (!h)
+        return -1;
+    /* a job of this process's: it ends with this one, as the ones started
+       here do */
+    HANDLE job = CreateJobObjectA(NULL, NULL);
+    if (job) {
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION li = {0};
+        li.BasicLimitInformation.LimitFlags =
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        SetInformationJobObject(job, JobObjectExtendedLimitInformation, &li,
+                                sizeof li);
+        if (!AssignProcessToJobObject(job, h)) {
+            CloseHandle(job);
+            job = NULL;
+        }
+    }
+    p->id = (intptr_t)h;
+    p->job = (intptr_t)job;
+    p->pid = pid;
+    p->adopted = 1;
+    return 0;
+}
+
 void janas_proc_kill(struct janas_proc *p, int hard)
 {
     if (!p->id)

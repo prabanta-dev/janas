@@ -472,7 +472,9 @@ static int proxy_for(const struct janas_url *u, struct janas_url *p, char *auth,
                      size_t auth_len, char *err, size_t err_len)
 {
     *auth = 0;
-    if (u->policy && u->policy->public_only)
+    const struct janas_net_policy *pol =
+        u->policy ? u->policy : janas_net_default();
+    if (pol && pol->public_only)
         return 0;
     static const char *const TLS[] = {"https_proxy", "HTTPS_PROXY", "all_proxy",
                                       "ALL_PROXY"};

@@ -347,28 +347,92 @@ int main(void)
     }
     /* an artifact's storage: set, read, listed, deleted */
     static const char *const store[][2] = {
-        {"{\"title\": \"My page!\", \"act\": \"set\", \"key\": \"n\", "
+        {"{\"title\": \"My page!\", \"chat\": \"c1\", \"act\": \"set\", \"key\": \"n\", "
          "\"value\": 41}",
          "{\"key\": \"n\", \"value\": 41}"},
-        {"{\"title\": \"My page!\", \"act\": \"set\", \"key\": \"s\", "
+        {"{\"title\": \"My page!\", \"chat\": \"c1\", \"act\": \"set\", \"key\": \"s\", "
          "\"value\": \"x\"}",
          "\"value\": \"x\""},
-        {"{\"title\": \"My page!\", \"act\": \"get\", \"key\": \"n\"}",
+        {"{\"title\": \"My page!\", \"chat\": \"c1\", \"act\": \"get\", \"key\": \"n\"}",
          "{\"key\": \"n\", \"value\": 41}"},
-        {"{\"title\": \"My page!\", \"act\": \"list\"}",
+        {"{\"title\": \"My page!\", \"chat\": \"c1\", \"act\": \"list\"}",
          "{\"keys\": [\"n\", \"s\"]}"},
-        {"{\"title\": \"My page!\", \"act\": \"delete\", \"key\": "
+        {"{\"title\": \"My page!\", \"chat\": \"c1\", \"act\": \"delete\", \"key\": "
          "\"n\"}",
          "\"deleted\": true"},
-        {"{\"title\": \"My page!\", \"act\": \"get\", \"key\": \"n\"}",
+        {"{\"title\": \"My page!\", \"chat\": \"c1\", \"act\": \"get\", \"key\": \"n\"}",
          "null"}};
     for (int i = 0; i < 6; i++) {
         st = ask("POST", "/brebus/artifact-store", store[i][0], own, &o);
         CHECK(st == 200 && strstr(o.p, store[i][1]), "storage %d: %d %s", i, st,
               o.p);
     }
-    snprintf(want, sizeof want, "%s/work/artifact/My page/storage.json", dir);
+    snprintf(want, sizeof want, "%s/work/artifact/My page/storage-c1.json",
+             dir);
     CHECK(access(want, F_OK) == 0, "the storage not in artifact/: %s", want);
+    /* another conversation's artifact of the same title: nothing of it */
+    st = ask("POST", "/brebus/artifact-store",
+             "{\"title\": \"My page!\", \"chat\": \"c2\", \"act\": "
+             "\"get\", \"key\": \"s\"}",
+             own, &o);
+    CHECK(st == 200 && strstr(o.p, "null"),
+          "another chat read this one's storage: %d %s", st, o.p);
+    /* the data's history: s set again at the chat's point 5; a branch, or
+       a rewind, at point 3 gets s as it was then, at 10 as it is now; an
+       artifact the branch does not take gives it nothing */
+    st = ask("POST", "/brebus/artifact-store",
+             "{\"title\": \"My page!\", \"chat\": \"c1\", \"act\": \"set\", "
+             "\"key\": \"s\", \"value\": \"y\", \"at\": 5}",
+             own, &o);
+    CHECK(st == 200, "storage at a point: %d %s", st, o.p);
+    static const char *const branch[][3] = {
+        {"{\"from\": \"c1\", \"to\": \"c3\", \"titles\": [\"Another\"], "
+         "\"upto\": 3}",
+         "\"copied\": 0", NULL},
+        {"{\"from\": \"c1\", \"to\": \"c3\", \"titles\": [\"My page!\"], "
+         "\"upto\": 3}",
+         "\"copied\": 1", "c3\", \"act\": \"get\", \"key\": \"s\"}"},
+        {"{\"from\": \"c1\", \"to\": \"c4\", \"titles\": [\"My page!\"], "
+         "\"upto\": 10}",
+         "\"copied\": 1", "c4\", \"act\": \"get\", \"key\": \"s\"}"}};
+    static const char *const want_s[] = {NULL, "\"value\": \"x\"",
+                                         "\"value\": \"y\""};
+    for (int i = 0; i < 3; i++) {
+        st = ask("POST", "/brebus/artifact-store/copy", branch[i][0], own, &o);
+        CHECK(st == 200 && strstr(o.p, branch[i][1]), "branch %d: %d %s", i, st,
+              o.p);
+        if (!branch[i][2])
+            continue;
+        char q[200];
+        snprintf(q, sizeof q, "{\"title\": \"My page!\", \"chat\": \"%s",
+                 branch[i][2]);
+        st = ask("POST", "/brebus/artifact-store", q, own, &o);
+        CHECK(st == 200 && strstr(o.p, want_s[i]),
+              "branch %d does not read the data of its point: %d %s", i, st,
+              o.p);
+    }
+    st = ask("POST", "/brebus/artifact-store/rewind",
+             "{\"chat\": \"c1\", \"upto\": 3}", own, &o);
+    CHECK(st == 200 && strstr(o.p, "\"rewound\": 1"), "rewind: %d %s", st, o.p);
+    st = ask("POST", "/brebus/artifact-store",
+             "{\"title\": \"My page!\", \"chat\": \"c1\", \"act\": \"get\", "
+             "\"key\": \"s\"}",
+             own, &o);
+    CHECK(st == 200 && strstr(o.p, "\"value\": \"x\""),
+          "a rewind kept the later data: %d %s", st, o.p);
+    st =
+        ask("POST", "/brebus/artifact-store/copy",
+            "{\"from\": \"c1\", \"to\": \"../x\", \"titles\": [], \"upto\": 1}",
+            own, &o);
+    CHECK(st == 400, "a copy to a chat name not an id taken: %d", st);
+    st = ask("POST", "/brebus/artifact-store/rewind",
+             "{\"chat\": \"../c1\", \"upto\": 1}", own, &o);
+    CHECK(st == 400, "a rewind of a chat name not an id taken: %d", st);
+    st = ask("POST", "/brebus/artifact-store",
+             "{\"title\": \"My page!\", \"act\": \"get\", \"key\": "
+             "\"s\"}",
+             own, &o);
+    CHECK(st == 400, "a storage without its chat taken: %d", st);
     st = ask("POST", "/brebus/artifact-store",
              "{\"title\": \"x\", \"act\": \"drop\", \"key\": \"n\"}", own, &o);
     CHECK(st == 400, "a storage act not known taken: %d", st);

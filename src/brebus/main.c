@@ -5,10 +5,12 @@
  * of its own (window.c), or in the browser where there cannot be one,
  * until the window is closed or Ctrl+C.
  */
+#include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 #ifdef _WIN32
 #include <windows.h>
@@ -45,8 +47,10 @@ static void usage(void)
             "--no-open]\n"
             "       brebus --serve [--listen ADDR] [--port N] [--tls-cert "
             "FILE --tls-key FILE]\n"
+            "                      [--host-name NAME[,NAME...]]\n"
             "       brebus --serve --users system [...]\n"
             "       brebus --add-user NAME [--user]\n"
+            "       brebus --enroll NAME [--users system]\n"
             "       brebus --install-desktop\n"
             "Brebus, Janas's app for the models of this computer: its page\n"
             "on http://127.0.0.1:41414 (--port), in a window of its own, or\n"
@@ -65,11 +69,61 @@ static void usage(void)
             "the models shared. Beyond this computer it speaks HTTPS,\n"
             "with Brebus's own certificate or --tls-cert/--tls-key, and asks\n"
             "every account for a second factor (an authenticator's code),\n"
-            "set up at its first login.\n"
+            "set up at the machine: at the first login from a browser at\n"
+            "127.0.0.1, or by --enroll NAME in its terminal. It answers at\n"
+            "its addresses and this machine's name; at other names (a DNS\n"
+            "name) only with --host-name.\n"
             "--users system (Linux): the users of this machine instead, by\n"
             "their own password, members of the group brebus (users) or\n"
             "brebus-admin (administrators), each one's Brebus run as them\n"
             "by janas-brebus-helper, installed setuid root.\n");
+}
+
+/* ---- the window's closing, in order (window.c's closer): the replies
+   stopped, the models' servers, the services; 15 s at most in all, then
+   the window closes whatever is left (it ends with Brebus) ---- */
+static struct brebus *closing_b;
+static pthread_mutex_t close_mu = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t close_cv = PTHREAD_COND_INITIALIZER;
+static int close_done;
+static void (*close_say)(const char *);
+
+static void *close_work(void *arg)
+{
+    (void)arg;
+    close_say("Stopping the reply…");
+    brebus_server_cancel_all(closing_b);
+    close_say("Stopping the model…");
+    struct janas_buf o = {0};
+    brebus_server_stop(closing_b, NULL, 0, &o);
+    janas_buf_free(&o);
+    close_say("Stopping the services…");
+    brebus_children_stop();
+    brebus_get_stop(closing_b, NULL);
+    brebus_tools_stop(closing_b);
+    close_say("Closing…");
+    pthread_mutex_lock(&close_mu);
+    close_done = 1;
+    pthread_cond_signal(&close_cv);
+    pthread_mutex_unlock(&close_mu);
+    return NULL;
+}
+
+static void close_steps(void (*say)(const char *))
+{
+    close_say = say;
+    pthread_t t;
+    if (pthread_create(&t, NULL, close_work, NULL) != 0)
+        return;
+    pthread_detach(t);
+    struct timespec until;
+    clock_gettime(CLOCK_REALTIME, &until);
+    until.tv_sec += 15;
+    pthread_mutex_lock(&close_mu);
+    while (!close_done)
+        if (pthread_cond_timedwait(&close_cv, &close_mu, &until) != 0)
+            break; /* past 15 s: the window goes all the same */
+    pthread_mutex_unlock(&close_mu);
 }
 
 static void open_browser(const char *url)
@@ -156,6 +210,50 @@ static int add_account(struct brebus *b, const char *name, int admin)
     return rc;
 }
 
+/* brebus --enroll NAME: an account's second factor set up here, at the
+   machine (from afar a password alone does not set it up) */
+static int enroll(struct brebus *b, const char *name)
+{
+    char secret[33], code[32] = "", codes[BREBUS_RECOVERY][12];
+    if (b->sys_users && brebus_user_keep(b, name) != 0) {
+        fprintf(stderr, "brebus: no room for %s\n", name);
+        return 1;
+    }
+    if (brebus_totp_secret(secret) != 0) {
+        fprintf(stderr, "brebus: no randomness\n");
+        return 1;
+    }
+    fprintf(stderr,
+            "Give this to %s's authenticator app (a QR code of it, or the "
+            "secret typed):\n  otpauth://totp/Brebus:%s?secret=%s&issuer="
+            "Brebus\n  secret: %s\n",
+            name, name, secret, secret);
+    for (int tries = 0; tries < 3; tries++) {
+        fputs("the code it shows: ", stderr);
+        fflush(stderr);
+        if (!fgets(code, sizeof code, stdin))
+            return 1;
+        code[strcspn(code, "\r\n")] = 0;
+        if (brebus_totp_check(secret, code, time(NULL)))
+            break;
+        fprintf(stderr, "brebus: wrong code: check the app's clock\n");
+        code[0] = 0;
+    }
+    if (!code[0])
+        return 1;
+    if (brebus_user_totp_on(b, name, secret, codes) != 0) {
+        fprintf(stderr,
+                "brebus: no account %s (brebus --add-user %s first; with "
+                "--users system, a user of this machine)\n",
+                name, name);
+        return 1;
+    }
+    fprintf(stderr, "Done. Recovery codes, each good once, shown only now:\n");
+    for (int k = 0; k < BREBUS_RECOVERY; k++)
+        fprintf(stderr, "  %s\n", codes[k]);
+    return 0;
+}
+
 /* whether an address to listen on is this computer's alone */
 static int loopback(const char *a)
 {
@@ -223,6 +321,7 @@ int main(int argc, char **argv)
     struct brebus b = {.port = 41414};
     int open = 1, browser = 0;
     const char *workspace = NULL, *add_user = NULL, *cert = NULL, *key = NULL;
+    const char *enroll_user = NULL;
     int plain_user = 0;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--port") && i + 1 < argc) {
@@ -246,6 +345,9 @@ int main(int argc, char **argv)
         } else if (!strcmp(argv[i], "--listen") && i + 1 < argc &&
                    strlen(argv[i + 1]) < sizeof b.listen) {
             snprintf(b.listen, sizeof b.listen, "%s", argv[++i]);
+        } else if (!strcmp(argv[i], "--host-name") && i + 1 < argc &&
+                   strlen(argv[i + 1]) < sizeof b.names) {
+            snprintf(b.names, sizeof b.names, "%s", argv[++i]);
         } else if (!strcmp(argv[i], "--tls-cert") && i + 1 < argc) {
             cert = argv[++i];
         } else if (!strcmp(argv[i], "--tls-key") && i + 1 < argc) {
@@ -270,6 +372,8 @@ int main(int argc, char **argv)
             snprintf(b.root, sizeof b.root, "%s", r);
         } else if (!strcmp(argv[i], "--add-user") && i + 1 < argc) {
             add_user = argv[++i];
+        } else if (!strcmp(argv[i], "--enroll") && i + 1 < argc) {
+            enroll_user = argv[++i];
         } else if (!strcmp(argv[i], "--users") && i + 1 < argc &&
                    (!strcmp(argv[i + 1], "system") ||
                     !strcmp(argv[i + 1], "brebus"))) {
@@ -314,6 +418,8 @@ int main(int argc, char **argv)
     brebus_users_load(&b);
     if (add_user)
         return add_account(&b, add_user, !plain_user);
+    if (enroll_user)
+        return enroll(&b, enroll_user);
     if ((b.listen[0] || cert || key) && !b.serve) {
         fprintf(stderr, "brebus: --listen and --tls-cert/--tls-key go with "
                         "--serve\n");
@@ -400,6 +506,8 @@ int main(int argc, char **argv)
         fprintf(stderr, "brebus: %s\n", why);
         return 1;
     }
+    if (!b.child)
+        brebus_server_adopt(&b); /* a server of before, still there */
     brebus_idle_start(&b);
     char url[128];
     snprintf(url, sizeof url, "%s://%s%s%s:%u/", b.tls ? "https" : "http",
@@ -424,6 +532,8 @@ int main(int argc, char **argv)
     }
     signal(SIGINT, on_signal);
     signal(SIGTERM, on_signal);
+    closing_b = &b;
+    brebus_window_set_closer(close_steps);
     if (open && !browser && brebus_window(url, &quit, why, sizeof why) == 0)
         quit = 1; /* the window closed */
     else if (open) {

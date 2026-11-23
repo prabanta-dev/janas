@@ -135,6 +135,15 @@ static void find_think_note(janas_llm *llm, const char *tmpl)
 
 /* Recognizes the chat format from the template in tmpl; returns 0 or an
    error code. */
+/* a token that ends a reply, once, while there is room (the model's file
+   says which: never past the list) */
+static void add_stop(janas_llm *llm, int32_t t)
+{
+    if (t >= 0 && llm->n_stop < JANAS_GEN_MAX_STOP &&
+        !janas_api_is_stop(llm, t))
+        llm->stop[llm->n_stop++] = t;
+}
+
 static int32_t find_format_in(janas_llm *llm, const struct janas_jns *j,
                               const char *tmpl)
 {
@@ -152,10 +161,10 @@ static int32_t find_format_in(janas_llm *llm, const struct janas_jns *j,
         llm->im_end = turn_close;
         llm->asst_role = "model";
         llm->bos = janas_tokenizer_find(llm->tok, "<bos>");
-        llm->stop[llm->n_stop++] = turn_close;
+        add_stop(llm, turn_close);
         int32_t eos = janas_tokenizer_find(llm->tok, "<eos>");
         if (eos >= 0)
-            llm->stop[llm->n_stop++] = eos;
+            add_stop(llm, eos);
         llm->think_open = janas_tokenizer_find(llm->tok, "<|channel>");
         llm->think_close = janas_tokenizer_find(llm->tok, "<channel|>");
         llm->think_on = janas_tokenizer_find(llm->tok, "<|think|>");
@@ -181,7 +190,7 @@ static int32_t find_format_in(janas_llm *llm, const struct janas_jns *j,
             llm->decl_close < 0)
             llm->tools = JANAS_TOOLS_NONE;
         if (llm->tools != JANAS_TOOLS_NONE)
-            llm->stop[llm->n_stop++] = llm->resp_open;
+            add_stop(llm, llm->resp_open);
     } else if (janas_tokenizer_find(llm->tok, "<｜User｜>") >= 0 &&
                janas_tokenizer_find(llm->tok, "<｜Assistant｜>") >= 0) {
         /* DeepSeek-V4 (<｜User｜>, <｜Assistant｜>): reasoning, tools */
@@ -194,7 +203,7 @@ static int32_t find_format_in(janas_llm *llm, const struct janas_jns *j,
         if (llm->im_end < 0 || llm->bos < 0)
             return janas_api_fail(JANAS_LLM_EMODEL,
                                   "chat format not supported");
-        llm->stop[llm->n_stop++] = llm->im_end;
+        add_stop(llm, llm->im_end);
         llm->think_open = janas_tokenizer_find(llm->tok, "<think>");
         llm->think_close = janas_tokenizer_find(llm->tok, "</think>");
         llm->thinker = llm->think_open >= 0 && llm->think_close >= 0;
@@ -215,10 +224,10 @@ static int32_t find_format_in(janas_llm *llm, const struct janas_jns *j,
         llm->hdr_end = janas_tokenizer_find(llm->tok, "<|end_header_id|>");
         llm->im_end = janas_tokenizer_find(llm->tok, "<|eot_id|>");
         llm->bos = janas_tokenizer_find(llm->tok, "<|begin_of_text|>");
-        llm->stop[llm->n_stop++] = llm->im_end;
+        add_stop(llm, llm->im_end);
         int32_t eom = janas_tokenizer_find(llm->tok, "<|eom_id|>");
         if (eom >= 0)
-            llm->stop[llm->n_stop++] = eom;
+            add_stop(llm, eom);
         llm->think_open = llm->think_close = -1;
         llm->call_open = llm->call_close = -1;
         llm->resp_open = llm->resp_close = -1;
@@ -226,7 +235,7 @@ static int32_t find_format_in(janas_llm *llm, const struct janas_jns *j,
     } else if (llm->im_start >= 0 && llm->im_end >= 0 &&
                (tmpl[0] == 0 || strstr(tmpl, "<|im_start|>"))) {
         llm->format = FORMAT_CHATML;
-        llm->stop[llm->n_stop++] = llm->im_end;
+        add_stop(llm, llm->im_end);
         llm->think_open = janas_tokenizer_find(llm->tok, "<think>");
         llm->think_close = janas_tokenizer_find(llm->tok, "</think>");
         llm->thinker = strstr(tmpl, "enable_thinking") &&
@@ -263,12 +272,9 @@ static int32_t find_format_in(janas_llm *llm, const struct janas_jns *j,
     if (janas_jns_meta_u32(j, "tokenizer.ggml.eos_token_id", &eos) == 0)
         llm->eos_id = (int32_t)eos;
     if (janas_jns_meta_u32(j, "tokenizer.ggml.eos_token_id", &eos) == 0 &&
-        !janas_api_is_stop(llm, (int32_t)eos))
-        llm->stop[llm->n_stop++] = (int32_t)eos;
-    int32_t eot = janas_tokenizer_find(llm->tok, "<|endoftext|>");
-    if (eot >= 0 && eot != llm->stop[0] &&
-        (llm->n_stop < 2 || eot != llm->stop[1]))
-        llm->stop[llm->n_stop++] = eot;
+        eos <= INT32_MAX)
+        add_stop(llm, (int32_t)eos);
+    add_stop(llm, janas_tokenizer_find(llm->tok, "<|endoftext|>"));
     return 0;
 }
 

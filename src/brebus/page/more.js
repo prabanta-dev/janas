@@ -224,15 +224,43 @@ $("#dirchg").onclick = async () => {
 };
 /* the workspace: chosen before the conversations, which live in it */
 let ws = {path: ""};
-/* the system's dialog, in Brebus's window: the path, "" cancelled, null
-   where there is none (the browser) */
+/* the system's dialog, in Brebus's window; from a browser, the folders of
+   the machine Brebus runs on, in a dialog of the page: the path, ""
+   cancelled */
 async function pick(file, title) {
-  const r = await fetch("/brebus/pick", {method: "POST", body: JSON.stringify({file, title})});
-  if (!r.ok) return null;
-  return (await r.json()).path;
+  if (ws.window) {
+    const r = await fetch("/brebus/pick", {method: "POST", body: JSON.stringify({file, title})});
+    if (r.ok) return (await r.json()).path;
+  }
+  return webPick(file, title);
+}
+async function webPick(file, title) {
+  let at = "", chosen = "";
+  const draw = async (box) => {
+    const j = await (await fetch("/brebus/dirs?files=" + (file ? 1 : 0) + "&path=" + encodeURIComponent(at))).json();
+    const list = box.querySelector(".wplist");
+    if (j.error) { list.textContent = j.error; return; }
+    at = j.path; chosen = file ? "" : j.path;
+    box.querySelector(".wpat").textContent = j.path;
+    list.innerHTML = (j.up ? `<button class="act quiet wpgo" data-p="${esc(j.up)}">⬆ up</button>` : "") +
+      j.dirs.map((d) => `<button class="act quiet wpgo" data-p="${esc(j.path + "/" + d)}">📁 ${esc(d)}</button>`).join("") +
+      (j.files || []).map((f) => `<button class="act quiet wpfile" data-p="${esc(j.path + "/" + f)}">${esc(f)}</button>`).join("") +
+      (j.dirs.length || (j.files || []).length ? "" : `<span class="note">nothing here${file ? "" : ": this folder may be chosen"}</span>`);
+    for (const b of list.querySelectorAll(".wpgo")) b.onclick = () => { at = b.dataset.p; draw(box); };
+    for (const b of list.querySelectorAll(".wpfile")) b.onclick = () => {
+      chosen = b.dataset.p;
+      for (const x of list.querySelectorAll(".wpfile")) x.classList.toggle("on", x === b);
+    };
+  };
+  const d = await dialog({title, wide: true,
+    html: `<p class="note">On the computer Brebus runs on: <code class="wpat"></code></p><div class="wplist"></div>`,
+    ready: (box) => draw(box), read: () => chosen,
+    buttons: [{label: file ? "Choose the file" : "Choose this folder", value: "ok", primary: true}, {label: "Cancel", value: "no"}]});
+  return d.button === "ok" ? d.form || "" : "";
 }
 function wsShow(open) {
-  for (const b of document.querySelectorAll("button.browse")) b.hidden = !ws.window;
+  /* Browse: the window's dialog, or the page's own from a browser */
+  for (const b of document.querySelectorAll("button.browse")) b.hidden = false;
   /* paths as this system writes them */
   if (ws.windows)
     for (const i of document.querySelectorAll('input[name="path"]'))
@@ -272,24 +300,16 @@ $("#wsform").onsubmit = () => {
 };
 const booted = (async () => {
   ws = await ask("workspace");
-  /* the chat used last, where it is (a project, the free chats), if it is
-     still there; else the free chats' newest, or a new one */
-  let last = null;
-  try { last = JSON.parse(localStorage.getItem("brebus.last") || "null"); } catch (e) {}
-  if (last && last.ws && last.id && !hashChat) {
-    const t = await ask("projects").catch(() => null);
-    const there = t && [{path: t.free, chats: t.free_chats}, ...t.projects]
-      .find((p) => p.path === last.ws && (p.chats.chats || []).some((c) => c.id === last.id && !c.archived));
-    if (there) { await wsOpen(last.ws, last.ws === t.free ? "free" : false, last.id); return; }
+  /* a chat named in the address (In a new window): in the workspace open */
+  if (hashChat && ws.path) {
+    wsShow(false);
+    await readTools(); await readFolders(); await readServices();
+    await readConvs();
+    if (convs.some((c) => c.id === hashChat)) { await openConv(hashChat); await refreshTree(); return; }
   }
-  if (!ws.path) { await wsOpen("", "free"); return; }
-  wsShow(false);
-  await readTools(); await readFolders(); await readServices();
-  await readConvs();
-  const live = convs.filter((c) => !c.archived);
-  if (hashChat && convs.some((c) => c.id === hashChat)) await openConv(hashChat);
-  else if (live.length) await openConv(live[0].id); else newConv();
-  await refreshTree();
+  /* else a new chat, of no project, as Claude opens: written only with its
+     first message; the others a click away in the side bar */
+  await wsOpen("", "free", "new");
 })().catch(() => {});
 status().catch(() => {});
 

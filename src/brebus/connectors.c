@@ -312,6 +312,9 @@ static void safe_id(const char *in, char *out, size_t n)
                        ? *c
                        : '-');
     out[k] = 0;
+    /* never "." or "..", nor hidden: a folder of connectors/ by its name */
+    if (out[0] == '.')
+        out[0] = '_';
 }
 
 int brebus_connector_inspect(struct brebus *b, const char *body, size_t n,
@@ -479,7 +482,8 @@ static int remove_tree(const char *dir, int depth)
         char p[4600];
         struct stat st;
         snprintf(p, sizeof p, "%s/%s", dir, e->d_name);
-        if (stat(p, &st) == 0 && S_ISDIR(st.st_mode))
+        /* a link is removed, never followed */
+        if (lstat(p, &st) == 0 && S_ISDIR(st.st_mode))
             remove_tree(p, depth + 1);
         else
             remove(p);

@@ -27,7 +27,9 @@ struct out {
     size_t r_think, r_text, r_lp;
     int r_calls, think_began, text_began, sent_role, sent_end;
     uint32_t queue_seen;
-    char *pend; /* the events ready, not yet sent */
+    uint32_t read_seen; /* the reading's progress last told */
+    double last_ms;     /* when bytes were last given to the client */
+    char *pend;         /* the events ready, not yet sent */
     size_t n_pend, off;
 };
 

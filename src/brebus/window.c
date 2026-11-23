@@ -15,7 +15,9 @@
 #include <locale.h>
 #include <signal.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -53,9 +55,18 @@ static struct {
     unsigned (*g_idle_add)(source_fn, P);
     P (*webkit_web_view_new_with_related_view)(P);
     void (*gtk_widget_destroy)(P);
+    /* the page told a step of the closing: WebKitGTK 2.40's, or the older
+       one (both looked for, neither needed) */
+    void (*webkit_web_view_evaluate_javascript)(P, const char *, long,
+                                                const char *, const char *, P,
+                                                P, P);
+    void (*webkit_web_view_run_javascript)(P, const char *, P, P, P);
     void (*webkit_web_view_load_uri)(P, const char *);
+    /* the page's zoom, asked by the page (optional) */
+    void (*webkit_web_view_set_zoom_level)(P, double);
     P (*webkit_navigation_policy_decision_get_navigation_action)(P);
     P (*webkit_navigation_action_get_request)(P);
+    int (*webkit_navigation_action_is_user_gesture)(P);
     const char *(*webkit_uri_request_get_uri)(P);
     void (*webkit_policy_decision_ignore)(P);
     /* the microphone, for dictation: optional, looked up when there */
@@ -102,8 +113,24 @@ static int permission(P view, P req, P data)
 static const char *own; /* the page's address, "http://127.0.0.1:port/" */
 static volatile sig_atomic_t *stop;
 
+/* this machine's own addresses: never handed to the browser (it would
+   reach Brebus, or a server of this machine, as a page of its own) */
+static int loopback(const char *url)
+{
+    const char *h = strstr(url, "://");
+    h = h ? h + 3 : url;
+    static const char *const lo[] = {"127.", "localhost",    "[::1]",
+                                     "0.",   "[::ffff:127.", "[0:"};
+    for (size_t i = 0; i < sizeof lo / sizeof *lo; i++)
+        if (!strncasecmp(h, lo[i], strlen(lo[i])))
+            return 1;
+    return 0;
+}
+
 static void open_outside(const char *url)
 {
+    if (loopback(url))
+        return;
     pid_t pid = fork();
     if (pid == 0) {
         execlp("xdg-open", "xdg-open", url, (char *)NULL);
@@ -126,7 +153,13 @@ static int decide(P view, P decision, int type, P data)
     const char *uri = req ? w.webkit_uri_request_get_uri(req) : NULL;
     if (!uri || !strncmp(uri, own, strlen(own)))
         return 0;
-    if (!strncmp(uri, "https://", 8) || !strncmp(uri, "http://", 7))
+    /* to the browser only a new window a click asked for: the page's links
+       open so; a frame going elsewhere (an artifact's, sandboxed, opens no
+       window) goes nowhere, even when clicked - its address may carry what
+       the artifact read */
+    if (type == 1 &&
+        (!strncmp(uri, "https://", 8) || !strncmp(uri, "http://", 7)) &&
+        w.webkit_navigation_action_is_user_gesture(action))
         open_outside(uri);
     w.webkit_policy_decision_ignore(decision);
     return 1;
@@ -247,6 +280,103 @@ static void closed(P widget, P data)
     w.gtk_main_quit();
 }
 
+/* ---- closing in order: the window stays while Brebus stops its work,
+   saying each step on the page ---- */
+static void (*closer)(void (*)(const char *));
+static int closing;
+static P main_view;
+
+void brebus_window_set_closer(void (*steps)(void (*say)(const char *)))
+{
+    closer = steps;
+}
+
+static int say_idle(P data)
+{
+    char *text = data, js[600];
+    snprintf(js, sizeof js,
+             "window.brebusClosing && window.brebusClosing(\"%s\")", text);
+    if (main_view && w.webkit_web_view_evaluate_javascript)
+        w.webkit_web_view_evaluate_javascript(main_view, js, -1, NULL, NULL,
+                                              NULL, NULL, NULL);
+    else if (main_view && w.webkit_web_view_run_javascript)
+        w.webkit_web_view_run_javascript(main_view, js, NULL, NULL, NULL);
+    free(text);
+    return 0;
+}
+
+/* a step, from the closer's thread: shown by GTK's (text of Brebus's own,
+   with no quote in it) */
+static void say(const char *text)
+{
+    char *t = strdup(text);
+    if (t)
+        w.g_idle_add(say_idle, t);
+}
+
+/* ---- the page's zoom: the page keeps it and asks it of the window
+   (Ctrl+wheel, Ctrl+plus, minus and 0, Settings), the whole page drawn
+   larger as a browser's zoom does ---- */
+static double zoom_to = 1;
+
+static int zoom_idle(P data)
+{
+    (void)data;
+    pthread_mutex_lock(&pick_mu);
+    double z = zoom_to;
+    pthread_mutex_unlock(&pick_mu);
+    if (main_view)
+        w.webkit_web_view_set_zoom_level(main_view, z);
+    return 0;
+}
+
+int brebus_window_zoom(double z)
+{
+    if (!(z >= 0.5 && z <= 3))
+        return -1;
+    pthread_mutex_lock(&pick_mu);
+    int on = window_on && w.webkit_web_view_set_zoom_level;
+    if (on)
+        zoom_to = z;
+    pthread_mutex_unlock(&pick_mu);
+    if (!on)
+        return -1;
+    w.g_idle_add(zoom_idle, NULL);
+    return 0;
+}
+
+static int close_now(P data)
+{
+    (void)data;
+    if (main_win)
+        w.gtk_widget_destroy(main_win);
+    return 0;
+}
+
+static void *close_steps(void *arg)
+{
+    (void)arg;
+    closer(say);
+    w.g_idle_add(close_now, NULL);
+    return NULL;
+}
+
+/* the window asked to close: kept open while the steps run, once */
+static int delete_event(P widget, P event, P data)
+{
+    (void)widget, (void)event, (void)data;
+    if (!closer)
+        return 0;
+    if (closing)
+        return 1;
+    closing = 1;
+    pthread_t t;
+    if (pthread_create(&t, NULL, close_steps, NULL) != 0)
+        return 0; /* no thread: it closes at once, the steps after it */
+    pthread_detach(t);
+    return 1;
+}
+
 /* Ctrl+C or SIGTERM, seen from GTK's loop */
 static int watch(P data)
 {
@@ -312,9 +442,16 @@ int brebus_window(const char *url, volatile sig_atomic_t *quit, char *why,
     SYM(g_idle_add)
     SYM(webkit_web_view_new_with_related_view)
     SYM(gtk_widget_destroy)
+    *(void **)&w.webkit_web_view_evaluate_javascript =
+        dlsym(lib, "webkit_web_view_evaluate_javascript");
+    *(void **)&w.webkit_web_view_run_javascript =
+        dlsym(lib, "webkit_web_view_run_javascript");
     SYM(webkit_web_view_load_uri)
+    *(void **)&w.webkit_web_view_set_zoom_level =
+        dlsym(lib, "webkit_web_view_set_zoom_level");
     SYM(webkit_navigation_policy_decision_get_navigation_action)
     SYM(webkit_navigation_action_get_request)
+    SYM(webkit_navigation_action_is_user_gesture)
     SYM(webkit_uri_request_get_uri)
     SYM(webkit_policy_decision_ignore)
     *(void **)&w.webkit_user_media_permission_request_get_type =
@@ -370,8 +507,14 @@ int brebus_window(const char *url, volatile sig_atomic_t *quit, char *why,
                             NULL, 0);
     w.g_signal_connect_data(view, "create", (P)create, NULL, NULL, 0);
     w.g_signal_connect_data(win, "destroy", (P)closed, NULL, NULL, 0);
+    w.g_signal_connect_data(win, "delete-event", (P)delete_event, NULL, NULL,
+                            0);
+    main_view = view;
     w.gtk_container_add(win, view);
-    w.webkit_web_view_load_uri(view, url);
+    /* "?window": the page knows it is the window's, its zoom its own */
+    char start[200];
+    snprintf(start, sizeof start, "%s?window", url);
+    w.webkit_web_view_load_uri(view, start);
     /* where it was when it closed, or maximized the first time (on Wayland
        the compositor places it: only the size and the maximized state
        hold there) */

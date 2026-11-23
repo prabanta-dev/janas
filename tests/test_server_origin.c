@@ -51,6 +51,10 @@ static void origins(void)
         {"chrome-extension://abc", "127.0.0.1:8080", SRV_ORIGIN_REFUSED},
         {"http://127.0.0.1:8080", NULL, SRV_ORIGIN_REFUSED},
         {"http://[::1", "[::1]:8080", SRV_ORIGIN_REFUSED},
+        /* rebinding, a GET of the same origin by name: no Origin sent */
+        {NULL, "evil.example:8080", SRV_ORIGIN_REFUSED},
+        {NULL, "localhost:8080", SRV_ORIGIN_NONE},
+        {NULL, "[::1]:8080", SRV_ORIGIN_NONE},
     };
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
         int got = srv_origin_check(&c, cases[i].origin, cases[i].host);
@@ -58,6 +62,10 @@ static void origins(void)
               cases[i].origin ? cases[i].origin : "-",
               cases[i].host ? cases[i].host : "-", got, cases[i].want);
     }
+    c.api_key = "k"; /* with a key, any name: the key answers for it */
+    CHECK(srv_origin_check(&c, NULL, "server.lan:8080") == SRV_ORIGIN_NONE,
+          "a program by another name refused though there is a key");
+    c.api_key = NULL;
     const char *allow[] = {"http://localhost:3000"};
     c.allow_origin = allow;
     c.n_allow_origin = 1;

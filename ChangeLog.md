@@ -4,6 +4,19 @@
 
 ## [Unreleased]
 
+- **Brebus: a chat summarized is not shown as summarizing for ever**: the line *Summarizing…* was kept in the chat's file when the chat was saved meanwhile (or Brebus closed), and drawn again at every start though nothing was being written; it is no longer kept, and the chats that kept it are cleaned when opened. A summary goes to its own chat even when another one is opened meanwhile. The summary and the reasoning are shown as Markdown, as the replies are.
+- **Brebus: the context in tokens, up to what each model takes**: a model's settings offer 4,096 tokens and each double up to the most the model was trained for, that one too (40,960 for Qwen3, 262,144 for Qwen3.5), each with about as many words beside it; the default says what it is (16,384, or the model's most when that is less) and Brebus never asks for more than the model takes. *Think before answering* shows only for the models that can reason, and the open *Settings* button is filled and reads *Close*.
+- **Markdown read whole, in Brebus and on `janas-server`'s test page**: CommonMark 0.31.2 and GitHub's extensions (tables, task lists, struck text, links written out), with real lists, nested ones, numbered ones from any number, quotes inside quotes, link references, headings underlined, indented code, entities and escapes. All 652 examples of CommonMark's specification and the 51 of GitHub's extensions pass (`test_markdown`), and texts made to slow a parser down are read in well under a second. Formulas are read as one piece, so nothing in them is taken for a mark; raw HTML is still shown as text, but for `<br>` and plain tags such as `<sup>`.
+- **A reasoning with no budget leaves room for the answer**: closed when what is left of the context only holds the answer, instead of running until the context is full and the request fails (Qwen3.5 9B once reasoned 8,171 tokens in circles).
+
+## [2026-11-20] - Brebus's kit, the first pieces of the apps
+
+- **`brebus-kit` in the artifacts**: the pieces an app is made of, the same in every one, so that a model composes them rather than writing them all: `Shell` (title and pages), `Stat`, `Form` (fields with their rules, checked), `Grid` (sorted, filtered, in pages, edited in place, rows deleted), `Chart` (bar, line, area, pie), `Upload` (CSV, Excel and JSON read into rows), `toast`, `confirm` and `useStored` (data kept between visits). The model is told of them in a line. Seen in a headless Chromium: a dashboard of two pages built from them.
+## [2026-11-20] - Brebus from a browser: files sent, the server's folders browsed
+
+- **Attach sends a file from the browser's computer** (or one dropped on the chat), kept in the workspace's `sources/`, up to 512 MB; a name given is never a path.
+- **Browse… works from a browser too**: the folders (and files) of the computer Brebus runs on, in a dialog of the page; a user's Brebus shows only their folder.
+- **Log out** is in the side bar when Brebus is served.
 ## [2026-11-20] - janas-bench's version and its drafts' counts (issue #73)
 
 - **janas-bench names the release it was built from.** The version came from `git describe` without `--tags`, which passes over the releases' tags, light ones: a build of v2026.11.19.3 said `v2026.11.18-6-g75f29a2`. It takes them now.

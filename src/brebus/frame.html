@@ -157,6 +157,40 @@ function bridge() {
       return enc ? new TextDecoder(/^utf-?8$/i.test(enc) ? "utf-8" : enc).decode(b) : b;
     },
   };
+  /* its own zoom, the page's to keep: drawn larger it keeps the layout it
+     has at 100% and scrolls, smaller it takes the room; Ctrl+wheel and
+     Ctrl+plus, minus or 0 over it ask the page for a step */
+  let zoom = +window.__janasZoom || 1;
+  const fitZoom = () => {
+    const h = document.documentElement;
+    h.style.zoom = zoom === 1 ? "" : zoom;
+    h.style.minWidth = zoom > 1 ? innerWidth + "px" : "";
+  };
+  fitZoom();
+  addEventListener("resize", () => { if (zoom > 1) fitZoom(); });
+  addEventListener("message", (e) => {
+    const z = e.source === parent && e.data && e.data.janasZoom;
+    if (z > 0) { zoom = z; fitZoom(); }
+  });
+  let acc = 0, last = 0;
+  addEventListener("wheel", (e) => {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    const now = Date.now();
+    if (now - last > 400) acc = 0;
+    last = now;
+    acc += e.deltaY * (e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? 400 : 1);
+    if (Math.abs(acc) < 40) return;
+    parent.postMessage({janasZoomStep: acc < 0 ? 1 : -1}, "*");
+    acc = 0;
+  }, {passive: false, capture: true});
+  addEventListener("keydown", (e) => {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+    const d = e.key === "+" || e.key === "=" ? 1 : e.key === "-" || e.key === "_" ? -1 : e.key === "0" ? 0 : null;
+    if (d === null) return;
+    e.preventDefault();
+    parent.postMessage({janasZoomStep: d}, "*");
+  }, true);
   const report = (m) => parent.postMessage({janasError: String(m).slice(0, 3000)}, "*");
   window.__janasReport = report;
   addEventListener("error", (e) => {
@@ -297,6 +331,212 @@ function uiKit() {
   };
 }
 
+/* Brebus's kit: the pieces an app is made of, the same in every one, so
+   that a model composes them rather than writing them all (import {...}
+   from "brebus-kit"). Tailwind's classes, React; charts by Recharts, files
+   by PapaParse and SheetJS, data kept by window.storage. */
+function brebusKit(ui) {
+  const h = React.createElement, {useState, useEffect, useMemo, useRef} = React;
+  const cn = ui.cn;
+  /* toasts and the confirm dialog: one host, in Shell or Toaster */
+  let host = null;
+  const toast = (text, kind = "info") => host ? host.toast(String(text), kind) : alert(text);
+  const confirm = (text) => host ? host.confirm(String(text)) : Promise.resolve(window.confirm(text));
+  const Toaster = () => {
+    const [items, setItems] = useState([]), [ask, setAsk] = useState(null);
+    useEffect(() => {
+      host = {
+        toast: (t, k) => { const id = Math.random(); setItems((x) => [...x, {id, t, k}]);
+          setTimeout(() => setItems((x) => x.filter((i) => i.id !== id)), 4000); },
+        confirm: (t) => new Promise((done) => setAsk({t, done})),
+      };
+      return () => { host = null; };
+    }, []);
+    const tone = {info: "bg-slate-900", ok: "bg-emerald-600", error: "bg-red-600", warn: "bg-amber-600"};
+    return h(React.Fragment, null,
+      h("div", {className: "fixed bottom-4 right-4 z-50 flex flex-col gap-2"},
+        items.map((i) => h("div", {key: i.id, className: cn("rounded-md px-4 py-2 text-sm text-white shadow", tone[i.k] || tone.info)}, i.t))),
+      ask && h("div", {className: "fixed inset-0 z-50 flex items-center justify-center bg-black/40"},
+        h("div", {className: "w-full max-w-sm rounded-lg bg-white p-6 text-slate-900 shadow-lg"},
+          h("p", {className: "mb-4"}, ask.t),
+          h("div", {className: "flex justify-end gap-2"},
+            h(ui.Button, {variant: "outline", onClick: () => { ask.done(false); setAsk(null); }}, "Cancel"),
+            h(ui.Button, {onClick: () => { ask.done(true); setAsk(null); }}, "OK")))));
+  };
+  /* the app's frame: a title, its pages by name, the one shown */
+  const Shell = ({title, pages = {}, children}) => {
+    const names = Object.keys(pages);
+    const [at, setAt] = useState(names[0]);
+    return h("div", {className: "min-h-screen bg-slate-50 text-slate-900"},
+      h("header", {className: "flex items-center gap-6 border-b bg-white px-6 py-3"},
+        h("h1", {className: "text-lg font-semibold"}, title),
+        names.length > 1 && h("nav", {className: "flex gap-1"}, names.map((n) =>
+          h("button", {key: n, onClick: () => setAt(n),
+            className: cn("rounded-md px-3 py-1.5 text-sm", n === at ? "bg-slate-900 text-white" : "hover:bg-slate-100")}, n)))),
+      h("main", {className: "mx-auto max-w-6xl p-6"}, names.length ? pages[at] : children),
+      h(Toaster));
+  };
+  const Stat = ({label, value, hint}) => h("div", {className: "rounded-lg border bg-white p-4 shadow-sm"},
+    h("div", {className: "text-sm text-slate-500"}, label),
+    h("div", {className: "mt-1 text-2xl font-semibold"}, value),
+    hint && h("div", {className: "mt-1 text-xs text-slate-500"}, hint));
+  /* a field's value checked by its rules: the message, or "" */
+  const check = (f, v) => {
+    const empty = v === undefined || v === null || v === "" || (f.type === "checkbox" && !v);
+    if (f.required && empty) return f.message || `${f.label || f.name} is required`;
+    if (empty) return "";
+    if (f.type === "number" && isNaN(+v)) return `${f.label || f.name} must be a number`;
+    if (f.type === "number" && f.min !== undefined && +v < f.min) return `${f.label || f.name}: at least ${f.min}`;
+    if (f.type === "number" && f.max !== undefined && +v > f.max) return `${f.label || f.name}: at most ${f.max}`;
+    if (f.type === "email" && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) return "Not an e-mail address";
+    if (f.pattern && !new RegExp(f.pattern).test(v)) return f.message || `${f.label || f.name} is not valid`;
+    if (f.minLength && String(v).length < f.minLength) return `${f.label || f.name}: at least ${f.minLength} characters`;
+    return "";
+  };
+  const Form = ({fields = [], initial = {}, onSubmit, submitLabel = "Save", reset = true}) => {
+    const [v, setV] = useState(initial), [err, setErr] = useState({});
+    const set = (n, x) => setV((o) => ({...o, [n]: x}));
+    const submit = async (e) => {
+      e.preventDefault();
+      const errs = {};
+      for (const f of fields) { const m = check(f, v[f.name]); if (m) errs[f.name] = m; }
+      setErr(errs);
+      if (Object.keys(errs).length) return;
+      const out = {};
+      for (const f of fields) out[f.name] = f.type === "number" && v[f.name] !== "" && v[f.name] !== undefined ? +v[f.name] : v[f.name];
+      await (onSubmit && onSubmit(out));
+      if (reset) setV(initial);
+    };
+    return h("form", {onSubmit: submit, className: "space-y-4"},
+      fields.map((f) => {
+        const id = "f-" + f.name, val = v[f.name] ?? (f.type === "checkbox" ? false : "");
+        const input = f.type === "select"
+          ? h("select", {id, value: val, onChange: (e) => set(f.name, e.target.value),
+              className: "flex h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm"},
+              h("option", {value: ""}, f.placeholder || "—"),
+              (f.options || []).map((o) => typeof o === "object"
+                ? h("option", {key: o.value, value: o.value}, o.label) : h("option", {key: o, value: o}, o)))
+          : f.type === "textarea"
+          ? h(ui.Textarea, {id, value: val, onChange: (e) => set(f.name, e.target.value), placeholder: f.placeholder})
+          : f.type === "checkbox"
+          ? h("input", {id, type: "checkbox", checked: !!val, onChange: (e) => set(f.name, e.target.checked), className: "h-4 w-4"})
+          : h(ui.Input, {id, type: f.type || "text", value: val, placeholder: f.placeholder,
+              onChange: (e) => set(f.name, e.target.value)});
+        return h("div", {key: f.name, className: "space-y-1"},
+          h(ui.Label, {htmlFor: id}, f.label || f.name, f.required ? " *" : ""), input,
+          err[f.name] && h("p", {className: "text-xs text-red-600"}, err[f.name]));
+      }),
+      h(ui.Button, {type: "submit"}, submitLabel));
+  };
+  const show = (c, x) => x === undefined || x === null ? "" : c.format ? c.format(x)
+    : c.type === "number" && typeof x === "number" ? x.toLocaleString() : String(x);
+  /* rows of objects: sorted by a header's click, filtered by the box,
+     in pages; a column with edit: true is changed in place, onChange gets
+     the rows; deletable: a button to remove a row */
+  const Grid = ({rows = [], columns, pageSize = 10, onChange, deletable, search = true}) => {
+    const cols = columns || Object.keys(rows[0] || {}).map((k) => ({key: k, label: k}));
+    const [sort, setSort] = useState(null), [q, setQ] = useState(""), [page, setPage] = useState(0);
+    const [editing, setEditing] = useState(null);
+    const view = useMemo(() => {
+      let r = rows.map((row, i) => ({row, i}));
+      if (q) { const t = q.toLowerCase(); r = r.filter(({row}) => cols.some((c) => String(row[c.key] ?? "").toLowerCase().includes(t))); }
+      if (sort) r.sort((a, b) => {
+        const x = a.row[sort.key], y = b.row[sort.key];
+        const d = typeof x === "number" && typeof y === "number" ? x - y : String(x ?? "").localeCompare(String(y ?? ""));
+        return sort.desc ? -d : d;
+      });
+      return r;
+    }, [rows, q, sort]);
+    const pages = Math.max(1, Math.ceil(view.length / pageSize)), p = Math.min(page, pages - 1);
+    const change = (i, key, x) => {
+      const c = cols.find((c) => c.key === key);
+      const next = rows.map((r, k) => k === i ? {...r, [key]: c && c.type === "number" && x !== "" ? +x : x} : r);
+      onChange && onChange(next);
+    };
+    return h("div", {className: "space-y-2"},
+      search && h(ui.Input, {placeholder: "Filter…", value: q, onChange: (e) => { setQ(e.target.value); setPage(0); }, className: "max-w-xs"}),
+      h("div", {className: "overflow-auto rounded-lg border bg-white"},
+        h("table", {className: "w-full text-sm"},
+          h("thead", null, h("tr", {className: "border-b bg-slate-50"},
+            cols.map((c) => h("th", {key: c.key, className: "cursor-pointer select-none px-3 py-2 text-left font-medium text-slate-600",
+              onClick: () => setSort(sort && sort.key === c.key ? {key: c.key, desc: !sort.desc} : {key: c.key, desc: false})},
+              c.label || c.key, sort && sort.key === c.key ? (sort.desc ? " ↓" : " ↑") : "")),
+            deletable && h("th", null))),
+          h("tbody", null, view.slice(p * pageSize, (p + 1) * pageSize).map(({row, i}) =>
+            h("tr", {key: i, className: "border-b last:border-0 hover:bg-slate-50"},
+              cols.map((c) => h("td", {key: c.key, className: cn("px-3 py-2", c.type === "number" && "text-right"),
+                onClick: () => c.edit && setEditing(i + ":" + c.key)},
+                editing === i + ":" + c.key
+                  ? h("input", {autoFocus: true, defaultValue: row[c.key] ?? "", className: "w-full rounded border px-1",
+                      onBlur: (e) => { change(i, c.key, e.target.value); setEditing(null); },
+                      onKeyDown: (e) => { if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") setEditing(null); }})
+                  : show(c, row[c.key]))),
+              deletable && h("td", {className: "px-2 text-right"},
+                h("button", {className: "text-red-600 hover:underline", onClick: async () => {
+                  if (await confirm("Delete this row?")) onChange && onChange(rows.filter((_, k) => k !== i));
+                }}, "Delete"))))))),
+      pages > 1 && h("div", {className: "flex items-center gap-2 text-sm"},
+        h(ui.Button, {variant: "outline", size: "sm", disabled: p === 0, onClick: () => setPage(p - 1)}, "‹"),
+        `${p + 1} / ${pages} · ${view.length} rows`,
+        h(ui.Button, {variant: "outline", size: "sm", disabled: p >= pages - 1, onClick: () => setPage(p + 1)}, "›")));
+  };
+  const COLORS = ["#2563eb", "#16a34a", "#dc2626", "#d97706", "#7c3aed", "#0891b2", "#db2777"];
+  /* a chart of rows: x their category, y one key or several */
+  const Chart = ({type = "bar", data = [], x, y, height = 300}) => {
+    const R = window.Recharts;
+    if (!R) return h("p", null, "Charts are not loaded");
+    const ys = [].concat(y || Object.keys(data[0] || {}).filter((k) => k !== x && typeof data[0][k] === "number"));
+    if (type === "pie")
+      return h(R.ResponsiveContainer, {width: "100%", height},
+        h(R.PieChart, null, h(R.Tooltip), h(R.Legend),
+          h(R.Pie, {data, dataKey: ys[0], nameKey: x, outerRadius: "80%", label: true},
+            data.map((_, i) => h(R.Cell, {key: i, fill: COLORS[i % COLORS.length]})))));
+    const C = {bar: R.BarChart, line: R.LineChart, area: R.AreaChart}[type] || R.BarChart;
+    const S = {bar: R.Bar, line: R.Line, area: R.Area}[type] || R.Bar;
+    return h(R.ResponsiveContainer, {width: "100%", height},
+      h(C, {data}, h(R.CartesianGrid, {strokeDasharray: "3 3"}), h(R.XAxis, {dataKey: x}), h(R.YAxis), h(R.Tooltip), h(R.Legend),
+        ys.map((k, i) => h(S, {key: k, dataKey: k, fill: COLORS[i % COLORS.length], stroke: COLORS[i % COLORS.length]}))));
+  };
+  /* a file of the user's read into rows (CSV, Excel) or text */
+  const readFile = (file) => new Promise((done, fail) => {
+    const name = file.name.toLowerCase(), r = new FileReader();
+    r.onerror = () => fail(r.error);
+    if (/\.(xlsx|xls|ods)$/.test(name) && window.XLSX) {
+      r.onload = () => { const wb = XLSX.read(r.result, {type: "array"});
+        done(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]])); };
+      r.readAsArrayBuffer(file);
+    } else {
+      r.onload = () => {
+        if (/\.(csv|tsv)$/.test(name) && window.Papa)
+          done(Papa.parse(r.result, {header: true, dynamicTyping: true, skipEmptyLines: true}).data);
+        else if (name.endsWith(".json")) { try { done(JSON.parse(r.result)); } catch (e) { fail(e); } }
+        else done(r.result);
+      };
+      r.readAsText(file);
+    }
+  });
+  const Upload = ({accept = ".csv,.tsv,.xlsx,.xls,.json,.txt", onData, label = "Choose a file"}) => {
+    const ref = useRef(null), [name, setName] = useState("");
+    return h("div", {className: "flex items-center gap-3"},
+      h("input", {ref, type: "file", accept, className: "hidden", onChange: async (e) => {
+        const f = e.target.files[0]; if (!f) return; setName(f.name);
+        try { onData && onData(await readFile(f), f); } catch (x) { toast("Not read: " + x.message, "error"); }
+      }}),
+      h(ui.Button, {variant: "outline", onClick: () => ref.current.click()}, label),
+      name && h("span", {className: "text-sm text-slate-500"}, name));
+  };
+  /* a value kept between visits (the artifact's storage): [value, set] */
+  const useStored = (key, initial) => {
+    const [v, setV] = useState(initial);
+    useEffect(() => { window.storage && window.storage.get(key).then((r) => {
+      if (r && r.value !== undefined) try { setV(JSON.parse(r.value)); } catch (e) {} }).catch(() => {}); }, [key]);
+    const set = (x) => setV((old) => { const n = typeof x === "function" ? x(old) : x;
+      window.storage && window.storage.set(key, JSON.stringify(n)).catch(() => {}); return n; });
+    return [v, set];
+  };
+  return {Shell, Stat, Form, Grid, Chart, Upload, Toaster, toast, confirm, useStored, readFile, cn};
+}
+
 /* a React component: its code read by Babel, run with its imports */
 function runReact(src) {
   const report = window.__janasReport;
@@ -307,8 +547,10 @@ function runReact(src) {
       plugins: ["transform-modules-commonjs"]}).code;
   } catch (e) { report(e.message); return; }
   const ui = uiKit();
+  let kit = null;
   const req = (name) => {
     if (/^@\/components\/ui\//.test(name)) return ui;
+    if (name === "brebus-kit" || name === "@brebus/kit") return kit || (kit = brebusKit(ui));
     if (name === "@/lib/utils") return {cn: ui.cn};
     const p = pkgOf(name);
     const g = p && PKG[p].g && window[PKG[p].g];
@@ -357,6 +599,9 @@ mermaid.run().catch((e) => __janasReport(e.message || e));<\/script></body></htm
   if (a.type === "react") {
     const libs = ["react", "react-dom", "prop-types", "tailwindcss", "@babel/standalone"];
     for (const n of imports(a.content)) { const p = pkgOf(n); if (p && !libs.includes(p)) libs.push(p); }
+    /* Brebus's kit: its charts and its files' readers with it */
+    if (imports(a.content).some((n) => n === "brebus-kit" || n === "@brebus/kit"))
+      for (const p of ["recharts", "papaparse", "xlsx"]) if (!libs.includes(p)) libs.push(p);
     return `<!doctype html><html><head>${head}${scripts(libs)}</head><body><div id="root"></div>
 <script>window.__janasRun(${JSON.stringify(a.content).replace(/<\//g, "<\\/")})<\/script></body></html>`;
   }
@@ -374,6 +619,7 @@ addEventListener("message", (e) => {
   window.__janasShown = true;
   /* kept across the document written: its globals stay, its listeners go */
   window.__janasRun = runReact;
+  window.__janasZoom = a.zoom;
   document.open();
   document.write(documentFor(a));
   document.close();

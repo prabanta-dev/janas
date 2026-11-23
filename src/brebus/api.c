@@ -102,9 +102,10 @@ static void models(struct brebus *b, struct janas_buf *o)
         str(o, m[i].arch);
         janas_buf_printf(o,
                          ", \"bytes\": %llu, \"context\": %u, \"fim\": %d, "
-                         "\"recurrent\": %d, \"coder\": %d, \"vision\": %d}",
+                         "\"recurrent\": %d, \"coder\": %d, \"thinks\": %d, "
+                         "\"vision\": %d}",
                          (unsigned long long)m[i].bytes, m[i].ctx, m[i].fim,
-                         m[i].recurrent, m[i].coder,
+                         m[i].recurrent, m[i].coder, m[i].thinks,
                          brebus_model_sees(b->models_dir, m[i].name));
     }
     janas_buf_puts(o, "]}");
@@ -143,9 +144,13 @@ int brebus_model_remove(struct brebus *b, const char *name, char *why,
         snprintf(why, wn, "no model named so in %s", b->models_dir);
         return -1;
     }
-    int busy = brebus_server_loaded(b, name);
-    if (busy) {
-        snprintf(why, wn, "%s is loaded: unload it first", name);
+    /* loaded but not the one used now: unloaded, then removed; the one
+       the chat uses stays */
+    if (brebus_server_unload_idle(b, name) != 0) {
+        snprintf(why, wn,
+                 "%s is the model in use: choose another one under the "
+                 "chat's field first",
+                 name);
         return -1;
     }
     if (remove(m[at].path) != 0) {

@@ -20,6 +20,12 @@
 #include <string.h>
 #include <sys/random.h>
 #include <sys/socket.h>
+#ifdef _WIN32
+#include <ws2tcpip.h>
+#else
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#endif
 #include <time.h>
 #include <unistd.h>
 
@@ -42,6 +48,7 @@ struct req_ctx {
     char *body;
     size_t n, cap;
     int too_big;
+    int no_key; /* a key is asked and not given: its body is not kept */
 };
 
 void srv_new_id(char *buf, size_t cap, const char *prefix)
@@ -89,6 +96,8 @@ static enum MHD_Result queue(struct MHD_Connection *c, unsigned status,
         return MHD_NO;
     if (type)
         MHD_add_response_header(resp, MHD_HTTP_HEADER_CONTENT_TYPE, type);
+    /* a file's bytes are never taken for a page by the browser */
+    MHD_add_response_header(resp, "X-Content-Type-Options", "nosniff");
     if (cors_origin) {
         MHD_add_response_header(resp, "Access-Control-Allow-Origin",
                                 cors_origin);
@@ -392,6 +401,12 @@ static enum MHD_Result dispatch(struct srv_req *r)
     int o = srv_origin_check(
         &r->srv->cfg, origin,
         MHD_lookup_connection_value(r->conn, MHD_HEADER_KIND, "Host"));
+    if (o == SRV_ORIGIN_REFUSED && !origin)
+        return (enum MHD_Result)srv_reply_error(
+            r, 403, "invalid_request_error", "host_not_allowed",
+            "This server, without a key, answers only at this machine's "
+            "names and addresses: start it with --api-key to be reached by "
+            "other names.");
     if (o == SRV_ORIGIN_REFUSED)
         return (enum MHD_Result)srv_reply_error(
             r, 403, "invalid_request_error", "origin_not_allowed",
@@ -469,6 +484,17 @@ static enum MHD_Result dispatch(struct srv_req *r)
             r, 401, "invalid_request_error", "invalid_api_key",
             "Incorrect or missing API key: send it as "
             "\"Authorization: Bearer <key>\".");
+    /* Janas's own: the replies under way stopped, the server kept (the
+       program that runs it, starting again, finds it busy with a request
+       of before) */
+    if (strcmp(r->path, "/janas/cancel") == 0 &&
+        strcmp(r->method, "POST") == 0) {
+        char *j = malloc(48);
+        int n = j ? snprintf(j, 48, "{\"cancelled\": %d}",
+                             srv_engine_cancel_all(r->srv->engine))
+                  : 0;
+        return (enum MHD_Result)srv_reply_json(r, 200, j, (size_t)n);
+    }
     /* llama.cpp's route for filling in code, which editors' extensions
        made for it ask: not OpenAI's, so not in routes.inc */
     if (strcmp(r->path, "/infill") == 0 && strcmp(r->method, "POST") == 0)
@@ -530,6 +556,18 @@ static size_t body_limit(const struct srv *srv, const char *url)
    a little for them to answer */
 static atomic_int in_flight;
 
+/* an address of this computer's alone (127.0.0.0/8, ::1) */
+static int loopback_addr(const struct sockaddr *sa)
+{
+    if (sa->sa_family == AF_INET)
+        return (ntohl(((const struct sockaddr_in *)sa)->sin_addr.s_addr) >>
+                24) == 127;
+    if (sa->sa_family == AF_INET6)
+        return IN6_IS_ADDR_LOOPBACK(
+            &((const struct sockaddr_in6 *)sa)->sin6_addr);
+    return 0;
+}
+
 static enum MHD_Result access_handler(void *cls, struct MHD_Connection *conn,
                                       const char *url, const char *method,
                                       const char *version,
@@ -545,11 +583,15 @@ static enum MHD_Result access_handler(void *cls, struct MHD_Connection *conn,
             return MHD_NO;
         *req_cls = ctx;
         atomic_fetch_add(&in_flight, 1);
+        struct srv_req k = {.srv = srv, .conn = conn};
+        ctx->no_key = !key_ok(&k);
         return MHD_YES;
     }
     if (*upload_data_size) { /* a piece of the body */
         size_t n = *upload_data_size;
         *upload_data_size = 0;
+        if (ctx->no_key) /* refused by dispatch: nothing of it in memory */
+            return MHD_YES;
         size_t limit = body_limit(srv, url);
         if (ctx->too_big || ctx->n + n > limit) {
             ctx->too_big = 1;
@@ -614,6 +656,15 @@ int srv_http_start(struct srv *s, const struct sockaddr *addr, char *err,
     unsigned flags = MHD_USE_THREAD_PER_CONNECTION |
                      MHD_USE_INTERNAL_POLLING_THREAD | MHD_USE_ERROR_LOG |
                      (addr->sa_family == AF_INET6 ? MHD_USE_IPv6 : 0);
+    /* on the network: no one address takes every connection (a quarter
+       each, 8 at least); on this computer alone, no such count (Brebus
+       and the like ask from 127.0.0.1 for all their users) */
+    unsigned per_ip = 0;
+    if (!loopback_addr(addr)) {
+        per_ip = (unsigned)s->cfg.max_connections / 4;
+        if (per_ip < 8)
+            per_ip = 8;
+    }
     if (tls) /* no socket of its own: tls.c adds the connections */
         s->mhd = MHD_start_daemon(
             flags | MHD_USE_NO_LISTEN_SOCKET | MHD_USE_ITC, 0, NULL, NULL,
@@ -621,7 +672,7 @@ int srv_http_start(struct srv *s, const struct sockaddr *addr, char *err,
             MHD_OPTION_CONNECTION_LIMIT, (unsigned)s->cfg.max_connections,
             MHD_OPTION_CONNECTION_TIMEOUT, (unsigned)600,
             MHD_OPTION_CONNECTION_MEMORY_LIMIT, (size_t)(256 * 1024),
-            MHD_OPTION_END);
+            MHD_OPTION_PER_IP_CONNECTION_LIMIT, per_ip, MHD_OPTION_END);
     else
         s->mhd = MHD_start_daemon(
             flags, s->cfg.port, NULL, NULL, access_handler, s,
@@ -629,7 +680,7 @@ int srv_http_start(struct srv *s, const struct sockaddr *addr, char *err,
             NULL, MHD_OPTION_CONNECTION_LIMIT, (unsigned)s->cfg.max_connections,
             MHD_OPTION_CONNECTION_TIMEOUT, (unsigned)600,
             MHD_OPTION_CONNECTION_MEMORY_LIMIT, (size_t)(256 * 1024),
-            MHD_OPTION_END);
+            MHD_OPTION_PER_IP_CONNECTION_LIMIT, per_ip, MHD_OPTION_END);
     if (!s->mhd) {
         snprintf(err, err_len, "cannot listen on %s:%u", s->cfg.host,
                  (unsigned)s->cfg.port);

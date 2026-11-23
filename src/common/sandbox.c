@@ -212,6 +212,16 @@ static void seccomp_on(void)
         BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_clone3, 0, 1),
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | ENOSYS),
 #endif
+    /* no links (a link written here is followed by whoever reads the
+       folder outside: the host's paths) and no FIFOs or devices */
+#ifdef SYS_symlink
+        DENY(SYS_symlink),
+        DENY(SYS_link),
+        DENY(SYS_mknod),
+#endif
+        DENY(SYS_symlinkat),
+        DENY(SYS_linkat),
+        DENY(SYS_mknodat),
         DENY(SYS_ptrace),
         DENY(SYS_mount),
         DENY(SYS_umount2),
@@ -271,6 +281,42 @@ static void seccomp_on(void)
         die("seccomp");
 }
 
+/* the file system of fd nearly full: under 1% of it free and 1 GiB at
+   least - a tenth of a small one at most (a /tmp in memory) - or under 1%
+   of its files' entries and 10,000 at least (a cage's code fills
+   neither) */
+static int disk_low(int fd)
+{
+    struct statvfs v;
+    if (fstatvfs(fd, &v) != 0)
+        return 0;
+    uint64_t unit = v.f_frsize ? v.f_frsize : v.f_bsize;
+    uint64_t free_b = (uint64_t)v.f_bavail * unit,
+             all_b = (uint64_t)v.f_blocks * unit;
+    uint64_t floor_b =
+        all_b / 100 > ((uint64_t)1 << 30) ? all_b / 100 : (uint64_t)1 << 30;
+    if (floor_b > all_b / 10)
+        floor_b = all_b / 10;
+    if (free_b < floor_b)
+        return 1;
+    /* file systems without a count of entries (btrfs) say 0 of them */
+    if (v.f_files) {
+        uint64_t floor_f = v.f_files / 100 > 10000 ? v.f_files / 100 : 10000;
+        if ((uint64_t)v.f_favail < floor_f)
+            return 1;
+    }
+    return 0;
+}
+
+/* the bytes free on fd's file system, to its users */
+static uint64_t disk_free(int fd)
+{
+    struct statvfs v;
+    if (fstatvfs(fd, &v) != 0)
+        return 0;
+    return (uint64_t)v.f_bavail * (v.f_frsize ? v.f_frsize : v.f_bsize);
+}
+
 static void limit(int what, uint64_t v)
 {
     struct rlimit r = {.rlim_cur = (rlim_t)v, .rlim_max = (rlim_t)v};
@@ -278,17 +324,22 @@ static void limit(int what, uint64_t v)
         die("setrlimit");
 }
 
-/* argv: JANAS_SANDBOX_ARG data mem file tmp n_ro ro... -- program args */
+/* argv: JANAS_SANDBOX_ARG data mem file tmp quota n_ro ro... -- program
+   args */
 void janas_sandbox_main(int argc, char **argv)
 {
     if (argc < 2 || strcmp(argv[1], JANAS_SANDBOX_ARG) != 0)
         return;
-    if (argc < 8)
+    if (argc < 9)
         _exit(127);
     const char *data = argv[2];
     uint64_t mem = strtoull(argv[3], NULL, 10);
     uint64_t fsz = strtoull(argv[4], NULL, 10);
     uint64_t tmp = strtoull(argv[5], NULL, 10);
+    uint64_t quota = strtoull(argv[6], NULL, 10);
+    if (!quota)
+        quota = (uint64_t)4 << 30;
+    argv++, argc--; /* the rest as before the quota was added */
     int n_ro = atoi(argv[6]);
     if (n_ro < 0 || 7 + n_ro + 1 >= argc || strcmp(argv[7 + n_ro], "--"))
         _exit(127);
@@ -297,8 +348,9 @@ void janas_sandbox_main(int argc, char **argv)
 
     if (prctl(PR_SET_PDEATHSIG, SIGKILL) != 0 || getppid() == 1)
         _exit(127);
-    for (int fd = 3; fd < 1024; fd++)
-        close(fd);
+    if (syscall(SYS_close_range, 3, ~0U, 0) != 0)
+        for (int fd = 3; fd < 65536; fd++)
+            close(fd);
     if (access(data, F_OK) != 0)
         die(data);
     if (n_ro > 64)
@@ -315,15 +367,56 @@ void janas_sandbox_main(int argc, char **argv)
     snprintf(map, sizeof map, "%u %u 1\n", (unsigned)gid, (unsigned)gid);
     write_file("/proc/self/gid_map", map);
 
+    /* the data's file system, watched from outside the cage */
+    int watch = open(data, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (watch < 0)
+        die(data);
+    uint64_t free0 = disk_free(watch);
+    if (disk_low(watch)) {
+        fprintf(stderr,
+                "janas-sandbox: the disk of %s is nearly full: no "
+                "code is run there\n",
+                data);
+        _exit(125);
+    }
     pid_t b = fork();
     if (b < 0)
         die("fork");
-    if (b > 0) { /* the first process: waits, and gives its end back */
+    if (b > 0) { /* the first process: waits, gives its end back, and stops
+                    the code that would fill the disk */
         int st = 0;
-        while (waitpid(b, &st, 0) < 0 && errno == EINTR)
-            ;
+        for (;;) {
+            pid_t w = waitpid(b, &st, WNOHANG);
+            if (w == b)
+                break;
+            if (w < 0 && errno != EINTR)
+                _exit(127);
+            /* nearly full, or less free than at the start by more than
+               the code may write (anything else writing on the disk counts
+               too: stopped early rather than late) */
+            uint64_t now = disk_free(watch);
+            int low = disk_low(watch),
+                much = free0 > now && free0 - now > quota;
+            if (low || much) {
+                kill(b, SIGKILL);
+                while (waitpid(b, &st, 0) < 0 && errno == EINTR)
+                    ;
+                if (low)
+                    fprintf(stderr, "janas-sandbox: stopped: the disk was "
+                                    "nearly full (files written by the "
+                                    "code)\n");
+                else
+                    fprintf(stderr,
+                            "janas-sandbox: stopped: the code wrote more "
+                            "than %llu MiB\n",
+                            (unsigned long long)(quota >> 20));
+                _exit(125);
+            }
+            usleep(50000);
+        }
         _exit(WIFEXITED(st) ? WEXITSTATUS(st) : 128 + WTERMSIG(st));
     }
+    close(watch);
     /* PID 1 of the cage */
     if (prctl(PR_SET_PDEATHSIG, SIGKILL) != 0)
         die("pdeathsig");
@@ -366,6 +459,14 @@ void janas_sandbox_main(int argc, char **argv)
     make_dirs(p);
     snprintf(src, sizeof src, "/proc/self/fd/%d", data_fd);
     bind(src, p, 1);
+    /* Brebus's own folder in it (its chats, its settings) out of sight:
+       an empty folder in memory, read only, over it */
+    struct stat bs;
+    snprintf(p, sizeof p, "%s/mnt/data/.brebus", root);
+    if (lstat(p, &bs) == 0 && S_ISDIR(bs.st_mode) &&
+        mount("tmpfs", p, "tmpfs", MS_NOSUID | MS_NODEV | MS_NOEXEC | MS_RDONLY,
+              "mode=0555,size=4k") != 0)
+        die(".brebus");
     /* more paths, read-only where they are */
     for (int i = 0; i < n_ro; i++) {
         struct stat st;
@@ -433,6 +534,9 @@ void janas_sandbox_main(int argc, char **argv)
     limit(RLIMIT_AS, mem ? mem : (uint64_t)2 << 30);
     limit(RLIMIT_FSIZE, fsz ? fsz : (uint64_t)1 << 30);
     limit(RLIMIT_NOFILE, 256);
+    /* processes and threads: counted in the cage's own user namespace
+       (Linux 5.14 and later), so the cage's alone */
+    limit(RLIMIT_NPROC, 512);
     limit(RLIMIT_CORE, 0);
     seccomp_on();
     execve(prog[0], prog, environ);
@@ -455,12 +559,13 @@ int janas_sandbox_spawn(const struct janas_sandbox_cfg *c, char *const argv[],
         snprintf(why, n, "too many read-only paths");
         return -1;
     }
-    char num[3][24], cnt[16];
+    char num[4][24], cnt[16];
     snprintf(num[0], sizeof num[0], "%llu", (unsigned long long)c->mem_bytes);
     snprintf(num[1], sizeof num[1], "%llu", (unsigned long long)c->file_bytes);
     snprintf(num[2], sizeof num[2], "%llu", (unsigned long long)c->tmp_bytes);
+    snprintf(num[3], sizeof num[3], "%llu", (unsigned long long)c->data_quota);
     snprintf(cnt, sizeof cnt, "%d", nro);
-    char **args = calloc((size_t)(9 + nro + na), sizeof(char *));
+    char **args = calloc((size_t)(10 + nro + na), sizeof(char *));
     if (!args) {
         snprintf(why, n, "out of memory");
         return -1;
@@ -472,6 +577,7 @@ int janas_sandbox_spawn(const struct janas_sandbox_cfg *c, char *const argv[],
     args[k++] = num[0];
     args[k++] = num[1];
     args[k++] = num[2];
+    args[k++] = num[3];
     args[k++] = cnt;
     for (int i = 0; i < nro; i++)
         args[k++] = (char *)c->ro[i];

@@ -928,7 +928,9 @@ size_t janas_tokenizer_decode(const struct janas_tokenizer *t, int32_t id,
     }
     if (t->spm) {
         if (len == 6 && memcmp(s, "<0x", 3) == 0) {
-            int b = (int)strtol((const char *)s + 3, NULL, 16);
+            /* the two digits alone: the pool has no 0 after a token */
+            char hx[3] = {(char)s[3], (char)s[4], 0};
+            int b = (int)strtol(hx, NULL, 16);
             if (b >= 0 && b < 256 && t->byte_id[b] == id) {
                 if (max)
                     out[0] = (char)b;

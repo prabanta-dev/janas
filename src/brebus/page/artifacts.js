@@ -3,7 +3,7 @@
 /* artifacts.js - Brebus's page (app.html): the artifacts beside the chat. build.sh puts it into
    the page where app.html includes it. */
 /* ---- artifacts: documents the model makes, beside the chat ---- */
-const ART_RULE = "When you write a self-contained document the user may want to see or keep - a web page, an interactive app, a chart, a diagram, an SVG drawing, a long Markdown document, a program - put it whole between <artifact type=\"html\" title=\"A short title\"> and </artifact>. Types: html (a whole page); react (one React component exported as default, needing no props, styled with Tailwind classes; it may import react, recharts, lucide-react, d3, lodash, mathjs, papaparse, xlsx, chart.js, three, tone, and shadcn/ui from @/components/ui/<name>); mermaid (a diagram); svg; markdown (math between $$ and $$); code (add lang=\"python\" or the language). There is no network: an html page may load from cdn.jsdelivr.net or cdnjs only chart.js, d3, three (r128), plotly, mathjs, lodash, papaparse, xlsx, tone, katex, mermaid, react, react-dom, @babel/standalone and tailwind; images only as data: URLs. In html and react, await window.claude.complete(prompt) asks the model and returns its answer as a plain string; await window.storage.set(key, value), get(key) (gives {key, value} or null), delete(key) and list(prefix) keep data between visits; await window.fs.readFile(name, {encoding: \"utf8\"}) reads a file the user attached. To change one you made, write it again whole with the same title. Outside the artifact, say in a sentence what it is. Short answers and short code stay in the text.";
+const ART_RULE = "When you write a self-contained document the user may want to see or keep - a web page, an interactive app, a chart, a diagram, an SVG drawing, a long Markdown document, a program - put it whole between <artifact type=\"html\" title=\"A short title\"> and </artifact>. Types: html (a whole page); react (one React component exported as default, needing no props, styled with Tailwind classes; it may import react, recharts, lucide-react, d3, lodash, mathjs, papaparse, xlsx, chart.js, three, tone, and shadcn/ui from @/components/ui/<name>; for apps, forms, tables and dashboards prefer Brebus's kit, import {...} from \"brebus-kit\": Shell({title, pages: {name: element}}), Stat({label, value, hint}), Form({fields: [{name, label, type: text|number|email|date|select|textarea|checkbox, required, min, max, pattern, options}], onSubmit(values)}), Grid({rows, columns: [{key, label, type, edit}], onChange(rows), deletable, pageSize}), Chart({type: bar|line|area|pie, data, x, y}), Upload({onData(rows, file)}) for CSV/Excel/JSON, toast(text, kind), await confirm(text), useStored(key, initial) for data kept between visits); mermaid (a diagram); svg; markdown (math between $$ and $$); code (add lang=\"python\" or the language). There is no network: an html page may load from cdn.jsdelivr.net or cdnjs only chart.js, d3, three (r128), plotly, mathjs, lodash, papaparse, xlsx, tone, katex, mermaid, react, react-dom, @babel/standalone and tailwind; images only as data: URLs. In html and react, await window.claude.complete(prompt) asks the model and returns its answer as a plain string; await window.storage.set(key, value), get(key) (gives {key, value} or null), delete(key) and list(prefix) keep data between visits; await window.fs.readFile(name, {encoding: \"utf8\"}) reads a file the user attached. To change one you made, write it again whole with the same title. Outside the artifact, say in a sentence what it is. Short answers and short code stay in the text.";
 const NO_RUN_RULE = "You cannot run code in this chat: nothing you write is executed. Never state what a program prints or computes as if it had run; give the code and say the user can run it, or work a result out step by step and say it is worked out by hand.";
 const attrsOf = (t) => {
   const a = {};
@@ -98,6 +98,7 @@ function artShow(title, version) {
   }
   $("#artpath").textContent = a.path ? a.path : "";
   $("#artopen").hidden = !a.path;
+  artZoomApply();
 }
 $("#artver").onchange = () => artShow(artShown.title, +$("#artver").value);
 /* an artifact renamed: in every reply's tag, in what was saved, its folder */
@@ -135,7 +136,14 @@ for (const b of $("#artview").children)
   b.onclick = () => { artMode = b.dataset.v;
     if (artShown) artShow(artShown.title, artShown.k);
     else if (fileShown) artShowFile(fileShown.path, fileShown.title); };
-$("#artfull").onclick = () => $("#artpane").classList.toggle("full");
+/* over the chat, or beside it: the button filled while it is over */
+function artWide(on) {
+  $("#artpane").classList.toggle("full", on);
+  const b = $("#artfull");
+  b.setAttribute("aria-pressed", on ? "true" : "false");
+  b.title = on ? "Back beside the chat" : "Wide, over the chat";
+}
+$("#artfull").onclick = () => artWide(!$("#artpane").classList.contains("full"));
 $("#artdown").onclick = () => {
   const a = artVersions(artShown.title)[artShown.k];
   const ext = {html: "html", svg: "svg", markdown: "md", react: "jsx", mermaid: "mmd"}[a.type] ||
@@ -150,20 +158,27 @@ $("#arterrx").onclick = () => { $("#arterr").hidden = true; };
 $("#artfix").onclick = () => {
   const t = $("#arterr pre").textContent;
   $("#arterr").hidden = true;
-  $("#artpane").classList.remove("full");
+  artWide(false);
   const ask = $("#ask");
   ask.value = `The artifact "${artShown.title}" gives this error:\n\n${t}\n\nFix it, and write it again whole with the same title.`;
   ask.dispatchEvent(new Event("input"));
   $("#send").click();
 };
-/* what an artifact's frame asks: only the frame shown, only these */
+/* the files the user let artifacts read, in a browser (artifact and
+   path), for this visit */
+const artFileOk = new Set();
+/* what an artifact's frame asks: only the frame shown, only these, and
+   only while it holds Brebus's sandboxed page (its origin "null"): a page
+   of somewhere else it went to asks nothing */
 window.addEventListener("message", async (e) => {
   const f = artFrame;
-  if (!f || e.source !== f.el.contentWindow || !e.data) return;
+  if (!f || e.source !== f.el.contentWindow || e.origin !== "null" || !e.data) return;
   const d = e.data;
   if (d.janasReady) {
     const dark = matchMedia("(prefers-color-scheme: dark)").matches;
-    f.el.contentWindow.postMessage({janasArtifact: {type: f.art.type, content: f.art.content, title: f.art.title, dark}}, "*");
+    f.el.contentWindow.postMessage({janasArtifact: {type: f.art.type, content: f.art.content, title: f.art.title, dark, zoom: artZoomNow()}}, "*");
+  } else if (d.janasZoomStep !== undefined) {
+    artZoomSet(Math.sign(+d.janasZoomStep) || 0);
   } else if (d.janasError) {
     /* each error once, the first ones kept */
     const pre = $("#arterr pre");
@@ -199,7 +214,9 @@ async function artCall(f, c) {
   if (c.op === "storage") {
     if (!ws.path) throw new Error("no workspace: storage needs one");
     const r = await fetch("/brebus/artifact-store", {method: "POST",
-      body: JSON.stringify({title: f.title, act: c.act, key: c.key, value: c.value, prefix: c.prefix})});
+      body: JSON.stringify({title: f.title, chat: cur ? cur.id : "", act: c.act, key: c.key, value: c.value, prefix: c.prefix,
+        /* the chat's point, for the data's history */
+        at: cur ? cur.messages.length : 0})});
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || "storage failed");
     return j;
@@ -209,6 +226,18 @@ async function artCall(f, c) {
     const all = (cur ? cur.messages : []).flatMap((m) => m.attached || []);
     const a = all.find((x) => x.name === c.name || x.path === c.name || x.path.endsWith("/" + c.name));
     if (!a) throw new Error(`no file "${c.name}" is attached to this conversation; attached: ${all.map((x) => x.name).join(", ") || "none"}`);
+    /* in a browser an artifact's frame may go to another site, carrying in
+       its address what it read (Brebus's window stops that; a browser
+       cannot be told to): there it reads a file only when the user says
+       so, once for each artifact and file */
+    const okKey = f.title + "\u0000" + a.path;
+    if (!ws.window && !artFileOk.has(okKey)) {
+      const b = (await dialog({title: `The artifact "${f.title}" asks to read ${a.name}`,
+        text: "It will be able to show it, and could send it to a web site it goes to. Allow only if you trust what it does.",
+        buttons: [{label: "Allow", value: "yes", primary: true}, {label: "Don't allow", value: "no"}]})).button;
+      if (b !== "yes") throw new Error("the user did not allow reading " + a.name);
+      artFileOk.add(okKey);
+    }
     const r = await fetch("/brebus/file?path=" + encodeURIComponent(a.path));
     if (!r.ok) throw new Error("cannot read " + a.name);
     return new Uint8Array(await r.arrayBuffer());
@@ -311,7 +340,7 @@ async function decorate(el) {
 }
 $("#artclose").onclick = () => {
   $("#artpane").hidden = true; artShown = null; fileShown = null;
-  $("#artpane").classList.remove("full");
+  artWide(false);
   if (navAuto) { navMini(false, false); navAuto = false; }
 };
 try { const w = +localStorage.getItem("brebus.artw"); if (w > 0) $("#artpane").style.width = w + "px"; } catch (e) {}
@@ -382,9 +411,12 @@ function apiMessages() {
                /* without the python tool nothing runs: a model that said what
                   its code printed made it up (17 Nov, five CRCs invented) */
                $("#usecode").checked ? "" : NO_RUN_RULE,
-               $("#usetools").checked && tools.catalog ? tools.catalog : ""].filter(Boolean).join("\n\n");
+               $("#usetools").checked && tools.catalog ? tools.catalog : "",
+               /* the earlier messages, summarized (compact.js) */
+               summaryNow() ? "Summary of the earlier part of this conversation, whose messages you no longer see:\n" + cur.summary.text : ""
+              ].filter(Boolean).join("\n\n");
   if (sys) out.push({role: "system", content: sys});
-  for (const m of cur.messages) {
+  for (const m of cur.messages.slice(summaryNow() ? cur.summary.upto : 0)) {
     if (m.role === "user") {
       /* pictures as pictures, for a model that sees them */
       const pics = modelInfo[server.model]?.vision
@@ -395,6 +427,12 @@ function apiMessages() {
         : userContent(m)});
     }
     else if (m.role === "assistant") {
+      /* an answer that never came (the server's error shown in its place)
+         is not the model's: it and the question it failed are left out */
+      if (m.failed || /^\(\d{3}\) \{"error"/.test(m.content || "")) {
+        if (out.length && out[out.length - 1].role === "user") out.pop();
+        continue;
+      }
       const a = {role: "assistant", content: m.content || ""};
       if (m.tool_calls) a.tool_calls = m.tool_calls;
       out.push(a);

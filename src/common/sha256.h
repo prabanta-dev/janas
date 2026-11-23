@@ -22,6 +22,8 @@ void janas_sha256_init(struct janas_sha256 *s);
 void janas_sha256_update(struct janas_sha256 *s, const void *data, size_t n);
 /* The digest as 64 lowercase hex digits and a NUL. */
 void janas_sha256_hex(struct janas_sha256 *s, char out[65]);
+/* the digest as 32 bytes (s is spent, as with _hex) */
+void janas_sha256_final(struct janas_sha256 *s, uint8_t out[32]);
 /* The SHA-256 of a whole file, as hex; 0, or -1 if it cannot be read. */
 int janas_sha256_file(const char *path, char out[65]);
 

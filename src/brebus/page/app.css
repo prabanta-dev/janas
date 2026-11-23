@@ -130,6 +130,10 @@ td.tag .badge, td.tag button.act { min-width: 74px; border-radius: 999px; }
 .empty { color: var(--dim); padding: 20px 0; }
 #dl { margin-bottom: 16px; display: flex; flex-direction: column; gap: 10px; }
 .dlone progress { display: block; width: 100%; margin: 4px 0; }
+.dlone .dlrow { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.dlone.dlend { display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  transition: opacity 1s ease; }
+.dlone.dlend.fading { opacity: 0; }
 #dl[hidden] { display: none; }
 button.act { all: unset; cursor: pointer; display: inline-flex; align-items: center;
              justify-content: center; box-sizing: border-box; height: 26px;
@@ -294,6 +298,13 @@ input[type=search]::-webkit-search-cancel-button { -webkit-appearance: none; app
                border: 1px solid var(--line); background: var(--panel); color: var(--fg);
                font: 13px var(--mono); }
 .hfget .note { flex-basis: 100%; }
+/* the forms that add a skill and an extension: buttons of one width, so
+   their fields are as long as each other */
+#skadd button, #cnadd button { min-width: 6.5em; justify-content: center; }
+/* a line of text with its button: the button at the right, its edge the
+   other buttons' */
+.btnline { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0; }
+.btnline button { flex: none; min-width: 6.5em; justify-content: center; }
 nav button.ws { margin: 0 6px 10px; padding: 4px 8px; font-size: 12px; color: var(--dim);
                 white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 210px;
                 border: 1px dashed var(--line); }
@@ -312,6 +323,11 @@ nav button.ws { margin: 0 6px 10px; padding: 4px 8px; font-size: 12px; color: va
               padding: 8px 10px; max-height: 40vh; overflow: auto; font: 12px var(--mono);
               white-space: pre-wrap; }
 .dlg .right { text-align: right; margin-bottom: 0; }
+.dlg .right button { justify-content: center; }
+/* a field with its button beside it (Browse…) */
+.dlg .dinrow { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
+.dlg .dinrow .din { margin-top: 0; flex: 1; }
+.dlg .dinrow button { flex: none; }
 #wsrecent { display: flex; flex-direction: column; gap: 4px; margin-bottom: 14px; }
 #wsrecent button { all: unset; cursor: pointer; padding: 6px 10px; border-radius: 8px;
                    font: 13px var(--mono); overflow: hidden; text-overflow: ellipsis;
@@ -326,6 +342,7 @@ nav button.ws { margin: 0 6px 10px; padding: 4px 8px; font-size: 12px; color: va
               padding: 4px 10px 4px 24px; font: 14px var(--sans); }
 @media print {
   nav, #under, #archbar, #bar, #form, #chips, #artpane, .msgact, .msgbar, .msgacts { display: none !important; }
+  .msgfoot { justify-content: flex-start !important; }
   #chat.on { height: auto; display: block; }
   #log { overflow: visible; }
   body, main { background: #fff; color: #000; }
@@ -338,7 +355,7 @@ main h3 { font-size: 15px; margin: 24px 0 10px; }
 .srvset label:has(> input[type=checkbox]) { flex-direction: row; flex-wrap: wrap;
                                             align-items: center; gap: 8px; }
 .srvset .note, .note { color: var(--dim); font-size: 12px; }
-.srvset label:has(> input[type=checkbox]) .note { flex-basis: 100%; margin-left: 24px; }
+.srvset label:has(> input[type=checkbox]) .note { flex-basis: 100%; margin-left: 42px; }
 .srvset .row { display: flex; gap: 8px; align-items: center; }
 .srvset input:not([type=checkbox]), .srvset textarea {
   padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line);
@@ -357,7 +374,16 @@ main h3 { font-size: 15px; margin: 24px 0 10px; }
                  border: 1px solid var(--line); }
 .msg details { color: var(--dim); font-size: 13px; margin-bottom: 6px; }
 .artpic { display: block; max-width: 100%; max-height: 100%; margin: 12px auto; background: #fff; border-radius: 6px; }
-.msg .speed { color: var(--dim); font-size: 12px; margin-top: 6px; }
+/* a turn: the message's box and its line under it, outside it; the turn
+   as wide as the wider of the two, the box stretched to it */
+.turn { display: flex; flex-direction: column; max-width: 80ch; min-width: 0; }
+.turn.user { align-self: flex-end; }
+.turn.assistant, .turn.tool { align-self: flex-start; }
+.turn > .msg, .turn > .msg.user, .turn > .msg.assistant { max-width: none; align-self: stretch; }
+.msgfoot { display: flex; align-items: center; gap: 8px; margin-top: 4px; padding: 0 4px;
+           font-size: 12px; color: var(--dim); }
+.turn.user .msgfoot { justify-content: flex-end; }
+.msgfoot .msginfo { white-space: nowrap; }
 #form { position: relative; width: 100%; max-width: 820px; margin: 0 auto; }
 .tog { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer;
        white-space: nowrap; }
@@ -371,11 +397,8 @@ main h3 { font-size: 15px; margin: 24px 0 10px; }
             border: 1px dashed var(--line); background: transparent; max-width: 80ch; }
 .msg.tool pre { white-space: pre-wrap; max-height: 260px; overflow: auto; }
 .msg .att { font-size: 12px; opacity: .85; margin-top: 4px; }
-/* a message's actions: small icons, shown under the pointer */
-.msgacts { display: flex; gap: 2px; align-items: center; margin-top: 6px; font-size: 12px; color: var(--dim);
-           opacity: 0; transition: opacity .12s; }
-.msg:hover .msgacts, .msg:focus-within .msgacts, .msg:last-child .msgacts { opacity: 1; }
-.msg.user .msgacts { justify-content: flex-end; }
+/* a message's actions: small icons in the line under its box, always there */
+.msgacts { display: flex; gap: 2px; align-items: center; font-size: 12px; color: var(--dim); }
 .msgico { all: unset; cursor: pointer; padding: 3px; border-radius: 6px; display: flex; color: var(--dim); }
 .msgico:hover { background: var(--bg); color: var(--fg); }
 .msgico svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8;
@@ -415,7 +438,7 @@ main h3 { font-size: 15px; margin: 24px 0 10px; }
 :root { --md-accent: var(--accent); --md-code: var(--fg); --md-code-bg: var(--bg);
         --md-dim: var(--dim); --md-line: var(--line); --md-pre-bg: var(--bg); }
 .msg .text pre { border: 1px solid var(--line); }
-.msg .text pre, .msg .text .m { font-family: var(--mono); font-size: 13px; }
+.msg .text pre, .msg .text code, .msg .text kbd { font-family: var(--mono); font-size: 13px; }
 
 /* ---- every form control alike, in the page's own style: fields, lists,
    numbers without the system's spinners, check boxes ---- */
@@ -435,14 +458,21 @@ main select, .dlg select { padding-right: 32px; cursor: pointer; background-repe
 input[type=number] { -moz-appearance: textfield; }
 input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button {
   -webkit-appearance: none; margin: 0; }
-input[type=checkbox] { appearance: none; -webkit-appearance: none; flex: none; width: 18px; height: 18px;
-  margin: 0; border: 1.5px solid var(--dim); border-radius: 5px; background: var(--panel);
-  cursor: pointer; display: inline-grid; place-content: center; vertical-align: -3px; }
+/* a checkbox drawn as a switch (Android's, iOS's): still a checkbox, so
+   the keyboard, a screen reader and a click on its label work as before */
+input[type=checkbox] { appearance: none; -webkit-appearance: none; flex: none; position: relative;
+  width: 34px; height: 20px; margin: 0; border: 1.5px solid var(--dim); border-radius: 10px;
+  background: var(--line); cursor: pointer; vertical-align: -5px;
+  transition: background .15s ease, border-color .15s ease; }
+input[type=checkbox]::after { content: ""; position: absolute; top: 2px; left: 2px; width: 13px;
+  height: 13px; border-radius: 50%; background: var(--panel); box-shadow: 0 1px 2px rgba(0,0,0,.25);
+  transition: transform .15s ease; }
 input[type=checkbox]:checked { background: var(--accent); border-color: var(--accent); }
-input[type=checkbox]:checked::after { content: ""; width: 9px; height: 5px; margin-top: -2px;
-  border: solid #fff; border-width: 0 0 2px 2px; transform: rotate(-45deg); }
+input[type=checkbox]:checked::after { transform: translateX(14px); background: #fff; }
 input[type=checkbox]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 input[type=checkbox]:disabled { opacity: .45; cursor: default; }
+@media (prefers-reduced-motion: reduce) {
+  input[type=checkbox], input[type=checkbox]::after { transition: none; } }
 /* in the settings' forms, every field as wide as the others */
 .plainset input:not([type=checkbox]), .plainset select, .plainset textarea,
 .setf.plain input, .setf.plain select { width: 100%; max-width: 100%; }
@@ -484,6 +514,9 @@ input[type=checkbox]:disabled { opacity: .45; cursor: default; }
 .hfst { display: inline-flex; gap: 6px; align-items: center; }
 .hfst .badge { height: 22px; font-size: 11px; }
 .hfst button.chk { min-width: 6.5em; }
+/* Get turns into Getting… while its download goes on: one width for both
+   words, everywhere, so that nothing around it moves */
+button.get, button.vget { width: 7.5em; min-width: 7.5em; justify-content: center; flex: none; }
 .row-acts button.act { min-width: 7.5em; text-align: center; justify-content: center; }
 /* the side bar's groups: the name on the left, its arrow on the right */
 .grp > .ghead { font-size: 13px; padding: 8px 6px 4px 10px; }
@@ -520,6 +553,9 @@ button.act, button.act.quiet {
   height: var(--ctl-h); padding: 0 14px; border-radius: 8px; font-size: 14px;
   background: transparent; color: var(--accent); border: 1px solid var(--accent); }
 button.act:hover:not([disabled]) { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+/* a button that opens something, while that is open: filled */
+button.act[aria-pressed="true"], button.act[aria-pressed="true"]:hover:not([disabled]) {
+  background: var(--accent); color: var(--panel); }
 button.act:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 main input:not([type=checkbox]):not([type=radio]), main select,
 .dlg input:not([type=checkbox]):not([type=radio]), .dlg select { height: var(--ctl-h); }
@@ -590,6 +626,9 @@ main:has(#chat.on) { padding-bottom: 10px; }
 
 /* the connectors: as the services, a row each with its button */
 #conncard .cnlist .svc { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+/* the rows of a list with a button each: a step between them, so that the
+   buttons one under the other never touch */
+#svclist, #sklist, #conncard .cnlist { display: flex; flex-direction: column; gap: 6px; }
 #conncard .cnlist label { display: flex; gap: 8px; align-items: baseline; padding: 3px 0; font-size: 13px; min-width: 0; }
 #conncard .cnlist small { color: var(--dim); }
 #conncard .cnlist button { flex: none; }
@@ -597,3 +636,60 @@ main:has(#chat.on) { padding-bottom: 10px; }
 #cnadd { margin-top: 10px; }
 /* Add and Remove of the same width, in one column */
 #conncard .cnlist button, #sklist .skrm, #svclist .svcauth { min-width: 6.5em; justify-content: center; }
+/* the page's own picker of the server's folders (from a browser) */
+.wplist { display: flex; flex-direction: column; align-items: stretch; max-height: 50vh; overflow: auto; gap: 2px; }
+.wplist button { text-align: left; justify-content: flex-start; }
+.wplist .wpfile.on { outline: 2px solid var(--accent); }
+/* a reply under way with nothing of it yet: the pintadera's five points,
+   each swelling in turn, clockwise from the top */
+.msg .working, #closing .working { display: inline-flex; align-items: center; height: 1.6em; }
+#closing .dtext { display: flex; align-items: center; gap: 10px; }
+.msg .reading { margin-left: 10px; color: var(--dim); font-size: 13px; vertical-align: middle; }
+.working .pinta circle { fill: var(--accent); transform-box: fill-box; transform-origin: center;
+  animation: pinta 1.25s ease-in-out infinite; opacity: .45; }
+.working .pinta circle:nth-child(2) { animation-delay: .25s; }
+.working .pinta circle:nth-child(3) { animation-delay: .5s; }
+.working .pinta circle:nth-child(4) { animation-delay: .75s; }
+.working .pinta circle:nth-child(5) { animation-delay: 1s; }
+@keyframes pinta { 0%, 60%, 100% { transform: scale(.7); opacity: .45; } 25% { transform: scale(1.45); opacity: 1; } }
+/* less motion asked (and Windows over Remote Desktop asks it): the points
+   keep their size and only light up in turn - still a sign of work */
+@keyframes pinta-still { 0%, 60%, 100% { opacity: .35; } 25% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .working .pinta circle { animation-name: pinta-still; transform: none; }
+}
+
+/* the line where a chat's summary ends (compact.js) */
+.sumline { margin: 14px 0; padding: 6px 12px; border-top: 1px dashed var(--line); border-bottom: 1px dashed var(--line); color: var(--dim); font-size: 0.9em; }
+.sumline > summary { cursor: pointer; }
+.sumline .sumtext { margin-top: 8px; color: var(--fg); }
+.sumline.busy { display: flex; align-items: center; gap: 10px; }
+.sumline .working { display: inline-flex; align-items: center; height: 1.6em; }
+/* zoom: the interface's at the side bar's foot (its percentage in the
+   accent while not 100%), the steps in Settings and in the artifact's bar */
+nav .uizoom { display: flex; align-items: center; gap: 10px; padding: 4px 0 4px 10px; color: var(--dim); }
+nav .uizoom[hidden] { display: none; }
+nav .uizoom .seg { margin-left: auto; height: 28px; }
+nav .uizoom .seg button { padding: 0 8px; border-radius: 0; font-size: 13px; color: var(--dim); }
+nav .uizoom .seg button:hover { background: var(--line); color: var(--fg); }
+nav .uizoom.on .seg b { color: var(--accent); }
+nav.mini .uizoom { justify-content: center; padding: 4px 0; }
+nav.mini .uizoom > svg { display: none; }
+nav.mini .uizoom .seg { margin: 0; }
+nav.mini .uizoom .seg button { min-width: 0; padding: 0 4px; font-size: 12px; }
+.zoomseg button, .btnline .zoomseg button { min-width: 0; padding: 0 9px; justify-content: center; }
+#artzpct, .zoomseg button[data-z="0"] { min-width: 3.4em; font-variant-numeric: tabular-nums; }
+#zoomcard .note { display: block; margin-top: 6px; }
+/* Server's models loaded: one a row, Unload at the right (flush with New
+   key below), spaced as the Connectors' rows */
+#srv .ldone { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 3px 0; }
+#srv .ldone + .ldone { margin-top: 6px; }
+#srv .ldone > span { min-width: 0; overflow-wrap: anywhere; }
+#srv .ldone .unl { flex: none; min-width: 6.5em; justify-content: center; }
+#srv .ldone ~ .note { display: block; margin-top: 6px; }
+#under #thinkbtn[aria-pressed="true"] { color: var(--accent); }
+#under #thinkbtn[aria-pressed="false"] svg { opacity: .7; }
+/* the reasoning working, folded: its seconds and the line it writes */
+.msg .reasoning { display: flex; align-items: center; gap: 8px; cursor: pointer; min-width: 0; }
+.msg .reasoning .thinkline { color: var(--dim); font-size: 13px; font-style: italic;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }

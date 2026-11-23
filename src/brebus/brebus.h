@@ -64,6 +64,9 @@ struct brebus {
        second factor (when it listens beyond this computer) */
     int serve, tls, need_2fa;
     char listen[64];
+    /* served: more names it is reached by (--host-name, comma separated),
+       beside its addresses and this machine's own name */
+    char names[512];
     /* a user's own Brebus (brebus --child, children.c): the token every
        request must carry, the front Brebus's port (and whether over
        HTTPS) for the models, the folder its projects must be in */
@@ -92,6 +95,7 @@ struct brebus {
     struct brebus_srv {
         struct janas_proc proc;
         int on;
+        int ready;           /* it answered: loaded, not only started */
         unsigned short port; /* Brebus's port plus one plus its place */
         char model[256];
         time_t used; /* when a request last went to it */
@@ -119,7 +123,8 @@ struct brebus {
    account's recovery codes, spent now. brebus_user_totp_on: the second
    factor kept (secret, base32) and ten recovery codes made into codes.
    brebus_totp_secret: a new one; brebus_totp_check: 1 when code is the
-   secret's at now, or a step either side; brebus_totp_code: the code at
+   secret's at now, or a step either side (then the step it is of, which
+   is never 0); brebus_totp_code: the code at
    now. */
 int brebus_random(void *p, size_t n);
 int brebus_users_load(struct brebus *b);
@@ -137,6 +142,12 @@ int brebus_user_recovery_use(struct brebus *b, const char *name,
                              const char *code);
 int brebus_user_totp_on(struct brebus *b, const char *name, const char *secret,
                         char codes[BREBUS_RECOVERY][12]);
+/* a user of the system's entry in users.json, made when there is none
+   (their role set at their login): 0, or -1 with no room */
+int brebus_user_keep(struct brebus *b, const char *name);
+/* an account's role now, not at its login: 1 an administrator, 0 a user,
+   -1 none any more (removed; out of the system's groups) */
+int brebus_user_role(struct brebus *b, const char *name);
 int brebus_totp_secret(char out[33]);
 int brebus_totp_check(const char *secret, const char *code, time_t now);
 int brebus_totp_code(const char *secret, time_t now, char out[7]);
@@ -178,8 +189,23 @@ void brebus_auth_logins(struct brebus *b, const char *user, int admin,
 int brebus_child_for(struct brebus *b, const char *user, unsigned short *port,
                      char tok[65], char *why, size_t wn);
 int brebus_child_token_ok(const char *tok);
+/* the port of 127.0.0.1 listened on by this process's user alone (Linux;
+   elsewhere 1): what Brebus sends its keys and tokens to */
+int brebus_port_mine(unsigned short port);
+/* a user of the system's login ticket (from janas-brebus-helper auth),
+   kept for the spawn of their Brebus */
+void brebus_child_ticket(const char *user, const char *t);
 void brebus_children_stop(void);
 int brebus_confined(const struct brebus *b, const char *path);
+/* the folders (and files too, with files) of a folder of this machine, as
+   JSON into out - for picking one from a browser, where there is no
+   window's dialog; a user's Brebus shows only its user's */
+void brebus_dirs(const struct brebus *b, const char *path, int files,
+                 struct janas_buf *out);
+/* a file sent by the page (its name, its bytes) kept in the workspace's
+   sources/ and attached as /brebus/attach does: 0, or -1 */
+int brebus_upload(struct brebus *b, const char *name, const char *data,
+                  size_t n, struct janas_buf *out);
 
 /* http.c: the daemon on 127.0.0.1:port; 0, or -1 with the reason */
 int brebus_http_start(struct brebus *b, char *why, size_t wn);
@@ -212,6 +238,15 @@ int brebus_certificate(struct brebus *b, char *cert, char *key, size_t n,
                        char *err, size_t en);
 /* whether the model named is loaded: 1, or 0 */
 int brebus_server_loaded(struct brebus *b, const char *model);
+/* a model loaded but not the one in use stopped: 0 (or not loaded), -1
+   when it is the one in use */
+int brebus_server_unload_idle(struct brebus *b, const char *model);
+/* the models' servers of an earlier Brebus still there (servers.json),
+   this Brebus's own and answering: taken up again, their work stopped,
+   instead of started anew; others found deaf are ended */
+void brebus_server_adopt(struct brebus *b);
+/* every model's server's replies under way stopped, the servers kept */
+void brebus_server_cancel_all(struct brebus *b);
 
 /* get.c: a model of the catalog downloaded (body: {"model": name,
    "bytes": its size when the page knows it}), several at once; stopped,
@@ -243,6 +278,25 @@ int brebus_settings_put(struct brebus *b, const char *body, size_t n);
    {"path", "version"} into out, 0; or -1 with the reason */
 /* an artifact's window.storage (store.c): {"title", "act", "key",
    "value", "prefix"} */
+/* store_log.c: an artifact's saved data, in its folder dir, with their
+   history. A change written to the log, at the chat's point at (before:
+   the state before it, the log's base when there is no log yet; value NULL:
+   key deleted): */
+int brebus_store_log(const char *dir, const char *chat, const char *before,
+                     size_t before_n, long at, const char *key,
+                     const struct janas_json *value);
+/* from's data as they were at point upto, given to the chat to: its log up
+   to there and that state (a branch; to == from: a rewind). 0, or -1 */
+int brebus_store_upto(const char *dir, const char *from, const char *to,
+                      long upto);
+/* a branched chat's artifacts keep the data its source's had at the point
+   it was branched from: {"from", "to", "titles", "upto"} (store.c) */
+int brebus_artifact_store_copy(struct brebus *b, const char *body, size_t n,
+                               struct janas_buf *out);
+/* a chat gone back to point upto: its artifacts' data as they were then,
+   {"chat", "upto"} */
+int brebus_artifact_store_rewind(struct brebus *b, const char *body, size_t n,
+                                 struct janas_buf *out);
 int brebus_artifact_store(struct brebus *b, const char *body, size_t n,
                           struct janas_buf *out);
 /* lib.c: a file of the libraries artifacts may use, by its path under
@@ -265,12 +319,19 @@ int brebus_export(struct brebus *b, const char *body, size_t n,
    can be no window (no WebKitGTK, no display) */
 int brebus_window(const char *url, volatile sig_atomic_t *quit, char *why,
                   size_t wn);
+/* What the window does when asked to close: steps(say) runs on a thread
+   of its own while the window stays open, say(text) showing each step on
+   the page (window.brebusClosing), and the window closes when it returns.
+   Set before brebus_window; without it the window closes at once. */
+void brebus_window_set_closer(void (*steps)(void (*say)(const char *)));
 /* The system's dialog to choose a folder (file 0) or a file (1), in the
    window: 0 with the path chosen in out ("" when cancelled), -1 when there
    is no window (the browser: the page asks for a path). */
 int brebus_pick(int file, const char *title, char *out, size_t n);
 /* 1 while Brebus shows its page in its own window */
 int brebus_window_on(void);
+/* the window's page drawn at zoom z (0.5-3, 1 its size): -1 with no window */
+int brebus_window_zoom(double z);
 /* window_place.c: the window's place and size (its normal ones, and
    whether it was maximized), kept in data_dir/window.json; read: 0, or -1
    when none is kept (the first start: maximized) */

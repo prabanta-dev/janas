@@ -34,6 +34,11 @@
 #define PDF_FORMS 4 /* forms drawn by forms */
 #define PDF_STREAM DZ_MAX_FILE
 #define PDF_TEXT (32 << 20) /* of a document's text */
+/* a document's work, whatever it repeats: the bytes its streams give
+   (a stream named again and again is inflated again) and what its
+   objects take in memory */
+#define PDF_SPEND ((size_t)1 << 30)
+#define PDF_ARENA ((size_t)768 << 20)
 
 /* ---- the arena ---- */
 
@@ -46,6 +51,7 @@ struct block {
 struct arena {
     struct block *b;
     int oom;
+    size_t total; /* bytes taken, PDF_ARENA at most */
 };
 
 static void *alloc(struct arena *a, size_t n)
@@ -53,6 +59,11 @@ static void *alloc(struct arena *a, size_t n)
     n = (n + 15) & ~(size_t)15;
     if (!a->b || a->b->cap - a->b->used < n) {
         size_t cap = n > 65536 ? n : 65536;
+        if (a->oom || cap > PDF_ARENA - a->total) {
+            a->oom = 1;
+            return NULL;
+        }
+        a->total += cap;
         struct block *b = malloc(sizeof(*b) + cap);
         if (!b) {
             a->oom = 1;
@@ -485,6 +496,7 @@ struct doc {
     unsigned char *seen; /* pages and forms already read */
     struct font *fonts;
     int ocr_pages; /* pages read from their pictures (ocr.c) */
+    size_t spent;  /* bytes the streams gave, PDF_SPEND at most */
 };
 
 static struct obj *slot(struct doc *d, double num)
@@ -626,7 +638,27 @@ static void scan(struct doc *d)
 
 /* a stream's bytes, its filters undone, into a malloc'd *out: its length,
    -1 when it cannot be (a filter not read here, broken data) */
+static long stream_bytes_once(struct doc *d, struct obj *o, uint8_t **out);
+
+/* a stream's bytes, the document's budget spent by them */
 static long stream_bytes(struct doc *d, struct obj *o, uint8_t **out)
+{
+    *out = NULL;
+    if (d->spent >= PDF_SPEND)
+        return -1;
+    long n = stream_bytes_once(d, o, out);
+    if (n >= 0 && (size_t)n > PDF_SPEND - d->spent) {
+        free(*out);
+        *out = NULL;
+        d->spent = PDF_SPEND;
+        return -1;
+    }
+    if (n >= 0)
+        d->spent += (size_t)n;
+    return n;
+}
+
+static long stream_bytes_once(struct doc *d, struct obj *o, uint8_t **out)
 {
     *out = NULL;
     if (!o || !o->data)
@@ -680,11 +712,15 @@ static void objstms(struct doc *d)
         free(b);
         struct lx h = {.p = keep, .n = (size_t)bn, .a = &d->a};
         size_t first = (size_t)F->num;
+        double last = -1;
         for (int k = 0; k < (int)N->num; k++) {
             struct pv *num = value(&h, 0), *off = value(&h, 0);
+            /* the objects in order, one after another: offsets that only
+               grow (one place named again and again is no object each) */
             if (!num || !off || num->t != PV_NUM || off->t != PV_NUM ||
-                off->num < 0 || first + off->num >= (double)bn)
+                off->num <= last || first + off->num >= (double)bn)
                 break;
+            last = off->num;
             struct obj *t = slot(d, num->num);
             if (!t)
                 return;
@@ -722,9 +758,10 @@ struct wrange {
 
 struct font {
     struct font *next;
-    uint32_t num; /* its object */
-    int two;      /* codes of two bytes */
-    int unread;   /* two-byte codes and no map: not read */
+    uint32_t num;          /* its object */
+    const struct pv *dict; /* or its dictionary, given in place */
+    int two;               /* codes of two bytes */
+    int unread;            /* two-byte codes and no map: not read */
     struct range *r;
     size_t nr;
     /* the glyphs' widths, in thousandths of the size: a simple font's by
@@ -928,16 +965,19 @@ static struct font *font_of(struct doc *d, struct pv *ref)
 {
     struct obj *o = obj_of(d, ref);
     uint32_t num = ref && ref->t == PV_REF ? (uint32_t)ref->num : 0;
+    struct pv *fd = o ? o->v : resolve(d, ref);
+    /* known by its object, or by its dictionary when it has none: each
+       font's map read once, however often a page names it */
     for (struct font *f = d->fonts; f; f = f->next)
-        if (num && f->num == num)
+        if ((num && f->num == num) || (!num && f->dict == fd))
             return f;
     struct font *f = alloc(&d->a, sizeof(*f));
     if (!f)
         return NULL;
     f->num = num;
+    f->dict = fd;
     f->next = d->fonts;
     d->fonts = f;
-    struct pv *fd = o ? o->v : resolve(d, ref);
     f->two = is_name(resolve(d, get(fd, "Subtype")), "Type0");
     struct obj *tu = obj_of(d, get(fd, "ToUnicode"));
     uint8_t *b;
@@ -1272,11 +1312,16 @@ static void page_picture(struct doc *d, struct pv *res)
         if (dp->t == PV_ARR && dp->n == 1)
             dp = resolve(d, dp->items[0]);
         int predicted = num_of(d, get(dp, "Predictor"), 1) > 1;
-        long rn = bpc == 8 && ch && !predicted && w <= JANAS_IMAGE_MAX_SIDE &&
-                          h <= JANAS_IMAGE_MAX_SIDE
+        /* whole sides, 1 to the largest a picture may have */
+        int sides = w >= 1 && h >= 1 && w <= JANAS_IMAGE_MAX_SIDE &&
+                    h <= JANAS_IMAGE_MAX_SIDE && w == (double)(uint32_t)w &&
+                    h == (double)(uint32_t)h;
+        long rn = bpc == 8 && ch && !predicted && sides
                       ? stream_bytes(d, best, &raw)
                       : -1;
-        if (rn >= (long)(w * h * ch) &&
+        if (sides && rn >= 0 &&
+            (uint64_t)rn >=
+                (uint64_t)(uint32_t)w * (uint32_t)h * (unsigned)ch &&
             dz_png(raw, (uint32_t)w, (uint32_t)h, ch, &png) == 0)
             img = (const uint8_t *)png.p, n = png.n;
     }

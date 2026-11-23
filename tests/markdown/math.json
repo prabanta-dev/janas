@@ -1,0 +1,62 @@
+[
+ {
+  "markdown": "$x^2$ and $5 to $10\n",
+  "html": "<p><span class=\"math\">\\(x^2\\)</span> and $5 to $10</p>\n",
+  "example": 1,
+  "section": "Math"
+ },
+ {
+  "markdown": "\\(a_1 * b_2 * c\\)\n",
+  "html": "<p><span class=\"math\">\\(a_1 * b_2 * c\\)</span></p>\n",
+  "example": 2,
+  "section": "Math"
+ },
+ {
+  "markdown": "$$\n\\sum_{i=1}^n *i*\n$$\n",
+  "html": "<p><span class=\"math\">\\[\n\\sum_{i=1}^n *i*\n\\]</span></p>\n",
+  "example": 3,
+  "section": "Math"
+ },
+ {
+  "markdown": "`$x^2$`\n",
+  "html": "<p><code>$x^2$</code></p>\n",
+  "example": 4,
+  "section": "Math"
+ },
+ {
+  "markdown": "\\[x = [y](z)\\]\n",
+  "html": "<p><span class=\"math\">\\[x = [y](z)\\]</span></p>\n",
+  "example": 5,
+  "section": "Math"
+ },
+ {
+  "markdown": "a\\(b\n",
+  "html": "<p>a(b</p>\n",
+  "example": 6,
+  "section": "Math"
+ },
+ {
+  "markdown": "price $5 and $x$\n",
+  "html": "<p>price $5 and $x$</p>\n",
+  "example": 7,
+  "section": "Math"
+ },
+ {
+  "markdown": "- $a_i$ for *each* i\n",
+  "html": "<ul>\n<li><span class=\"math\">\\(a_i\\)</span> for <em>each</em> i</li>\n</ul>\n",
+  "example": 8,
+  "section": "Math"
+ },
+ {
+  "markdown": "\\(\\)\n",
+  "html": "<p>()</p>\n",
+  "example": 9,
+  "section": "Math"
+ },
+ {
+  "markdown": "a$b_1$\n",
+  "html": "<p>a$b_1$</p>\n",
+  "example": 10,
+  "section": "Math"
+ }
+]

@@ -24,6 +24,9 @@
 #include <limits.h>
 #include <signal.h>
 #include <stdio.h>
+#ifdef __linux__
+#include <sys/prctl.h>
+#endif
 #include <stdlib.h>
 #include <string.h>
 
@@ -300,6 +303,18 @@ int main(int argc, char **argv)
 {
     janas_sandbox_main(argc, argv); /* a cage of code_interpreter's */
     janas_env_check("janas-server");
+#ifdef __linux__
+    /* started by a program that wants it gone with it (Brebus): SIGTERM
+       when that program ends, however it ends - a crash leaves no server
+       behind (on Windows a Job Object does the same) */
+    const char *pp = getenv("JANAS_PARENT_PID");
+    if (pp && *pp) {
+        pid_t want = (pid_t)strtol(pp, NULL, 10);
+        prctl(PR_SET_PDEATHSIG, SIGTERM);
+        if (want > 0 && getppid() != want) /* it is gone already */
+            return 1;
+    }
+#endif
     struct srv s = {0};
     struct srv_config *c = &s.cfg;
     janas_llm_params_default(&c->llm);

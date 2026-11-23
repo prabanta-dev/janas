@@ -13,6 +13,10 @@
  * MCP client carries, under its lock (janas_tls_lock).
  */
 #include <fcntl.h>
+#ifndef _WIN32
+#include <grp.h>
+#include <pwd.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,6 +27,7 @@
 #include <psa/crypto.h>
 
 #include "brebus.h"
+#include "common/sha256.h"
 #include "common/mcp_tls.h"
 #include "common/proc.h"
 
@@ -65,32 +70,63 @@ int brebus_random(void *p, size_t n)
     return rc;
 }
 
+/* zeros the compiler keeps (Windows has no explicit_bzero) */
+static void wipe(void *p, size_t n)
+{
+    volatile uint8_t *v = p;
+    while (n--)
+        *v++ = 0;
+}
+
+/* PBKDF2-HMAC-SHA256 (RFC 8018), one block of 32 bytes, with Janas's own
+   SHA-256: not under the lock of Mbed TLS, which every HTTPS connection
+   takes (600,000 iterations would stall them all at each login). The
+   key's inner and outer states are hashed once, copied at each step. */
 static int pbkdf2(const char *pw, const uint8_t salt[16], uint32_t iters,
                   uint8_t out[32])
 {
-    janas_tls_lock();
-    int rc = -1;
-    if (janas_tls_crypto() == 0) {
-        psa_key_derivation_operation_t op = PSA_KEY_DERIVATION_OPERATION_INIT;
-        rc =
-            psa_key_derivation_setup(
-                &op, PSA_ALG_PBKDF2_HMAC(PSA_ALG_SHA_256)) == PSA_SUCCESS &&
-                    psa_key_derivation_input_integer(
-                        &op, PSA_KEY_DERIVATION_INPUT_COST, iters) ==
-                        PSA_SUCCESS &&
-                    psa_key_derivation_input_bytes(
-                        &op, PSA_KEY_DERIVATION_INPUT_SALT, salt, 16) ==
-                        PSA_SUCCESS &&
-                    psa_key_derivation_input_bytes(
-                        &op, PSA_KEY_DERIVATION_INPUT_PASSWORD,
-                        (const uint8_t *)pw, strlen(pw)) == PSA_SUCCESS &&
-                    psa_key_derivation_output_bytes(&op, out, 32) == PSA_SUCCESS
-                ? 0
-                : -1;
-        psa_key_derivation_abort(&op);
+    uint8_t key[64] = {0}, pad[64];
+    size_t pn = strlen(pw);
+    if (pn > 64) {
+        struct janas_sha256 h;
+        janas_sha256_init(&h);
+        janas_sha256_update(&h, pw, pn);
+        janas_sha256_final(&h, key);
+    } else {
+        memcpy(key, pw, pn);
     }
-    janas_tls_unlock();
-    return rc;
+    struct janas_sha256 in, outer;
+    janas_sha256_init(&in);
+    janas_sha256_init(&outer);
+    for (int i = 0; i < 64; i++)
+        pad[i] = key[i] ^ 0x36;
+    janas_sha256_update(&in, pad, 64);
+    for (int i = 0; i < 64; i++)
+        pad[i] = key[i] ^ 0x5c;
+    janas_sha256_update(&outer, pad, 64);
+    /* U1 = HMAC(salt || INT(1)), then Ui = HMAC(Ui-1), out = xor of all */
+    uint8_t u[32], one[4] = {0, 0, 0, 1};
+    struct janas_sha256 h = in;
+    janas_sha256_update(&h, salt, 16);
+    janas_sha256_update(&h, one, 4);
+    janas_sha256_final(&h, u);
+    h = outer;
+    janas_sha256_update(&h, u, 32);
+    janas_sha256_final(&h, u);
+    memcpy(out, u, 32);
+    for (uint32_t k = 1; k < iters; k++) {
+        h = in;
+        janas_sha256_update(&h, u, 32);
+        janas_sha256_final(&h, u);
+        h = outer;
+        janas_sha256_update(&h, u, 32);
+        janas_sha256_final(&h, u);
+        for (int i = 0; i < 32; i++)
+            out[i] ^= u[i];
+    }
+    wipe(key, sizeof key);
+    wipe(pad, sizeof pad);
+    return 0;
 }
 
 static int sha256(const void *p, size_t n, uint8_t out[32])
@@ -208,7 +244,7 @@ int brebus_totp_check(const char *secret, const char *code, time_t now)
     int ok = 0;
     for (int d = -1; d <= 1; d++)
         if (totp_at(secret, t + (uint64_t)(int64_t)d, &got) == 0 && got == want)
-            ok = 1;
+            ok = (int)(t + (uint64_t)(int64_t)d); /* the step it is of */
     return ok;
 }
 
@@ -322,7 +358,8 @@ static int save_locked(struct brebus *b)
 #ifdef _WIN32
     FILE *f = o.oom ? NULL : fopen(tmp, "wb");
 #else
-    int fd = o.oom ? -1 : open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    int fd =
+        o.oom ? -1 : open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
     FILE *f = fd >= 0 ? fdopen(fd, "wb") : NULL;
 #endif
     if (f) {
@@ -473,7 +510,7 @@ int brebus_user_system(struct brebus *b, const char *name, const char *pw,
     if (!name || !pw || strlen(name) >= sizeof out->name ||
         strchr(name, '\n') || strchr(pw, '\n') || strlen(pw) > 500)
         return 0;
-    char exe[4300], role[16] = "";
+    char exe[4300], role[128] = "";
     snprintf(exe, sizeof exe, "%s/janas-brebus-helper", b->bin_dir);
     int in[2], outp[2];
     if (janas_pipe(in) != 0)
@@ -509,9 +546,15 @@ int brebus_user_system(struct brebus *b, const char *name, const char *pw,
     }
     if (rc != 0 || code != 0)
         return 0;
-    int admin = !strncmp(role, "admin", 5);
-    if (!admin && strncmp(role, "user", 4))
+    /* "admin TICKET" or "user TICKET": the ticket a spawn of this user
+       shows the helper, once */
+    char kind[16] = "", ticket[80] = "";
+    if (sscanf(role, "%15s %79s", kind, ticket) != 2 || strlen(ticket) != 64)
         return 0;
+    int admin = !strcmp(kind, "admin");
+    if (!admin && strcmp(kind, "user"))
+        return 0;
+    brebus_child_ticket(name, ticket);
     /* the account kept here: its role, its second factor */
     pthread_mutex_lock(&b->mu);
     struct brebus_user *u = find_locked(b, name);
@@ -530,4 +573,55 @@ int brebus_user_system(struct brebus *b, const char *name, const char *pw,
     }
     pthread_mutex_unlock(&b->mu);
     return ok;
+}
+
+int brebus_user_keep(struct brebus *b, const char *name)
+{
+    pthread_mutex_lock(&b->mu);
+    struct brebus_user *u = find_locked(b, name);
+    if (!u && b->n_users < BREBUS_USERS) {
+        u = &b->users[b->n_users++];
+        memset(u, 0, sizeof *u);
+        snprintf(u->name, sizeof u->name, "%s", name);
+        save_locked(b);
+    }
+    pthread_mutex_unlock(&b->mu);
+    return u ? 0 : -1;
+}
+
+int brebus_user_role(struct brebus *b, const char *name)
+{
+    if (b->sys_users) {
+#ifdef _WIN32
+        return -1;
+#else
+        /* the system's groups now: brebus-admin, brebus, or none */
+        struct passwd pw, *res = NULL;
+        char buf[4096];
+        if (getpwnam_r(name, &pw, buf, sizeof buf, &res) != 0 || !res ||
+            pw.pw_uid < 1000 || pw.pw_uid == 65534)
+            return -1;
+        gid_t gs[256];
+        int ng = 256;
+        if (getgrouplist(name, pw.pw_gid, gs, &ng) < 0)
+            return -1;
+        struct group *ga = getgrnam("brebus-admin");
+        gid_t admin = ga ? ga->gr_gid : (gid_t)-1;
+        struct group *gu = getgrnam("brebus");
+        gid_t user = gu ? gu->gr_gid : (gid_t)-1;
+        int role = -1;
+        for (int i = 0; i < ng; i++) {
+            if (gs[i] == admin)
+                role = 1;
+            else if (gs[i] == user && role < 0)
+                role = 0;
+        }
+        return role;
+#endif
+    }
+    pthread_mutex_lock(&b->mu);
+    struct brebus_user *u = find_locked(b, name);
+    int role = u && u->iters ? u->admin != 0 : -1;
+    pthread_mutex_unlock(&b->mu);
+    return role;
 }

@@ -37,6 +37,9 @@
     <button data-s="server" title="Server: the model for other programs"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="7" rx="1.5"/><rect x="4" y="13" width="16" height="7" rx="1.5"/><path d="M8 7.5h.01M8 16.5h.01"/></svg><span class="lbl">Server</span></button>
     <button data-s="prefs" title="Settings: what the chat may do"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg><span class="lbl">Settings</span></button>
     <button data-s="machine" title="Info: Brebus, this computer, the engine"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5h.01"/></svg><span class="lbl">Info</span></button>
+    <div id="uizoom" class="uizoom" hidden title="The size of the whole interface: also Ctrl+wheel, Ctrl+plus, Ctrl+minus, and Ctrl+0 for 100%. An artifact has a zoom of its own, in its bar"><svg viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="15" rx="2"/><path d="M3 8.5h18M8 12.5v4M6 14.5h4M14 14.5h4"/></svg><span class="lbl">Interface</span>
+      <span class="seg zoomseg"><button data-z="-1" class="lbl" title="The whole interface smaller (Ctrl+minus)">−</button><button data-z="0" title="The whole interface back to 100% (Ctrl+0)"><b>100%</b></button><button data-z="1" class="lbl" title="The whole interface larger (Ctrl+plus)">+</button></span></div>
+    <button id="navout" hidden title="Log out of this Brebus"><svg viewBox="0 0 24 24"><path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4"/><path d="M10 16l-4-4 4-4M6 12h10"/></svg><span class="lbl">Log out</span></button>
   </div>
 </nav>
 <main>
@@ -50,8 +53,9 @@
       <div id="archbar" class="note" hidden>This chat is archived: it can be read, not continued. <button class="act quiet" id="unarch" title="Back among the chats, to be continued">Restore it</button></div>
       <form id="form"><textarea id="ask" rows="1" placeholder="Ask the model. Enter sends, Shift+Enter a new line."></textarea>
         <button type="submit" id="send" title="Send (Enter)" aria-label="Send" disabled></button></form>
-      <div id="under"><button type="button" id="attach" class="ico" title="Attach a file of this computer or a web address" aria-label="Attach"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+      <div id="under"><input type="file" id="upfile" multiple hidden><button type="button" id="attach" class="ico" title="Attach a file or a web address" aria-label="Attach"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
         <button type="button" id="speak" class="ico" title="Read the replies aloud" aria-label="Read the replies aloud" aria-pressed="false"></button>
+        <button type="button" id="thinkbtn" class="ico" hidden aria-label="Reason before answering" aria-pressed="false"></button>
         <span id="loaded" class="note"></span>
         <span id="ctxring" title="The model's memory of this chat: nothing used yet"><svg viewBox="0 0 24 24"><circle class="bg" cx="12" cy="12" r="8.5"/><circle class="fg" cx="12" cy="12" r="8.5"/></svg></span>
         <button type="button" id="modelbtn" class="modelbtn" title="The model that answers: click to choose another">…<span class="caret"></span></button>
@@ -62,10 +66,11 @@
       <div class="arthead"><b id="arttitle"></b>
         <select id="artver" title="Its versions"></select>
         <span class="artbtns"><span class="seg" id="artview"><button data-v="preview" class="on" title="The artifact as it looks and works">Preview</button><button data-v="code" title="The artifact's source, as the model wrote it">Code</button></span>
+          <span class="seg zoomseg" id="artzoom" title="The artifact's own zoom, not the interface's: Ctrl+wheel over it too"><button data-z="-1" title="The artifact smaller">−</button><button data-z="0" id="artzpct" title="The artifact back to 100%">100%</button><button data-z="1" title="The artifact larger">+</button></span>
+          <button class="act quiet" id="artfull" title="Wide, over the chat" aria-label="Wide" aria-pressed="false">⤢</button>
           <button class="act quiet" id="artcopy" title="Copy its source to the clipboard">Copy</button>
           <button class="act quiet" id="artdown" title="Save it as a file of its own">Download</button>
           <button class="act quiet" id="artopen" title="Open the saved file with this computer's own program for it">Open</button>
-          <button class="act quiet" id="artfull" title="Wide, over the chat">⤢</button>
           <button class="act quiet" id="artclose" title="Close">×</button></span></div>
       <div id="arterr" hidden><pre></pre><span><button class="act" id="artfix" title="The error goes to the model, which writes the artifact again">Ask the model to fix it</button>
         <button class="act quiet" id="arterrx" title="Hide this error">Dismiss</button></span></div>
@@ -146,6 +151,8 @@
     <div class="card prefs" id="conncard"></div>
     <h3>Skills</h3>
     <div class="card prefs" id="skillcard"></div>
+    <h3>Appearance</h3>
+    <div class="card prefs" id="zoomcard"></div>
     <h3>When the computer starts</h3>
     <div class="card prefs">
       <label class="tog"><input type="checkbox" id="autost"> Start Brebus in the background
@@ -216,6 +223,8 @@
   <p class="right"><button class="act quiet" id="wsclose" title="Close, changing nothing">Cancel</button></p>
 </div></div>
 <script>
+<!--#include web/md_entities.js-->
+<!--#include web/md_parse.js-->
 <!--#include web/markdown.js-->
 </script>
 <script>
@@ -224,8 +233,10 @@
 <!--#include brebus/page/chats.js-->
 <!--#include brebus/page/artifacts.js-->
 <!--#include brebus/page/turn.js-->
+<!--#include brebus/page/compact.js-->
 <!--#include brebus/page/side.js-->
 <!--#include brebus/page/more.js-->
+<!--#include brebus/page/zoom.js-->
 </script>
 </body>
 </html>

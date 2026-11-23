@@ -28,8 +28,11 @@
 #include "llm/json.h"
 
 #define DZ_MAX_FILE (64 << 20) /* a document, and a file in its archive */
-#define DZ_MAX_FILES 50000     /* documents indexed */
-#define DZ_CHUNK 1200          /* bytes of a piece, about 300 tokens */
+/* a document's text: past it no more is read (a small file naming one
+   part again and again would make gigabytes of it) */
+#define DZ_TEXT_MAX (32 << 20)
+#define DZ_MAX_FILES 50000 /* documents indexed */
+#define DZ_CHUNK 1200      /* bytes of a piece, about 300 tokens */
 #define DZ_OVERLAP 200
 #define DZ_ROOTS 16
 

@@ -168,7 +168,7 @@ void janas_sha256_update(struct janas_sha256 *s, const void *data, size_t n)
     s->n = n;
 }
 
-void janas_sha256_hex(struct janas_sha256 *s, char out[65])
+void janas_sha256_final(struct janas_sha256 *s, uint8_t out[32])
 {
     uint64_t bits = s->len * 8;
     uint8_t pad[72] = {0x80};
@@ -178,13 +178,20 @@ void janas_sha256_hex(struct janas_sha256 *s, char out[65])
     uint64_t len = s->len;
     janas_sha256_update(s, pad, k + 8);
     s->len = len;
-    static const char hex[] = "0123456789abcdef";
     for (int i = 0; i < 8; i++)
-        for (int j = 0; j < 4; j++) {
-            uint8_t b = (uint8_t)(s->h[i] >> (24 - 8 * j));
-            out[8 * i + 2 * j] = hex[b >> 4];
-            out[8 * i + 2 * j + 1] = hex[b & 15];
-        }
+        for (int j = 0; j < 4; j++)
+            out[4 * i + j] = (uint8_t)(s->h[i] >> (24 - 8 * j));
+}
+
+void janas_sha256_hex(struct janas_sha256 *s, char out[65])
+{
+    uint8_t d[32];
+    janas_sha256_final(s, d);
+    static const char hex[] = "0123456789abcdef";
+    for (int i = 0; i < 32; i++) {
+        out[2 * i] = hex[d[i] >> 4];
+        out[2 * i + 1] = hex[d[i] & 15];
+    }
     out[64] = 0;
 }
 

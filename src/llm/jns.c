@@ -599,7 +599,8 @@ int janas_jns_parse(const uint8_t *image, size_t bytes, uint64_t file_bytes,
             return fail(err, err_len, "layer %u: bad levels", l);
         }
         for (int m = 0; m < 3; m++)
-            if (ly->m[m].offset + ly->m[m].bytes > ly->level_bytes[0]) {
+            if (!inside(ly->m[m].offset, ly->m[m].bytes, 0,
+                        ly->level_bytes[0])) {
                 janas_jns_close(out);
                 return fail(err, err_len, "layer %u: matrix %d past level 1", l,
                             m);
@@ -624,8 +625,8 @@ int janas_jns_parse(const uint8_t *image, size_t bytes, uint64_t file_bytes,
                 __builtin_mul_overflow((uint64_t)px->rows * (px->cols / 256),
                                        64, &total) ||
                 total != px->bytes || px->offset % 256 ||
-                px->offset < ly->level_bytes[m] ||
-                px->offset + px->bytes > ly->level_bytes[m + 1]) {
+                !inside(px->offset, px->bytes, ly->level_bytes[m],
+                        ly->level_bytes[m + 1])) {
                 janas_jns_close(out);
                 return fail(err, err_len, "layer %u: bad plane %d", l, m);
             }
@@ -654,6 +655,10 @@ int janas_jns_parse(const uint8_t *image, size_t bytes, uint64_t file_bytes,
         for (uint32_t d = 1; dims_ok && d < tn->n_dims; d++)
             dims_ok = tn->dims[d] > 0 &&
                       !__builtin_mul_overflow(rows, tn->dims[d], &rows);
+        /* and the dims past them nothing (0 or 1): a reader taking dims[1]
+           of a vector reads no rows it does not have */
+        for (uint32_t d = tn->n_dims; dims_ok && d < 4; d++)
+            dims_ok = tn->dims[d] <= 1;
         if (memchr(tn->name, 0, sizeof(tn->name)) == NULL || !dims_ok ||
             !type_geometry(tn->type, &blck, &size) || tn->dims[0] == 0 ||
             tn->dims[0] % blck ||

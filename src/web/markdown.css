@@ -1,28 +1,49 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
    Copyright (C) 2026 Maurizio Cammalleri */
-/* markdown.css - the looks of markdown.js's blocks, inside an element of
-   class "text"; the page sets the --md-* colours. */
-.text { white-space: pre-wrap; overflow-wrap: anywhere; }
+/* markdown.css - the looks of markdown.js's elements, inside an element of
+   class "text"; the page sets the --md-* colours. Each rule says all of
+   what it draws: the page's own rules for tables, headings and code do not
+   reach into a reply. */
+.text { white-space: normal; overflow-wrap: anywhere; line-height: 1.5; }
+.text > :first-child { margin-top: 0; }
+.text > :last-child { margin-bottom: 0; }
+.text p { margin: 0 0 .75em; }
+.text h1, .text h2, .text h3, .text h4, .text h5, .text h6 {
+  margin: 1.1em 0 .5em; line-height: 1.25; font-weight: bold; letter-spacing: 0;
+  text-transform: none; color: inherit; }
+.text h1 { font-size: 1.5em; color: var(--md-accent); }
+.text h2 { font-size: 1.3em; }
+.text h3 { font-size: 1.15em; }
+.text h4 { font-size: 1em; }
+.text h5 { font-size: 1em; font-style: italic; }
+.text h6 { font-size: 1em; color: var(--md-dim); }
+.text ul, .text ol { margin: 0 0 .75em; padding-left: 1.7em; }
+.text li { margin: .2em 0; }
+.text li > ul, .text li > ol { margin: .2em 0; }
+.text li > p { margin: 0 0 .5em; }
+.text li > p:last-child { margin-bottom: 0; }
+.text .loose > li { margin-bottom: .6em; }
+.text li.task { list-style: none; }
+.text li.task > input { margin: 0 .45em 0 -1.35em; vertical-align: -1px; }
+.text blockquote { border-left: 3px solid var(--md-line); padding: 0 0 0 10px;
+                   margin: 0 0 .75em; color: var(--md-dim); }
 .text pre { background: var(--md-pre-bg); color: var(--md-code); padding: 8px;
             overflow-x: auto; white-space: pre; border-radius: 4px;
-            margin: 6px 0; }
-.text .b { font-weight: bold; }
-.text .s { text-decoration: line-through; }
-.text a.link { color: var(--md-code); text-decoration: underline;
-               cursor: pointer; }
-.text .quote { border-left: 3px solid var(--md-line); padding-left: 10px;
-               margin: 8px 0; color: var(--md-dim); }
-.text .table { overflow-x: auto; margin: 8px 0; }
-.text table { border-collapse: collapse; white-space: normal; }
-.text th, .text td { border: 1px solid var(--md-line); padding: 3px 8px;
-                     text-align: left; vertical-align: top; }
-.text th { font-weight: bold; }
-.text .h1 { font-weight: bold; font-size: 1.5em; color: var(--md-accent); }
-.text .h2 { font-weight: bold; font-size: 1.3em; }
-.text .h3 { font-weight: bold; font-size: 1.15em; }
-.text .h4 { font-weight: bold; }
-.text .h5 { font-weight: bold; font-style: italic; }
-.text .h6 { font-weight: bold; color: var(--md-dim); }
-.text .i { font-style: italic; }
-.text .m { color: var(--md-code); background: var(--md-code-bg);
-           padding: 0 4px; border-radius: 3px; }
+            margin: 0 0 .75em; line-height: 1.4; }
+.text code { color: var(--md-code); background: var(--md-code-bg);
+             padding: 0 4px; border-radius: 3px; font-size: .92em; }
+.text hr { border: 0; border-top: 1px solid var(--md-line); margin: 1em 0; }
+.text .table { overflow-x: auto; margin: 0 0 .75em; }
+.text table { width: auto; border-collapse: collapse; background: none;
+              border: 0; border-radius: 0; overflow: visible; }
+.text table th, .text table td { border: 1px solid var(--md-line); padding: 4px 9px;
+  text-align: left; vertical-align: top; font-size: inherit; text-transform: none;
+  letter-spacing: 0; color: inherit; }
+.text table th { font-weight: bold; vertical-align: bottom; }
+.text del { text-decoration: line-through; }
+.text a.link { color: var(--md-code); text-decoration: underline; cursor: pointer; }
+.text .link.off { text-decoration: underline dotted; cursor: help; }
+.text .rawhtml { white-space: pre-wrap; font-family: monospace; color: var(--md-dim);
+                 margin: 0 0 .75em; }
+.text kbd { border: 1px solid var(--md-line); border-bottom-width: 2px;
+            border-radius: 3px; padding: 0 4px; font-size: .9em; }

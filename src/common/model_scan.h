@@ -25,6 +25,8 @@ struct janas_model_file {
     int fim;       /* fills in the middle */
     int recurrent; /* has recurrent layers */
     int coder;     /* made for code (its name says so) */
+    int thinks;    /* can reason before answering, as the engine reads it
+                      (src/llm/api.c, find_format_in) */
 };
 
 /* The chat models of dir (the .jns files, not the prediction files,

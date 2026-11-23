@@ -537,9 +537,41 @@ int brebus_artifact_save(struct brebus *b, const char *body, size_t n,
     return 0;
 }
 
+/* how many chats of the workspace name text anywhere (2 means more than
+   one) */
+static int chats_naming(struct brebus *b, const char *text)
+{
+    char dir[4200];
+    if (chats_dir(b, dir, sizeof dir) != 0)
+        return 2;
+    DIR *d = opendir(dir);
+    if (!d)
+        return 2;
+    int n = 0;
+    struct dirent *e;
+    while (n < 2 && (e = readdir(d))) {
+        size_t l = strlen(e->d_name);
+        if (l < 6 || strcmp(e->d_name + l - 5, ".json"))
+            continue;
+        char p[4500];
+        struct janas_buf f = {0};
+        snprintf(p, sizeof p, "%s/%s", dir, e->d_name);
+        if (slurp(p, &f) == 0 && f.p && strstr(f.p, text))
+            n++;
+        janas_buf_free(&f);
+    }
+    closedir(d);
+    return n;
+}
+
 /* window.storage of an artifact: its data, a JSON object in
-   artifact/<title>/storage.json; {"title", "act": get, set, delete or
-   list, "key", "value", "prefix"}, answered as Claude's storage answers */
+   artifact/<title>/storage-<chat>.json, each conversation's its own (an
+   artifact of another chat, which the model may give any title, reads
+   nothing of it); {"title", "chat", "act": get, set, delete or list,
+   "key", "value", "prefix"}, answered as Claude's storage answers. The
+   storage of before, one for every chat (storage.json), goes to the chat
+   that asks for it when that chat alone names the title; otherwise it
+   stays where it is, read by none. */
 #define STORE_MAX (20u << 20)
 int brebus_artifact_store(struct brebus *b, const char *body, size_t n,
                           struct janas_buf *out)
@@ -553,21 +585,39 @@ int brebus_artifact_store(struct brebus *b, const char *body, size_t n,
         body && n ? janas_json_parse(body, n, err, sizeof err) : NULL;
     const struct janas_json *o = d ? janas_json_root(d) : NULL;
     const char *title = o ? janas_json_str(janas_json_get(o, "title")) : NULL;
+    const char *chat = o ? janas_json_str(janas_json_get(o, "chat")) : NULL;
     const char *act = o ? janas_json_str(janas_json_get(o, "act")) : NULL;
     const char *key = o ? janas_json_str(janas_json_get(o, "key")) : NULL;
     const char *prefix = o ? janas_json_str(janas_json_get(o, "prefix")) : NULL;
     const struct janas_json *value = o ? janas_json_get(o, "value") : NULL;
+    /* the chat's point (its messages), for the history */
+    long at = o ? (long)janas_json_num(janas_json_get(o, "at"), 0) : 0;
     int set = act && !strcmp(act, "set"), del = act && !strcmp(act, "delete");
     int get = act && !strcmp(act, "get"), list = act && !strcmp(act, "list");
-    if (!title || !(set || del || get || list) ||
+    if (!title || !chat || !good_id(chat) || !(set || del || get || list) ||
         (!list && (!key || !*key || strlen(key) > 200)) || (set && !value)) {
         janas_json_free(d);
-        janas_buf_puts(out, "{\"error\": \"title, act and key\"}");
+        janas_buf_puts(out, "{\"error\": \"title, chat, act and key\"}");
         return -1;
     }
     art_name(title, name, sizeof name);
     snprintf(dir, sizeof dir, "%s/artifact/%s", ws, name);
-    snprintf(path, sizeof path, "%s/storage.json", dir);
+    snprintf(path, sizeof path, "%s/storage-%s.json", dir, chat);
+    struct stat ls;
+    char legacy[4500];
+    snprintf(legacy, sizeof legacy, "%s/storage.json", dir);
+    if (stat(path, &ls) != 0 && stat(legacy, &ls) == 0) {
+        char cp[4500];
+        struct stat cs;
+        /* the requesting chat exists and is the only one naming it */
+        if (chat_path(b, chat, cp, sizeof cp) == 0 && stat(cp, &cs) == 0 &&
+            chats_naming(b, title) == 1) {
+            struct janas_buf t = {0};
+            if (slurp(cp, &t) == 0 && t.p && strstr(t.p, title))
+                rename(legacy, path);
+            janas_buf_free(&t);
+        }
+    }
     struct janas_buf f = {0}, w = {0};
     struct janas_json_doc *sd = NULL;
     if (slurp(path, &f) == 0 && f.n)
@@ -640,16 +690,18 @@ int brebus_artifact_store(struct brebus *b, const char *body, size_t n,
                 janas_buf_puts(out, "{\"error\": \"cannot write the "
                                     "artifact's storage\"}");
                 rc = -1;
-            } else if (set) {
-                janas_buf_puts(out, "{\"key\": ");
-                str(out, key);
-                janas_buf_puts(out, ", \"value\": ");
-                janas_json_write(out, value);
-                janas_buf_puts(out, "}");
             } else {
+                /* and in its history, at the chat's point */
+                brebus_store_log(dir, chat, f.p ? f.p : "", f.p ? f.n : 0, at,
+                                 key, set ? value : NULL);
                 janas_buf_puts(out, "{\"key\": ");
                 str(out, key);
-                janas_buf_puts(out, ", \"deleted\": true}");
+                if (set) {
+                    janas_buf_puts(out, ", \"value\": ");
+                    janas_json_write(out, value);
+                    janas_buf_puts(out, "}");
+                } else
+                    janas_buf_puts(out, ", \"deleted\": true}");
             }
         }
     }
@@ -658,4 +710,92 @@ int brebus_artifact_store(struct brebus *b, const char *body, size_t n,
     janas_buf_free(&f);
     janas_buf_free(&w);
     return rc;
+}
+
+/* a chat branched: the data of the artifacts it takes (titles, those
+   written in the messages it keeps) as they were at the point it was
+   branched from (upto, the messages it keeps; the history in
+   store_log.c), given to the new one; {"from", "to", "titles", "upto"},
+   answered with how many it got. One the new chat has already is left as
+   it is. */
+int brebus_artifact_store_copy(struct brebus *b, const char *body, size_t n,
+                               struct janas_buf *out)
+{
+    char ws[4096], err[160], base[4400];
+    if (brebus_ws_path(b, ws, sizeof ws) != 0) {
+        janas_buf_puts(out, "{\"error\": \"no workspace\"}");
+        return -1;
+    }
+    struct janas_json_doc *d =
+        body && n ? janas_json_parse(body, n, err, sizeof err) : NULL;
+    const struct janas_json *o = d ? janas_json_root(d) : NULL;
+    const char *from = o ? janas_json_str(janas_json_get(o, "from")) : NULL;
+    const char *to = o ? janas_json_str(janas_json_get(o, "to")) : NULL;
+    const struct janas_json *titles = o ? janas_json_get(o, "titles") : NULL;
+    long upto = o ? (long)janas_json_num(janas_json_get(o, "upto"), -1) : -1;
+    if (!from || !to || !good_id(from) || !good_id(to) || !strcmp(from, to) ||
+        !titles || titles->type != JANAS_JSON_ARRAY || upto < 0) {
+        janas_json_free(d);
+        janas_buf_puts(out, "{\"error\": \"from, to, titles and upto\"}");
+        return -1;
+    }
+    snprintf(base, sizeof base, "%s/artifact", ws);
+    int copied = 0;
+    for (const struct janas_json *t = titles->child; t; t = t->next) {
+        const char *title = janas_json_str(t);
+        if (!title)
+            continue;
+        char name[96], dir[4500], dst[4800];
+        art_name(title, name, sizeof name);
+        snprintf(dir, sizeof dir, "%s/%s", base, name);
+        snprintf(dst, sizeof dst, "%s/storage-%s.json", dir, to);
+        struct stat st;
+        if (lstat(dst, &st) == 0)
+            continue;
+        if (brebus_store_upto(dir, from, to, upto) == 0)
+            copied++;
+    }
+    janas_json_free(d);
+    janas_buf_printf(out, "{\"copied\": %d}", copied);
+    return 0;
+}
+
+int brebus_artifact_store_rewind(struct brebus *b, const char *body, size_t n,
+                                 struct janas_buf *out)
+{
+    char ws[4096], err[160], base[4400];
+    if (brebus_ws_path(b, ws, sizeof ws) != 0) {
+        janas_buf_puts(out, "{\"error\": \"no workspace\"}");
+        return -1;
+    }
+    struct janas_json_doc *d =
+        body && n ? janas_json_parse(body, n, err, sizeof err) : NULL;
+    const struct janas_json *o = d ? janas_json_root(d) : NULL;
+    const char *chat = o ? janas_json_str(janas_json_get(o, "chat")) : NULL;
+    long upto = o ? (long)janas_json_num(janas_json_get(o, "upto"), -1) : -1;
+    if (!chat || !good_id(chat) || upto < 0) {
+        janas_json_free(d);
+        janas_buf_puts(out, "{\"error\": \"chat and upto\"}");
+        return -1;
+    }
+    snprintf(base, sizeof base, "%s/artifact", ws);
+    int back = 0;
+    DIR *dd = opendir(base);
+    struct dirent *e;
+    while (dd && (e = readdir(dd))) {
+        if (e->d_name[0] == '.')
+            continue;
+        char dir[4700], log[4900];
+        snprintf(dir, sizeof dir, "%s/%s", base, e->d_name);
+        snprintf(log, sizeof log, "%s/storage-%s.log", dir, chat);
+        struct stat st;
+        if (lstat(log, &st) == 0 && S_ISREG(st.st_mode) &&
+            brebus_store_upto(dir, chat, chat, upto) == 0)
+            back++;
+    }
+    if (dd)
+        closedir(dd);
+    janas_json_free(d);
+    janas_buf_printf(out, "{\"rewound\": %d}", back);
+    return 0;
 }

@@ -185,6 +185,15 @@ int brebus_proxy_to(struct brebus *b, struct MHD_Connection *conn,
     if (p->h.head.csp[0])
         MHD_add_response_header(*resp, "Content-Security-Policy",
                                 p->h.head.csp);
+    else if (!strncmp(p->h.head.content_type, "text/html", 9))
+        /* a page without its own policy runs nothing at Brebus's origin */
+        MHD_add_response_header(*resp, "Content-Security-Policy",
+                                "default-src 'none'; frame-ancestors 'none'");
+    MHD_add_response_header(*resp, "X-Content-Type-Options", "nosniff");
+    MHD_add_response_header(*resp, "Referrer-Policy", "no-referrer");
+    if (b->tls)
+        MHD_add_response_header(*resp, "Strict-Transport-Security",
+                                "max-age=31536000");
     if (p->h.head.disposition[0])
         MHD_add_response_header(*resp, "Content-Disposition",
                                 p->h.head.disposition);
@@ -212,7 +221,7 @@ int brebus_proxy(struct brebus *b, struct MHD_Connection *conn,
     int tls = 0;
     unsigned short port =
         brebus_server_route(b, model[0] ? model : NULL, &tls, key, sizeof key);
-    if (!port)
+    if (!port || !brebus_port_mine(port))
         return -1;
     return brebus_proxy_to(b, conn, method, url, body, n, port, tls, key, NULL,
                            resp, status);

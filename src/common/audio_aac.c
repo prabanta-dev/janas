@@ -1498,7 +1498,12 @@ int aac_frame(struct aac_dec *d, const uint8_t *p, size_t n, char *why,
                  : id == 2 ? read_cce(d, &b, e)
                            : read_sce(d, &b, e);
             prev = e;
-            if (n_seen < MAX_ELEMENTS)
+            /* an element repeated in a frame is one element: its channels
+               are given one output each, not two */
+            int dup = 0;
+            for (int q = 0; q < n_seen; q++)
+                dup |= seen[q] == e;
+            if (!dup && n_seen < MAX_ELEMENTS)
                 seen[n_seen++] = e;
             break;
         }
@@ -1593,7 +1598,8 @@ int aac_frame(struct aac_dec *d, const uint8_t *p, size_t n, char *why,
             }
             out += och;
         } else {
-            for (int j = 0; j < e->ch && out < MAX_CHANNELS; j++)
+            for (int j = 0; j < e->ch && out < MAX_CHANNELS && out < d->n_ch;
+                 j++)
                 memcpy(d->outp[out++], core[j],
                        sizeof(float) * (size_t)d->frame);
         }

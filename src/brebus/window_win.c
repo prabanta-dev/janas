@@ -51,6 +51,14 @@ static int ours(const WCHAR *uri)
 /* another site's page: the browser's, as a link clicked */
 static void open_outside(const WCHAR *uri)
 {
+    /* never this machine's own addresses (Brebus, its servers) */
+    const WCHAR *h = uri ? wcsstr(uri, L"://") : NULL;
+    h = h ? h + 3 : L"";
+    static const WCHAR *const lo[] = {L"127.", L"localhost",    L"[::1]",
+                                      L"0.",   L"[::ffff:127.", L"[0:"};
+    for (size_t i = 0; i < sizeof lo / sizeof *lo; i++)
+        if (!_wcsnicmp(h, lo[i], wcslen(lo[i])))
+            return;
     if (uri && (!wcsncmp(uri, L"https://", 8) || !wcsncmp(uri, L"http://", 7)))
         ShellExecuteW(NULL, L"open", uri, NULL, NULL, SW_SHOWNORMAL);
 }
@@ -90,10 +98,15 @@ static HRESULT STDMETHODCALLTYPE navigation_starting(
 {
     (void)self, (void)sender;
     LPWSTR uri = NULL;
+    BOOL user = FALSE;
     if (ICoreWebView2NavigationStartingEventArgs_get_Uri(args, &uri) == S_OK &&
         !ours(uri) && wcsncmp(uri, L"about:", 6)) {
         ICoreWebView2NavigationStartingEventArgs_put_Cancel(args, TRUE);
-        open_outside(uri);
+        /* to the browser only what a click asked for */
+        if (ICoreWebView2NavigationStartingEventArgs_get_IsUserInitiated(
+                args, &user) == S_OK &&
+            user)
+            open_outside(uri);
     }
     CoTaskMemFree(uri);
     return S_OK;
@@ -121,6 +134,27 @@ static ICoreWebView2NavigationStartingEventHandlerVtbl nav_vtbl = {
     ICoreWebView2NavigationStartingEventHandler_ref,
     ICoreWebView2NavigationStartingEventHandler_ref, navigation_starting};
 static ICoreWebView2NavigationStartingEventHandler nav_handler = {&nav_vtbl};
+
+/* a frame of the page (an artifact's) going elsewhere: never - not even to
+   the browser, which would carry in its address what the artifact read */
+static HRESULT STDMETHODCALLTYPE frame_navigation_starting(
+    ICoreWebView2NavigationStartingEventHandler *self, ICoreWebView2 *sender,
+    ICoreWebView2NavigationStartingEventArgs *args)
+{
+    (void)self, (void)sender;
+    LPWSTR uri = NULL;
+    if (ICoreWebView2NavigationStartingEventArgs_get_Uri(args, &uri) == S_OK &&
+        !ours(uri) && wcsncmp(uri, L"about:", 6))
+        ICoreWebView2NavigationStartingEventArgs_put_Cancel(args, TRUE);
+    CoTaskMemFree(uri);
+    return S_OK;
+}
+static ICoreWebView2NavigationStartingEventHandlerVtbl frame_vtbl = {
+    ICoreWebView2NavigationStartingEventHandler_qi,
+    ICoreWebView2NavigationStartingEventHandler_ref,
+    ICoreWebView2NavigationStartingEventHandler_ref, frame_navigation_starting};
+static ICoreWebView2NavigationStartingEventHandler frame_handler = {
+    &frame_vtbl};
 
 static ICoreWebView2NewWindowRequestedEventHandlerVtbl popup_vtbl = {
     ICoreWebView2NewWindowRequestedEventHandler_qi,
@@ -151,10 +185,14 @@ controller_made(ICoreWebView2CreateCoreWebView2ControllerCompletedHandler *self,
     ICoreWebView2Settings *s = NULL;
     if (ICoreWebView2_get_Settings(view, &s) == S_OK && s) {
         ICoreWebView2Settings_put_IsStatusBarEnabled(s, FALSE);
+        /* the zoom is the page's (it asks it, WM_ZOOM): WebView2's own
+           Ctrl+wheel would not be the page's, nor remembered */
+        ICoreWebView2Settings_put_IsZoomControlEnabled(s, FALSE);
         ICoreWebView2Settings_Release(s);
     }
     EventRegistrationToken t;
     ICoreWebView2_add_NavigationStarting(view, &nav_handler, &t);
+    ICoreWebView2_add_FrameNavigationStarting(view, &frame_handler, &t);
     ICoreWebView2_add_NewWindowRequested(view, &popup_handler, &t);
     ICoreWebView2_Navigate(view, start_url);
     /* where it was when it closed, or maximized the first time; a place
@@ -249,9 +287,70 @@ static void frame_theme(HWND h)
         set(h, 19, &dark, sizeof dark);
 }
 
+static WCHAR *wide(const char *s);
+
+/* ---- closing in order: the window stays while Brebus stops its work,
+   saying each step on the page ---- */
+#define WM_CLOSE_SAY (WM_APP + 21)  /* lp: a step's text, malloc'ed */
+#define WM_CLOSE_DONE (WM_APP + 22) /* the steps are over */
+#define WM_ZOOM (WM_APP + 23)       /* wp: the page's zoom, in thousandths */
+static void (*closer)(void (*)(const char *));
+static int closing;
+
+void brebus_window_set_closer(void (*steps)(void (*say)(const char *)))
+{
+    closer = steps;
+}
+
+/* a step, from the closer's thread: shown by the window's (text of
+   Brebus's own, with no quote in it) */
+static void say(const char *text)
+{
+    char *t = strdup(text);
+    if (t && !PostMessageW(main_win, WM_CLOSE_SAY, 0, (LPARAM)t))
+        free(t);
+}
+
+static void *close_steps(void *arg)
+{
+    (void)arg;
+    closer(say);
+    PostMessageW(main_win, WM_CLOSE_DONE, 0, 0);
+    return NULL;
+}
+
 static LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp)
 {
     switch (m) {
+    case WM_CLOSE: /* asked to close: kept open while the steps run, once */
+        if (!closer)
+            break;
+        if (!closing) {
+            closing = 1;
+            pthread_t t;
+            if (pthread_create(&t, NULL, close_steps, NULL) != 0)
+                break; /* no thread: it closes at once, the steps after */
+            pthread_detach(t);
+        }
+        return 0;
+    case WM_CLOSE_SAY: {
+        char *t = (char *)lp, js[600];
+        snprintf(js, sizeof js,
+                 "window.brebusClosing && window.brebusClosing(\"%s\")", t);
+        WCHAR *wjs = wide(js);
+        if (view && wjs)
+            ICoreWebView2_ExecuteScript(view, wjs, NULL);
+        free(wjs);
+        free(t);
+        return 0;
+    }
+    case WM_CLOSE_DONE:
+        DestroyWindow(h);
+        return 0;
+    case WM_ZOOM:
+        if (controller)
+            ICoreWebView2Controller_put_ZoomFactor(controller, wp / 1000.0);
+        return 0;
     case WM_SIZE:
         /* hidden while minimized, as WebView2 asks: it stops drawing */
         if (controller)
@@ -308,6 +407,15 @@ int brebus_window_on(void)
     int on = window_on;
     pthread_mutex_unlock(&win_mu);
     return on;
+}
+
+/* the page's zoom, asked by the page: set on the window's thread */
+int brebus_window_zoom(double z)
+{
+    if (!(z >= 0.5 && z <= 3) || !brebus_window_on())
+        return -1;
+    return PostMessageW(main_win, WM_ZOOM, (WPARAM)(z * 1000 + 0.5), 0) ? 0
+                                                                        : -1;
 }
 
 /* The system's dialog to choose a folder or a file, from a request's
@@ -383,7 +491,11 @@ int brebus_window(const char *url, volatile sig_atomic_t *quit, char *why,
     }
     MultiByteToWideChar(CP_UTF8, 0, url, -1, own,
                         (int)(sizeof own / sizeof *own));
-    start_url = own;
+    /* "?window": the page knows it is the window's, its zoom its own */
+    static WCHAR start[100];
+    _snwprintf(start, sizeof start / sizeof *start, L"%ls?window", own);
+    start[sizeof start / sizeof *start - 1] = 0;
+    start_url = start;
     stop = quit;
     HINSTANCE hi = GetModuleHandleW(NULL);
     WNDCLASSEXW wc = {.cbSize = sizeof wc,
