@@ -105,7 +105,7 @@ int brebus_autostart(int on)
             for (char *c = exe; *c; c++)
                 if (*c == '/')
                     *c = '\\';
-            int n = snprintf(cmd, sizeof cmd, "\"%s\" --no-open", exe);
+            int n = snprintf(cmd, sizeof cmd, "\"%s\" --background", exe);
             rc = n > 0 && (size_t)n < sizeof cmd &&
                          RegSetValueExA(k, "Brebus", 0, REG_SZ,
                                         (const BYTE *)cmd, (DWORD)n + 1) == 0
@@ -207,7 +207,8 @@ int brebus_autostart(int on)
         return -1;
     snprintf(dir, sizeof dir, "%s", p);
     *strrchr(dir, '/') = 0;
-    /* its server only: the window opens from the menu, onto it */
+    /* no window, the model used last loaded: the window opens from the
+       menu, onto it */
     const char *jm = getenv("JANAS_MODELS");
     char env[4200] = "";
     if (jm && *jm == '/' && !strpbrk(jm, "\"\\`$ \n"))
@@ -218,7 +219,7 @@ int brebus_autostart(int on)
                      "Type=Application\n"
                      "Name=Brebus\n"
                      "Comment=Janas's app, its server started at login\n"
-                     "Exec=%s\"%s\" --no-open\n"
+                     "Exec=%s\"%s\" --background\n"
                      "Icon=brebus\n"
                      "Terminal=false\n"
                      "X-GNOME-Autostart-enabled=true\n",

@@ -44,7 +44,7 @@ static void usage(void)
 {
     fprintf(stderr,
             "usage: brebus [--port N] [--workspace DIR] [--browser | "
-            "--no-open]\n"
+            "--no-open | --background]\n"
             "       brebus --serve [--listen ADDR] [--port N] [--tls-cert "
             "FILE --tls-key FILE]\n"
             "                      [--host-name NAME[,NAME...]]\n"
@@ -56,8 +56,10 @@ static void usage(void)
             "on http://127.0.0.1:41414 (--port), in a window of its own, or\n"
             "in the browser with --browser or where there is no WebKitGTK;\n"
             "--no-open: neither. Only this computer reaches it.\n"
-            "It works in a folder: --workspace, or the one it is started\n"
-            "in from a terminal; else the page asks.\n"
+            "--background: no window, and the model the chat used last\n"
+            "loaded for other programs (how it starts at login).\n"
+            "It opens on a new chat of no project; --workspace DIR opens\n"
+            "that folder as a project instead.\n"
             "--install-desktop puts Brebus in the desktop's menu, with its\n"
             "icon (~/.local/share/applications).\n"
             "--serve: no window, for the browsers of this computer or of\n"
@@ -319,7 +321,7 @@ int main(int argc, char **argv)
 {
     janas_sandbox_main(argc, argv); /* a cage for python.c being built */
     struct brebus b = {.port = 41414};
-    int open = 1, browser = 0;
+    int open = 1, browser = 0, background = 0;
     const char *workspace = NULL, *add_user = NULL, *cert = NULL, *key = NULL;
     const char *enroll_user = NULL;
     int plain_user = 0;
@@ -335,6 +337,9 @@ int main(int argc, char **argv)
             workspace = argv[++i];
         } else if (!strcmp(argv[i], "--no-open")) {
             open = 0;
+        } else if (!strcmp(argv[i], "--background")) {
+            open = 0;
+            background = 1;
         } else if (!strcmp(argv[i], "--install-desktop")) {
             return brebus_install_desktop(0);
         } else if (!strcmp(argv[i], "--browser")) {
@@ -437,8 +442,10 @@ int main(int argc, char **argv)
         pthread_mutex_init(&b.get[i].mu, NULL);
     pthread_mutex_init(&b.tools_mu, NULL);
     char why[600];
-    /* the workspace: the one given, or this terminal's folder; from the
-       desktop's menu (no terminal, the home) the page asks */
+    /* the workspace: the one given, opened by the page with a new chat;
+       else the free chats, as a chat app starts (a terminal's folder is
+       not taken for a project: a new chat of no project, as from the
+       menu) */
     char cwd[4096];
     if (workspace) {
         char abs[4200];
@@ -450,15 +457,8 @@ int main(int argc, char **argv)
             fprintf(stderr, "brebus: %s\n", why);
             return 1;
         }
+        b.ws_given = 1;
     }
-#ifndef _WIN32
-    /* (not on Windows: started from Explorer or the Start menu, its
-       current folder is the program's own, which means nothing; tried on
-       Windows 11 on 16 Nov 2026) */
-    else if (isatty(STDIN_FILENO) && getcwd(cwd, sizeof cwd) &&
-             brebus_ws_open(&b, cwd, 0, why, sizeof why) != 0)
-        fprintf(stderr, "brebus: %s; the free chats instead\n", why);
-#endif
     /* no project given: the free chats, as a chat app starts */
     if (brebus_ws_path(&b, cwd, sizeof cwd) != 0 &&
         brebus_ws_free(&b, why, sizeof why) != 0)
@@ -508,6 +508,12 @@ int main(int argc, char **argv)
     }
     if (!b.child)
         brebus_server_adopt(&b); /* a server of before, still there */
+    /* the entry that starts it at login written as this Brebus starts it
+       (an older one said --no-open, which loaded no model) */
+    if (!b.child && !b.serve && brebus_autostart_on())
+        brebus_autostart(1);
+    if (background && !b.child && !b.serve)
+        brebus_server_start_last(&b);
     brebus_idle_start(&b);
     char url[128];
     snprintf(url, sizeof url, "%s://%s%s%s:%u/", b.tls ? "https" : "http",

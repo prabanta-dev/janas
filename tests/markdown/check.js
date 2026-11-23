@@ -113,6 +113,32 @@ for (const [md, want] of page) {
 }
 counts.push(`page ${pageOk}/${page.length}`);
 
+/* a reply still coming: its open marks closed for now, nothing else
+   changed (markdown.js, mdStreaming) */
+const streaming = vm.runInContext("mdStreaming", ctx);
+const coming = [
+  ["Questo è **gras", "Questo è **gras**"],
+  ["**a** e *b", "**a** e *b*"],
+  ["Ecco **", "Ecco "],
+  ["**", ""],
+  ["2 * 3 = 6 e a_b_c", "2 * 3 = 6 e a_b_c"],
+  ["- uno\n- **due", "- uno\n- **due**"],
+  ["`co", "`co`"],
+  ["x ~~ba", "x ~~ba~~"],
+  ["x **a *b", "x **a *b***"],
+  ["```py\nx = **2", "```py\nx = **2"],
+  ["fine.\n\n**nuovo ", "fine.\n\n**nuovo**"],
+  ["\\*non è corsivo", "\\*non è corsivo"],
+];
+let comingOk = 0;
+for (const [md, want] of coming) {
+  const got = streaming(md);
+  total++;
+  if (got === want) comingOk++;
+  else show("streaming", {example: comingOk + 1, section: "mdStreaming", markdown: md, html: want + "\n"}, got + "\n");
+}
+counts.push(`streaming ${comingOk}/${coming.length}`);
+
 /* nothing a text can hold makes it slow: the inputs that are quadratic in
    a careless parser, each a few hundred kB, in well under a second */
 const t0 = Date.now();

@@ -159,6 +159,10 @@ async function machineNow() {
 /* a model started or stopped from elsewhere (another program, the
    server's API): seen within a few seconds, while the page is in view */
 setInterval(() => { if (!document.hidden && !busy && !modelLoading) status().catch(() => {}); }, 8000);
+/* a dialog in front: the page's own keys (Ctrl+B, Ctrl+K, Ctrl+Shift+O)
+   wait for it */
+const dialogOpen = () => !!document.querySelector('[role="dialog"][aria-modal="true"]') ||
+                         !$("#wsdlg").hidden;
 /* the side bar: whole, or a strip of icons (its button, Ctrl+B), as left */
 let navAuto = false; /* hidden by an artifact opened, shown again when it closes */
 function navMini(on, remember) {
@@ -170,14 +174,14 @@ function navMini(on, remember) {
 try { navMini(localStorage.getItem("brebus.mini") === "1", false); } catch (e) {}
 $("#navtog").onclick = () => navMini(!$("#side").classList.contains("mini"), true);
 document.addEventListener("keydown", (e) => {
-  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "b") {
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "b" && !dialogOpen()) {
     e.preventDefault();
     navMini(!$("#side").classList.contains("mini"), true);
   }
 });
-/* Brebus opens on its chat, whatever page was shown last: the last chat
-   (more.js), or a new one; an address with #models and the like still
-   opens that page */
+/* Brebus opens on its chat, whatever page was shown last: a new one
+   (more.js), in the project given by --workspace if any; an address with
+   #models and the like still opens that page */
 let first = "chat";
 const hashChat = (location.hash.match(/^#chat\/([\w-]+)$/) || [])[1];
 if (location.hash.length > 1) first = location.hash.slice(1).split("/")[0];

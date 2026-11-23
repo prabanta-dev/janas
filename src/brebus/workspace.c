@@ -270,8 +270,9 @@ void brebus_ws_status(struct brebus *b, struct janas_buf *out)
     const char *slash = on ? strrchr(ws, '/') : NULL;
     janas_buf_puts(out, ", \"name\": ");
     str(out, slash ? slash + 1 : "");
-    janas_buf_printf(out, ", \"free\": %s",
-                     on && is_free(b, ws) ? "true" : "false");
+    janas_buf_printf(out, ", \"free\": %s, \"given\": %s",
+                     on && is_free(b, ws) ? "true" : "false",
+                     b->ws_given ? "true" : "false");
     documents(docs, sizeof docs);
     janas_buf_puts(out, ", \"new_in\": ");
     snprintf(rp, sizeof rp, "%s/Brebus", docs);

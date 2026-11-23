@@ -195,6 +195,58 @@ function mdDom(doc, el, opts) {
   }, () => stack.pop());
 }
 
+/* A reply still being written, for its drawing only: the marks its last
+   paragraph opened and has not closed yet (**, *, _, ~~, a code's `)
+   closed for now, so that "**gras" shows bold rather than its asterisks,
+   and a mark just come with nothing after it yet left out. Inside an open
+   code block nothing is changed. The text kept is the model's own: this
+   is drawn while it comes, and the whole reply is drawn as it is. */
+function mdStreaming(text) {
+  if (!text) return text;
+  /* an open fence: the block shows as code already */
+  let fence = null;
+  for (const line of text.split("\n")) {
+    const f = line.match(/^ {0,3}(`{3,}|~{3,})/);
+    if (!f) continue;
+    if (!fence) fence = f[1];
+    else if (f[1][0] === fence[0] && f[1].length >= fence.length && !line.slice(line.indexOf(f[1]) + f[1].length).trim()) fence = null;
+  }
+  if (fence) return text;
+  const cut = text.lastIndexOf("\n\n") + 1; /* the last paragraph */
+  const head = text.slice(0, cut), tail = text.slice(cut);
+  const space = (c) => c === undefined || /\s/.test(c);
+  const word = (c) => c !== undefined && /[\p{L}\p{N}]/u.test(c);
+  const open = []; /* {ch, n} */
+  let out = tail, code = "";
+  for (let i = 0; i < tail.length;) {
+    const c = tail[i];
+    if (c === "\\") { i += 2; continue; }
+    let j = i;
+    while (j < tail.length && tail[j] === c) j++;
+    const n = j - i;
+    if (c === "`") {
+      const close = tail.indexOf(c.repeat(n), j);
+      if (close < 0) { code = c.repeat(n); break; } /* a code span open */
+      i = close + n;
+      continue;
+    }
+    if (c === "*" || c === "_" || (c === "~" && n <= 2)) {
+      const before = tail[i - 1], after = tail[j];
+      const left = !space(after) && !(c === "_" && word(before));
+      const right = !space(before) && !(c === "_" && word(after));
+      const top = open.length ? open[open.length - 1] : null;
+      if (right && top && top.ch === c) open.pop();
+      else if (j === tail.length && !right) { out = tail.slice(0, i); break; } /* nothing after it yet */
+      else if (left) open.push({ch: c, n});
+      i = j;
+      continue;
+    }
+    i = j;
+  }
+  if (!code && !open.length) return head + out;
+  return head + out.replace(/\s+$/, "") + code + open.reverse().map((o) => o.ch.repeat(o.n)).join("");
+}
+
 function render(el, text, opts) {
   el.textContent = "";
   const doc = mdParse(text || "", {math: true});

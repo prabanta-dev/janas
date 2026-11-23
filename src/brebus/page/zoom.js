@@ -5,8 +5,8 @@
    The interface: in Brebus's window (its address says ?window) the page
    keeps the zoom and asks it of the window (/brebus/zoom), which draws the
    whole page larger as a browser's zoom does: Ctrl+wheel, Ctrl+plus,
-   Ctrl+minus, Ctrl+0 back to 100%, Settings › Appearance; a tag at the top
-   while it is not 100%. In a browser the browser's own zoom does it.
+   Ctrl+minus, Ctrl+0 back to 100%, the side bar's foot (Interface) and
+   Settings › Appearance. In a browser the browser's own zoom does it.
    An artifact: its own zoom, in its bar or Ctrl+wheel over it, kept for
    it; a page or a drawing keeps its layout and scrolls, a text flows to
    the pane's width. */

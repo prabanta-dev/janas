@@ -693,3 +693,5 @@ nav.mini .uizoom .seg button { min-width: 0; padding: 0 4px; font-size: 12px; }
 .msg .reasoning { display: flex; align-items: center; gap: 8px; cursor: pointer; min-width: 0; }
 .msg .reasoning .thinkline { color: var(--dim); font-size: 13px; font-style: italic;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
+/* the project dialog for a new project: not the open one's settings */
+#wsdlg.fresh #wsemb, #wsdlg.fresh #wssvc, #wsdlg.fresh #wsro { display: none; }

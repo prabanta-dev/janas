@@ -1,23 +1,11 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later
    Copyright (C) 2026 Maurizio Cammalleri */
-/* more.js - Brebus's page (app.html): regenerate and edit, services, folders, settings, the workspace, the start. build.sh puts it into
+/* more.js - Brebus's page (app.html): edit a message, services, folders, settings, the workspace, the start. build.sh puts it into
    the page where app.html includes it. */
-/* ---- regenerate, and edit a message ---- */
+/* ---- a message edited; a reply's versions (written again by a Brebus
+   before, whose button is gone: their arrows still page through them) ---- */
 const variantOf = (m) => ({content: m.content, think: m.think, speed: m.speed, saved: m.saved,
                            tool_calls: m.tool_calls});
-/* the answer to the last question written again, the earlier ones kept */
-async function regenerate() {
-  if (busy || !await ensureModel()) return;
-  let i = cur.messages.length - 1;
-  while (i >= 0 && cur.messages[i].role !== "user") i--;
-  if (i < 0) return;
-  const last = cur.messages[cur.messages.length - 1];
-  const keep = last && last.role === "assistant"
-    ? (last.variants ? last.variants : [variantOf(last)]) : [];
-  cur.messages = cur.messages.slice(0, i + 1);
-  drawLog();
-  await runTurn(cur.messages[i], keep);
-}
 /* one of the user's messages changed: the conversation goes on from it */
 async function editMessage(k) {
   if (busy) return;
@@ -258,9 +246,13 @@ async function webPick(file, title) {
     buttons: [{label: file ? "Choose the file" : "Choose this folder", value: "ok", primary: true}, {label: "Cancel", value: "no"}]});
   return d.button === "ok" ? d.form || "" : "";
 }
-function wsShow(open) {
-  /* Browse: the window's dialog, or the page's own from a browser */
-  for (const b of document.querySelectorAll("button.browse")) b.hidden = false;
+/* fresh: for a new project (+ beside Projects), without the settings of
+   the project open now */
+function wsShow(open, fresh) {
+  /* Browse: the window's dialog, or the page's own from a browser (the
+     dialog's own: Skills' and Connectors' take the window's only) */
+  for (const b of document.querySelectorAll("#wsdlg button.browse")) b.hidden = false;
+  $("#wsdlg").classList.toggle("fresh", !!fresh);
   /* paths as this system writes them */
   if (ws.windows)
     for (const i of document.querySelectorAll('input[name="path"]'))
@@ -307,6 +299,8 @@ const booted = (async () => {
     await readConvs();
     if (convs.some((c) => c.id === hashChat)) { await openConv(hashChat); await refreshTree(); return; }
   }
+  /* a project given to brebus (--workspace): a new chat in it */
+  if (ws.given && ws.path && !ws.free) { await wsOpen(ws.path, false, "new"); return; }
   /* else a new chat, of no project, as Claude opens: written only with its
      first message; the others a click away in the side bar */
   await wsOpen("", "free", "new");

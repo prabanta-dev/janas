@@ -113,11 +113,16 @@ async function deleteConv() {
 }
 async function exportConv(c) {
   if (!c || c instanceof Event) c = cur;
-  const how = await dialog({title: "Export this chat", text: "As a Markdown or plain text file in the project's exports/, or as a PDF through the system's print dialog (Print to file).",
-    buttons: [{label: "Markdown", value: "md", primary: true}, {label: "Text", value: "txt"}, {label: "PDF", value: "pdf"}, {label: "Cancel", value: "no"}]});
+  /* a PDF is printed from the page that shows the chat: offered for the
+     chat open only */
+  const open = c === cur;
+  const how = await dialog({title: "Export this chat", text: open
+      ? "As a Markdown or plain text file in the project's exports/, or as a PDF through the system's print dialog (Print to file)."
+      : "As a Markdown or plain text file in the project's exports/. A PDF: open the chat, then Export in its menu.",
+    buttons: [{label: "Markdown", value: "md", primary: true}, {label: "Text", value: "txt"},
+              ...(open ? [{label: "PDF", value: "pdf"}] : []), {label: "Cancel", value: "no"}]});
   if (how.button === "no") return;
   if (how.button === "pdf") {
-    if (c !== cur) { say("Open the chat first: the PDF is printed from the page that shows it."); return; }
     document.title = cur.title || "Chat"; window.print(); document.title = "Brebus"; return;
   }
   /* the words said, not the tools' calls and answers */
@@ -262,7 +267,7 @@ function bubble(m) {
     t.className = "think";
     /* Markdown, as the model writes it there too */
     t.innerHTML = "<summary>Reasoning</summary><div class=\"thinktext text\"></div>";
-    renderText(t.lastChild, m.think);
+    renderText(t.lastChild, busy && cur && m === cur.messages.at(-1) ? mdStreaming(m.think) : m.think);
     keepOpen(t, m);
     d.append(t);
   }
@@ -278,10 +283,13 @@ function bubble(m) {
   const body = document.createElement("div");
   if (m.role === "assistant") {
     const parts = m.content ? artParts(m.content) : [];
+    const writing = busy && cur && m === cur.messages.at(-1);
     for (const p of parts) {
       if (p.text !== undefined) {
         if (!p.text.trim()) continue;
-        const t = document.createElement("div"); t.className = "text"; renderText(t, p.text); body.append(t);
+        /* the part still coming: its marks closed for now (mdStreaming) */
+        const t = document.createElement("div"); t.className = "text";
+        renderText(t, writing && p === parts.at(-1) ? mdStreaming(p.text) : p.text); body.append(t);
         if (!busy || m !== cur.messages.at(-1)) decorate(t);
       } else {
         const c = document.createElement("button");
@@ -333,7 +341,7 @@ function redraw(el, m) {
   const old = el.querySelector(":scope > details.think");
   const now = fresh.querySelector(":scope > details.think");
   if (!old || !now) return el.replaceWith(fresh);
-  renderText(old.querySelector(".thinktext"), m.think);
+  renderText(old.querySelector(".thinktext"), busy && cur && m === cur.messages.at(-1) ? mdStreaming(m.think) : m.think);
   now.remove();
   while (old.nextSibling) old.nextSibling.remove();
   while (old.previousSibling) old.previousSibling.remove();
@@ -554,7 +562,7 @@ $("#usecode").addEventListener("change", async (e) => {
   if (!e.target.checked || !pyState.needed || pyState.installed) return;
   e.target.checked = false;
   const d = await dialog({title: "Install Python for Run code?",
-    text: `To run the model's code Brebus needs Python, which Janas does not carry. It downloads Python ${pyState.version} from python.org and numpy and matplotlib from PyPI (${mb(pyState.total)} in all), checks each file against the fingerprint written in Brebus, and installs them in your AppData folder, for Brebus alone. Nothing is downloaded unless you say so; you can remove it from Machine.`,
+    text: `To run the model's code Brebus needs Python, which Janas does not carry. It downloads Python ${pyState.version} from python.org and numpy and matplotlib from PyPI (${mb(pyState.total)} in all), checks each file against the fingerprint written in Brebus, and installs them in your AppData folder, for Brebus alone. Nothing is downloaded unless you say so; you can remove it from Settings, Python for Run code.`,
     buttons: [{label: "Install", value: "ok", primary: true}, {label: "Cancel", value: "no"}]});
   if (d.button !== "ok") return;
   await installPython();

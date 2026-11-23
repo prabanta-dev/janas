@@ -2,6 +2,14 @@
 
 > Curated, user-facing summary of completed work, newest first.
 
+## [2026-11-23] - Brebus started at login loads its model, a reply's marks no longer shown while it comes, the guide whole
+
+- **Brebus's guide, whole** (`docs/brebus.md`): installing and removing it, the first start, every part of the window and its buttons, chats and projects, a conversation, documents and tools, Run code, artifacts, voice, the models, Server, Settings, Info, served from a browser, the keys, the command line, where everything is kept, and what to do when something goes wrong.
+- **A reply being written no longer shows its marks**: `**gras` was drawn with its asterisks until the closing ones came, then turned bold; while a reply comes, the marks its last paragraph opened are closed for now and a mark with nothing after it yet is left out (Brebus and `janas-server`'s test page; the reply, once whole, is drawn as written). `test_markdown` checks it.
+- **Brebus started at login loads the model**: *Start Brebus in the background* said so, but no model was loaded; Brebus now starts there with `--background`, which loads the model the chat used last with its settings, for other programs. An entry written before is rewritten at the next start.
+- **`brebus --workspace DIR` opens that project**, with a new chat in it (the page went to the free chats); started from a terminal, Brebus no longer adds the terminal's folder to the projects.
+- **Brebus: smaller fixes**: Export from a chat not open no longer offers a PDF it then refused; *+* beside Projects shows the dialog of a new project, without the open project's services and folders; the dialog's *Browse…* no longer shows Skills' and Connectors' outside the window; Ctrl+B, Ctrl+K and Ctrl+Shift+O wait while a dialog is open; texts naming a page that is gone (Machine) or a download that exists now (dictation's model) said right.
+
 ## [2026-11-23] - Brebus: Markdown read whole, chats summarized when they fill the memory, the context to each model's measure
 
 - **Markdown read whole, in Brebus and on `janas-server`'s test page**: CommonMark 0.31.2 and GitHub's extensions (tables, task lists, struck text, links written out), with real lists, nested ones, numbered ones from any number, quotes inside quotes, link references, headings underlined, indented code, entities and escapes. All 652 examples of CommonMark's specification and the 51 of GitHub's extensions pass (`test_markdown`), and texts made to slow a parser down are read in well under a second. Formulas are read as one piece, so nothing in them is taken for a mark; raw HTML is still shown as text, but for `<br>` and plain tags such as `<sup>`.

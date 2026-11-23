@@ -184,7 +184,7 @@ for (const h of document.querySelectorAll("#tree .grp > .ghead"))
   };
 $("#addchat").onclick = () => newFree();
 /* a new project: a folder chosen, or made in Documents/Brebus */
-$("#addproj").onclick = () => wsShow(true);
+$("#addproj").onclick = () => wsShow(true, true);
 
 /* a chat of a project (or of the free chats) opened; "new": a new one */
 async function goChat(where, id) {
@@ -380,7 +380,7 @@ async function findChats() {
     buttons: [{label: "Close", value: "ok", primary: true}]});
 }
 document.addEventListener("keydown", (e) => {
-  if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+  if (!(e.ctrlKey || e.metaKey) || e.altKey || dialogOpen()) return;
   const k = e.key.toLowerCase();
   if (k === "k" && !e.shiftKey) { e.preventDefault(); $("#findbtn").click(); }
   if (k === "o" && e.shiftKey) { e.preventDefault(); newFree(); }
@@ -572,7 +572,7 @@ async function dictate() {
       } else {
         const why = (j.error && (j.error.message || j.error)) || "";
         say(/speech model/i.test(why)
-          ? "Dictation needs a speech model (Whisper) beside the others. Brebus cannot download one yet: it is coming to Discover. Meanwhile it can be converted by hand, as the documentation's models page says."
+          ? "Dictation needs a speech model (Whisper): get one in Settings, Voice. It is used from the next time the chat's model is loaded."
           : "The voice could not be written" + (why ? ": " + why : "."), "Dictation");
       }
     } finally { status(); }

@@ -977,3 +977,59 @@ void brebus_server_adopt(struct brebus *b)
     pthread_mutex_unlock(&b->mu);
     janas_json_free(d);
 }
+
+void brebus_server_start_last(struct brebus *b)
+{
+    pthread_mutex_lock(&b->mu);
+    int running = 0;
+    for (int i = 0; i < BREBUS_LOADED; i++)
+        running |= b->srv[i].on;
+    pthread_mutex_unlock(&b->mu);
+    if (running) /* one taken up again already */
+        return;
+    struct janas_buf f = {0}, body = {0}, out = {0};
+    char err[160];
+    brebus_settings_get(b, &f);
+    struct janas_json_doc *d =
+        f.n ? janas_json_parse(f.p, f.n, err, sizeof err) : NULL;
+    const struct janas_json *o = d ? janas_json_root(d) : NULL;
+    const char *name = o ? janas_json_str(janas_json_get(o, "_last")) : NULL;
+    if (!name || !*name) {
+        fprintf(stderr, "brebus: no model used yet: none loaded\n");
+        goto done;
+    }
+    /* its settings, as the page sends them when it loads it */
+    const struct janas_json *s = janas_json_get(o, name);
+    janas_buf_puts(&body, "{\"model\": ");
+    str(&body, name);
+    static const char *const NUM[] = {"context", "parallel"};
+    for (size_t i = 0; s && i < sizeof NUM / sizeof *NUM; i++) {
+        double v = janas_json_num(janas_json_get(s, NUM[i]), 0);
+        if (v > 0)
+            janas_buf_printf(&body, ", \"%s\": %.0f", NUM[i], v);
+    }
+    const struct janas_json *th = s ? janas_json_get(s, "think") : NULL;
+    if (th && (th->type == JANAS_JSON_TRUE || th->type == JANAS_JSON_FALSE))
+        janas_buf_printf(&body, ", \"think\": %s",
+                         th->type == JANAS_JSON_TRUE ? "true" : "false");
+    static const char *const STR[] = {"prompt_on", "drafts_on", "reply_on",
+                                      "gpu_api"};
+    for (size_t i = 0; s && i < sizeof STR / sizeof *STR; i++) {
+        const char *v = janas_json_str(janas_json_get(s, STR[i]));
+        if (v) {
+            janas_buf_printf(&body, ", \"%s\": ", STR[i]);
+            str(&body, v);
+        }
+    }
+    janas_buf_puts(&body, "}");
+    if (brebus_server_start(b, body.p, body.n, &out) == 0)
+        fprintf(stderr, "brebus: %s loaded for other programs\n", name);
+    else
+        fprintf(stderr, "brebus: %s not loaded: %.*s\n", name, (int)out.n,
+                out.p ? out.p : "");
+done:
+    janas_json_free(d);
+    janas_buf_free(&f);
+    janas_buf_free(&body);
+    janas_buf_free(&out);
+}

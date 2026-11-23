@@ -78,6 +78,7 @@ struct brebus {
     unsigned short front_port;
     char child_token[65];
     char root[4096];
+    int ws_given;    /* a project given by --workspace: the page opens it */
     char cert[4300]; /* the certificate served (a child trusts it) */
     struct brebus_user users[BREBUS_USERS];
     int n_users;
@@ -245,6 +246,9 @@ int brebus_server_unload_idle(struct brebus *b, const char *model);
    this Brebus's own and answering: taken up again, their work stopped,
    instead of started anew; others found deaf are ended */
 void brebus_server_adopt(struct brebus *b);
+/* the model the chat used last (settings.json's _last) loaded with its
+   settings, when no model's server runs: brebus --background, at login */
+void brebus_server_start_last(struct brebus *b);
 /* every model's server's replies under way stopped, the servers kept */
 void brebus_server_cancel_all(struct brebus *b);
 
