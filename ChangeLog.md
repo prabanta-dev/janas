@@ -2,6 +2,10 @@
 
 > Curated, user-facing summary of completed work, newest first.
 
+## [Unreleased]
+
+- **A model's server no longer stops in the middle of a reply**: `janas-server`, started by Brebus, asked the kernel to end it with its parent (`PR_SET_PDEATHSIG`), which fires when the parent's *thread* ends; Brebus starts the servers from the thread of the HTTP connection that asks for them, which ends when the page closes that connection - and the model's server ended with it, a reply cut off. It now watches for the Brebus process itself, and ends only when that is gone.
+
 ## [2026-11-23] - Brebus started at login loads its model, a reply's marks no longer shown while it comes, the guide whole
 
 - **Brebus's guide, whole** (`docs/brebus.md`): installing and removing it, the first start, every part of the window and its buttons, chats and projects, a conversation, documents and tools, Run code, artifacts, voice, the models, Server, Settings, Info, served from a browser, the keys, the command line, where everything is kept, and what to do when something goes wrong.

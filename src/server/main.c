@@ -22,6 +22,7 @@
 
 #include <netdb.h>
 #include <limits.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
 #ifdef __linux__
@@ -299,6 +300,23 @@ static char *model_name(const char *path)
     return n;
 }
 
+#ifdef __linux__
+/* the program that started it gone: SIGTERM to itself, the same ending as
+   Ctrl+C. Watched rather than asked of the kernel (PR_SET_PDEATHSIG): that
+   fires when the parent's THREAD ends, and Brebus starts its servers from
+   the thread of an HTTP connection, which ends when the connection closes -
+   a model's server was stopped in the middle of a reply */
+static pid_t parent_want;
+static void *parent_watch(void *arg)
+{
+    (void)arg;
+    while (getppid() == parent_want)
+        sleep(1);
+    kill(getpid(), SIGTERM);
+    return NULL;
+}
+#endif
+
 int main(int argc, char **argv)
 {
     janas_sandbox_main(argc, argv); /* a cage of code_interpreter's */
@@ -310,9 +328,12 @@ int main(int argc, char **argv)
     const char *pp = getenv("JANAS_PARENT_PID");
     if (pp && *pp) {
         pid_t want = (pid_t)strtol(pp, NULL, 10);
-        prctl(PR_SET_PDEATHSIG, SIGTERM);
         if (want > 0 && getppid() != want) /* it is gone already */
             return 1;
+        pthread_t pw;
+        parent_want = want;
+        if (want > 0 && pthread_create(&pw, NULL, parent_watch, NULL) == 0)
+            pthread_detach(pw);
     }
 #endif
     struct srv s = {0};

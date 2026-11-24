@@ -1,8 +1,8 @@
 # Brebus
 
-Brebus is Janas's app: the models of your computer, a chat with them and a server for other programs, in a window of its own. Nothing leaves the computer unless you ask it to: the models run on it, your chats and documents stay on it. *Brebus*, in Sardinian, are the magic words of the *janas*. It runs on Linux and Windows; macOS is not supported yet.
+Brebus is Janas's app: the models of your computer, a chat with them and a server for other programs, in a window of its own. Nothing leaves the computer unless you ask it to: the models run on it, your chats and documents stay on it. It runs on Linux and Windows; macOS is not supported yet.
 
-![Brebus: a chat with Qwen3-30B-A3B, which made a page with a doughnut chart of a monthly budget, open beside the chat as an artifact](img/brebus.png)
+![Brebus: a chat with Qwen3.5-9B, which reasoned and made a page with a doughnut chart of a monthly budget, open beside the chat as an artifact](img/brebus.png)
 
 This is the guide to all of it, from installing it to every button.
 
@@ -20,8 +20,8 @@ Brebus comes with every release of Janas, and on its own page, [github.com/praba
 
 Windows 10 (1903 or later) and 11, x86-64.
 
-- **The setup**, `brebus-windows-x86_64-setup.exe`: it installs Brebus for you alone, with no administrator's rights, in `%LOCALAPPDATA%\Programs\Brebus`, with an entry in the Start menu and one on the desktop, and starts it at the end if you leave its box ticked. The setup is not signed yet: Windows says *Windows protected your PC*; *More info*, then *Run anyway*. To remove it: *Settings › Apps › Installed apps › Brebus › Uninstall*, which takes away the program, its entries and its start at login; your chats, projects and models stay (below, [where they are](#where-brebus-keeps-things)).
-- **Without installing**, `brebus-windows-x86_64.zip`, or Janas's `janas-windows-x86_64.zip`: unpack it anywhere and start `brebus.exe`.
+- **The setup**, [`brebus-windows-x86_64-setup.exe`](https://github.com/prabanta-dev/brebus/releases/latest/download/brebus-windows-x86_64-setup.exe): it installs Brebus for you alone, with no administrator's rights, in `%LOCALAPPDATA%\Programs\Brebus`, with an entry in the Start menu and one on the desktop, and starts it at the end if you leave its box ticked. The setup is not signed yet: Windows says *Windows protected your PC*; *More info*, then *Run anyway*. To remove it: *Settings › Apps › Installed apps › Brebus › Uninstall*, which takes away the program, its entries and its start at login; your chats, projects and models stay (below, [where they are](#where-brebus-keeps-things)).
+- **Without installing**, [`brebus-windows-x86_64.zip`](https://github.com/prabanta-dev/brebus/releases/latest/download/brebus-windows-x86_64.zip), or Janas's [`janas-windows-x86_64.zip`](https://github.com/prabanta-dev/janas/releases/latest/download/janas-windows-x86_64.zip): unpack it anywhere and start `brebus.exe`.
 
 The window is WebView2, the engine of Edge that Windows 10 and 11 carry, through `WebView2Loader.dll` beside `brebus.exe` (Microsoft's, under its BSD licence, `LICENSE-WebView2.txt`).
 
@@ -29,9 +29,9 @@ The window is WebView2, the engine of Edge that Windows 10 and 11 carry, through
 
 x86-64: Ubuntu 22.04, Debian 12 and later.
 
-- **The .deb**: `sudo apt install ./brebus_amd64.deb`. Brebus goes in `/opt/brebus-janas`, `brebus` on the PATH and in the desktop's menu with its icon. `sudo apt remove brebus-janas` takes it all away.
-- **The .rpm**, for the distributions that install .rpm packages: `sudo dnf install ./brebus.x86_64.rpm`, the same layout; `sudo dnf remove brebus-janas`.
-- **Without installing**, `brebus-linux-x86_64.tar.gz`, or Janas's `janas-linux-x86_64.tar.gz`: unpack it and start `./brebus`; `./brebus --install-desktop` puts it in the desktop's menu, with its icon, for you (`~/.local/share/applications`).
+- **The .deb**, [`brebus_amd64.deb`](https://github.com/prabanta-dev/brebus/releases/latest/download/brebus_amd64.deb): `sudo apt install ./brebus_amd64.deb`. Brebus goes in `/opt/brebus-janas`, `brebus` on the PATH and in the desktop's menu with its icon. `sudo apt remove brebus-janas` takes it all away.
+- **The .rpm**, [`brebus.x86_64.rpm`](https://github.com/prabanta-dev/brebus/releases/latest/download/brebus.x86_64.rpm), for the distributions that install .rpm packages: `sudo dnf install ./brebus.x86_64.rpm`, the same layout; `sudo dnf remove brebus-janas`.
+- **Without installing**, [`brebus-linux-x86_64.tar.gz`](https://github.com/prabanta-dev/brebus/releases/latest/download/brebus-linux-x86_64.tar.gz), or Janas's [`janas-linux-x86_64.tar.gz`](https://github.com/prabanta-dev/janas/releases/latest/download/janas-linux-x86_64.tar.gz): unpack it and start `./brebus`; `./brebus --install-desktop` puts it in the desktop's menu, with its icon, for you (`~/.local/share/applications`).
 
 The window is WebKitGTK's (`libwebkit2gtk-4.1-0` on Debian and Ubuntu, `webkit2gtk4.1` with .rpm packages: the packages recommend it), loaded when Brebus starts. Where it is missing, or there is no display, Brebus opens its page in the browser. Before removing a package, turn off *Start Brebus in the background* (Settings) if you turned it on: its entry is in your home, which a package does not touch.
 
@@ -51,7 +51,7 @@ Brebus always opens on **a new chat, of no project**: nothing of it is written, 
 
 ## The window
 
-![A project's chat: the side bar with the free chats and the project "Trip to Sardinia" with its chats, the reply as an artifact beside it](img/brebus-project.png)
+![A project's chat: the project "Kitchen renovation" with its chats, a question answered from the notes in its folder (the passages found under it), the table the model made open beside the chat](img/brebus-project.png)
 
 ### The side bar
 
@@ -275,7 +275,7 @@ The libraries it may use - React 18.3.1, Recharts 2.13.3, lucide-react 0.460.0, 
 
 ### Discover
 
-![Discover: a model's files on Hugging Face, each with how far it is from running here](img/brebus-discover.png)
+![Discover: a search on Hugging Face, a model's files each with its size, the room its conversion takes and how far it is from running here](img/brebus-discover.png)
 
 - **The catalog**: the models Janas knows, converted and checked, with what each one is, how much it downloads and the memory it is meant for - *fits*, or *needs more*: it still runs, slower, reading its parts from the disk. This computer's memory is said above. **Get** downloads one into the models' folder, checked against its published fingerprint; *installed* when it is there.
 - **One field to search or get**: words search Hugging Face for models with GGUF files, the most downloaded first, each with its downloads and likes; an address (`https://huggingface.co/…/file.gguf` or `.jns`, or `hf:owner/repo/file.gguf`) gets that file, and the button reads *Get*. **Clear**, or emptying the field, brings the catalog back.
@@ -283,6 +283,8 @@ The libraries it may use - React 18.3.1, Recharts 2.13.3, lucide-react 0.460.0, 
 - **The downloads**, four at most at once, each with its progress, its speed and **Stop**: *Get* again goes on from where it stopped. A download starts only when the disk has room for it beside those going on, or Brebus says how much is needed and how much there is. When one ends, it says so (*ready: load it in My models*, stopped, or why it failed), and the box goes after a few seconds.
 
 ### My models
+
+![My models: the models of this computer with their kind, size and context; one's settings open, how much of the chat it keeps in mind in tokens and words](img/brebus-models.png)
 
 - **The folder** of the models, and **Change…** to keep them in another one (one with more room, an external disk...). `$JANAS_MODELS`, when it is set, is the folder.
 - **The table**: each model with its kind (*recurrent*, *fills in the middle*, *sees pictures*), size and context.

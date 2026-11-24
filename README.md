@@ -46,7 +46,7 @@ Measured on 21 October 2026 (the first two) and 26-27 October (the context of 8,
 
 ### Brebus, the app
 
-The models of your computer in a window of their own, nothing sent anywhere: the catalog and any model of Hugging Face downloaded, each file of the Hub said how far it is from running here; chats, and projects that work in a folder of yours - your documents (PDF, Word, Excel, PowerPoint, LibreOffice, web pages, EPUB) searched before each question and given to the model with their names; artifacts beside the chat as Claude's; dictation by Whisper and replies read aloud; files, web pages and pictures attached; the model's tools and Python in a cage asking you first; and the server for other programs. On Linux and Windows (macOS later): [docs/brebus.md](docs/brebus.md), a complete guide. Beside LM Studio, Jan, Ollama, AnythingLLM and Msty, feature by feature, from their official documentation: [docs/compare.md](docs/compare.md), updated every week.
+The models of your computer in a window of their own, nothing sent anywhere: the catalog and any model of Hugging Face downloaded, each file of the Hub said how far it is from running here; chats, and projects that work in a folder of yours - your documents (PDF, Word, Excel, PowerPoint, LibreOffice, web pages, EPUB) searched before each question and given to the model with their names; artifacts beside the chat as Claude's; dictation by Whisper and replies read aloud; files, web pages and pictures attached; the model's tools and Python in a cage asking you first; and the server for other programs. On Linux and Windows (macOS later): [docs/brebus.md](docs/brebus.md), a complete guide. **Get it** - Windows 10 and 11: [the setup](https://github.com/prabanta-dev/brebus/releases/latest/download/brebus-windows-x86_64-setup.exe) or [the .zip](https://github.com/prabanta-dev/brebus/releases/latest/download/brebus-windows-x86_64.zip); Linux x86-64: [the .deb](https://github.com/prabanta-dev/brebus/releases/latest/download/brebus_amd64.deb) (Ubuntu 22.04, Debian 12 and later), [the .rpm](https://github.com/prabanta-dev/brebus/releases/latest/download/brebus.x86_64.rpm) or [the .tar.gz](https://github.com/prabanta-dev/brebus/releases/latest/download/brebus-linux-x86_64.tar.gz); its page: [github.com/prabanta-dev/brebus](https://github.com/prabanta-dev/brebus). Beside LM Studio, Jan, Ollama, AnythingLLM and Msty, feature by feature, from their official documentation: [docs/compare.md](docs/compare.md), updated every week.
 
 ### janas-chat
 
@@ -68,9 +68,9 @@ MCP servers of Janas's own, for `janas-chat`, Brebus and any MCP client: your do
 
 A research tool: a word's explication in the Natural Semantic Metalanguage, Goddard and Wierzbicka's sixty-odd semantic primes, asked of DeepNSM and counted as its paper does: [docs/tools.md](docs/tools.md#janas-nsm). DeepNSM-1B (Llama-3.2-1B with the adapter of [arXiv 2505.11764](https://arxiv.org/abs/2505.11764)) writes its answers at 57.8 tok/s on the laptop's CPU, where llama.cpp writes 37.9 to 39.8 on the same file.
 
-![Brebus, dark: a chat with Qwen3-30B-A3B, which made a page with a doughnut chart of a monthly budget, open beside the chat as an artifact; the side bar with the chats and the pages](docs/img/brebus.png)
+![Brebus, dark: a chat with Qwen3.5-9B, which reasoned and made a page with a doughnut chart of a monthly budget, open beside the chat as an artifact; the side bar with the chats, the pages and the interface's zoom](docs/img/brebus.png)
 
-*Brebus with Qwen3-30B-A3B on the development laptop: asked for an HTML page with a doughnut chart of a monthly budget, the model wrote it (506 tokens at 18.3 tokens/s), and the page opens beside the chat.*
+*Brebus with Qwen3.5-9B on the development laptop: asked for an HTML page with a doughnut chart of a monthly budget, the model reasoned, then wrote it (1,863 tokens at 22.6 tokens/s), and the page opens beside the chat.*
 
 ## Read this first
 
