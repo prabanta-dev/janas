@@ -116,8 +116,13 @@ int janas_models_scan(const char *dir, struct janas_model_file *out, int max)
         snprintf(key, sizeof key, "%s.context_length", m->arch);
         janas_jns_meta_u32(&j, key, &m->ctx);
         char head[8];
-        int chat = janas_jns_meta_str(&j, "tokenizer.chat_template", head,
-                                      sizeof head) == 0;
+        /* a chat model: one with a template, or DeepSeek-V4, whose files
+           (tools/hf2jns_ds4.c) have none and whose format the engine reads
+           from its tokens (src/llm/api.c) */
+        int chat =
+            janas_jns_meta_str(&j, "tokenizer.chat_template", head,
+                               sizeof head) == 0 ||
+            (has_token(&j, "<｜User｜>") && has_token(&j, "<｜Assistant｜>"));
         m->fim = has_token(&j, "<|fim_prefix|>") &&
                  has_token(&j, "<|fim_suffix|>") &&
                  has_token(&j, "<|fim_middle|>");

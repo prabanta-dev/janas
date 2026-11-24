@@ -39,6 +39,17 @@ enum chat_format {
        im_start holds <｜User｜>, hdr_end <｜Assistant｜>, im_end the end of
        sentence. No tools yet (its DSML) */
     FORMAT_DEEPSEEK,
+    /* Inkling-2-Mini: a message is its role's token (<|message_user|>,
+       _model, _system, _tool), <|content_text|>, the text, <|end_message|>;
+       a reply of the model's ends with <|content_model_end_sampling|>, its
+       stop. The prompt does not open the reply: the model writes
+       <|message_model|> and <|content_thinking|> (its reasoning, ended by
+       <|end_message|>) or <|content_text|> itself. "Thinking effort level:
+       0" (or 0.9) as a system message before the first other one says
+       whether it reasons. think_open and think_close hold
+       <|content_thinking|> and <|content_text|>, im_end the stop. No tools
+       yet (its JSON calls) */
+    FORMAT_INKLING,
 };
 
 /* a picture read by the vision encoder (api_image.c): its embeddings and
@@ -66,6 +77,9 @@ struct janas_llm {
     int32_t think_on;      /* Gemma's <|think|>: reasoning asked for, or -1 */
     int32_t quote, decl_open, decl_close; /* Gemma's <|"|>, <|tool>, <tool|> */
     int32_t think_open, think_close;      /* reasoning markers, or -1 */
+    /* Inkling's roles (user, model, system, tool), <|content_text|> and
+       <|end_message|> */
+    int32_t ink_role[4], ink_text, ink_endmsg;
     int thinker; /* the template knows enable_thinking */
     /* the template's words at the top of the system message while the
        model reasons, at its default effort (Qwen3.8: "Reasoning effort is
@@ -122,6 +136,7 @@ struct janas_llm_chat {
     int closed;     /* the last reply ended with a stop token */
     int ended;      /* the reply is over: the next call says DONE */
     int in_think;   /* the reply is in its reasoning part */
+    int ink_effort; /* Inkling: its effort message written in the sequence */
     int in_turn;    /* Gemma: the reply continues the model's turn (after the
                        tools' answers), no new turn to open */
     int chan_label; /* Gemma: the channel's name ("thought\n") to skip */

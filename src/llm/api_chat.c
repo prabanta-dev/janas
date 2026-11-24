@@ -302,9 +302,28 @@ int janas_api_add_special(janas_llm_chat *c, int32_t id)
 /* The newline after a turn's end: ChatML's and Gemma's, none in Llama 3. */
 int janas_api_end_turn_nl(janas_llm_chat *c)
 {
-    return c->llm->format == FORMAT_LLAMA3 || c->llm->format == FORMAT_DEEPSEEK
+    return c->llm->format == FORMAT_LLAMA3 ||
+                   c->llm->format == FORMAT_DEEPSEEK ||
+                   c->llm->format == FORMAT_INKLING
                ? 0
                : janas_api_add_text(c, "\n", 1);
+}
+
+/* Inkling's effort, once a sequence, before its first message that is not
+   the system's: 0, or the template's 0.9 when the model reasons. */
+static int ink_effort(janas_llm_chat *c)
+{
+    const janas_llm *llm = c->llm;
+    if (c->ink_effort)
+        return 0;
+    const char *e = llm->thinker && c->p.thinking != 0
+                        ? "Thinking effort level: 0.9"
+                        : "Thinking effort level: 0";
+    c->ink_effort = 1;
+    return janas_api_add_special(c, llm->ink_role[2]) ||
+           janas_api_add_special(c, llm->ink_text) ||
+           janas_api_add_text(c, e, strlen(e)) ||
+           janas_api_add_special(c, llm->ink_endmsg);
 }
 
 /* One message of the conversation, in the model's format. */
@@ -313,6 +332,20 @@ int janas_api_add_message(janas_llm_chat *c, const char *role, const char *text,
 {
     const janas_llm *llm = c->llm;
     switch (llm->format) {
+    case FORMAT_INKLING: {
+        int sys = !strcmp(role, "system");
+        if (!sys && ink_effort(c))
+            return -1;
+        int r = !strcmp(role, "assistant") ? 1
+                : sys                      ? 2
+                : !strcmp(role, "tool")    ? 3
+                                           : 0;
+        return janas_api_add_special(c, llm->ink_role[r]) ||
+               janas_api_add_special(c, llm->ink_text) ||
+               janas_api_add_text(c, text, n) ||
+               janas_api_add_special(c, llm->ink_endmsg) ||
+               (r == 1 && janas_api_add_special(c, llm->im_end));
+    }
     case FORMAT_DEEPSEEK:
         /* the system message as it is; a reply without its reasoning */
         if (!strcmp(role, "system"))
@@ -347,6 +380,7 @@ int janas_api_add_message(janas_llm_chat *c, const char *role, const char *text,
    nothing for ChatML. */
 int janas_api_begin_sequence(janas_llm_chat *c)
 {
+    c->ink_effort = 0; /* a new sequence: Inkling's effort not written */
     return c->llm->bos >= 0 ? janas_api_add_special(c, c->llm->bos) : 0;
 }
 
@@ -354,6 +388,20 @@ int janas_api_start_reply(janas_llm_chat *c)
 {
     const janas_llm *llm = c->llm;
     switch (llm->format) {
+    case FORMAT_INKLING:
+        /* the model opens its message itself; a prompt with no message yet
+           still says the effort */
+        /* without reasoning the reply is opened as text: at effort 0 the
+           model still reasoned when it chose (98 tokens before a
+           multiplication's answer), as DeepSeek's closes its <think> */
+        c->in_think = 0;
+        if (ink_effort(c))
+            return -1;
+        if (!(llm->thinker && c->p.thinking != 0) &&
+            (janas_api_add_special(c, llm->ink_role[1]) ||
+             janas_api_add_special(c, llm->ink_text)))
+            return -1;
+        return janas_api_flush_text(c);
     case FORMAT_GEMMA:
         if (c->in_turn) { /* after the tools' answers: the model goes on */
             c->in_turn = 0;
@@ -559,6 +607,12 @@ int janas_api_add_system(janas_llm_chat *c, const char *sys, size_t n)
         janas_buf_put(&b, nb.p, nb.n);
     janas_buf_free(&nb);
     janas_tools_system(&b, llm->tools, c->tools_sys, sys, n);
+    if (llm->format == FORMAT_INKLING) { /* its system message */
+        int err =
+            b.oom || (b.n && janas_api_add_message(c, "system", b.p, b.n));
+        janas_buf_free(&b);
+        return err ? -1 : 0;
+    }
     if (llm->format == FORMAT_DEEPSEEK) { /* no turn: the text as it is */
         int err = b.oom || janas_api_add_markup(c, b.p, b.n) ||
                   janas_api_flush_text(c);

@@ -214,9 +214,10 @@ async function getStatus() {
     for (const b of box.querySelectorAll(".dlx"))
       b.onclick = () => { dlClosed.add(b.closest(".dlend").dataset.k); getStatus(); };
   }
-  /* an ended one closes by itself: ten seconds, then a second's fading */
+  /* one that ended well closes by itself: ten seconds, then a second's
+     fading; one that failed stays, its reason with it, until closed */
   for (const g of shown)
-    if (!g.running && !dlFading.has(key(g))) {
+    if (!g.running && g.code === 0 && !dlFading.has(key(g))) {
       const k = key(g);
       dlFading.set(k, "wait");
       setTimeout(() => {

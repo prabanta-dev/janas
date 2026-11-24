@@ -305,7 +305,7 @@ int janas_llm_model_shift(struct janas_llm_model *m, uint32_t keep,
        again instead */
     /* nor DeepSeek-V4's compressed latents, turned at their positions */
     if (!drop || n_kv > m->n_ctx || keep + drop > n_kv || m->hd_max > 512 ||
-        m->cur->n_media || m->a->ds4)
+        m->cur->n_media || m->a->ds4 || m->a->ink)
         return -1;
     /* qwen4exp: its n-gram history first (the one part that can refuse) */
     if (m->hc_n && janas_m_hc_shift(m, keep, drop, n_kv) != 0)
@@ -723,6 +723,12 @@ static int forward(struct janas_llm_model *m, const int32_t *tokens, uint32_t n,
             return -1;
         goto output;
     }
+    /* Inkling-2-Mini: its looped layers (model_ink.c) */
+    if (m->a->ink) {
+        if (janas_m_ink_layers(m, n, pos0) != 0)
+            return -1;
+        goto output;
+    }
     /* Nemotron-H: one part a layer (model_nh.c) */
     if (m->a->nh) {
         if (janas_m_nh_layers(m, n, pos0) != 0)
@@ -938,6 +944,8 @@ int janas_llm_model_rewind_ok(const struct janas_llm_model *m, uint32_t n)
     for (uint32_t sl = 0; sl < m->n_attn; sl++)
         if (m->kv_ring[sl] && m->cur->ring_hi > n + m->kv_cap[sl] - m->window)
             return 0;
+    if (m->a->ink)
+        return janas_m_ink_rewind_ok(m, n);
     return !m->a->ds4 || janas_m_ds4_rewind_ok(m, n);
 }
 

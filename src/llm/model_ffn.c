@@ -124,6 +124,13 @@ static void act_worker(void *arg, int tid, int n_threads)
         uint32_t ff = m->hlen[g];
         float *gt = m->gate + g * stride, *u = m->up + g * stride;
         float *h = m->h + g * stride;
+        if (m->moe_gu_scale) { /* the expert's own scale of gate and up */
+            float s = m->moe_gu_scale[m->pair_exp[m->order[g]]];
+            for (uint32_t r = 0; r < ff; r++) {
+                gt[r] *= s;
+                u[r] *= s;
+            }
+        }
         if (m->swiglu_limit > 0.0f) { /* DeepSeek-V4's clamp */
             float lim = m->swiglu_limit;
             for (uint32_t r = 0; r < ff; r++) {
@@ -137,6 +144,11 @@ static void act_worker(void *arg, int tid, int n_threads)
         if (m->a->nh) { /* relu^2 on up, no gate (Nemotron-H) */
             for (; r < ff; r++)
                 h[r] = u[r] > 0.0f ? u[r] * u[r] : 0.0f;
+        } else if (m->a->ink) { /* Inkling: soft caps on gate and up */
+            for (; r < ff; r++)
+                h[r] = 4.0f * tanhf(gt[r] * 0.25f) *
+                       (1.0f / (1.0f + expf(-gt[r]))) * 25.0f *
+                       tanhf(u[r] * 0.04f);
         } else if (m->a->gelu) {
 #if defined(__x86_64__)
             if (m->avx2)
@@ -174,6 +186,7 @@ static void act_worker(void *arg, int tid, int n_threads)
 struct router_job {
     struct janas_llm_model *m;
     const uint16_t *w;
+    const float *w32; /* the weights at 32 bits, where the model keeps them */
     uint32_t n;
     uint32_t ne; /* the layer's experts: the model's, or fewer (Nemotron-H) */
     const float *x; /* the input (NULL: m->xn) and the scores (NULL: */
@@ -219,6 +232,11 @@ static void router_worker(void *arg, int tid, int n_threads)
     for (uint32_t e = (uint32_t)tid; e < r->ne; e += (uint32_t)n_threads)
         for (uint32_t j = 0; j < r->n; j++) {
             const float *x = in + (size_t)j * dm;
+            if (r->w32) {
+                out[(size_t)j * ne + e] =
+                    janas_dot_f32(r->w32 + (size_t)e * dm, x, dm);
+                continue;
+            }
             const uint16_t *w = r->w + (size_t)e * dm;
 #if defined(__x86_64__)
             if (m->avx2 && m->f16c) {
@@ -790,6 +808,7 @@ int janas_m_moe_block(struct janas_llm_model *m, const struct layer *ly,
     } else if (k) {
         struct router_job rj = {.m = m,
                                 .w = ly->router16,
+                                .w32 = ly->router32,
                                 .n = n,
                                 .ne = ly->n_exp ? ly->n_exp : m->n_expert};
         janas_pool_run(m->compute, router_worker, &rj);

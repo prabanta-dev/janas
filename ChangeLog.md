@@ -2,6 +2,15 @@
 
 > Curated, user-facing summary of completed work, newest first.
 
+## [Unreleased]
+
+## [2026-11-24] - Downloaded DeepSeek-V4-Flash shown in My models, Inkling-2-Mini's engine
+
+- **Inkling-2-Mini's engine (Thinking Machines, issue #76)**: its tokenizer (o200k's splitting: `inkling2`, the same ids as llama.cpp's on 39,449 tokens of four texts) and its looped layers (`model_ink.c`): 24 layers run 48 times, the core three times with messages between the passes through gates of rank 64, depth mixes of block states before every sublayer, attention with no RoPE (a position bias of the query's own, sinks, an output gate), the local layers' window of 1024, short convs, experts with soft-capped gate and up. Against llama.cpp (flash attention off, its cache at 32 bits) on 1300 tokens of text: the most likely token the same at 1279 positions, as close as llama.cpp's default settings are to its own exact ones (1277); blocks of 64 the same to the bit as token by token. The router at 32 bits, as the reference has it. Its chat format: each message its role's token and <|content_text|>, the effort ("Thinking effort level", 0 or 0.9) written once, the reasoning apart from the answer, and without reasoning the reply opened as text, since at effort 0 the model still reasoned when it chose; tried through janas-server, one turn and several. The GPU, the speed and tools are still to come. Both GGUFs convert: ggml-org's Q8_0 and unsloth's (UD-Q4_K_M: its experts in NVFP4 with a scale an expert for gate and up and one for down, its sinks and dynamic conv taps in bf16, read as f32), the latter against llama.cpp the most likely token the same at 61 of 64 positions, as the Q8_0.
+- **DeepSeek-V4-Flash in My models (issues #78, #71)**: the list of the models (Brebus's *My models*, janas-chat's menu) took only files with a chat template, and DeepSeek-V4's has none (its format is read from its tokens), so a downloaded DeepSeek-V4-Flash never showed; it is now recognized as the engine recognizes it.
+- **Brebus: a failed download stays on screen**: its box closed by itself after ten seconds like one that ended well, taking its reason with it; it now stays until closed.
+- **Brebus: Enter in a dialog presses the button it is on**: with the focus on *Cancel* or *Don't allow*, Enter did the main action instead (deleting a chat, running the model's code); it now presses the button that has the focus, and goes to the main one only from a field.
+
 ## [2026-11-24] - A model's server in Brebus no longer stops in the middle of a reply
 
 - **Brebus's screenshots made anew** and its download links in the README and in its guide (`docs/brebus.md`).

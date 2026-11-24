@@ -73,6 +73,7 @@ struct layer {
     struct janas_jns_matrix sh_mx[3];
     float *sh_gate;           /* d_model weights of the sigmoid gate, as f32 */
     const uint16_t *router16; /* router weights, f16 (in place of the f32) */
+    const float *router32;    /* or f32, kept (Inkling: as its reference) */
     uint16_t *router_own;     /* the zero router of a dense layer, if any */
     float *conv_t;            /* conv weights transposed: d_conv x conv_ch */
     /* qwen4exp (model_hc.c): the hyper-connections before the token mixer
@@ -103,6 +104,8 @@ struct layer {
     const struct janas_jns_tensor *lat_down, *lat_up, *sh_up, *sh_down;
     /* DeepSeek-V4 (model_ds4.c): the layer's own tensors there */
     struct ds4_layer *ds4l;
+    /* Inkling-2-Mini (model_ink.c) */
+    struct ink_layer *inkl;
 };
 
 enum { JANAS_NH_MAMBA, JANAS_NH_ATTN, JANAS_NH_MOE };
@@ -168,6 +171,7 @@ struct janas_seq {
     uint32_t n_media;
     /* DeepSeek-V4's (model_ds4.c), made when first used */
     struct janas_ds4_seq *ds4;
+    struct janas_ink_seq *ink; /* Inkling-2-Mini's (model_ink.c) */
 };
 
 struct janas_llm_model {
@@ -294,6 +298,10 @@ struct janas_llm_model {
     float swiglu_limit;
     /* DeepSeek-V4 (model_ds4.c): its tensors, mixes and scratch */
     struct janas_ds4 *ds4;
+    struct janas_ink *ink; /* Inkling-2-Mini's (model_ink.c) */
+    /* the layer's scale of each expert's gate and up, for the moe_block
+       call under way (Inkling's NVFP4 files), or NULL */
+    const float *moe_gu_scale;
     const struct janas_block_q8k *moe_xq;
     float *moe_out, *lat, *lat_acc, *sh_h;
     struct janas_block_q8k *latq, *sh_hq;
@@ -981,6 +989,18 @@ int janas_m_ds4_layers(struct janas_llm_model *m, uint32_t n, uint32_t pos0);
 int janas_m_ds4_rewind_ok(const struct janas_llm_model *m, uint32_t n);
 void janas_m_ds4_route(struct janas_llm_model *m, const struct layer *ly,
                        uint32_t l, uint32_t n);
+/* Inkling-2-Mini (model_ink.c): as DeepSeek-V4's - its hyperparameters,
+   layer l's tensors, its buffers, freed; a sequence's state freed; a
+   block's 48 layer passes on the embeddings in x, the final depth mix into
+   x for the output norm; whether the sequence can go back to n */
+int janas_m_ink_params(struct janas_llm_model *m);
+int janas_m_ink_layer_load(struct janas_llm_model *m, uint32_t l,
+                           struct layer *ly, char *err, size_t err_len);
+int janas_m_ink_alloc(struct janas_llm_model *m);
+void janas_m_ink_free(struct janas_llm_model *m);
+void janas_m_ink_seq_free(struct janas_llm_model *m, struct janas_seq *sq);
+int janas_m_ink_layers(struct janas_llm_model *m, uint32_t n, uint32_t pos0);
+int janas_m_ink_rewind_ok(const struct janas_llm_model *m, uint32_t n);
 /* which experts a moe_block call runs */
 enum { MOE_ALL, MOE_SHARED, MOE_ROUTED };
 

@@ -45,7 +45,11 @@ function dialog(o) {
     };
     const key = (e) => {
       if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); end(btns[btns.length - 1]); }
-      else if (e.key === "Enter" && !e.shiftKey && !(fieldEl && fieldEl.tagName === "TEXTAREA")) {
+      /* Enter: the main button from a field; on a button, that button (the
+         browser's own click) - never the main one, as Cancel or Don't allow
+         would then do what they refuse */
+      else if (e.key === "Enter" && !e.shiftKey && !(fieldEl && fieldEl.tagName === "TEXTAREA") &&
+               !(e.target instanceof Element && e.target.closest("button, a, select, summary"))) {
         e.preventDefault(); end(btns.find((b) => b.primary) || btns[0]);
       }
     };

@@ -218,6 +218,14 @@ static void take(janas_llm_chat *c, int32_t t)
     char tmp[sizeof(c->pend)];
     if (!c->in_think && t != llm->think_open && t != llm->think_close)
         c->answer_tokens++; /* text or a call: what max_answer counts */
+    /* Inkling: its message marks, never text */
+    if (llm->format == FORMAT_INKLING &&
+        (t == llm->ink_role[1] || t == llm->ink_endmsg)) {
+        if (t == llm->ink_endmsg)
+            c->in_think = 0;
+        janas_api_record(c, t, JANAS_LLM_PART_MARK, "", 0);
+        return;
+    }
     if (t == llm->think_open || t == llm->think_close) {
         c->in_think = t == llm->think_open;
         /* Gemma names its channel before the reasoning: "thought\n" */
@@ -340,8 +348,12 @@ static void close_reasoning(janas_llm_chat *c)
     long n = janas_tokenizer_encode(llm->tok, say, sizeof(say) - 1, 0, ids, 64);
     if (n < 0 || n > 64)
         n = 0;
+    if (llm->format == FORMAT_INKLING) { /* the message ends, a text one */
+        ids[n++] = llm->ink_endmsg;
+        ids[n++] = llm->ink_role[1];
+    }
     ids[n++] = llm->think_close;
-    if (llm->format != FORMAT_GEMMA) {
+    if (llm->format != FORMAT_GEMMA && llm->format != FORMAT_INKLING) {
         long m = janas_tokenizer_encode(llm->tok, "\n\n", 2, 0, ids + n, 8);
         if (m > 0 && m <= 8)
             n += m;

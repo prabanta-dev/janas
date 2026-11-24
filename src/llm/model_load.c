@@ -814,8 +814,9 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
     m->d_ff = m->j.layers[0].m[JANAS_JNS_GATE].rows;
     uint32_t interval = 4;
     const uint8_t *swa_pat = NULL;
-    if (m->a->nh
-            ? janas_m_nh_params(m) != 0
+    if (m->a->nh ? janas_m_nh_params(m) != 0
+        : m->a->ink
+            ? janas_m_ink_params(m) != 0
             : meta_u32(m, "attention.head_count", &m->n_head) ||
                   (m->a->swa ? load_swa_params(m, &swa_pat)
                              : meta_u32(m, "attention.head_count_kv",
@@ -832,8 +833,8 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
         snprintf(err, err_len, "missing or inconsistent hyperparameters");
         goto fail;
     }
-    if (meta_u32(m, "rope.dimension_count", &m->n_rot) != 0)
-        m->n_rot = m->head_dim;
+    if (meta_u32(m, "rope.dimension_count", &m->n_rot) != 0 || m->a->ink)
+        m->n_rot = m->head_dim; /* Inkling: no RoPE, the tables unused */
     if (m->a->ds4 && janas_m_ds4_params(m) != 0) {
         snprintf(err, err_len, "missing or inconsistent hyperparameters");
         goto fail;
@@ -1012,6 +1013,14 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
         snprintf(err, err_len, "embedding and output vocabularies differ");
         goto fail;
     }
+    /* Inkling's head padded past its vocabulary: its rows alone */
+    if (m->a->ink) {
+        uint32_t nv = 0;
+        char key[96];
+        snprintf(key, sizeof(key), "%.32s.vocab_size_unpadded", m->j.h.arch);
+        if (janas_jns_meta_u32(&m->j, key, &nv) == 0 && nv && nv < m->n_vocab)
+            m->n_vocab = nv;
+    }
     m->layers = calloc(m->n_layer, sizeof(*m->layers));
     if (!m->layers)
         goto fail;
@@ -1020,6 +1029,11 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
         ly->rec = m->a->rec && (l + 1) % interval != 0;
         if (m->a->ds4) { /* its state is model_ds4.c's, not the KV cache */
             if (janas_m_ds4_layer_load(m, &m->j, l, ly, err, err_len) != 0)
+                goto fail;
+            continue;
+        }
+        if (m->a->ink) { /* and Inkling's model_ink.c's */
+            if (janas_m_ink_layer_load(m, l, ly, err, err_len) != 0)
                 goto fail;
             continue;
         }
@@ -1125,7 +1139,7 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
     }
     for (uint32_t l = 0; l <= m->n_layer; l++) {
         const struct layer *ly = l < m->n_layer ? &m->layers[l] : &m->mtp_layer;
-        if (ly->rec || (l == m->n_layer && !m->mtp) || m->a->ds4 ||
+        if (ly->rec || (l == m->n_layer && !m->mtp) || m->a->ds4 || m->a->ink ||
             (m->a->nh && l < m->n_layer && ly->nh_kind == JANAS_NH_MOE))
             continue;
         m->kv_hd[ly->slot] = ly->hd;
@@ -1334,7 +1348,8 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
     m->moe_xq = m->xq;
     m->moe_out = m->x;
     if ((m->a->nh && janas_m_nh_alloc(m) != 0) ||
-        (m->a->ds4 && janas_m_ds4_alloc(m) != 0)) {
+        (m->a->ds4 && janas_m_ds4_alloc(m) != 0) ||
+        (m->a->ink && janas_m_ink_alloc(m) != 0)) {
         snprintf(err, err_len, "out of memory");
         goto fail;
     }
@@ -1636,6 +1651,7 @@ void janas_llm_model_free(struct janas_llm_model *m)
     janas_m_hc_free(m);
     janas_m_nh_free(m);
     janas_m_ds4_free(m);
+    janas_m_ink_free(m);
     janas_m_qsa_free(m);
     if (m->layers)
         for (uint32_t l = 0; l < m->n_layer; l++) {

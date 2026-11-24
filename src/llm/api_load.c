@@ -168,7 +168,8 @@ static int add_assistant(janas_llm_chat *c, const struct cmsg *m, int after_q)
         janas_buf_free(&b);
         return err ? -1 : 0;
     }
-    if (llm->format == FORMAT_LLAMA3 || llm->format == FORMAT_DEEPSEEK)
+    if (llm->format == FORMAT_LLAMA3 || llm->format == FORMAT_DEEPSEEK ||
+        llm->format == FORMAT_INKLING)
         /* no reasoning given back, no tools */
         return janas_api_add_message(c, llm->asst_role, m->text, m->n) ? -1 : 0;
     enum janas_tool_dialect d = llm->tools;

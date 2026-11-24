@@ -232,6 +232,34 @@ static int32_t find_format_in(janas_llm *llm, const struct janas_jns *j,
         llm->call_open = llm->call_close = -1;
         llm->resp_open = llm->resp_close = -1;
         llm->tools = JANAS_TOOLS_NONE;
+    } else if (janas_tokenizer_find(llm->tok, "<|message_user|>") >= 0 &&
+               janas_tokenizer_find(llm->tok, "<|content_text|>") >= 0 &&
+               janas_tokenizer_find(llm->tok, "<|end_message|>") >= 0 &&
+               janas_tokenizer_find(llm->tok,
+                                    "<|content_model_end_sampling|>") >= 0 &&
+               strstr(tmpl, "<|message_user|>")) {
+        /* Inkling-2-Mini: its messages and effort (chat.h) */
+        static const char *const roles[4] = {
+            "<|message_user|>", "<|message_model|>", "<|message_system|>",
+            "<|message_tool|>"};
+        llm->format = FORMAT_INKLING;
+        for (int i = 0; i < 4; i++)
+            llm->ink_role[i] = janas_tokenizer_find(llm->tok, roles[i]);
+        llm->ink_text = janas_tokenizer_find(llm->tok, "<|content_text|>");
+        llm->ink_endmsg = janas_tokenizer_find(llm->tok, "<|end_message|>");
+        llm->asst_role = "assistant";
+        llm->im_start = llm->ink_role[0];
+        llm->im_end =
+            janas_tokenizer_find(llm->tok, "<|content_model_end_sampling|>");
+        add_stop(llm, llm->im_end);
+        llm->think_open =
+            janas_tokenizer_find(llm->tok, "<|content_thinking|>");
+        llm->think_close = llm->ink_text;
+        llm->thinker = llm->think_open >= 0 &&
+                       strstr(tmpl, "Thinking effort level") != NULL;
+        llm->call_open = llm->call_close = -1;
+        llm->resp_open = llm->resp_close = -1;
+        llm->tools = JANAS_TOOLS_NONE;
     } else if (llm->im_start >= 0 && llm->im_end >= 0 &&
                (tmpl[0] == 0 || strstr(tmpl, "<|im_start|>"))) {
         llm->format = FORMAT_CHATML;
@@ -610,7 +638,8 @@ int32_t janas_llm_open(const char *path, const struct janas_llm_params *pp,
         (strcmp(kind, "gpt2") == 0 &&
          (strcmp(pre, "qwen2") == 0 || strcmp(pre, "qwen35") == 0 ||
           strcmp(pre, "llama-bpe") == 0 || strcmp(pre, "pixtral") == 0 ||
-          strcmp(pre, "deepseek-v3") == 0 || strcmp(pre, "joyai-llm") == 0)) ||
+          strcmp(pre, "deepseek-v3") == 0 || strcmp(pre, "joyai-llm") == 0 ||
+          strcmp(pre, "inkling2") == 0)) ||
         strcmp(kind, "gemma4") == 0;
     if (!known)
         rc = janas_api_fail(JANAS_LLM_EMODEL, "tokenizer %s/%s not supported",

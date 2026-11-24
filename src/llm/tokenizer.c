@@ -34,6 +34,8 @@ struct janas_tokenizer {
                    written as U+2581, unknown characters as <0xXX> bytes */
     int tekken; /* Mistral's Tekken expression (pre "pixtral": Nemotron-H),
                    and a pre-token in the vocabulary taken whole, unmerged */
+    int o200k;  /* with tekken: o200k's (pre "inkling2"): a word takes an
+                   English contraction after it, digits go three by three */
     int gpt2;   /* GPT-2's expression (pre "whisper") */
     int ds3;    /* DeepSeek-V3's splits (pre "deepseek-v3", "joyai-llm") */
 };
@@ -226,7 +228,9 @@ struct janas_tokenizer *janas_tokenizer_create(const struct janas_jns *j,
     t->marks = strcmp(pre, "qwen35") == 0;
     t->digits = strcmp(pre, "llama-bpe") == 0 ? 3 : 1;
     t->spm = strcmp(model, "gemma4") == 0;
-    t->tekken = strcmp(pre, "pixtral") == 0 || strcmp(pre, "tekken") == 0;
+    t->o200k = strcmp(pre, "inkling2") == 0;
+    t->tekken =
+        strcmp(pre, "pixtral") == 0 || strcmp(pre, "tekken") == 0 || t->o200k;
     t->gpt2 = strcmp(pre, "whisper") == 0 || strcmp(pre, "gpt-2") == 0;
     /* DeepSeek-V3's, and V4's, which llama.cpp calls joyai-llm */
     t->ds3 = strcmp(pre, "deepseek-v3") == 0 || strcmp(pre, "joyai-llm") == 0;
@@ -494,7 +498,27 @@ static size_t gpt2_end(const uint32_t *cp, size_t n, size_t i)
  * either. The first alternative backtracks as a regex does: U* gives back
  * up to the last W it took.
  */
-static size_t tekken_end(const uint32_t *cp, size_t n, size_t i)
+/* o200k's (?i:'s|'t|'re|'ve|'m|'ll|'d)? after a word: where it ends */
+static size_t contraction(const uint32_t *cp, size_t n, size_t e)
+{
+#define LOW(c) ((c) >= 'A' && (c) <= 'Z' ? (c) + 32 : (c))
+    if (e + 1 >= n || cp[e] != '\'')
+        return e;
+    uint32_t a = LOW(cp[e + 1]), b = e + 2 < n ? LOW(cp[e + 2]) : 0;
+    if (a == 's' || a == 't' || a == 'm' || a == 'd')
+        return e + 2;
+    if ((a == 'r' && b == 'e') || (a == 'v' && b == 'e') ||
+        (a == 'l' && b == 'l'))
+        return e + 3;
+    return e;
+#undef LOW
+}
+
+/* o200k (pre "inkling2"): Tekken's, but a word takes an English
+   contraction after it and a number's digits go up to three together:
+ *   [^\r\n\p{L}\p{N}]?U*W+C? | [^\r\n\p{L}\p{N}]?U+W*C? | \p{N}{1,3} | ...
+ * (C the contraction; the rest as Tekken's) */
+static size_t tekken_end(const uint32_t *cp, size_t n, size_t i, int o200k)
 {
 #define LM(c) (is_letter(c) || is_mark(c))
 #define UP(c) (LM(c) && !((c) >= 'a' && (c) <= 'z'))
@@ -511,20 +535,24 @@ static size_t tekken_end(const uint32_t *cp, size_t n, size_t i)
         if (u < n && LO(cp[u])) { /* U* then W+ */
             while (u < n && LO(cp[u]))
                 u++;
-            return u;
+            return o200k ? contraction(cp, n, u) : u;
         }
         for (size_t p = u; p > k; p--) /* U* gives back to a W */
             if (LO(cp[p - 1])) {
                 size_t e = p - 1;
                 while (e < n && LO(cp[e]))
                     e++;
-                return e;
+                return o200k ? contraction(cp, n, e) : e;
             }
         if (u > k) /* U+ then W*, W* empty here */
-            return u;
+            return o200k ? contraction(cp, n, u) : u;
     }
-    if (is_number(c))
-        return i + 1;
+    if (is_number(c)) {
+        size_t e = i + 1;
+        while (o200k && e < n && e < i + 3 && is_number(cp[e]))
+            e++;
+        return e;
+    }
     k = i + (c == ' ');
     if (k < n && !is_space(cp[k]) && !is_letter(cp[k]) && !is_number(cp[k])) {
         while (k < n && !is_space(cp[k]) && !is_letter(cp[k]) &&
@@ -865,7 +893,7 @@ static int encode_plain(const struct janas_tokenizer *t, const char *text,
     }
     at[n] = len;
     for (size_t i = 0; i < n;) {
-        size_t e = t->tekken ? tekken_end(cp, n, i)
+        size_t e = t->tekken ? tekken_end(cp, n, i, t->o200k)
                    : t->gpt2 ? gpt2_end(cp, n, i)
                    : t->ds3  ? ds3_piece(cp, n, i)
                              : pretoken_end(cp, n, i, t->marks, t->digits);

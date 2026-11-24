@@ -59,6 +59,12 @@ struct janas_arch {
        choosing among them), experts chosen by sqrt(softplus) scores or by a
        table of token ids, SwiGLU clamped */
     int ds4;
+    /* Inkling-2-Mini (inkling2_loop, model_ink.c): 24 layers run 48 times
+       (6-17 three times, messages between the passes), depth mixes of
+       block states before every sublayer, attention with no RoPE (a
+       position bias of the query's own, sinks, an output gate), short
+       convs, experts 4 tanh(g/4) sigmoid(g) 25 tanh(u/25) */
+    int ink;
 };
 
 /* The architecture called name, or NULL if Janas does not know it. */

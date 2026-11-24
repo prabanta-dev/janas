@@ -1020,7 +1020,7 @@ int janas_m_gpu_token_asked(void)
 int janas_m_gpu_token(struct janas_llm_model *m, uint32_t pos, uint32_t n,
                       int all, float *logits)
 {
-    if (m->gtok_state < 0 || m->a->ds4)
+    if (m->gtok_state < 0 || m->a->ds4 || m->a->ink)
         return -1;
     /* a picture whose tokens attend both ways: the CPU's attention */
     if (m->cur->n_media && janas_m_media_both(m, pos, n))

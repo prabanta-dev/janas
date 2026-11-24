@@ -46,6 +46,8 @@ static const struct janas_arch archs[] = {
      .nh = 1},
     /* DeepSeek-V4-Flash */
     {.name = "deepseek4", .rec = JANAS_REC_NONE, .ds4 = 1},
+    /* Thinking Machines' Inkling-2-Mini */
+    {.name = "inkling2_loop", .rec = JANAS_REC_NONE, .ink = 1},
     /* its scores are not scaled down, and an eight-bit key moves them: at
        eight bits llama.cpp agrees with its own f16 cache at 169 of 200 most
        likely tokens */
