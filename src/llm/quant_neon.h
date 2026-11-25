@@ -52,7 +52,13 @@ static inline int32_t s8_sum16(int8x16_t a, int8x16_t b)
     return vaddvq_s32(vaddq_s32(vpaddlq_s16(p), vpaddlq_s16(q)));
 }
 
-#define SDOT __attribute__((target("+dotprod")))
+/* the architecture named whole: GCC 11 (Ubuntu 22.04's) takes "+dotprod"
+   alone as ARMv8.0 with the extension, which its arm_neon.h refuses */
+#if defined(__clang__)
+#define SDOT __attribute__((target("dotprod")))
+#else
+#define SDOT __attribute__((target("arch=armv8.2-a+dotprod")))
+#endif
 
 /* the dot product instructions: four products into each 32-bit lane */
 SDOT static inline int32_t sdot_sum32(int8x16_t a0, int8x16_t a1, int8x16_t b0,

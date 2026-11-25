@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include "brebus.h"
@@ -117,6 +118,23 @@ int brebus_autostart(int on)
     return rc;
 }
 #else
+/* What the menu and the login start: brebus itself, or, run from an
+   AppImage, the .AppImage file (APPIMAGE, set by its runtime), since the
+   folder brebus runs from is mounted anew, elsewhere, at each start. */
+static int launch_path(char *exe, size_t n)
+{
+    if (janas_exe_path(exe, n) <= 0)
+        return -1;
+    const char *img = getenv("APPIMAGE"), *dir = getenv("APPDIR");
+    struct stat st;
+    size_t dl = dir ? strlen(dir) : 0;
+    if (img && *img == '/' && dl && strncmp(exe, dir, dl) == 0 &&
+        exe[dl] == '/' && stat(img, &st) == 0 && S_ISREG(st.st_mode) &&
+        !strpbrk(img, "\"\\`$\n") && strlen(img) < n)
+        snprintf(exe, n, "%s", img);
+    return 0;
+}
+
 int brebus_install_desktop(int quiet)
 {
     const char *home = getenv("HOME"), *xd = getenv("XDG_DATA_HOME");
@@ -129,7 +147,7 @@ int brebus_install_desktop(int quiet)
         fprintf(stderr, "brebus: no home\n");
         return 1;
     }
-    if (janas_exe_path(exe, sizeof exe) <= 0) {
+    if (launch_path(exe, sizeof exe) != 0) {
         fprintf(stderr, "brebus: where is brebus?\n");
         return 1;
     }
@@ -203,7 +221,7 @@ int brebus_autostart(int on)
     autostart_path(p, sizeof p);
     if (!on)
         return remove(p) == 0 || errno == ENOENT ? 0 : -1;
-    if (janas_exe_path(exe, sizeof exe) <= 0)
+    if (launch_path(exe, sizeof exe) != 0)
         return -1;
     snprintf(dir, sizeof dir, "%s", p);
     *strrchr(dir, '/') = 0;

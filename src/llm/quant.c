@@ -1615,6 +1615,7 @@ static inline void iq2_sub_mask(int type, const void *blk, int l,
 #include "quant_z.h"
 #elif defined(__aarch64__)
 #include "quant_neon.h" /* 64-bit ARM: the references' sums, with NEON */
+static int use_sdot; /* the dot product instructions' kernels */
 #if defined(__linux__)
 #include <sys/auxv.h>
 #endif
@@ -1854,6 +1855,7 @@ __attribute__((constructor)) static void dot_kernels_init(void)
     dot51_impl = sdot ? q5_1_dot_sdot : q5_1_dot_neon;
     dot2k_impl = sdot ? q2k_dot_sdot : q2k_dot_neon;
     dot3_impl = sdot ? q3k_dot_sdot : q3k_dot_neon;
+    use_sdot = sdot;
     dot_name = sdot ? "neon-sdot" : "neon";
 #endif
 }
@@ -2721,6 +2723,37 @@ void janas_dot_multi(int type, const void *w, const struct janas_block_q8k *x,
                 break;
             default:
                 (KPICK(q8_0_dotn))(w, xv, x_stride, g, nb, r);
+            }
+            for (int i = 0; i < g; i++)
+                out[(v + (size_t)i) * out_stride] = r[i];
+        }
+        return;
+    }
+#elif defined(__aarch64__)
+    if (type == JANAS_Q4_K || type == JANAS_Q5_K || type == JANAS_Q6_K ||
+        type == JANAS_Q8_0) {
+        float r[8];
+        int g = 1;
+        for (; v < nv; v += (size_t)g) {
+            /* groups of 8, then the rest in one group */
+            g = nv - v >= 8 ? 8 : (int)(nv - v);
+            const struct janas_block_q8k *xv = x + v * x_stride;
+            switch (type) {
+            case JANAS_Q4_K:
+                (use_sdot ? q4k_dotn_sdot : q4k_dotn_neon)(w, xv, x_stride, g,
+                                                           nb, r);
+                break;
+            case JANAS_Q5_K:
+                (use_sdot ? q5k_dotn_sdot : q5k_dotn_neon)(w, xv, x_stride, g,
+                                                           nb, r);
+                break;
+            case JANAS_Q6_K:
+                (use_sdot ? q6k_dotn_sdot : q6k_dotn_neon)(w, xv, x_stride, g,
+                                                           nb, r);
+                break;
+            default:
+                (use_sdot ? q8_0_dotn_sdot : q8_0_dotn_neon)(w, xv, x_stride, g,
+                                                             nb, r);
             }
             for (int i = 0; i < g; i++)
                 out[(v + (size_t)i) * out_stride] = r[i];

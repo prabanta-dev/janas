@@ -332,3 +332,162 @@ KATTR static float K(q3k_dot)(const struct janas_block_q3k *w,
     }
     return acc;
 }
+
+/*
+ * The same products for nv vectors (1 to 8) at once: a row's block read and
+ * its weights unpacked once, then each vector's sums and float operations
+ * as the one-vector kernel makes them, in its order - each result that
+ * kernel's to the bit. x[v * xs] is vector v's first block.
+ */
+KATTR static void K(q4k_dotn)(const struct janas_block_q4k *w,
+                              const struct janas_block_q8k *x, size_t xs,
+                              int nv, size_t nb, float *out)
+{
+    const uint8x16_t low4 = vdupq_n_u8(0x0f);
+    float acc[8] = {0}, accm[8] = {0};
+    for (size_t b = 0; b < nb; b++) {
+        uint8_t sc[8], m[8];
+        unpack_scales(w[b].scales, sc, m);
+        int8x16_t lo[8], hi[8];
+        for (int s = 0; s < 8; s += 2) {
+            const uint8_t *q = w[b].qs + (s / 2) * 32;
+            uint8x16_t q0 = vld1q_u8(q), q1 = vld1q_u8(q + 16);
+            lo[s] = vreinterpretq_s8_u8(vandq_u8(q0, low4));
+            lo[s + 1] = vreinterpretq_s8_u8(vandq_u8(q1, low4));
+            hi[s] = vreinterpretq_s8_u8(vshrq_n_u8(q0, 4));
+            hi[s + 1] = vreinterpretq_s8_u8(vshrq_n_u8(q1, 4));
+        }
+        float d = janas_fp16_to_fp32(w[b].d),
+              dmin = janas_fp16_to_fp32(w[b].dmin);
+        for (int v = 0; v < nv; v++) {
+            const struct janas_block_q8k *xb = x + (size_t)v * xs + b;
+            int32_t sumi = 0, summ = 0;
+            for (int s = 0; s < 8; s += 2) {
+                const int8_t *a = xb->qs + s * 32;
+                int32_t l =
+                    KSUM32(lo[s], lo[s + 1], vld1q_s8(a), vld1q_s8(a + 16));
+                int32_t h = KSUM32(hi[s], hi[s + 1], vld1q_s8(a + 32),
+                                   vld1q_s8(a + 48));
+                sumi += sc[s] * l + sc[s + 1] * h;
+                summ +=
+                    m[s] * (xb->bsums[2 * s] + xb->bsums[2 * s + 1]) +
+                    m[s + 1] * (xb->bsums[2 * s + 2] + xb->bsums[2 * s + 3]);
+            }
+            acc[v] = fmaf(d * xb->d, (float)sumi, acc[v]);
+            accm[v] = fmaf(dmin * xb->d, (float)summ, accm[v]);
+        }
+    }
+    for (int v = 0; v < nv; v++)
+        out[v] = acc[v] - accm[v];
+}
+
+KATTR static void K(q5k_dotn)(const struct janas_block_q5k *w,
+                              const struct janas_block_q8k *x, size_t xs,
+                              int nv, size_t nb, float *out)
+{
+    const uint8x16_t low4 = vdupq_n_u8(0x0f), one = vdupq_n_u8(1);
+    float acc[8] = {0}, accm[8] = {0};
+    for (size_t b = 0; b < nb; b++) {
+        uint8_t sc[8], m[8];
+        unpack_scales(w[b].scales, sc, m);
+        uint8x16_t h0 = vld1q_u8(w[b].qh), h1 = vld1q_u8(w[b].qh + 16);
+        int8x16_t wq[8][2];
+        for (int s = 0; s < 8; s++) {
+            const uint8_t *q = w[b].qs + (s / 2) * 32;
+            uint8x16_t q0 = vld1q_u8(q), q1 = vld1q_u8(q + 16);
+            if (s & 1)
+                q0 = vshrq_n_u8(q0, 4), q1 = vshrq_n_u8(q1, 4);
+            else
+                q0 = vandq_u8(q0, low4), q1 = vandq_u8(q1, low4);
+            int8x16_t sh = vdupq_n_s8((int8_t)-s);
+            q0 = vorrq_u8(q0, vshlq_n_u8(vandq_u8(vshlq_u8(h0, sh), one), 4));
+            q1 = vorrq_u8(q1, vshlq_n_u8(vandq_u8(vshlq_u8(h1, sh), one), 4));
+            wq[s][0] = vreinterpretq_s8_u8(q0);
+            wq[s][1] = vreinterpretq_s8_u8(q1);
+        }
+        float d = janas_fp16_to_fp32(w[b].d),
+              dmin = janas_fp16_to_fp32(w[b].dmin);
+        for (int v = 0; v < nv; v++) {
+            const struct janas_block_q8k *xb = x + (size_t)v * xs + b;
+            int32_t sumi = 0, summ = 0;
+            for (int s = 0; s < 8; s++) {
+                const int8_t *a = xb->qs + s * 32;
+                int32_t dot =
+                    KSUM32(wq[s][0], wq[s][1], vld1q_s8(a), vld1q_s8(a + 16));
+                sumi += sc[s] * dot;
+                summ += m[s] * (xb->bsums[2 * s] + xb->bsums[2 * s + 1]);
+            }
+            acc[v] = fmaf(d * xb->d, (float)sumi, acc[v]);
+            accm[v] = fmaf(dmin * xb->d, (float)summ, accm[v]);
+        }
+    }
+    for (int v = 0; v < nv; v++)
+        out[v] = acc[v] - accm[v];
+}
+
+KATTR static void K(q6k_dotn)(const struct janas_block_q6k *w,
+                              const struct janas_block_q8k *x, size_t xs,
+                              int nv, size_t nb, float *out)
+{
+    const uint8x16_t low4 = vdupq_n_u8(0x0f), three = vdupq_n_u8(3);
+    const int8x16_t bias = vdupq_n_s8(32);
+    float acc[8] = {0};
+    for (size_t b = 0; b < nb; b++) {
+        int8x16_t wv[16];
+        for (int n = 0; n < 2; n++)
+            for (int part = 0; part < 4; part++) {
+                const uint8_t *ql = w[b].ql + 64 * n + (part & 1) * 32;
+                const uint8_t *qh = w[b].qh + 32 * n;
+                for (int half = 0; half < 2; half++) {
+                    uint8x16_t l = vld1q_u8(ql + 16 * half);
+                    l = part < 2 ? vandq_u8(l, low4) : vshrq_n_u8(l, 4);
+                    uint8x16_t h = vld1q_u8(qh + 16 * half);
+                    h = vandq_u8(vshlq_u8(h, vdupq_n_s8((int8_t)(-2 * part))),
+                                 three);
+                    wv[8 * n + 2 * part + half] = vsubq_s8(
+                        vreinterpretq_s8_u8(vorrq_u8(l, vshlq_n_u8(h, 4))),
+                        bias);
+                }
+            }
+        float d = janas_fp16_to_fp32(w[b].d);
+        for (int v = 0; v < nv; v++) {
+            const struct janas_block_q8k *xb = x + (size_t)v * xs + b;
+            int32_t sumi = 0;
+            /* the one-vector kernel's order of the groups */
+            for (int n = 0; n < 2; n++)
+                for (int part = 0; part < 4; part++)
+                    for (int half = 0; half < 2; half++) {
+                        int g = 8 * n + 2 * part + half;
+                        sumi += w[b].scales[g] *
+                                KSUM16(wv[g], vld1q_s8(xb->qs + 16 * g));
+                    }
+            acc[v] = fmaf(d * xb->d, (float)sumi, acc[v]);
+        }
+    }
+    for (int v = 0; v < nv; v++)
+        out[v] = acc[v];
+}
+
+KATTR static void K(q8_0_dotn)(const struct janas_block_q8_0 *w,
+                               const struct janas_block_q8k *x, size_t xs,
+                               int nv, size_t nb, float *out)
+{
+    float acc[8][8] = {{0}};
+    for (size_t b = 0; b < nb; b++)
+        for (int k = 0; k < 8; k++) {
+            const struct janas_block_q8_0 *wk = w + 8 * b + k;
+            int8x16_t q0 = vld1q_s8(wk->qs), q1 = vld1q_s8(wk->qs + 16);
+            float d = janas_fp16_to_fp32(wk->d);
+            for (int v = 0; v < nv; v++) {
+                const struct janas_block_q8k *xb = x + (size_t)v * xs + b;
+                const int8_t *a = xb->qs32 + 32 * k;
+                int32_t dot = KSUM32W(q0, q1, vld1q_s8(a), vld1q_s8(a + 16));
+                acc[v][k] = fmaf(d * xb->d32[k], (float)dot, acc[v][k]);
+            }
+        }
+    for (int v = 0; v < nv; v++) {
+        const float *a = acc[v];
+        out[v] =
+            ((a[0] + a[4]) + (a[2] + a[6])) + ((a[1] + a[5]) + (a[3] + a[7]));
+    }
+}

@@ -35,6 +35,8 @@ jobs:
   # of its own kind (Ubuntu 22.04: its C library), packed the same way
   linux:
     strategy:
+      # each machine's build and tests to their end, whatever the other's
+      fail-fast: false
       matrix:
         include:
           - arch: x86_64
