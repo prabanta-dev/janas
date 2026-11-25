@@ -20,7 +20,6 @@
 #include "sysinfo_os.h"
 
 #include <windows.h>
-#include <cpuid.h>
 #include <powrprof.h>
 #include <psapi.h>
 #include <stdio.h>
@@ -224,6 +223,7 @@ int janas_cpu_split(int *compute, int *n_compute, int *io, int *n_io, int max)
 int janas_cpus_save(unsigned char save[JANAS_CPU_SAVE_BYTES])
 {
     _Static_assert(sizeof(GROUP_AFFINITY) <= JANAS_CPU_SAVE_BYTES, "cpu set");
+    memset(save, 0, JANAS_CPU_SAVE_BYTES);
     return GetThreadGroupAffinity(GetCurrentThread(), (GROUP_AFFINITY *)save)
                ? 0
                : -1;
@@ -232,7 +232,10 @@ int janas_cpus_save(unsigned char save[JANAS_CPU_SAVE_BYTES])
 void janas_cpus_restore(const unsigned char save[JANAS_CPU_SAVE_BYTES])
 {
     const GROUP_AFFINITY *ga = (const GROUP_AFFINITY *)save;
-    SetThreadGroupAffinity(GetCurrentThread(), ga, NULL);
+    /* only the mask and the group: Windows refuses the call unless the
+       reserved words are zero */
+    GROUP_AFFINITY back = {.Mask = ga->Mask, .Group = ga->Group};
+    SetThreadGroupAffinity(GetCurrentThread(), &back, NULL);
     if (known)
         pinned = ga->Mask != before_pin.Mask || ga->Group != before_pin.Group;
 }
@@ -263,17 +266,17 @@ int janas_exe_path(char *buf, size_t len)
 
 void janas_cpu_name(char *buf, size_t len)
 {
-    /* the brand string, from the processor itself */
-    unsigned r[12];
+    /* the brand string Windows keeps of the processor, on x86 (its own
+       brand string) and on ARM alike */
+    char s[128];
+    DWORD sz = sizeof s;
     buf[0] = 0;
-    if (__get_cpuid_max(0x80000000, NULL) < 0x80000004)
+    if (RegGetValueA(HKEY_LOCAL_MACHINE,
+                     "HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0",
+                     "ProcessorNameString", RRF_RT_REG_SZ, NULL, s,
+                     &sz) != ERROR_SUCCESS)
         return;
-    for (unsigned i = 0; i < 3; i++)
-        __get_cpuid(0x80000002 + i, &r[i * 4], &r[i * 4 + 1], &r[i * 4 + 2],
-                    &r[i * 4 + 3]);
-    char s[49];
-    memcpy(s, r, 48);
-    s[48] = 0;
+    s[sizeof s - 1] = 0;
     char *p = s;
     while (*p == ' ')
         p++;

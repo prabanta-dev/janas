@@ -2,7 +2,8 @@
    Copyright (C) 2026 Maurizio Cammalleri */
 /*
  * sysinfo_os.h - what each system tells of its CPUs, for sysinfo.c:
- * Linux's in sysinfo.c, Windows's in sysinfo_win.c.
+ * Linux's in sysinfo_linux.c, macOS's in sysinfo_mac.c, Windows's in
+ * sysinfo_win.c.
  */
 #ifndef JANAS_COMMON_SYSINFO_OS_H
 #define JANAS_COMMON_SYSINFO_OS_H

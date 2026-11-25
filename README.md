@@ -1,6 +1,6 @@
 # Janas
 
-[![Platform: Linux x86-64 and ARM64 | Windows x86-64](https://img.shields.io/badge/platform-Linux%20x86--64%20%26%20ARM64%20%7C%20Windows%20x86--64-lightgrey.svg)]() [![LinkedIn](https://img.shields.io/badge/LinkedIn-Maurizio%20Cammalleri-0077B5?logo=linkedin)](https://www.linkedin.com/in/maurizio-cammalleri-80a89a11/) [![Substack](https://img.shields.io/badge/Substack-Maurizio%20Cammalleri-FF6719?logo=substack)](https://cammalleri.substack.com/)
+[![Platform: Linux and Windows on x86-64 and ARM64 | macOS on Apple Silicon](https://img.shields.io/badge/platform-Linux%20%26%20Windows%20x86--64%2FARM64%20%7C%20macOS%20Apple%20Silicon-lightgrey.svg)]() [![LinkedIn](https://img.shields.io/badge/LinkedIn-Maurizio%20Cammalleri-0077B5?logo=linkedin)](https://www.linkedin.com/in/maurizio-cammalleri-80a89a11/) [![Substack](https://img.shields.io/badge/Substack-Maurizio%20Cammalleri-FF6719?logo=substack)](https://cammalleri.substack.com/)
 
 <p align="center">
   <img src="docs/img/winston.png" alt="Winston, Janas's mascot: a blue octopus with glasses reading a tablet, the icons of a book, a brain, code and the web around him" width="240">
@@ -19,7 +19,9 @@ tar xf janas-linux-x86_64.tar.gz && cd janas
 
 **On Linux for 64-bit ARM** (the same systems, built and tested on GitHub's ARM machines): the same three lines with `janas-linux-aarch64.tar.gz`.
 
-**Or on Windows** 10 (1903 or later) and 11, x86-64: download [janas-windows-x86_64.zip](https://github.com/prabanta-dev/janas/releases/latest/download/janas-windows-x86_64.zip), unpack it, and in a terminal in its `janas` folder run `.\janas-chat`. Its figures there: [below](#on-windows).
+**Or on Windows** 10 (1903 or later) and 11, x86-64: download [janas-windows-x86_64.zip](https://github.com/prabanta-dev/janas/releases/latest/download/janas-windows-x86_64.zip), unpack it, and in a terminal in its `janas` folder run `.\janas-chat`. Its figures there: [below](#on-windows). On 64-bit ARM (Snapdragon X and the other Copilot+ PCs): [janas-windows-aarch64.zip](https://github.com/prabanta-dev/janas/releases/latest/download/janas-windows-aarch64.zip), tested on GitHub's Windows on ARM machines.
+
+**Or on macOS** 14 and later on Apple Silicon, the CPU alone for now (Apple's GPU through Metal comes later): [janas-macos-arm64.tar.gz](https://github.com/prabanta-dev/janas/releases/latest/download/janas-macos-arm64.tar.gz), built and tested on GitHub's Macs. The programs are not signed by Apple yet: after unpacking, `xattr -dr com.apple.quarantine janas` in a terminal lets them start (or System Settings, Privacy & Security, *Open Anyway*), then `cd janas && ./janas-chat`.
 
 The models come already converted from [Hugging Face](https://huggingface.co/prabanta-dev); building from the sources: [Getting started](#getting-started).
 

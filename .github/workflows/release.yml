@@ -7,7 +7,9 @@
 # janas-linux-x86_64.tar.gz and janas-linux-aarch64.tar.gz with the SHA-256
 # of every file. The one for Windows x86-64 is built from the same sources with
 # MinGW-w64 on Linux, tested on a Windows machine of GitHub's and packed as
-# janas-windows-x86_64.zip, attached to the same release. A tag v* publishes it as that tag's release (the name never
+# janas-windows-x86_64.zip, attached to the same release, as is macOS's
+# (janas-macos-arm64.tar.gz, built on a Mac of GitHub's). Every package is
+# made by dist/pack.sh. A tag v* publishes it as that tag's release (the name never
 # changes, so releases/latest/download/janas-linux-x86_64.tar.gz is always
 # the newest); run by hand, it only builds the package and keeps it as an
 # artifact of the run. The shaders' compiler and the Vulkan headers are
@@ -27,6 +29,8 @@ env:
   GLSLANG_VERSION: 16.6.0
   GLSLANG_SHA256: 2c34071f56ecf39d16233294d3739cf43f981fd39080f2fd9dccb782101191ce
   GLSLANG_COMMIT: e1b562a8bed273a02f30b59b66a5d499793cede5
+  LLVM_MINGW_VERSION: '20261104'
+  LLVM_MINGW_SHA256: 919380403de87dca3c581c2053230cd298af5e891286628ba0613b7fed370926
   VULKAN_HEADERS_TAG: vulkan-sdk-1.4.363.0
   VULKAN_HEADERS_COMMIT: 6802bb4733b63ed5efd3adb308a6c885ef180ea1
 
@@ -100,75 +104,9 @@ jobs:
         run: ./build.sh release test
 
       - name: Pack
-        run: |
-          set -euo pipefail
-          B=bin/${{ matrix.arch }}-linux
-          P="$PACKAGE/janas"
-          mkdir -p "$P/services" "$P/lib" "$P/include/janas" "$P/docs" "$P/node"
-          for f in janas-chat janas-server janas-get janas-setup janas-bench janas-mcp brebus \
-                   janas-brebus-helper \
-                   gguf2jns jns_planes hf2jns_mtp hf2jns_ds4 hf2jns_vision hf2jns_whisper \
-                   silero2jns wespeaker2jns jns_check vkcheck gpu_check; do
-            install -m 755 "$B/$f" "$P/"
-          done
-          # Brebus served to the users of the system: its PAM service
-          install -m 644 dist/brebus.pam "$P/brebus.pam"
-          for s in src/services/*/; do
-            s=$(basename "$s")
-            [ "$s" = common ] && continue
-            install -m 755 "$B/janas-$s" "$P/services/"
-            # each service's page, its links made to point beside it
-            install -m 644 "src/services/$s/README.md" "$P/services/janas-$s.md"
-            # its instructions for the model, a skill in Claude's format
-            install -Dm 644 "src/services/$s/SKILL.md" "$P/skills/janas-$s/SKILL.md"
-          done
-          sed -E 's#\(([a-z]+)/README\.md\)#(janas-\1.md)#g' \
-            src/services/README.md > "$P/services/README.md"
-          install -m 755 "$B/libjanas_llm.so" "$B/libjanas_mcp.so" "$P/lib/"
-          # the library as a module for Node.js, with its types for TypeScript
-          install -m 755 "$B/janas.node" "$P/node/"
-          install -m 644 "$B/janas.d.ts" "$P/node/"
-          install -m 644 include/janas/* "$P/include/janas/"
-          install -m 644 docs/*.md "$P/docs/"
-          install -m 644 dist/README.md "$P/README.md"
-          install -m 644 LICENSE ChangeLog.md MODELS.md "$P/"
-          # nothing but programs, libraries and text: no script of any kind
-          if find "$P" -type f \( -name '*.sh' -o -name '*.py' \) | grep -q .; then
-            echo "a script in the package"; exit 1
-          fi
-          # the module, as packed, loads where the runner has Node.js
-          if command -v node >/dev/null; then
-            node -e 'const j = require(process.argv[1]);
-              if (j.abiVersion() !== 1) process.exit(1);
-              console.log("janas.node " + j.version + " loads in Node " + process.version)' \
-              "$(realpath "$P/node/janas.node")"
-          fi
-          # the newest C library the programs ask for
-          find "$P" -type f -perm -u+x ! -name '*.so' -print0 |
-            xargs -0 -n 1 objdump -T | grep -o 'GLIBC_[0-9.]*' |
-            sort -V | uniq | tail -1
-          (cd "$P" && find . -type f ! -name SHA256SUMS -print0 | sort -z |
-            xargs -0 sha256sum > SHA256SUMS)
-          tar -C "$PACKAGE" -czf "$PACKAGE.tar.gz" janas
-          sha256sum "$PACKAGE.tar.gz" > "$PACKAGE.tar.gz.sha256"
-          cat "$PACKAGE.tar.gz.sha256"
-
-      - name: Pack the diagnostics
-        run: |
-          set -euo pipefail
-          # vkcheck and gpu_check alone, for a tester who only has to tell
-          # whether the GPU works: no model, no engine, a few megabytes
-          B=bin/${{ matrix.arch }}-linux
-          D="$DIAG/janas-diag"
-          mkdir -p "$D"
-          install -m 755 "$B/vkcheck" "$B/gpu_check" "$D/"
-          install -m 644 dist/README-diag.md "$D/README.md"
-          install -m 644 LICENSE "$D/"
-          (cd "$D" && find . -type f ! -name SHA256SUMS -print0 | sort -z |
-            xargs -0 sha256sum > SHA256SUMS)
-          tar -C "$DIAG" -czf "$DIAG.tar.gz" janas-diag
-          sha256sum "$DIAG.tar.gz" > "$DIAG.tar.gz.sha256"
-          cat "$DIAG.tar.gz.sha256"
+        # the package and the GPU's checks alone (dist/pack.sh, the same
+        # for every system)
+        run: bash dist/pack.sh linux ${{ matrix.arch }}
 
       - name: Keep the package
         uses: actions/upload-artifact@v7
@@ -202,18 +140,23 @@ jobs:
             janas-linux-aarch64.tar.gz janas-linux-aarch64.tar.gz.sha256 \
             janas-diag-linux-aarch64.tar.gz janas-diag-linux-aarch64.tar.gz.sha256 \
             --title "Janas $GITHUB_REF_NAME" \
-            --notes "Janas for Linux x86-64 (Ubuntu 22.04, Debian 12 and later): janas-linux-x86_64.tar.gz; for Linux on 64-bit ARM (the same systems, Raspberry Pi OS 64-bit): janas-linux-aarch64.tar.gz; for Windows 10 and 11 x86-64: janas-windows-x86_64.zip. Only the GPU checks (vkcheck, gpu_check), to tell whether a GPU computes what the CPU does: janas-diag-linux-x86_64.tar.gz, janas-diag-linux-aarch64.tar.gz, janas-diag-windows-x86_64.zip. Unpack it and start: janas-get list, then janas-chat <model>. What changed: ChangeLog.md. The SHA-256 of every file: SHA256SUMS in the package."
+            --notes "Janas for Linux x86-64 (Ubuntu 22.04, Debian 12 and later): janas-linux-x86_64.tar.gz; for Linux on 64-bit ARM (the same systems, Raspberry Pi OS 64-bit): janas-linux-aarch64.tar.gz; for Windows 10 and 11 x86-64: janas-windows-x86_64.zip, on 64-bit ARM: janas-windows-aarch64.zip; for macOS 14 and later on Apple Silicon, the CPU alone: janas-macos-arm64.tar.gz (added once GitHub's Mac has built it; not signed: its README says how to open it). Only the GPU checks (vkcheck, gpu_check), to tell whether a GPU computes what the CPU does: janas-diag-linux-x86_64.tar.gz, janas-diag-linux-aarch64.tar.gz, janas-diag-windows-x86_64.zip. Unpack it and start: janas-get list, then janas-chat <model>. What changed: ChangeLog.md. The SHA-256 of every file: SHA256SUMS in the package."
 
   # Windows x86-64: the same sources built with MinGW-w64 on Linux (a
   # newer Ubuntu: the C library does not matter for Windows, the MinGW
   # headers do), then tested on Windows, then packed.
   windows-build:
+    # x86-64 with MinGW-w64's gcc, 64-bit ARM with llvm-mingw's clang
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
 
-      - name: MinGW-w64, the shaders' compiler and the Vulkan headers
+      - name: MinGW-w64 (or llvm-mingw), the shaders' compiler and the Vulkan headers
         run: |
           set -euo pipefail
           # no question may wait for an answer (needrestart asks one)
@@ -223,6 +166,22 @@ jobs:
             gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64 clang lld
           mkdir -p "$RUNNER_TEMP/khronos"
           cd "$RUNNER_TEMP/khronos"
+          if [ "${{ matrix.arch }}" = aarch64 ]; then
+            curl -fsSL -o llvm-mingw.tar.xz \
+              "https://github.com/mstorsjo/llvm-mingw/releases/download/$LLVM_MINGW_VERSION/llvm-mingw-$LLVM_MINGW_VERSION-ucrt-ubuntu-22.04-x86_64.tar.xz"
+            echo "$LLVM_MINGW_SHA256  llvm-mingw.tar.xz" | sha256sum -c -
+            tar xJf llvm-mingw.tar.xz
+            T="$PWD/llvm-mingw-$LLVM_MINGW_VERSION-ucrt-ubuntu-22.04-x86_64/bin"
+            # by full paths: its lld must not stand in for the system's,
+            # which links the HIP kernels
+            { echo "CC=$T/aarch64-w64-mingw32-clang"
+              echo "AR=$T/aarch64-w64-mingw32-ar"
+              echo "WINDRES=$T/aarch64-w64-mingw32-windres"
+              echo "OBJDUMP=$T/llvm-objdump"
+              echo "JANAS_CPU=aarch64"; } >> "$GITHUB_ENV"
+          else
+            echo "OBJDUMP=x86_64-w64-mingw32-objdump" >> "$GITHUB_ENV"
+          fi
           curl -fsSL -o glslang.tar.gz \
             "https://github.com/KhronosGroup/glslang/releases/download/$GLSLANG_VERSION/glslang-$GLSLANG_VERSION-linux-x86_64-release.tar.gz"
           echo "$GLSLANG_SHA256  glslang.tar.gz" | sha256sum -c -
@@ -236,7 +195,6 @@ jobs:
       - name: Build
         run: |
           set -euo pipefail
-          x86_64-w64-mingw32-gcc --version | head -1
           JANAS_OS=windows ./build.sh release build 2>&1 | tee build.log
           if grep -q "building without GPU support" build.log; then
             echo "the build left the GPU out"; exit 1
@@ -245,115 +203,87 @@ jobs:
           if grep -qE "building without (CUDA|HIP)" build.log; then
             echo "the build left CUDA or HIP out"; exit 1
           fi
-          # nothing but Windows's own DLLs
-          for f in bin/x86_64-windows/*.exe bin/x86_64-windows/*.dll; do
-            x86_64-w64-mingw32-objdump -p "$f" | grep "DLL Name" |
-              grep -v -i -E 'kernel32|msvcrt|ws2_32|bcrypt|crypt32|powrprof|advapi32|iphlpapi|ole32|wevtapi|wlanapi|shell32|psapi|user32|gdi32|setupapi' &&
+          # nothing but Windows's own DLLs (its C runtime too: msvcrt, or
+          # the universal one's api-ms-win-crt-*)
+          for f in bin/${{ matrix.arch }}-windows/*.exe bin/${{ matrix.arch }}-windows/*.dll; do
+            "$OBJDUMP" -p "$f" | grep "DLL Name" |
+              grep -v -i -E 'kernel32|msvcrt|api-ms-win-crt-|ws2_32|bcrypt|crypt32|powrprof|advapi32|iphlpapi|ole32|wevtapi|wlanapi|shell32|psapi|user32|gdi32|setupapi' &&
               { echo "$f needs a DLL Windows does not have"; exit 1; } || true
           done
 
       - uses: actions/upload-artifact@v7
         with:
-          name: windows-bin
-          path: bin/x86_64-windows/
+          name: windows-bin-${{ matrix.arch }}
+          path: bin/${{ matrix.arch }}-windows/
 
   windows-test:
     needs: windows-build
-    runs-on: windows-latest
+    if: always()
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: windows-latest
+          - arch: aarch64
+            runner: windows-11-arm
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
 
       - uses: actions/download-artifact@v7
         with:
-          name: windows-bin
-          path: bin/x86_64-windows
+          name: windows-bin-${{ matrix.arch }}
+          path: bin/${{ matrix.arch }}-windows
 
       - name: Test
         shell: pwsh
         run: |
           $failed = @()
-          foreach ($t in Get-ChildItem bin\x86_64-windows\test_*.exe) {
+          foreach ($t in Get-ChildItem bin\${{ matrix.arch }}-windows\test_*.exe) {
             Write-Host "RUN $($t.Name)"
             & $t.FullName
             if ($LASTEXITCODE -ne 0) { $failed += $t.Name }
           }
           if ($failed.Count -gt 0) { Write-Host "failed: $failed"; exit 1 }
+          # the mark windows-package looks for: this processor's tests passed
+          Set-Content -Path tested.txt -Value "${{ matrix.arch }}"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-tested-${{ matrix.arch }}
+          path: tested.txt
 
   windows-package:
     needs: [linux-release, windows-build, windows-test]
+    # each processor's package when its own tests passed (the mark of
+    # windows-test), whatever the other's; run by hand the release is not
+    # made (linux-release skipped) and the packages are kept all the same
+    if: always() && needs.linux-release.result != 'failure'
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
-      WPACKAGE: janas-windows-x86_64
-      WDIAG: janas-diag-windows-x86_64
+      WPACKAGE: janas-windows-${{ matrix.arch }}
+      WDIAG: janas-diag-windows-${{ matrix.arch }}
     steps:
       - uses: actions/checkout@v7
 
       - uses: actions/download-artifact@v7
         with:
-          name: windows-bin
-          path: bin/x86_64-windows
+          name: windows-tested-${{ matrix.arch }}
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: windows-bin-${{ matrix.arch }}
+          path: bin/${{ matrix.arch }}-windows
 
       - name: Pack
-        run: |
-          set -euo pipefail
-          B=bin/x86_64-windows
-          P="$WPACKAGE/janas"
-          mkdir -p "$P/services" "$P/lib" "$P/include/janas" "$P/docs"
-          for f in janas-chat janas-server janas-get janas-setup janas-bench janas-mcp \
-                   brebus gguf2jns jns_planes hf2jns_mtp hf2jns_ds4 hf2jns_vision \
-                   hf2jns_whisper silero2jns wespeaker2jns jns_check vkcheck gpu_check; do
-            install -m 755 "$B/$f.exe" "$P/"
-          done
-          # Brebus's window: WebView2's loader beside brebus.exe, from
-          # Microsoft's SDK (src/third_party/webview2/README.md), checked
-          curl -sfL -o wv2.nupkg \
-            https://www.nuget.org/api/v2/package/Microsoft.Web.WebView2/1.0.4314.35
-          echo "90778deb1b77e36292828b4b5833c9255c27533f40e0ddd55891ae718944edc4  wv2.nupkg" |
-            sha256sum -c -
-          unzip -q -j wv2.nupkg build/native/x64/WebView2Loader.dll -d "$P/"
-          echo "d3fce90bdeecb08596e377dea6a316354dd8949e32ff09b89d51be00c14e21b6  $P/WebView2Loader.dll" |
-            sha256sum -c -
-          install -m 644 src/third_party/webview2/LICENSE.txt "$P/LICENSE-WebView2.txt"
-          rm -f wv2.nupkg
-          for s in src/services/*/; do
-            s=$(basename "$s")
-            [ "$s" = common ] && continue
-            # a service not built for Windows yet (janas-files) stays out
-            [ -f "$B/janas-$s.exe" ] || continue
-            install -m 755 "$B/janas-$s.exe" "$P/services/"
-            install -m 644 "src/services/$s/README.md" "$P/services/janas-$s.md"
-            # its instructions for the model, a skill in Claude's format
-            install -Dm 644 "src/services/$s/SKILL.md" "$P/skills/janas-$s/SKILL.md"
-          done
-          sed -E 's#\(([a-z]+)/README\.md\)#(janas-\1.md)#g' \
-            src/services/README.md > "$P/services/README.md"
-          install -m 755 "$B/libjanas_llm.dll" "$B/libjanas_mcp.dll" "$P/lib/"
-          install -m 644 "$B/libjanas_llm.dll.a" "$B/libjanas_mcp.dll.a" "$P/lib/"
-          install -m 644 include/janas/* "$P/include/janas/"
-          install -m 644 docs/*.md "$P/docs/"
-          install -m 644 dist/README-windows.md "$P/README.md"
-          install -m 644 LICENSE ChangeLog.md MODELS.md "$P/"
-          if find "$P" -type f \( -name '*.sh' -o -name '*.py' -o -name '*.bat' \) | grep -q .; then
-            echo "a script in the package"; exit 1
-          fi
-          (cd "$P" && find . -type f ! -name SHA256SUMS -print0 | sort -z |
-            xargs -0 sha256sum > SHA256SUMS)
-          (cd "$WPACKAGE" && zip -q -r -X "../$WPACKAGE.zip" janas)
-          sha256sum "$WPACKAGE.zip" > "$WPACKAGE.zip.sha256"
-          cat "$WPACKAGE.zip.sha256"
-          # the diagnostics alone, as for Linux
-          D="$WDIAG/janas-diag"
-          mkdir -p "$D"
-          install -m 755 "$B/vkcheck.exe" "$B/gpu_check.exe" "$D/"
-          install -m 644 dist/README-diag.md "$D/README.md"
-          install -m 644 LICENSE "$D/"
-          (cd "$D" && find . -type f ! -name SHA256SUMS -print0 | sort -z |
-            xargs -0 sha256sum > SHA256SUMS)
-          (cd "$WDIAG" && zip -q -r -X "../$WDIAG.zip" janas-diag)
-          sha256sum "$WDIAG.zip" > "$WDIAG.zip.sha256"
-          cat "$WDIAG.zip.sha256"
+        run: bash dist/pack.sh windows ${{ matrix.arch }}
 
       - name: Keep the package (run by hand)
         if: github.event_name == 'workflow_dispatch'
@@ -374,6 +304,55 @@ jobs:
           gh release upload "$GITHUB_REF_NAME" \
             "$WPACKAGE.zip" "$WPACKAGE.zip.sha256" \
             "$WDIAG.zip" "$WDIAG.zip.sha256"
+
+  # macOS on Apple Silicon: built, tested and packed on a Mac of GitHub's,
+  # the CPU alone for now; its package added to the release once made, so
+  # that GitHub's Macs, often kept waiting, never hold the others' release
+  # back. build.sh wants bash 4 and GNU's tools: Homebrew's, ahead in PATH.
+  macos:
+    needs: linux-release
+    if: always() && needs.linux-release.result != 'failure'
+    runs-on: macos-15
+    timeout-minutes: 90
+    env:
+      MPACKAGE: janas-macos-arm64
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: bash 4 and GNU's tools
+        run: |
+          set -euo pipefail
+          brew install bash coreutils gnu-sed findutils gawk grep
+          P=$(brew --prefix)
+          for d in coreutils gnu-sed findutils gawk grep; do
+            echo "$P/opt/$d/libexec/gnubin" >> "$GITHUB_PATH"
+          done
+          echo "$P/bin" >> "$GITHUB_PATH"
+
+      - name: Build
+        run: bash ./build.sh release build
+
+      - name: Test
+        run: bash ./build.sh release test
+
+      - name: Pack
+        run: bash dist/pack.sh darwin arm64
+
+      - name: Keep the package
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.MPACKAGE }}
+          path: |
+            ${{ env.MPACKAGE }}.tar.gz
+            ${{ env.MPACKAGE }}.tar.gz.sha256
+
+      - name: Add it to the release (a tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$GITHUB_REF_NAME" \
+            "$MPACKAGE.tar.gz" "$MPACKAGE.tar.gz.sha256"
 
   # The wiki, made from the same pages as the repository: README.md becomes
   # Home, each docs/*.md a page named after its title. It is never edited

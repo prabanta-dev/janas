@@ -25,7 +25,61 @@ static unsigned long long xcr0(void)
 }
 #elif defined(__aarch64__) && defined(__linux__)
 #include <sys/auxv.h>
+#elif defined(__aarch64__) && defined(__APPLE__)
+#include <sys/sysctl.h>
+#elif defined(__aarch64__) && defined(_WIN32)
+#include <windows.h>
 #endif
+
+#if defined(__aarch64__)
+/* ARM's instructions that matter to a model: each with its bit in Linux's
+   HWCAP (word 1) or HWCAP2 (word 2), its name in macOS's sysctl and its
+   number for Windows's IsProcessorFeaturePresent (0: Windows does not say;
+   PF_ARM_V82_DP_INSTRUCTIONS_AVAILABLE 43, PF_ARM_SVE_INSTRUCTIONS_AVAILABLE
+   46, PF_ARM_SVE2_INSTRUCTIONS_AVAILABLE 47) */
+static const struct arm_feat {
+    const char *name, *mac;
+    int word;
+    unsigned long bit;
+    unsigned win;
+} arm_feats[] = {
+    {"fp16", "hw.optional.arm.FEAT_FP16", 1, 1UL << 10, 0},
+    {"dotprod", "hw.optional.arm.FEAT_DotProd", 1, 1UL << 20, 43},
+    {"i8mm", "hw.optional.arm.FEAT_I8MM", 2, 1UL << 13, 0},
+    {"bf16", "hw.optional.arm.FEAT_BF16", 2, 1UL << 14, 0},
+    {"sve", NULL, 1, 1UL << 22, 46},
+    {"sve2", NULL, 2, 1UL << 1, 47},
+    {"sme", "hw.optional.arm.FEAT_SME", 2, 1UL << 23, 0},
+};
+
+static int arm_has(const struct arm_feat *f)
+{
+#if defined(__linux__)
+    return (getauxval(f->word == 1 ? AT_HWCAP : AT_HWCAP2) & f->bit) != 0;
+#elif defined(__APPLE__)
+    int v = 0;
+    size_t n = sizeof v;
+    return f->mac && sysctlbyname(f->mac, &v, &n, NULL, 0) == 0 && v;
+#elif defined(_WIN32)
+    return f->win && IsProcessorFeaturePresent(f->win);
+#else
+    (void)f;
+    return 0;
+#endif
+}
+#endif
+
+int janas_arm_feature(const char *name)
+{
+#if defined(__aarch64__)
+    for (size_t i = 0; i < sizeof arm_feats / sizeof arm_feats[0]; i++)
+        if (strcmp(arm_feats[i].name, name) == 0)
+            return arm_has(&arm_feats[i]);
+#else
+    (void)name;
+#endif
+    return 0;
+}
 
 static void add(char *buf, size_t len, const char *name)
 {
@@ -111,36 +165,9 @@ void janas_cpu_features(char *buf, size_t len)
         if (a71 >> 21 & 1)
             add(buf, len, "amx-fp16");
     }
-#elif defined(__aarch64__) && defined(__linux__)
-    unsigned long h = getauxval(AT_HWCAP), h2 = getauxval(AT_HWCAP2);
-    (void)h2;
-#ifdef HWCAP_ASIMDHP
-    if (h & HWCAP_ASIMDHP)
-        add(buf, len, "fp16");
-#endif
-#ifdef HWCAP_ASIMDDP
-    if (h & HWCAP_ASIMDDP)
-        add(buf, len, "dotprod");
-#endif
-#ifdef HWCAP2_I8MM
-    if (h2 & HWCAP2_I8MM)
-        add(buf, len, "i8mm");
-#endif
-#ifdef HWCAP2_BF16
-    if (h2 & HWCAP2_BF16)
-        add(buf, len, "bf16");
-#endif
-#ifdef HWCAP_SVE
-    if (h & HWCAP_SVE)
-        add(buf, len, "sve");
-#endif
-#ifdef HWCAP2_SVE2
-    if (h2 & HWCAP2_SVE2)
-        add(buf, len, "sve2");
-#endif
-#ifdef HWCAP2_SME
-    if (h2 & HWCAP2_SME)
-        add(buf, len, "sme");
-#endif
+#elif defined(__aarch64__)
+    for (size_t i = 0; i < sizeof arm_feats / sizeof arm_feats[0]; i++)
+        if (arm_has(&arm_feats[i]))
+            add(buf, len, arm_feats[i].name);
 #endif
 }

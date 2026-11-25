@@ -68,12 +68,13 @@ int main(void)
     if (janas_cpu_layout(NULL, 0, &before) == 0 && before.n > 1 &&
         janas_cpus_save(save) == 0) {
         janas_pin_current_thread(before.cpus[0]);
-        int ok =
-            janas_cpu_layout(NULL, 0, &during) == 0 && during.n == before.n;
+        during.n = after.n = -1;
+        int rd = janas_cpu_layout(NULL, 0, &during);
         janas_cpus_restore(save);
-        ok &= janas_cpu_layout(NULL, 0, &after) == 0 && after.n == before.n;
-        if (!ok) {
-            printf("pinned: %d CPUs seen, %d before\n", during.n, before.n);
+        int ra = janas_cpu_layout(NULL, 0, &after);
+        if (rd != 0 || ra != 0 || during.n != before.n || after.n != before.n) {
+            printf("pinned: %d CPUs seen (%d), %d after it (%d), %d before\n",
+                   during.n, rd, after.n, ra, before.n);
             failures++;
         }
     }

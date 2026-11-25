@@ -69,4 +69,9 @@ int janas_pipe(int fd[2]);
    reading. */
 int janas_null_fd(int for_writing);
 
+/* A link opened as the user's desktop opens one, in its default browser:
+   xdg-open on Linux, open on macOS, the shell on Windows; their messages
+   not shown. 0 when it opened, -1 when not. */
+int janas_open_url(const char *url);
+
 #endif

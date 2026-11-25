@@ -23,6 +23,7 @@
 #include "brebus.h"
 #include "common/catalog.h"
 #include "common/mcp_tls.h"
+#include "common/proc.h"
 #include "common/mhd_tls.h"
 #include "common/mcp_http.h"
 #include "common/sandbox.h"
@@ -126,22 +127,6 @@ static void close_steps(void (*say)(const char *))
         if (pthread_cond_timedwait(&close_cv, &close_mu, &until) != 0)
             break; /* past 15 s: the window goes all the same */
     pthread_mutex_unlock(&close_mu);
-}
-
-static void open_browser(const char *url)
-{
-#ifdef _WIN32
-    /* the default browser, as a link clicked */
-    ShellExecuteA(NULL, "open", url, NULL, NULL, SW_SHOWNORMAL);
-#else
-    pid_t pid = fork();
-    if (pid == 0) {
-        execlp("xdg-open", "xdg-open", url, (char *)NULL);
-        _exit(127);
-    }
-    if (pid > 0)
-        waitpid(pid, NULL, 0);
-#endif
 }
 
 static void *stdin_life(void *arg)
@@ -500,7 +485,7 @@ int main(int argc, char **argv)
         }
         if (there && open) {
             if (browser || brebus_window(url0, &quit, why, sizeof why) != 0)
-                open_browser(url0);
+                janas_open_url(url0);
             return 0;
         }
         fprintf(stderr, "brebus: %s\n", why);
@@ -545,7 +530,7 @@ int main(int argc, char **argv)
     else if (open) {
         if (!browser)
             fprintf(stderr, "brebus: %s; in the browser instead\n", why);
-        open_browser(url);
+        janas_open_url(url);
     }
     while (!quit)
         sleep(1);

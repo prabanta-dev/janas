@@ -1615,20 +1615,16 @@ static inline void iq2_sub_mask(int type, const void *blk, int l,
 #include "quant_z.h"
 #elif defined(__aarch64__)
 #include "quant_neon.h" /* 64-bit ARM: the references' sums, with NEON */
+#include "common/sysinfo.h"
 static int use_sdot; /* the dot product instructions' kernels */
-#if defined(__linux__)
-#include <sys/auxv.h>
-#endif
 /* the dot product instructions (ARMv8.2's extension): known at build time
-   when the target has them, asked of Linux otherwise */
+   when the target has them, asked of the system otherwise */
 static int arm_has_sdot(void)
 {
 #if defined(__ARM_FEATURE_DOTPROD)
     return 1;
-#elif defined(__linux__)
-    return (getauxval(AT_HWCAP) & (1UL << 20)) != 0; /* HWCAP_ASIMDDP */
 #else
-    return 0;
+    return janas_arm_feature("dotprod");
 #endif
 }
 #endif

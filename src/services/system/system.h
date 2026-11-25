@@ -7,7 +7,8 @@
  *
  * What its parts share. The system is read by one backend a platform,
  * behind the sy_get_* calls: linux.c (from /proc and /sys, journalctl,
- * systemctl and the package manager) and windows.c (from the Win32 API);
+ * systemctl and the package manager), macos.c (sysctl, Mach, libproc) and
+ * windows.c (from the Win32 API);
  * usage.c walks a directory. read.c reads the texts of Linux (no system
  * here: the tests read kept texts), data.c and layouts.c write the
  * answers as data with a layout, tools.c offers the tools.
@@ -157,7 +158,7 @@ struct sy_usage {
     double secs;
 };
 
-/* ---- the backend: linux.c or windows.c (and usage.c) ---- */
+/* ---- the backend: linux.c, macos.c or windows.c (and usage.c) ---- */
 
 int sy_get_status(struct sy_status *s, char *err, size_t err_len);
 int sy_get_disks(struct sy_disks *d, char *err, size_t err_len);

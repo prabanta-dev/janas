@@ -22,6 +22,7 @@
 #include <unistd.h>
 
 #include "brebus.h"
+#include "common/proc.h"
 
 typedef void *P;
 typedef int (*source_fn)(P);
@@ -129,15 +130,8 @@ static int loopback(const char *url)
 
 static void open_outside(const char *url)
 {
-    if (loopback(url))
-        return;
-    pid_t pid = fork();
-    if (pid == 0) {
-        execlp("xdg-open", "xdg-open", url, (char *)NULL);
-        _exit(127);
-    }
-    if (pid > 0)
-        waitpid(pid, NULL, 0);
+    if (!loopback(url))
+        janas_open_url(url);
 }
 
 /* WEBKIT_POLICY_DECISION_TYPE_NAVIGATION_ACTION 0, NEW_WINDOW_ACTION 1:

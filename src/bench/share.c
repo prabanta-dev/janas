@@ -25,6 +25,7 @@
 #endif
 
 #include "common/bench_report.h"
+#include "common/proc.h"
 #include "llm/json.h"
 
 #define REPO "https://github.com/prabanta-dev/janas"
@@ -67,33 +68,6 @@ static void line_of(const char *s, const char *label, char *out, size_t cap)
         n = cap - 1;
     memcpy(out, p, n);
     out[n] = 0;
-}
-
-static int open_in_browser(const char *url)
-{
-#ifdef _WIN32
-    return (INT_PTR)ShellExecuteA(NULL, "open", url, NULL, NULL,
-                                  SW_SHOWNORMAL) > 32
-               ? 0
-               : -1;
-#else
-    pid_t pid = fork();
-    if (pid < 0)
-        return -1;
-    if (pid == 0) { /* the browser's own messages are not the report's */
-        int fd = open("/dev/null", O_WRONLY);
-        if (fd >= 0) {
-            dup2(fd, 1);
-            dup2(fd, 2);
-        }
-        execlp("xdg-open", "xdg-open", url, (char *)NULL);
-        _exit(127);
-    }
-    int st = 0;
-    return waitpid(pid, &st, 0) == pid && WIFEXITED(st) && WEXITSTATUS(st) == 0
-               ? 0
-               : -1;
-#endif
 }
 
 void bench_share(const char *path)
@@ -160,7 +134,7 @@ void bench_share(const char *path)
         fflush(stdout);
         char a[16] = "";
         if (fgets(a, sizeof a, stdin) && (a[0] == 'y' || a[0] == 'Y') &&
-            open_in_browser(u.p) != 0)
+            janas_open_url(u.p) != 0)
             printf("the browser did not open: copy the address above\n");
     }
     janas_buf_free(&u);

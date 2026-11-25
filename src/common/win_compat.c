@@ -423,13 +423,15 @@ int janas_fclose(FILE *f)
     return fclose(f) == 0 ? rc : EOF;
 }
 
+#if defined(__x86_64__)
 /*
  * fmaf as the C standard has it, x * y + z rounded once: MinGW's rounds
  * the sum to a double and then again to a float, and now and then lands
  * on the next float, where glibc's is exact. The kernels, built for FMA,
  * never call it (the instruction is inlined there); the scalar code does,
  * and must agree with them to the bit. Defined under the C library's own
- * name, it is the one every file links.
+ * name, it is the one every file links. x86-64 only: on 64-bit ARM every
+ * processor has the fused multiply-add and the library's fmaf is it.
  */
 __attribute__((target("fma"))) static float fmaf_fma(float x, float y, float z)
 {
@@ -473,6 +475,7 @@ float fmaf(float x, float y, float z)
     }
     return has_fma ? fmaf_fma(x, y, z) : fmaf_soft(x, y, z);
 }
+#endif
 
 static VOID CALLBACK alarm_fired(PVOID arg, BOOLEAN timer)
 {

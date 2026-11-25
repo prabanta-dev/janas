@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#if defined(__linux__) || defined(_WIN32)
 static const char *generation(unsigned dev)
 {
     return dev == 0x1502 ? "first generation (XDNA: Phoenix, Hawk Point)"
@@ -24,6 +25,7 @@ static const char *generation(unsigned dev)
                  "Point)"
                : NULL;
 }
+#endif
 
 #if defined(__linux__)
 #include <dirent.h>

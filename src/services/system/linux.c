@@ -68,14 +68,6 @@ static int slurp_buf(const char *path, struct janas_buf *b)
     return b->oom ? -1 : 0;
 }
 
-const char *sy_home(void)
-{
-    const char *h = getenv("HOME");
-    if (h && *h)
-        return h;
-    struct passwd *pw = getpwuid(getuid());
-    return pw && pw->pw_dir ? pw->pw_dir : "";
-}
 
 static void sleep_ms(int ms)
 {

@@ -6,7 +6,8 @@
  * counts it (the blocks taken). Within limits: SY_USAGE_MS at most, after
  * which the sizes are told as at least these; SY_USAGE_DEPTH levels; never
  * across to another filesystem, never through a symbolic link. A file of
- * more names than one (hard links) is counted at each.
+ * more names than one (hard links) is counted at each. Also the user's
+ * home, alike on Linux and macOS.
  */
 #ifndef _WIN32
 #define _GNU_SOURCE
@@ -21,7 +22,18 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <pwd.h>
+
 #include "system.h"
+
+const char *sy_home(void)
+{
+    const char *h = getenv("HOME");
+    if (h && *h)
+        return h;
+    struct passwd *pw = getpwuid(getuid());
+    return pw && pw->pw_dir ? pw->pw_dir : "";
+}
 
 struct walk {
     dev_t dev;

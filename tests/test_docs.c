@@ -220,8 +220,8 @@ static void documents(void)
     const char *xs[] = {"<w:p><w:t>a &#xFFFFFFFFFF; &#0; &# &amp b</w:t>",
                         "<text:h text:outline-level=\"9\">x<text:s text:c=",
                         "<?x <!-- <![CDATA[ a",
-                        "<office:body><text:p>&#55296;"
-                        "</text:p><w:t \"'>\"",
+                        ("<office:body><text:p>&#55296;"
+                         "</text:p><w:t \"'>\""),
                         "<office:body><text:s text:c=\"99999\"/>"};
     for (size_t i = 0; i < sizeof xs / sizeof xs[0]; i++)
         for (size_t k = 0; k <= strlen(xs[i]); k++) {

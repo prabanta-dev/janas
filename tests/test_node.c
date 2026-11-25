@@ -13,7 +13,7 @@
  * them as well: its declarations follow Node's here, and the compiler stops
  * on any that differs.
  */
-#if !defined(_WIN32) && defined(__has_include)
+#if defined(__linux__) && defined(__has_include)
 #if __has_include(<node/node_api.h>)
 #include <node/node_api.h>
 #define JANAS_NAPI_NODE_TYPES
@@ -24,7 +24,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#ifdef _WIN32
+#ifndef __linux__
 int main(void)
 {
     printf("test_node: skipped, the module is built on Linux only\n");

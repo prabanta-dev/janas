@@ -2,8 +2,10 @@
    Copyright (C) 2026 Maurizio Cammalleri */
 /*
  * reopen.c - see reopen.h. Linux: the file's entry in /proc/self/fd.
- * Windows: ReOpenFile on the descriptor's handle; a direct one is also
- * overlapped, for uring_win.c's reads that run while the caller computes.
+ * macOS: the path F_GETPATH gives, opened again; direct reads are the page
+ * cache left out with F_NOCACHE (macOS has no O_DIRECT). Windows:
+ * ReOpenFile on the descriptor's handle; a direct one is also overlapped,
+ * for uring_win.c's reads that run while the caller computes.
  */
 #define _GNU_SOURCE
 #include "common/reopen.h"
@@ -29,6 +31,22 @@ int janas_reopen_read(int fd, int direct)
     int nfd = _open_osfhandle((intptr_t)n, _O_RDONLY | _O_BINARY);
     if (nfd < 0)
         CloseHandle(n);
+    return nfd;
+}
+
+#elif defined(__APPLE__)
+#include <sys/param.h>
+
+int janas_reopen_read(int fd, int direct)
+{
+    char path[MAXPATHLEN];
+    if (fcntl(fd, F_GETPATH, path) == -1)
+        return -1;
+    int nfd = open(path, O_RDONLY | O_CLOEXEC);
+    if (nfd >= 0 && direct && fcntl(nfd, F_NOCACHE, 1) == -1) {
+        close(nfd);
+        return -1;
+    }
     return nfd;
 }
 

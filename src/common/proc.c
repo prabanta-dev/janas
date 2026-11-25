@@ -197,4 +197,22 @@ int janas_null_fd(int for_writing)
     return open("/dev/null", (for_writing ? O_WRONLY : O_RDONLY) | O_CLOEXEC);
 }
 
+int janas_open_url(const char *url)
+{
+#ifdef __APPLE__
+    const char *argv[] = {"open", url, NULL};
+#else
+    const char *argv[] = {"xdg-open", url, NULL};
+#endif
+    int nul = janas_null_fd(1);
+    struct janas_proc p;
+    char err[128];
+    int started = janas_proc_start(&p, argv, NULL, NULL, -1, nul, nul, 0, err,
+                                   sizeof err) == 0;
+    if (nul >= 0)
+        close(nul);
+    int code = -1;
+    return started && janas_proc_wait(&p, -1, &code) == 1 && code == 0 ? 0 : -1;
+}
+
 #endif /* !_WIN32 */

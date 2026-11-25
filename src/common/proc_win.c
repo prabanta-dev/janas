@@ -18,6 +18,7 @@
 #include "common/proc.h"
 
 #include <windows.h>
+#include <shellapi.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <io.h>
@@ -388,6 +389,15 @@ int janas_null_fd(int for_writing)
 {
     return _open("NUL", (for_writing ? _O_WRONLY : _O_RDONLY) | _O_BINARY |
                             _O_NOINHERIT);
+}
+
+int janas_open_url(const char *url)
+{
+    /* the default browser, as a link clicked */
+    return (INT_PTR)ShellExecuteA(NULL, "open", url, NULL, NULL,
+                                  SW_SHOWNORMAL) > 32
+               ? 0
+               : -1;
 }
 
 #endif /* _WIN32 */

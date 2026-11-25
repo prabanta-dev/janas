@@ -74,6 +74,9 @@ Environment
   JANAS_OS      windows: the same sources for Windows x86-64, with
                 MinGW-w64 (x86_64-w64-mingw32-gcc), into
                 bin/x86_64-windows/ (.exe, .dll); release and debug only.
+                With JANAS_CPU=aarch64, Windows on 64-bit ARM with
+                llvm-mingw (aarch64-w64-mingw32-clang in the PATH), into
+                bin/aarch64-windows/
                 The tests run under Wine when the build is not on Windows.
                 On Windows itself, in MSYS2's MINGW64 or UCRT64 shell, it is
                 set by itself, with that shell's gcc (build.bat starts it)
@@ -123,8 +126,15 @@ MSYS_NT* | MINGW32_NT* | CLANG*_NT* | CYGWIN_NT*)
     ;;
 esac
 if [ "$JANAS_OS" = windows ]; then
-    CC="${CC:-x86_64-w64-mingw32-gcc}"
-    AR="${AR:-x86_64-w64-mingw32-ar}"
+    # x86-64 with MinGW-w64's gcc; 64-bit ARM with llvm-mingw's clang
+    # (the same triplet's tools, aarch64-w64-mingw32-*, in the PATH)
+    MINGW=x86_64-w64-mingw32
+    if [ "${JANAS_CPU:-}" = aarch64 ]; then
+        MINGW=aarch64-w64-mingw32
+        CC="${CC:-$MINGW-clang}"
+    fi
+    CC="${CC:-$MINGW-gcc}"
+    AR="${AR:-$MINGW-ar}"
     EXE=".exe"
     case "$VARIANT" in
     release | debug) ;;
@@ -188,6 +198,12 @@ if [ "$OS" = windows ]; then
     CFLAGS+=(-D_WIN32_WINNT=0x0A00 -D__USE_MINGW_ANSI_STDIO=1
         -D_FILE_OFFSET_BITS=64 -Isrc/common/win
         -include src/common/win_compat.h)
+elif [ "$OS" = darwin ]; then
+    # macOS: its own extensions beside POSIX's (sysconf's names, SIGWINCH),
+    # and what its C library lacks of Linux's, in one header every file
+    # starts with (src/common/mac_compat.h)
+    CFLAGS+=(-fPIC -fvisibility=hidden -D_DARWIN_C_SOURCE
+        -include src/common/mac_compat.h)
 else
     CFLAGS+=(-fPIC -fvisibility=hidden)
 fi
@@ -618,8 +634,9 @@ tp_flags()
     local d="src/third_party/$1"
     case "$1" in
     libmicrohttpd)
-        # Windows has a configuration of its own (see its origin.md)
+        # Windows and macOS have configurations of their own (see its origin.md)
         [ "$OS" = windows ] && echo "-I$d/w32"
+        [ "$OS" = darwin ] && echo "-I$d/macos"
         echo "-D_GNU_SOURCE -DHAVE_CONFIG_H -I$d -I$d/src/include" \
             "-I$d/src/microhttpd" ;;
     mbedtls)
@@ -746,7 +763,8 @@ if [ "$VARIANT" = release ]; then
         # the JSON reader and the strict reading of words, the sockets and
         # the programs started, what Windows lacks of POSIX: both
         */llm_json.o | */common_words.o | */common_sock.o | */common_proc.o | \
-            */common_proc_win.o | */common_win_compat.o | */common_win_posix.o)
+            */common_proc_win.o | */common_win_compat.o | */common_win_posix.o | \
+            */common_mac_posix.o)
             mcp_objs+=("$o") llm_objs+=("$o") ;;
         *) llm_objs+=("$o") ;;
         esac
@@ -763,22 +781,30 @@ if [ "$VARIANT" = release ]; then
         done
     else
         # --no-undefined: a function a library needs and does not have is
-        # an error here, not when a program first calls it
-        echo "LD  $BIN/libjanas_llm.so"
-        "$CC" -shared -pthread -Wl,--no-undefined "${llm_objs[@]}" \
-            "${LDLIBS[@]}" -o "$BIN/libjanas_llm.so"
-        echo "LD  $BIN/libjanas_mcp.so"
-        # with Mbed TLS from the archive of the libraries of others
-        "$CC" -shared -pthread -Wl,--no-undefined "${mcp_objs[@]}" \
-            "$OBJ/libjanas_third.a" "${LDLIBS[@]}" -o "$BIN/libjanas_mcp.so"
+        # an error here, not when a program first calls it (macOS's linker
+        # does so by itself); on macOS .dylib, found beside the program
+        # that loads it (@rpath)
+        so=so nu=(-Wl,--no-undefined)
+        [ "$OS" = darwin ] && so=dylib nu=()
+        for l in llm mcp; do
+            if [ $l = llm ]; then lo=("${llm_objs[@]}"); else
+                # with Mbed TLS from the archive of the libraries of others
+                lo=("${mcp_objs[@]}" "$OBJ/libjanas_third.a"); fi
+            name=(); [ "$OS" = darwin ] &&
+                name=(-Wl,-install_name,@rpath/libjanas_$l.dylib)
+            echo "LD  $BIN/libjanas_$l.$so"
+            "$CC" -shared -pthread "${nu[@]}" "${name[@]}" "${lo[@]}" \
+                "${LDLIBS[@]}" -o "$BIN/libjanas_$l.$so"
+        done
     fi
 fi
 # The module for Node.js: its own files and the library, in one janas.node
 # that Node loads. The functions of Node-API are the node process's, so they
 # stay undefined here - and only they: in release anything else undefined
 # stops the build, as --no-undefined does for the libraries above. Linux
-# only, for now: on Windows they would come from node.exe's import library.
-if [ "$OS" != windows ]; then
+# only, for now: on Windows they would come from node.exe's import library,
+# on macOS from the node process at load time (-undefined dynamic_lookup).
+if [ "$OS" = linux ]; then
     node_objs=()
     node_list=$(sources src/node find src/node -maxdepth 1 -name '*.c') || exit 2
     while IFS= read -r c; do
@@ -815,7 +841,7 @@ if [ "$OS" = windows ]; then
     compile src/common/win_start.c "$OBJ/win_start.o" "${CFLAGS[@]}"
     # MSYS2's MINGW64 has windres unprefixed only (binutils 2.47:
     # windres.exe alone, issue #64), a Linux cross toolchain prefixed
-    wr=${WINDRES:-x86_64-w64-mingw32-windres}
+    wr=${WINDRES:-$MINGW-windres}
     if ! command -v "$wr" >/dev/null 2>&1 && [ -z "${WINDRES:-}" ] &&
         command -v windres >/dev/null 2>&1; then
         wr=windres

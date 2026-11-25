@@ -271,8 +271,8 @@ static void writes(void)
         "{\"path\": \"../../out/new2.txt\", \"content\": \"x\"}",
         "{\"path\": \"link_ssh/new\", \"content\": \"x\"}",
         "{\"path\": \".env\", \"content\": \"x\", \"overwrite\": true}",
-        "{\"path\": \"~/../out/deep/x.txt\", \"content\": \"x\", "
-        "\"make_dirs\": true}",
+        ("{\"path\": \"~/../out/deep/x.txt\", \"content\": \"x\", "
+         "\"make_dirs\": true}"),
     };
     for (size_t i = 0; i < sizeof refused / sizeof refused[0]; i++) {
         call("files_write", refused[i]);

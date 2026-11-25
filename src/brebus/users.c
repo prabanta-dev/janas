@@ -601,9 +601,16 @@ int brebus_user_role(struct brebus *b, const char *name)
         if (getpwnam_r(name, &pw, buf, sizeof buf, &res) != 0 || !res ||
             pw.pw_uid < 1000 || pw.pw_uid == 65534)
             return -1;
-        gid_t gs[256];
+        /* macOS's getgrouplist takes the groups as int, Linux's as gid_t:
+           the same bits */
+#ifdef __APPLE__
+        typedef int group_t;
+#else
+        typedef gid_t group_t;
+#endif
+        group_t gs[256];
         int ng = 256;
-        if (getgrouplist(name, pw.pw_gid, gs, &ng) < 0)
+        if (getgrouplist(name, (group_t)pw.pw_gid, gs, &ng) < 0)
             return -1;
         struct group *ga = getgrnam("brebus-admin");
         gid_t admin = ga ? ga->gr_gid : (gid_t)-1;
@@ -611,9 +618,9 @@ int brebus_user_role(struct brebus *b, const char *name)
         gid_t user = gu ? gu->gr_gid : (gid_t)-1;
         int role = -1;
         for (int i = 0; i < ng; i++) {
-            if (gs[i] == admin)
+            if ((gid_t)gs[i] == admin)
                 role = 1;
-            else if (gs[i] == user && role < 0)
+            else if ((gid_t)gs[i] == user && role < 0)
                 role = 0;
         }
         return role;

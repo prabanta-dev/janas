@@ -32,7 +32,7 @@
 #include <string.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
-#ifndef _WIN32
+#ifdef __linux__
 #include <sys/sysmacros.h>
 #endif
 #include <time.h>
@@ -53,8 +53,8 @@ static double now(void)
    /proc/diskstats (io_ticks), or -1 (always on Windows). */
 static long long disk_busy_ms(const char *path)
 {
-#ifdef _WIN32
-    (void)path;
+#ifndef __linux__
+    (void)path; /* /proc/diskstats: Linux's */
     return -1;
 #else
     struct stat st;

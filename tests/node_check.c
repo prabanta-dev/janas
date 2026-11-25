@@ -23,7 +23,7 @@
 
 #include "janas/llm.h"
 
-#ifdef _WIN32
+#ifndef __linux__
 int main(void)
 {
     printf("node_check: the module is built on Linux only\n");

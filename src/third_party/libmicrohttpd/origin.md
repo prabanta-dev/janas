@@ -32,6 +32,11 @@ wrote on 11 October 2026 for `--host=x86_64-w64-mingw32` (MinGW-w64, GCC
 14), with the same options but `--with-threads`, which it chose itself:
 Windows's own threads. It compiles the same 14 sources.
 
+`macos/MHD_config.h`, for macOS builds, is the one the same `configure`, with
+the same options, wrote on 25 November 2026 on a Mac of GitHub's (macos-15,
+Apple Silicon, Apple's clang), in Janas's macOS workflow
+(`.github/workflows/macos.yml`).
+
 `build.sh` compiles the sources with `-D_GNU_SOURCE -DHAVE_CONFIG_H` and
 without Janas's warning flags: warnings in code that is not Janas's are not
 Janas's to fix here.

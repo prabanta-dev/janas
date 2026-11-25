@@ -53,6 +53,11 @@ void janas_cpu_name(char *buf, size_t len);
    is known. */
 void janas_cpu_features(char *buf, size_t len);
 
+/* On ARM, whether the processor and the system have the instruction set
+   named as janas_cpu_features names it ("dotprod", "i8mm"...): 1 or 0;
+   0 elsewhere. */
+int janas_arm_feature(const char *name);
+
 /* Whether the machine runs on mains power: 1 yes, 0 on battery, -1 unknown
    (no power supply information: a desktop, most likely). */
 int janas_on_mains(void);

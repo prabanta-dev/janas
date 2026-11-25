@@ -15,6 +15,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "common/reopen.h"
 #include "common/aligned.h"
 #include "llm/jns.h"
 
@@ -74,7 +75,11 @@ int main(int argc, char **argv)
 
     int status = 0;
     if (argc > 2 && strcmp(argv[2], "--verify") == 0) {
-        int fd = open(argv[1], O_RDONLY | O_DIRECT);
+        /* direct reads as the cache makes them, on every system */
+        int fd0 = open(argv[1], O_RDONLY);
+        int fd = fd0 >= 0 ? janas_reopen_read(fd0, 1) : -1;
+        if (fd0 >= 0)
+            close(fd0);
         uint64_t max_slot = 0;
         for (uint32_t l = 0; l < h->n_layer; l++)
             if (j.layers[l].slot_bytes > max_slot)
