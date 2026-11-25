@@ -27,11 +27,12 @@ The window is WebView2, the engine of Edge that Windows 10 and 11 carry, through
 
 ### Linux
 
-x86-64: Ubuntu 22.04, Debian 12 and later.
+x86-64: Ubuntu 22.04, Debian 12 and later. 64-bit ARM, the same systems: [`brebus-linux-aarch64.tar.gz`](https://github.com/prabanta-dev/brebus/releases/latest/download/brebus-linux-aarch64.tar.gz), without installing as below (its programs built and tested on GitHub's ARM machines).
 
 - **The .deb**, [`brebus_amd64.deb`](https://github.com/prabanta-dev/brebus/releases/latest/download/brebus_amd64.deb): `sudo apt install ./brebus_amd64.deb`. Brebus goes in `/opt/brebus-janas`, `brebus` on the PATH and in the desktop's menu with its icon. `sudo apt remove brebus-janas` takes it all away.
 - **The .rpm**, [`brebus.x86_64.rpm`](https://github.com/prabanta-dev/brebus/releases/latest/download/brebus.x86_64.rpm), for the distributions that install .rpm packages: `sudo dnf install ./brebus.x86_64.rpm`, the same layout; `sudo dnf remove brebus-janas`.
 - **The pacman package**, [`brebus.x86_64.pkg.tar.zst`](https://github.com/prabanta-dev/brebus/releases/latest/download/brebus.x86_64.pkg.tar.zst), for Arch Linux and the systems made from it (CachyOS, EndeavourOS, Manjaro...): `sudo pacman -U ./brebus.x86_64.pkg.tar.zst`, the same layout; `sudo pacman -R brebus-janas`.
+- **The AppImage**, [`brebus-x86_64.AppImage`](https://github.com/prabanta-dev/brebus/releases/latest/download/brebus-x86_64.AppImage), one file for any distribution with the C library of Ubuntu 22.04 or later: `chmod +x brebus-x86_64.AppImage`, then start it. Nothing is installed; the first window puts Brebus in the desktop's menu, pointing at that file (move the file, and start it again from its new place). WebKitGTK is the system's, as below.
 - **Without installing**, [`brebus-linux-x86_64.tar.gz`](https://github.com/prabanta-dev/brebus/releases/latest/download/brebus-linux-x86_64.tar.gz), or Janas's [`janas-linux-x86_64.tar.gz`](https://github.com/prabanta-dev/janas/releases/latest/download/janas-linux-x86_64.tar.gz): unpack it and start `./brebus`; `./brebus --install-desktop` puts it in the desktop's menu, with its icon, for you (`~/.local/share/applications`).
 
 The window is WebKitGTK's (`libwebkit2gtk-4.1-0` on Debian and Ubuntu, `webkit2gtk4.1` with .rpm packages, `webkit2gtk-4.1` on Arch: the packages recommend it), loaded when Brebus starts. Where it is missing, or there is no display, Brebus opens its page in the browser. Before removing a package, turn off *Start Brebus in the background* (Settings) if you turned it on: its entry is in your home, which a package does not touch.

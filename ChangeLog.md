@@ -2,8 +2,9 @@
 
 > Curated, user-facing summary of completed work, newest first.
 
-## [Unreleased]
+## [2026-11-25] - Janas for Linux on 64-bit ARM, Brebus as a pacman package and an AppImage, Winston
 
+- **Downloads for Linux on 64-bit ARM**: `janas-linux-aarch64.tar.gz` and Brebus's `brebus-linux-aarch64.tar.gz`, built and tested on GitHub's ARM machines. **Brebus as an AppImage** (`brebus-x86_64.AppImage`): one file, started in clean systems of Ubuntu 22.04 and 24.04, Debian 12 and 13, Fedora 43 and Arch.
 - **Winston, Janas's mascot**: the README opens with his picture (`docs/img/winston.png`) in place of the octopus drawn in characters; the wiki's Home shows it from the tag's files.
 - **Brebus as a pacman package** for Arch Linux and the systems made from it (CachyOS, EndeavourOS, Manjaro...): `brebus.x86_64.pkg.tar.zst` among Brebus's release files, `sudo pacman -U`, the same layout as the .deb and the .rpm; built by `makepkg` from the release's own archive, installed, started and removed in clean systems of Arch and CachyOS.
 - **The release workflow builds Linux on 64-bit ARM too**: the Linux job on GitHub's x86-64 and ARM machines, each built, tested and packed on its own kind (`janas-linux-aarch64.tar.gz`, `janas-diag-linux-aarch64.tar.gz`), glslang built from its tag's sources on ARM, where Khronos builds none.
