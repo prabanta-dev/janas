@@ -257,9 +257,17 @@ static int32_t find_format_in(janas_llm *llm, const struct janas_jns *j,
         llm->think_close = llm->ink_text;
         llm->thinker = llm->think_open >= 0 &&
                        strstr(tmpl, "Thinking effort level") != NULL;
-        llm->call_open = llm->call_close = -1;
+        /* its calls: <|message_model|>name<|content_invoke_tool_json|>
+           {"name":...,"args":{...}}<|end_message|> */
+        llm->ink_xml = janas_tokenizer_find(llm->tok, "<|content_xml|>");
+        llm->call_open =
+            janas_tokenizer_find(llm->tok, "<|content_invoke_tool_json|>");
+        llm->call_close = llm->ink_endmsg;
         llm->resp_open = llm->resp_close = -1;
-        llm->tools = JANAS_TOOLS_NONE;
+        llm->tools = janas_tools_dialect(tmpl);
+        if (llm->tools != JANAS_TOOLS_INK || llm->call_open < 0 ||
+            llm->ink_xml < 0 || llm->ink_role[3] < 0)
+            llm->tools = JANAS_TOOLS_NONE;
     } else if (llm->im_start >= 0 && llm->im_end >= 0 &&
                (tmpl[0] == 0 || strstr(tmpl, "<|im_start|>"))) {
         llm->format = FORMAT_CHATML;

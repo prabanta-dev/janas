@@ -77,9 +77,9 @@ struct janas_llm {
     int32_t think_on;      /* Gemma's <|think|>: reasoning asked for, or -1 */
     int32_t quote, decl_open, decl_close; /* Gemma's <|"|>, <|tool>, <tool|> */
     int32_t think_open, think_close;      /* reasoning markers, or -1 */
-    /* Inkling's roles (user, model, system, tool), <|content_text|> and
-       <|end_message|> */
-    int32_t ink_role[4], ink_text, ink_endmsg;
+    /* Inkling's roles (user, model, system, tool), <|content_text|>,
+       <|end_message|> and <|content_xml|> (its tools' declaration) */
+    int32_t ink_role[4], ink_text, ink_endmsg, ink_xml;
     int thinker; /* the template knows enable_thinking */
     /* the template's words at the top of the system message while the
        model reasons, at its default effort (Qwen3.8: "Reasoning effort is
@@ -255,6 +255,9 @@ struct janas_llm_chat {
        held_lt: DeepSeek's "<" kept back until the next token says whether
        a block of calls opens */
     int in_call, held_lt;
+    /* Inkling: after the model's <|message_model|>, before its content's
+       mark - a call's function name, not text */
+    int ink_head;
     struct janas_buf body;
     struct rcall {
         char *name, *args;

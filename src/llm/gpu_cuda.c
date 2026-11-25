@@ -533,7 +533,7 @@ int janas_cuda_begin(struct janas_cuda *c,
         size_t nv, xs, nb, off;
         int k32;
     } xc[MAX_XCACHE];
-    size_t n_xc = 0, x_used = 0, y_used = 0, launched = 0;
+    size_t n_xc = 0, x_used = 0, y_used = 0;
     size_t xk[MAX_PENDING];
     c->n_pend = 0;
     /* the activations, each once, then their copy */
@@ -596,7 +596,6 @@ int janas_cuda_begin(struct janas_cuda *c,
         if (c->cuLaunchKernel(wf ? wf : kernel_of(c, t->type), blocks, 1, 1,
                               ROWS_A_BLOCK, 1, 1, 0, c->st, args, NULL))
             goto broke;
-        launched++;
         snprintf(c->last, sizeof c->last, "%s%s (%s)", kernel_name(t->type),
                  wf ? "_w" : "", c->hip ? "HIP" : "CUDA");
         c->pend[c->n_pend++] =

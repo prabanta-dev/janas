@@ -2,16 +2,10 @@
 
 [![Platform: Linux | Windows x86-64](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20x86--64-lightgrey.svg)]() [![LinkedIn](https://img.shields.io/badge/LinkedIn-Maurizio%20Cammalleri-0077B5?logo=linkedin)](https://www.linkedin.com/in/maurizio-cammalleri-80a89a11/) [![Substack](https://img.shields.io/badge/Substack-Maurizio%20Cammalleri-FF6719?logo=substack)](https://cammalleri.substack.com/)
 
-```
-  ▄███████████▄    
-▄███████████████▄  
-███ ▄ █████ ▄ ███ ▄   J A N A S
-███▄▄▄█████▄▄▄████ 
-▀█████▄▀▀▀▄█████▀ ▀   a family of tools for artificial intelligence, in C
-  █████████████    
- █ █ █ █ █ █ █ █   
-▀ ▀ ▀ ▀ ▀ ▀ ▀ ▀    
-```
+<p align="center">
+  <img src="docs/img/winston.png" alt="Winston, Janas's mascot: a blue octopus with glasses reading a tablet, the icons of a book, a brain, code and the web around him" width="240">
+</p>
+<p align="center"><b>A family of tools for artificial intelligence, in C</b><br>with Winston, its octopus</p>
 
 > **Download Janas only from here.** Janas is published only at [github.com/prabanta-dev/janas](https://github.com/prabanta-dev/janas), its [releases](https://github.com/prabanta-dev/janas/releases) and its models at [huggingface.co/prabanta-dev](https://huggingface.co/prabanta-dev). Other sites using its name are not the project's: one, `joaniberian9588.github.io`, offers a Windows download that is malware, with no part of Janas in it (reported to GitHub on 6 November 2026). Do not run it; if you did, treat that computer as compromised.
 
@@ -46,7 +40,7 @@ Measured on 21 October 2026 (the first two) and 26-27 October (the context of 8,
 
 ### Brebus, the app
 
-The models of your computer in a window of their own, nothing sent anywhere: the catalog and any model of Hugging Face downloaded, each file of the Hub said how far it is from running here; chats, and projects that work in a folder of yours - your documents (PDF, Word, Excel, PowerPoint, LibreOffice, web pages, EPUB) searched before each question and given to the model with their names; artifacts beside the chat as Claude's; dictation by Whisper and replies read aloud; files, web pages and pictures attached; the model's tools and Python in a cage asking you first; and the server for other programs. On Linux and Windows (macOS later): [docs/brebus.md](docs/brebus.md), a complete guide. **Get it** - Windows 10 and 11: [the setup](https://github.com/prabanta-dev/brebus/releases/latest/download/brebus-windows-x86_64-setup.exe) or [the .zip](https://github.com/prabanta-dev/brebus/releases/latest/download/brebus-windows-x86_64.zip); Linux x86-64: [the .deb](https://github.com/prabanta-dev/brebus/releases/latest/download/brebus_amd64.deb) (Ubuntu 22.04, Debian 12 and later), [the .rpm](https://github.com/prabanta-dev/brebus/releases/latest/download/brebus.x86_64.rpm) or [the .tar.gz](https://github.com/prabanta-dev/brebus/releases/latest/download/brebus-linux-x86_64.tar.gz); its page: [github.com/prabanta-dev/brebus](https://github.com/prabanta-dev/brebus). Beside LM Studio, Jan, Ollama, AnythingLLM and Msty, feature by feature, from their official documentation: [docs/compare.md](docs/compare.md), updated every week.
+The models of your computer in a window of their own, nothing sent anywhere: the catalog and any model of Hugging Face downloaded, each file of the Hub said how far it is from running here; chats, and projects that work in a folder of yours - your documents (PDF, Word, Excel, PowerPoint, LibreOffice, web pages, EPUB) searched before each question and given to the model with their names; artifacts beside the chat as Claude's; dictation by Whisper and replies read aloud; files, web pages and pictures attached; the model's tools and Python in a cage asking you first; and the server for other programs. On Linux and Windows (macOS later): [docs/brebus.md](docs/brebus.md), a complete guide. **Get it** - Windows 10 and 11: [the setup](https://github.com/prabanta-dev/brebus/releases/latest/download/brebus-windows-x86_64-setup.exe) or [the .zip](https://github.com/prabanta-dev/brebus/releases/latest/download/brebus-windows-x86_64.zip); Linux x86-64: [the .deb](https://github.com/prabanta-dev/brebus/releases/latest/download/brebus_amd64.deb) (Ubuntu 22.04, Debian 12 and later), [the .rpm](https://github.com/prabanta-dev/brebus/releases/latest/download/brebus.x86_64.rpm), [the pacman package](https://github.com/prabanta-dev/brebus/releases/latest/download/brebus.x86_64.pkg.tar.zst) (Arch, CachyOS) or [the .tar.gz](https://github.com/prabanta-dev/brebus/releases/latest/download/brebus-linux-x86_64.tar.gz); its page: [github.com/prabanta-dev/brebus](https://github.com/prabanta-dev/brebus). Beside LM Studio, Jan, Ollama, AnythingLLM and Msty, feature by feature, from their official documentation: [docs/compare.md](docs/compare.md), updated every week.
 
 ### janas-chat
 

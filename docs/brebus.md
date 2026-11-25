@@ -31,9 +31,10 @@ x86-64: Ubuntu 22.04, Debian 12 and later.
 
 - **The .deb**, [`brebus_amd64.deb`](https://github.com/prabanta-dev/brebus/releases/latest/download/brebus_amd64.deb): `sudo apt install ./brebus_amd64.deb`. Brebus goes in `/opt/brebus-janas`, `brebus` on the PATH and in the desktop's menu with its icon. `sudo apt remove brebus-janas` takes it all away.
 - **The .rpm**, [`brebus.x86_64.rpm`](https://github.com/prabanta-dev/brebus/releases/latest/download/brebus.x86_64.rpm), for the distributions that install .rpm packages: `sudo dnf install ./brebus.x86_64.rpm`, the same layout; `sudo dnf remove brebus-janas`.
+- **The pacman package**, [`brebus.x86_64.pkg.tar.zst`](https://github.com/prabanta-dev/brebus/releases/latest/download/brebus.x86_64.pkg.tar.zst), for Arch Linux and the systems made from it (CachyOS, EndeavourOS, Manjaro...): `sudo pacman -U ./brebus.x86_64.pkg.tar.zst`, the same layout; `sudo pacman -R brebus-janas`.
 - **Without installing**, [`brebus-linux-x86_64.tar.gz`](https://github.com/prabanta-dev/brebus/releases/latest/download/brebus-linux-x86_64.tar.gz), or Janas's [`janas-linux-x86_64.tar.gz`](https://github.com/prabanta-dev/janas/releases/latest/download/janas-linux-x86_64.tar.gz): unpack it and start `./brebus`; `./brebus --install-desktop` puts it in the desktop's menu, with its icon, for you (`~/.local/share/applications`).
 
-The window is WebKitGTK's (`libwebkit2gtk-4.1-0` on Debian and Ubuntu, `webkit2gtk4.1` with .rpm packages: the packages recommend it), loaded when Brebus starts. Where it is missing, or there is no display, Brebus opens its page in the browser. Before removing a package, turn off *Start Brebus in the background* (Settings) if you turned it on: its entry is in your home, which a package does not touch.
+The window is WebKitGTK's (`libwebkit2gtk-4.1-0` on Debian and Ubuntu, `webkit2gtk4.1` with .rpm packages, `webkit2gtk-4.1` on Arch: the packages recommend it), loaded when Brebus starts. Where it is missing, or there is no display, Brebus opens its page in the browser. Before removing a package, turn off *Start Brebus in the background* (Settings) if you turned it on: its entry is in your home, which a package does not touch.
 
 ### From the sources
 
@@ -426,7 +427,7 @@ Started when one is running already on its port, a second `brebus` opens its win
 | The tokens of the services signed in to | `~/.local/share/janas/mcp-auth` | `%LOCALAPPDATA%\janas\mcp-auth` |
 | A project's chats and files | in the project's folder | in the project's folder |
 | Python for Run code | the system's | `%LOCALAPPDATA%\janas\python` |
-| The program | `/opt/brebus-janas` (the .deb and the .rpm), or where it was unpacked | `%LOCALAPPDATA%\Programs\Brebus` (the setup), or where it was unpacked |
+| The program | `/opt/brebus-janas` (the .deb, the .rpm and the pacman package), or where it was unpacked | `%LOCALAPPDATA%\Programs\Brebus` (the setup), or where it was unpacked |
 
 In Brebus's data folder:
 
@@ -449,7 +450,7 @@ The page also remembers, in its browser's storage, what is a matter of taste: th
 | What happens | What to do |
 |---|---|
 | Windows says *Windows protected your PC* | the setup is not signed yet: *More info*, then *Run anyway* |
-| On Linux the page opens in the browser, not in a window | WebKitGTK is missing: `sudo apt install libwebkit2gtk-4.1-0` (or `webkit2gtk4.1` with .rpm packages), then start Brebus again |
+| On Linux the page opens in the browser, not in a window | WebKitGTK is missing: `sudo apt install libwebkit2gtk-4.1-0` (`webkit2gtk4.1` with .rpm packages, `webkit2gtk-4.1` on Arch), then start Brebus again |
 | A reply ends with *no answer* | the model's server stopped: *My models* or *Server* say so; its `server.log`, in Brebus's data folder, says why |
 | A model is slow, or *needs more* in Discover | it is larger than the memory and reads its parts from the disk; a smaller one, or fewer models loaded at once (*Server*), leaves it more |
 | A long chat's answers come later and later | the context fills: *Compact now*, or a new chat; or less of it in the model's settings |
@@ -492,7 +493,7 @@ Its icon is the Prabanta logo, drawn for each size and system ([src/brebus/icons
   - a page's attempts to read Brebus, the network and the page around it, all refused;
   - with Gemma 4 E2B, a picture described and an Italian recording transcribed and summarised;
   - `brebus --background` (23 November 2026): Qwen3-0.6B, the model used last, loaded with its context of 4,096 tokens and answering other programs within two seconds, an older entry for the login rewritten, and Brebus, its model's server and its services ended together by Ctrl+C.
-- **The packages for Linux** (23 November 2026): the .deb installed in clean systems of Ubuntu 22.04 and 24.04, Debian 12 and 13, the .rpm in one that installs .rpm packages; each started, its page asked for, `janas-server` run, and removed, nothing left behind.
+- **The packages for Linux** (23 November 2026): the .deb installed in clean systems of Ubuntu 22.04 and 24.04, Debian 12 and 13, the .rpm in one that installs .rpm packages; each started, its page asked for, `janas-server` run, and removed, nothing left behind. The pacman package (25 November 2026) the same way in clean systems of Arch Linux and CachyOS, built there by `makepkg` from the release's files.
 - **`tests/test_brebus`** starts `brebus` with no model and checks:
   - its page, its API, another site's page refused;
   - the free chats at the start; projects listed, a chat moved and refused outside Brebus's projects; the search's filters;

@@ -20,6 +20,8 @@ struct janas_toolset {
 
 enum janas_tool_dialect janas_tools_dialect(const char *tmpl)
 {
+    if (tmpl && strstr(tmpl, "<|content_invoke_tool_json|>"))
+        return JANAS_TOOLS_INK;
     if (tmpl && strstr(tmpl, "<|tool_call>"))
         return JANAS_TOOLS_GEMMA;
     if (!tmpl || !strstr(tmpl, "<tool_call>"))
@@ -195,6 +197,83 @@ static void extra_keys(struct janas_buf *out, const struct janas_json *obj,
         janas_buf_put(out, k->key, k->key_n);
         janas_buf_puts(out, ">");
     }
+}
+
+/* ---- Inkling's JSON: Python's json.dumps with sort_keys, no spaces ---- */
+
+/* An object's members by key, as Python sorts strings (by code point: the
+   bytes of UTF-8 sort the same). */
+static size_t by_key(const struct janas_json *obj,
+                     const struct janas_json **out, size_t cap)
+{
+    size_t n = 0;
+    for (const struct janas_json *k = obj ? obj->child : NULL; k && n < cap;
+         k = k->next) {
+        size_t i = n++;
+        for (; i > 0; i--) {
+            const struct janas_json *p = out[i - 1];
+            size_t m = p->key_n < k->key_n ? p->key_n : k->key_n;
+            int c = memcmp(p->key, k->key, m);
+            if (c < 0 || (c == 0 && p->key_n <= k->key_n))
+                break;
+            out[i] = p;
+        }
+        out[i] = k;
+    }
+    return n;
+}
+
+/* v as JSON, its objects' keys sorted (all of them, deep: sort), or only
+   the outer object's (the call's arguments: Jinja's dictsort, then each
+   value's tojson as it is). */
+static void ink_json(struct janas_buf *out, const struct janas_json *v,
+                     int deep)
+{
+    if (v->type == JANAS_JSON_ARRAY) {
+        janas_buf_puts(out, "[");
+        for (const struct janas_json *e = v->child; e; e = e->next) {
+            if (e != v->child)
+                janas_buf_puts(out, ",");
+            ink_json(out, e, deep);
+        }
+        janas_buf_puts(out, "]");
+        return;
+    }
+    if (v->type != JANAS_JSON_OBJECT) {
+        janas_json_write(out, v);
+        return;
+    }
+    const struct janas_json *k[256];
+    size_t m = by_key(v, k, 256);
+    janas_buf_puts(out, "{");
+    for (size_t i = 0; i < m; i++) {
+        if (i)
+            janas_buf_puts(out, ",");
+        janas_json_write_str(out, k[i]->key, k[i]->key_n);
+        janas_buf_puts(out, ":");
+        if (deep)
+            ink_json(out, k[i], 1);
+        else
+            janas_json_write(out, k[i]);
+    }
+    janas_buf_puts(out, "}");
+}
+
+void janas_tools_ink_call(struct janas_buf *out,
+                          const struct janas_tool_call *call)
+{
+    janas_buf_puts(out, "{\"name\":");
+    janas_json_write_str(out, call->name, call->name_n);
+    janas_buf_puts(out, ",\"args\":");
+    struct janas_json_doc *doc =
+        janas_json_parse(call->args, call->args_n, NULL, 0);
+    const struct janas_json *r = janas_json_root(doc);
+    if (r && r->type == JANAS_JSON_OBJECT)
+        ink_json(out, r, 0);
+    else
+        janas_buf_puts(out, "{}");
+    janas_json_free(doc);
+    janas_buf_puts(out, "}");
 }
 
 /* ---- Gemma 4's notation ---- */
@@ -668,6 +747,43 @@ void janas_tools_system(struct janas_buf *out, enum janas_tool_dialect d,
         janas_buf_puts(out, "\n</tools>");
         janas_buf_puts(out, XML_FORMAT);
         break;
+    case JANAS_TOOLS_INK:
+        /* the declaration's content alone: each tool as {"description",
+           "name", "parameters", "type"}, sorted deep; the system message,
+           a message of its own, is the caller's */
+        janas_buf_puts(out, "[");
+        for (uint32_t i = 0; i < t->n; i++) {
+            const struct janas_json *f = t->fn[i];
+            const struct janas_json *d = janas_json_get(f, "description");
+            const struct janas_json *nm = janas_json_get(f, "name");
+            const struct janas_json *p = janas_json_get(f, "parameters");
+            const struct janas_json *ty = janas_json_get(t->item[i], "type");
+            if (i)
+                janas_buf_puts(out, ",");
+            janas_buf_puts(out, "{\"description\":");
+            if (d && d->type == JANAS_JSON_STRING)
+                janas_json_write(out, d);
+            else
+                janas_buf_puts(out, "\"\"");
+            janas_buf_puts(out, ",\"name\":");
+            if (nm)
+                janas_json_write(out, nm);
+            else
+                janas_buf_puts(out, "\"\"");
+            janas_buf_puts(out, ",\"parameters\":");
+            if (p && p->type == JANAS_JSON_OBJECT && p->child)
+                ink_json(out, p, 1);
+            else
+                janas_buf_puts(out, "{}");
+            janas_buf_puts(out, ",\"type\":");
+            if (ty && ty->type == JANAS_JSON_STRING && ty->n)
+                janas_json_write(out, ty);
+            else
+                janas_buf_puts(out, "\"function\"");
+            janas_buf_puts(out, "}");
+        }
+        janas_buf_puts(out, "]");
+        break;
     case JANAS_TOOLS_DSML:
         /* encoding_dsv4.py's render_tools after the system message */
         if (sys)
@@ -1027,12 +1143,13 @@ int janas_tools_parse(enum janas_tool_dialect d, const struct janas_toolset *t,
         janas_buf_put(name, nm, (size_t)(s - nm));
         return g_to_json(&s, end, args);
     }
-    if (d != JANAS_TOOLS_JSON)
+    if (d != JANAS_TOOLS_JSON && d != JANAS_TOOLS_INK)
         return parse_xml(t, body, n, name, args);
     struct janas_json_doc *doc = janas_json_parse(body, n, NULL, 0);
     const struct janas_json *root = janas_json_root(doc);
     const struct janas_json *nm = janas_json_get(root, "name");
-    const struct janas_json *ar = janas_json_get(root, "arguments");
+    const struct janas_json *ar =
+        janas_json_get(root, d == JANAS_TOOLS_INK ? "args" : "arguments");
     int rc = -1;
     if (nm && nm->type == JANAS_JSON_STRING) {
         janas_buf_put(name, nm->s, nm->n);
@@ -1264,14 +1381,17 @@ uint32_t janas_tools_rule(struct janas_gbuild *b, struct janas_jsg *j,
             continue;
         const struct janas_json *nm = janas_json_get(t->fn[i], "name");
         uint32_t a = janas_gb_alt(b, fns);
-        if (d == JANAS_TOOLS_JSON) {
+        if (d == JANAS_TOOLS_JSON || d == JANAS_TOOLS_INK) {
             janas_gb_byte(b, a, '"');
             janas_gb_lit(b, a, nm->s, nm->n);
             janas_gb_byte(b, a, '"');
             janas_gb_ref(b, a, ws);
             janas_gb_byte(b, a, ',');
             janas_gb_ref(b, a, ws);
-            janas_gb_lit(b, a, "\"arguments\"", 11);
+            if (d == JANAS_TOOLS_INK)
+                janas_gb_lit(b, a, "\"args\"", 6);
+            else
+                janas_gb_lit(b, a, "\"arguments\"", 11);
             janas_gb_ref(b, a, ws);
             janas_gb_byte(b, a, ':');
             janas_gb_ref(b, a, ws);
@@ -1285,7 +1405,7 @@ uint32_t janas_tools_rule(struct janas_gbuild *b, struct janas_jsg *j,
     uint32_t r = janas_gb_rule(b);
     uint32_t a = janas_gb_alt(b, r);
     janas_gb_ref(b, a, ws);
-    if (d == JANAS_TOOLS_JSON) {
+    if (d == JANAS_TOOLS_JSON || d == JANAS_TOOLS_INK) {
         janas_gb_byte(b, a, '{');
         janas_gb_ref(b, a, ws);
         janas_gb_lit(b, a, "\"name\"", 6);

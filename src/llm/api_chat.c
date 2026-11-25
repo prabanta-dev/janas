@@ -394,10 +394,12 @@ int janas_api_start_reply(janas_llm_chat *c)
         /* without reasoning the reply is opened as text: at effort 0 the
            model still reasoned when it chose (98 tokens before a
            multiplication's answer), as DeepSeek's closes its <think> */
+        /* with tools the model opens its message itself, a call or text */
         c->in_think = 0;
         if (ink_effort(c))
             return -1;
         if (!(llm->thinker && c->p.thinking != 0) &&
+            !(c->tools && llm->tools == JANAS_TOOLS_INK) &&
             (janas_api_add_special(c, llm->ink_role[1]) ||
              janas_api_add_special(c, llm->ink_text)))
             return -1;
@@ -607,10 +609,23 @@ int janas_api_add_system(janas_llm_chat *c, const char *sys, size_t n)
         janas_buf_put(&b, nb.p, nb.n);
     janas_buf_free(&nb);
     janas_tools_system(&b, llm->tools, c->tools_sys, sys, n);
-    if (llm->format == FORMAT_INKLING) { /* its system message */
-        int err =
-            b.oom || (b.n && janas_api_add_message(c, "system", b.p, b.n));
+    if (llm->format == FORMAT_INKLING) {
+        /* the tools' declaration, a message of its own before the system
+           message: <|message_system|>tool_declare<|content_xml|>[...] */
+        struct janas_buf d = {0};
+        janas_tools_system(&d, JANAS_TOOLS_INK, c->tools_sys, NULL, 0);
+        int err = b.oom || d.oom ||
+                  janas_api_add_special(c, llm->ink_role[2]) ||
+                  janas_api_add_text(c, "tool_declare", 12) ||
+                  janas_api_add_special(c, llm->ink_xml) ||
+                  janas_api_add_text(c, d.p, d.n) ||
+                  janas_api_add_special(c, llm->ink_endmsg) ||
+                  (sys && n && janas_api_add_message(c, "system", sys, n)) ||
+                  janas_api_flush_text(c);
+        janas_buf_free(&d);
         janas_buf_free(&b);
+        if (!err && c->n_ids - ids0 > plain)
+            c->tools_tokens = (uint32_t)(c->n_ids - ids0 - plain);
         return err ? -1 : 0;
     }
     if (llm->format == FORMAT_DEEPSEEK) { /* no turn: the text as it is */

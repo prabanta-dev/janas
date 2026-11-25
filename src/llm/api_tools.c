@@ -277,7 +277,7 @@ void janas_api_reply_clear(janas_llm_chat *c)
     c->n_calls = 0;
     c->n_toks = 0;
     c->tbytes.n = 0;
-    c->in_call = c->held_lt = 0;
+    c->in_call = c->held_lt = c->ink_head = 0;
     c->body.n = 0;
 }
 
@@ -291,8 +291,12 @@ int janas_api_reply_setup(janas_llm_chat *c)
     int tools = c->tools && llm->tools != JANAS_TOOLS_NONE &&
                 llm->tools != JANAS_TOOLS_DSML && c->reply_at != UINT32_MAX;
     int choice = tools ? c->tool_choice : JANAS_LLM_TOOLS_NONE;
-    int must = choice == JANAS_LLM_TOOLS_REQUIRED ||
-               choice == JANAS_LLM_TOOLS_FUNCTION;
+    /* Inkling's calls follow a message mark and the function's name, which
+       the grammar of a whole reply does not write: a call required is not
+       held to there, a call made is */
+    int must = (choice == JANAS_LLM_TOOLS_REQUIRED ||
+                choice == JANAS_LLM_TOOLS_FUNCTION) &&
+               llm->tools != JANAS_TOOLS_INK;
     if (!tools && c->format == JANAS_LLM_FORMAT_TEXT)
         return 0; /* nothing to hold: the sampler asks nobody */
     struct janas_gbuild *b = janas_gbuild_new();
@@ -404,9 +408,12 @@ void janas_api_close_call(janas_llm_chat *c, struct janas_buf *text)
         c->calls[c->n_calls++] = (struct rcall){.name = name.p, .args = args.p};
     } else {
         /* not a call after all: it stays in the text as it was written */
-        janas_buf_puts(text, "<tool_call>");
+        int ink = c->llm->tools == JANAS_TOOLS_INK;
+        if (!ink)
+            janas_buf_puts(text, "<tool_call>");
         janas_buf_put(text, c->body.p ? c->body.p : "", c->body.n);
-        janas_buf_puts(text, "</tool_call>");
+        if (!ink)
+            janas_buf_puts(text, "</tool_call>");
         janas_buf_free(&name);
         janas_buf_free(&args);
     }

@@ -218,13 +218,24 @@ static void take(janas_llm_chat *c, int32_t t)
     char tmp[sizeof(c->pend)];
     if (!c->in_think && t != llm->think_open && t != llm->think_close)
         c->answer_tokens++; /* text or a call: what max_answer counts */
-    /* Inkling: its message marks, never text */
-    if (llm->format == FORMAT_INKLING &&
-        (t == llm->ink_role[1] || t == llm->ink_endmsg)) {
-        if (t == llm->ink_endmsg)
-            c->in_think = 0;
-        janas_api_record(c, t, JANAS_LLM_PART_MARK, "", 0);
-        return;
+    /* Inkling: its message marks, never text (a call's end is the call's);
+       with tools, what comes between <|message_model|> and its content's
+       mark is a call's function name, written again in the call */
+    if (llm->format == FORMAT_INKLING && !c->in_call) {
+        if (t == llm->ink_role[1] || t == llm->ink_endmsg) {
+            if (t == llm->ink_endmsg)
+                c->in_think = 0;
+            c->ink_head = t == llm->ink_role[1] && c->tools &&
+                          llm->tools == JANAS_TOOLS_INK;
+            janas_api_record(c, t, JANAS_LLM_PART_MARK, "", 0);
+            return;
+        }
+        if (c->ink_head && t != llm->think_open && t != llm->think_close &&
+            t != llm->call_open) {
+            janas_api_record(c, t, JANAS_LLM_PART_MARK, "", 0);
+            return;
+        }
+        c->ink_head = 0;
     }
     if (t == llm->think_open || t == llm->think_close) {
         c->in_think = t == llm->think_open;

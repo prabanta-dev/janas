@@ -42,6 +42,14 @@ enum janas_tool_dialect {
        string="true|false"> each, answers <tool_result>...</tool_result> in
        a user turn. ｜DSML｜ is a token of its own, the rest text */
     JANAS_TOOLS_DSML,
+    /* Inkling-2-Mini: the tools as a JSON array (keys sorted, no spaces)
+       in a system message of their own, <|message_system|>tool_declare
+       <|content_xml|>[...]; each call a message of the model's,
+       <|message_model|>f<|content_invoke_tool_json|>{"name":"f","args":
+       {...}}<|end_message|>; each answer a message of the tool's,
+       <|message_tool|>f<|content_text|>...<|end_message|>. The marks are
+       tokens of their own, written by the caller (api_chat.c, api_load.c) */
+    JANAS_TOOLS_INK,
 };
 
 /* The dialect of a chat template (NONE when it has no tools). */
@@ -70,6 +78,11 @@ struct janas_tool_call {
     const char *name, *args;
     size_t name_n, args_n;
 };
+
+/* Inkling: a call's body as its template writes it,
+   {"name":"f","args":{...}} - the arguments' keys sorted, no spaces. */
+void janas_tools_ink_call(struct janas_buf *out,
+                          const struct janas_tool_call *call);
 
 /* An assistant message with calls, after the role: its content, then each
    call as the dialect writes it. */

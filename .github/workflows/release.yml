@@ -1,16 +1,18 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Maurizio Cammalleri
 #
-# The binary package of Janas for Linux x86-64: built on Ubuntu 22.04, so
-# that it runs with the C library of Ubuntu 22.04, Debian 12 and later;
-# tested; packed as janas-linux-x86_64.tar.gz with the SHA-256 of every
-# file. The one for Windows x86-64 is built from the same sources with
+# The binary packages of Janas for Linux x86-64 and Linux on 64-bit ARM:
+# each built on Ubuntu 22.04 on a machine of its kind, so that it runs with
+# the C library of Ubuntu 22.04, Debian 12 and later; tested; packed as
+# janas-linux-x86_64.tar.gz and janas-linux-aarch64.tar.gz with the SHA-256
+# of every file. The one for Windows x86-64 is built from the same sources with
 # MinGW-w64 on Linux, tested on a Windows machine of GitHub's and packed as
 # janas-windows-x86_64.zip, attached to the same release. A tag v* publishes it as that tag's release (the name never
 # changes, so releases/latest/download/janas-linux-x86_64.tar.gz is always
 # the newest); run by hand, it only builds the package and keeps it as an
 # artifact of the run. The shaders' compiler and the Vulkan headers are
-# Khronos's own, at fixed versions: Ubuntu 22.04's are from 2022.
+# Khronos's own, at fixed versions: Ubuntu 22.04's are from 2022 (the
+# compiler built from its sources on ARM, where Khronos builds none).
 name: release
 
 on:
@@ -24,14 +26,25 @@ permissions:
 env:
   GLSLANG_VERSION: 16.6.0
   GLSLANG_SHA256: 2c34071f56ecf39d16233294d3739cf43f981fd39080f2fd9dccb782101191ce
+  GLSLANG_COMMIT: e1b562a8bed273a02f30b59b66a5d499793cede5
   VULKAN_HEADERS_TAG: vulkan-sdk-1.4.363.0
   VULKAN_HEADERS_COMMIT: 6802bb4733b63ed5efd3adb308a6c885ef180ea1
-  PACKAGE: janas-linux-x86_64
-  DIAG: janas-diag-linux-x86_64
 
 jobs:
-  linux-x86_64:
-    runs-on: ubuntu-22.04
+  # Linux on x86-64 and on 64-bit ARM, each built and tested on a machine
+  # of its own kind (Ubuntu 22.04: its C library), packed the same way
+  linux:
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+          - arch: aarch64
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
+    env:
+      PACKAGE: janas-linux-${{ matrix.arch }}
+      DIAG: janas-diag-linux-${{ matrix.arch }}
     steps:
       - uses: actions/checkout@v7
 
@@ -44,10 +57,22 @@ jobs:
           sudo -E apt-get install -y -q --no-install-recommends clang lld
           mkdir -p "$RUNNER_TEMP/khronos"
           cd "$RUNNER_TEMP/khronos"
-          curl -fsSL -o glslang.tar.gz \
-            "https://github.com/KhronosGroup/glslang/releases/download/$GLSLANG_VERSION/glslang-$GLSLANG_VERSION-linux-x86_64-release.tar.gz"
-          echo "$GLSLANG_SHA256  glslang.tar.gz" | sha256sum -c -
-          mkdir glslang && tar xzf glslang.tar.gz -C glslang
+          if [ "${{ matrix.arch }}" = x86_64 ]; then
+            curl -fsSL -o glslang.tar.gz \
+              "https://github.com/KhronosGroup/glslang/releases/download/$GLSLANG_VERSION/glslang-$GLSLANG_VERSION-linux-x86_64-release.tar.gz"
+            echo "$GLSLANG_SHA256  glslang.tar.gz" | sha256sum -c -
+            mkdir glslang && tar xzf glslang.tar.gz -C glslang
+          else
+            # Khronos builds none for ARM: the same version from its tag's
+            # sources (the compiler alone, no optimizer)
+            git clone -q --depth 1 --branch "$GLSLANG_VERSION" \
+              https://github.com/KhronosGroup/glslang.git glslang-src
+            test "$(git -C glslang-src rev-parse HEAD)" = "$GLSLANG_COMMIT"
+            cmake -S glslang-src -B glslang-build -DCMAKE_BUILD_TYPE=Release \
+              -DENABLE_OPT=OFF -DGLSLANG_TESTS=OFF -DENABLE_GLSLANG_BINARIES=ON \
+              -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/khronos/glslang" >/dev/null
+            cmake --build glslang-build -j "$(nproc)" --target install >/dev/null
+          fi
           echo "$RUNNER_TEMP/khronos/glslang/bin" >> "$GITHUB_PATH"
           git clone -q --depth 1 --branch "$VULKAN_HEADERS_TAG" \
             https://github.com/KhronosGroup/Vulkan-Headers.git
@@ -75,7 +100,7 @@ jobs:
       - name: Pack
         run: |
           set -euo pipefail
-          B=bin/x86_64-linux
+          B=bin/${{ matrix.arch }}-linux
           P="$PACKAGE/janas"
           mkdir -p "$P/services" "$P/lib" "$P/include/janas" "$P/docs" "$P/node"
           for f in janas-chat janas-server janas-get janas-setup janas-bench janas-mcp brebus \
@@ -131,7 +156,7 @@ jobs:
           set -euo pipefail
           # vkcheck and gpu_check alone, for a tester who only has to tell
           # whether the GPU works: no model, no engine, a few megabytes
-          B=bin/x86_64-linux
+          B=bin/${{ matrix.arch }}-linux
           D="$DIAG/janas-diag"
           mkdir -p "$D"
           install -m 755 "$B/vkcheck" "$B/gpu_check" "$D/"
@@ -143,8 +168,7 @@ jobs:
           sha256sum "$DIAG.tar.gz" > "$DIAG.tar.gz.sha256"
           cat "$DIAG.tar.gz.sha256"
 
-      - name: Keep the package (run by hand)
-        if: github.event_name == 'workflow_dispatch'
+      - name: Keep the package
         uses: actions/upload-artifact@v7
         with:
           name: ${{ env.PACKAGE }}
@@ -154,16 +178,29 @@ jobs:
             ${{ env.DIAG }}.tar.gz
             ${{ env.DIAG }}.tar.gz.sha256
 
+  # the release, once both Linux packages are made: the x86-64 and the ARM
+  # one attached together (Windows's added by windows-package)
+  linux-release:
+    needs: linux
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: janas-linux-*
+          merge-multiple: true
+
       - name: Publish the release (a tag)
-        if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            "$PACKAGE.tar.gz" "$PACKAGE.tar.gz.sha256" \
-            "$DIAG.tar.gz" "$DIAG.tar.gz.sha256" \
+          gh release create "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" \
+            janas-linux-x86_64.tar.gz janas-linux-x86_64.tar.gz.sha256 \
+            janas-diag-linux-x86_64.tar.gz janas-diag-linux-x86_64.tar.gz.sha256 \
+            janas-linux-aarch64.tar.gz janas-linux-aarch64.tar.gz.sha256 \
+            janas-diag-linux-aarch64.tar.gz janas-diag-linux-aarch64.tar.gz.sha256 \
             --title "Janas $GITHUB_REF_NAME" \
-            --notes "Janas for Linux x86-64 (Ubuntu 22.04, Debian 12 and later): janas-linux-x86_64.tar.gz; for Windows 10 and 11 x86-64: janas-windows-x86_64.zip. Only the GPU checks (vkcheck, gpu_check), to tell whether a GPU computes what the CPU does: janas-diag-linux-x86_64.tar.gz, janas-diag-windows-x86_64.zip. Unpack it and start: janas-get list, then janas-chat <model>. What changed: ChangeLog.md. The SHA-256 of every file: SHA256SUMS in the package."
+            --notes "Janas for Linux x86-64 (Ubuntu 22.04, Debian 12 and later): janas-linux-x86_64.tar.gz; for Linux on 64-bit ARM (the same systems, Raspberry Pi OS 64-bit): janas-linux-aarch64.tar.gz; for Windows 10 and 11 x86-64: janas-windows-x86_64.zip. Only the GPU checks (vkcheck, gpu_check), to tell whether a GPU computes what the CPU does: janas-diag-linux-x86_64.tar.gz, janas-diag-linux-aarch64.tar.gz, janas-diag-windows-x86_64.zip. Unpack it and start: janas-get list, then janas-chat <model>. What changed: ChangeLog.md. The SHA-256 of every file: SHA256SUMS in the package."
 
   # Windows x86-64: the same sources built with MinGW-w64 on Linux (a
   # newer Ubuntu: the C library does not matter for Windows, the MinGW
@@ -242,7 +279,7 @@ jobs:
           if ($failed.Count -gt 0) { Write-Host "failed: $failed"; exit 1 }
 
   windows-package:
-    needs: [linux-x86_64, windows-build, windows-test]
+    needs: [linux-release, windows-build, windows-test]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
@@ -342,7 +379,7 @@ jobs:
   # release. Links between the pages become the wiki's own; links to the
   # sources point to the tag's files on GitHub.
   wiki:
-    needs: linux-x86_64
+    needs: linux-release
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-22.04
     steps:
@@ -357,6 +394,7 @@ jobs:
           git clone -q "https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY.wiki.git" "$W"
           find "$W" -maxdepth 1 -name '*.md' -delete
           BLOB="https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME"
+          RAW="https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$GITHUB_REF_NAME"
           # the order of the README's list, then any page not in it
           ORDER="features models chat library serving code-completion tools hardware"
           for f in docs/*.md; do
@@ -375,8 +413,10 @@ jobs:
             done
           }
           # Home: docs/x.md -> the page, other files -> the tag's sources
+          # pictures (<img src=...>) -> the tag's files themselves
           sed -E -e 's#\]\(docs/([a-z-]+)\.md(\#[^)]*)?\)#](@@\1@@\2)#g' \
-                 -e "s#\\]\\(([A-Za-z][^):@]*)\\)#](${BLOB}/\\1)#g" README.md |
+                 -e "s#\\]\\(([A-Za-z][^):@]*)\\)#](${BLOB}/\\1)#g" \
+                 -e "s#src=\"([A-Za-z][^\":]*)\"#src=\"${RAW}/\\1\"#g" README.md |
             sed -E -f <(names) > "$W/Home.md"
           for n in $ORDER; do
             t=$(head -1 "docs/$n.md" | sed -E 's/^# //')

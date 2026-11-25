@@ -168,6 +168,30 @@ static int add_assistant(janas_llm_chat *c, const struct cmsg *m, int after_q)
         janas_buf_free(&b);
         return err ? -1 : 0;
     }
+    if (llm->format == FORMAT_INKLING && m->n_calls &&
+        llm->tools == JANAS_TOOLS_INK) {
+        /* its text a message, each call one, then the end of sampling */
+        int err = 0;
+        size_t tn = m->n;
+        if (tn)
+            err |= janas_api_add_special(c, llm->ink_role[1]) ||
+                   janas_api_add_special(c, llm->ink_text) ||
+                   janas_api_add_text(c, m->text, tn) ||
+                   janas_api_add_special(c, llm->ink_endmsg);
+        for (size_t k = 0; k < m->n_calls && !err; k++) {
+            struct janas_buf b = {0};
+            janas_tools_ink_call(&b, &m->calls[k]);
+            err |=
+                b.oom || janas_api_add_special(c, llm->ink_role[1]) ||
+                janas_api_add_text(c, m->calls[k].name, m->calls[k].name_n) ||
+                janas_api_add_special(c, llm->call_open) ||
+                janas_api_add_text(c, b.p, b.n) ||
+                janas_api_add_special(c, llm->ink_endmsg);
+            janas_buf_free(&b);
+        }
+        err |= janas_api_add_special(c, llm->im_end);
+        return err ? -1 : 0;
+    }
     if (llm->format == FORMAT_LLAMA3 || llm->format == FORMAT_DEEPSEEK ||
         llm->format == FORMAT_INKLING)
         /* no reasoning given back, no tools */
@@ -306,6 +330,29 @@ static int render(janas_llm_chat *c, uint32_t *reply_off)
             int first = i == 0 || c->msgs[i - 1].role != JANAS_LLM_ROLE_TOOL;
             int last = i + 1 == c->n_msgs ||
                        c->msgs[i + 1].role != JANAS_LLM_ROLE_TOOL;
+            if (llm->format == FORMAT_INKLING) {
+                /* a message of the tool's, its role named by the call it
+                   answers (the k-th answer, the k-th call before it) */
+                size_t k = 0, a = i;
+                while (a > 0 && c->msgs[a - 1].role == JANAS_LLM_ROLE_TOOL)
+                    a--, k++;
+                const struct cmsg *q =
+                    a > 0 && c->msgs[a - 1].role == JANAS_LLM_ROLE_ASSISTANT
+                        ? &c->msgs[a - 1]
+                        : NULL;
+                if (first) {
+                    err |= janas_api_flush_text(c);
+                    c->last_at = (uint32_t)c->n_ids;
+                }
+                err |= janas_api_add_special(c, llm->ink_role[3]);
+                if (q && k < q->n_calls)
+                    err |= janas_api_add_text(c, q->calls[k].name,
+                                              q->calls[k].name_n);
+                err |= janas_api_add_special(c, llm->ink_text) ||
+                       janas_api_add_text(c, m->text, m->n) ||
+                       janas_api_add_special(c, llm->ink_endmsg);
+                break;
+            }
             if (llm->format == FORMAT_DEEPSEEK) {
                 /* <｜User｜> and the answers, a blank line between them */
                 if (first) {
