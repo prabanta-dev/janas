@@ -3,11 +3,12 @@
 #
 # The port to Metal, while it is being written (port/metal only, not to be
 # merged): a real model on GitHub's Mac with Apple's GPU, the engine's own
-# choices of devices told by janas-bench. Run by hand.
+# choices of devices told by janas-bench. Run by a push to port/metal.
 name: metal-dev
 
 on:
-  workflow_dispatch:
+  push:
+    branches: ['port/metal']
 
 jobs:
   model:
