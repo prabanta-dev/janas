@@ -218,7 +218,7 @@ int brebus_pick(int file, const char *title, char *out, size_t n)
     }
     pick_busy = 1;
     pthread_mutex_unlock(&mu);
-    __block char path[4096] = "";
+    __block NSString *chosen = nil;
     NSString *t = [NSString stringWithUTF8String:title ? title : ""];
     dispatch_sync(dispatch_get_main_queue(), ^{
       NSOpenPanel *p = [NSOpenPanel openPanel];
@@ -227,10 +227,10 @@ int brebus_pick(int file, const char *title, char *out, size_t n)
       p.canChooseDirectories = file == 0;
       p.allowsMultipleSelection = NO;
       p.canCreateDirectories = YES;
-      if ([p runModal] == NSModalResponseOK && p.URL.fileSystemRepresentation)
-          snprintf(path, sizeof path, "%s", p.URL.fileSystemRepresentation);
+      if ([p runModal] == NSModalResponseOK)
+          chosen = p.URL.path;
     });
-    snprintf(out, n, "%s", path);
+    snprintf(out, n, "%s", chosen ? chosen.fileSystemRepresentation : "");
     pthread_mutex_lock(&mu);
     pick_busy = 0;
     pthread_cond_broadcast(&cv);
