@@ -78,8 +78,13 @@ struct janas_cuda *janas_cuda_create(char *err, size_t err_len)
         /* the CPU's bits: no fast math, no fused operations of its own */
         if (@available(macOS 15.0, *))
             o.mathMode = MTLMathModeSafe;
-        else
+        else {
+            /* macOS 14's way, deprecated after it */
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
             o.fastMathEnabled = NO;
+#pragma clang diagnostic pop
+        }
         NSString *src = [[NSString alloc]
             initWithBytes:janas_matvec_metal
                    length:sizeof(janas_matvec_metal) - 1
