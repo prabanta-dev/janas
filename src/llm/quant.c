@@ -2020,6 +2020,8 @@ float janas_nvfp4_dot(const struct janas_block_nvfp4 *w,
 #if defined(__x86_64__)
     if (use_avx2_fma)
         return nvfp4_dot_avx2(w, x, nb);
+#elif defined(__aarch64__)
+    return use_sdot ? nvfp4_dot_sdot(w, x, nb) : nvfp4_dot_neon(w, x, nb);
 #endif
     return janas_nvfp4_dot_ref(w, x, nb);
 }
@@ -2727,7 +2729,7 @@ void janas_dot_multi(int type, const void *w, const struct janas_block_q8k *x,
     }
 #elif defined(__aarch64__)
     if (type == JANAS_Q4_K || type == JANAS_Q5_K || type == JANAS_Q6_K ||
-        type == JANAS_Q8_0) {
+        type == JANAS_Q8_0 || type == JANAS_NVFP4) {
         float r[8];
         int g = 1;
         for (; v < nv; v += (size_t)g) {
@@ -2746,6 +2748,10 @@ void janas_dot_multi(int type, const void *w, const struct janas_block_q8k *x,
             case JANAS_Q6_K:
                 (use_sdot ? q6k_dotn_sdot : q6k_dotn_neon)(w, xv, x_stride, g,
                                                            nb, r);
+                break;
+            case JANAS_NVFP4:
+                (use_sdot ? nvfp4_dotn_sdot : nvfp4_dotn_neon)(w, xv, x_stride,
+                                                               g, nb, r);
                 break;
             default:
                 (use_sdot ? q8_0_dotn_sdot : q8_0_dotn_neon)(w, xv, x_stride, g,

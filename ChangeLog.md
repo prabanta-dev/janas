@@ -2,6 +2,10 @@
 
 > Curated, user-facing summary of completed work, newest first.
 
+## [Unreleased]
+
+- **Inkling-2-Mini in the catalog**: `janas-get inkling-2-mini` downloads its JNS from `prabanta-dev/Inkling-2-Mini-JNS` (18.3 GB, converted from unsloth's UD-Q4_K_M, checked against its SHA-256), or converts unsloth's GGUF with `--from-gguf`. Apache 2.0, with Thinking Machines' Model Acceptable Use Policy (MODELS.md).
+
 ## [2026-11-26] - Janas on macOS (Apple Silicon) and on Windows for ARM
 
 - **Janas on macOS (Apple Silicon), the CPU alone**: `janas-macos-arm64.tar.gz`, built, tested (the whole suite but the Node.js module's) and packed on a Mac of GitHub's by the release workflow, not signed (its README says how to open it). What macOS tells of the machine in `sysinfo_mac.c` (sysctl and Mach; a thread "pinned" to a kind of core through its quality of service, macOS having no affinity), Linux's moved whole to `sysinfo_linux.c`; direct reads with `F_NOCACHE`; what macOS's C library lacks of Linux's in `mac_compat.h` and `mac_posix.c`, as `win_compat` does for Windows; libmicrohttpd's configuration written by its own `configure` on a Mac; `.dylib` libraries; janas-system's backend there (`macos.c`); ARM's instruction sets asked in one place for every system (`cpu_features.c`); a link opened in the browser by one function (`janas_open_url`, `open` on macOS) where three copies ran `xdg-open`. Apple's GPU (Metal) and Brebus's own window for macOS come later: until then Brebus opens in the browser.

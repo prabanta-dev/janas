@@ -547,7 +547,8 @@ static int tiles_exact(void)
 
 /* An NVIDIA card through CUDA's driver (hip 0) or an AMD one through HIP
    (1), gpu_cuda.c: its products split by rows as Vulkan's are, what it has
-   no kernel for on the CPU */
+   no kernel for on the CPU. On macOS the same interface is Apple's GPU
+   through Metal (gpu_metal.m, hip 0). */
 static struct janas_gpu *drv_create(int hip, char *err, size_t err_len)
 {
     struct janas_gpu *g = calloc(1, sizeof(*g));
@@ -573,8 +574,9 @@ static struct janas_gpu *vk_create(char *err, size_t err_len);
 
 /* Vulkan, the GPU of every maker, with the products, the prompt's tiles,
    the experts and the whole token; where there is no Vulkan (a server's
-   card with its maker's driver alone), NVIDIA's CUDA, then AMD's HIP.
-   JANAS_GPU_API=vulkan, cuda or hip takes that one alone; any other
+   card with its maker's driver alone), NVIDIA's CUDA, then AMD's HIP; on
+   macOS, where none of them is, Apple's Metal.
+   JANAS_GPU_API=vulkan, cuda, hip or metal takes that one alone; any other
    value is refused, said in err, rather than read as the default order
    (issue #73: a mistyped name ran Vulkan without a word). */
 struct janas_gpu *janas_gpu_create(char *err, size_t err_len)
@@ -583,13 +585,27 @@ struct janas_gpu *janas_gpu_create(char *err, size_t err_len)
     if (api && !*api)
         api = NULL;
     if (api && strcmp(api, "vulkan") && strcmp(api, "cuda") &&
-        strcmp(api, "hip")) {
+        strcmp(api, "hip") && strcmp(api, "metal")) {
         snprintf(err, err_len,
                  "JANAS_GPU_API=%.40s is not an API Janas knows: vulkan, "
-                 "cuda or hip",
+                 "cuda, hip or metal",
                  api);
         return NULL;
     }
+#if defined(__APPLE__)
+    if (api && strcmp(api, "metal")) {
+        snprintf(err, err_len, "JANAS_GPU_API=%.40s: on macOS only metal",
+                 api);
+        return NULL;
+    }
+    (void)vk_create;
+    return drv_create(0, err, err_len); /* Metal (gpu_metal.m) */
+#else
+    if (api && !strcmp(api, "metal")) {
+        snprintf(err, err_len, "JANAS_GPU_API=metal: Metal is macOS's");
+        return NULL;
+    }
+#endif
     if (api && !strcmp(api, "cuda"))
         return drv_create(0, err, err_len);
     if (api && !strcmp(api, "hip"))
