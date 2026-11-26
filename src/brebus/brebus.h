@@ -323,6 +323,10 @@ int brebus_export(struct brebus *b, const char *body, size_t n,
    can be no window (no WebKitGTK, no display) */
 int brebus_window(const char *url, volatile sig_atomic_t *quit, char *why,
                   size_t wn);
+/* outside.c: another site's page, a click in the window, opened in the
+   user's browser: only http and https, never this machine's own addresses
+   (127., localhost...): 0, or -1 when refused or not opened */
+int brebus_open_outside(const char *url);
 /* What the window does when asked to close: steps(say) runs on a thread
    of its own while the window stays open, say(text) showing each step on
    the page (window.brebusClosing), and the window closes when it returns.
@@ -334,7 +338,8 @@ void brebus_window_set_closer(void (*steps)(void (*say)(const char *)));
 int brebus_pick(int file, const char *title, char *out, size_t n);
 /* 1 while Brebus shows its page in its own window */
 int brebus_window_on(void);
-/* the window's page drawn at zoom z (0.5-3, 1 its size): -1 with no window */
+/* the window's page drawn at zoom z (0.25-4, 1 its size: the page's menu
+   goes by 25% from 25% to 400%): -1 with no window */
 int brebus_window_zoom(double z);
 /* window_place.c: the window's place and size (its normal ones, and
    whether it was maximized), kept in data_dir/window.json; read: 0, or -1

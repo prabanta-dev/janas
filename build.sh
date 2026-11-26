@@ -906,9 +906,11 @@ for src in tests/*.c tools/*.c src/*/main.c src/services/*/main.c; do
         # Brebus, the app, has a name of its own
         [ "$dir" = src/brebus ] && exe="$BIN/brebus$SUFFIX$EXE"
         own_list=$(sources may-be-empty "$dir" \
-            find "$dir" -maxdepth 1 -name '*.c' ! -name main.c) || exit 2
+            find "$dir" -maxdepth 1 \( -name '*.c' -o -name '*.m' \) ! -name main.c) || exit 2
         while IFS= read -r c; do
             [ -n "$c" ] || continue
+            # Objective-C is macOS's alone (window_mac.m)
+            [ "${c##*.}" = m ] && [ "$OS" != darwin ] && continue
             obj=$(objname "$c")
             own+=("$obj")
             extra=()
@@ -919,6 +921,9 @@ for src in tests/*.c tools/*.c src/*/main.c src/services/*/main.c; do
             # system's (src/third_party/webview2)
             [ "$c" = src/brebus/window_win.c ] &&
                 extra=(-isystem src/third_party/webview2)
+            # Objective-C (macOS's window, window_mac.m), its objects counted
+            # by the compiler
+            [ "${c##*.}" = m ] && extra+=(-fobjc-arc)
             compile "$c" "$obj" "${CFLAGS[@]}" "${TP_INC[@]}" "${extra[@]}"
         done < <(sort <<<"$own_list")
     fi
@@ -955,6 +960,9 @@ for src in tests/*.c tools/*.c src/*/main.c src/services/*/main.c; do
     # brebus.exe on Windows: a window's program, no console; its own icon
     [ "$OS" = windows ] && [ "$src" = src/brebus/main.c ] &&
         start=("$OBJ/win_start.o" "$OBJ/brebus_res.o" -mwindows)
+    # Brebus's window on macOS: Cocoa and WebKit, its program alone
+    [ "$OS" = darwin ] && [ "$src" = src/brebus/main.c ] &&
+        start+=(-framework Cocoa -framework WebKit)
     # the setuid helper: its tables read only before it runs
     [ "$OS" = linux ] && [ "$src" = src/brebus-helper/main.c ] &&
         start+=(-Wl,-z,relro,-z,now)
