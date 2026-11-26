@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Maurizio Cammalleri
+#
+# The port to Metal, while it is being written (port/metal only, not to be
+# merged): a real model on GitHub's Mac with Apple's GPU, the engine's own
+# choices of devices told by janas-bench. Run by hand.
+name: metal-dev
+
+on:
+  workflow_dispatch:
+
+jobs:
+  model:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: bash 4, GNU's tools, the GPU's headers
+        run: |
+          set -euo pipefail
+          brew install bash coreutils gnu-sed findutils gawk grep glslang vulkan-headers
+          P=$(brew --prefix)
+          for d in coreutils gnu-sed findutils gawk grep; do
+            echo "$P/opt/$d/libexec/gnubin" >> "$GITHUB_PATH"
+          done
+          echo "$P/bin" >> "$GITHUB_PATH"
+          echo "CPATH=$P/include" >> "$GITHUB_ENV"
+
+      - name: Build
+        run: bash ./build.sh release build
+
+      - name: Qwen3-0.6B
+        run: bin/arm64-darwin/janas-get qwen3-0.6b </dev/null
+
+      - name: janas-bench, the GPU allowed
+        run: JANAS_GPU=1 bin/arm64-darwin/janas-bench qwen3-0.6b --rounds 1 --no-mtp
+
+      - name: janas-bench, the prompt on the GPU
+        run: JANAS_GPU=1 bin/arm64-darwin/janas-bench qwen3-0.6b --rounds 1 --no-mtp --prompt-on gpu --reply-on gpu
