@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- **Brebus's pacman repository**: on Arch Linux and the systems made from it (CachyOS, EndeavourOS, Manjaro...) Brebus is installed from a repository of its own in each release (`brebus.db`, `brebus.files`, the package under pacman's name), signed by a key of the project's (`brebus-pacman.asc`, F11E 7105 999E 8A5D F89A 39E4 C18A 5C8C A861 8649), so `pacman -Syu` updates it with the rest of the system; already in the release of 2026-11-28. Tried in clean systems of Arch Linux and CachyOS: installed from GitHub, a newer version signed by the key taken, one signed by another key refused. The guide (`docs/brebus.md`, Linux and Updates) and the README say how to add it
+
 ## [2026-11-28] - The tools' views in Brebus (maps, charts, pages), Brebus updating itself and in six languages, every conversation by the model's own template
 
 - **Flights: the plane chosen is never lost**: when it flies out of the map's sight (or the map is moved away) it stays chosen, its card open, and keeps being updated: the view asks the service for it by its transponder wherever it is (`follow`, a view's argument).
