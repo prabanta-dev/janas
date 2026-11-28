@@ -30,6 +30,7 @@ void janas_mcp_free_tools(struct janas_mcp *m)
         free(m->tools[i].description);
         free(m->tools[i].schema);
         free(m->tools[i].params);
+        free(m->tools[i].view);
     }
     free(m->tools);
     m->tools = NULL;
@@ -94,6 +95,22 @@ int janas_mcp_take_tools(struct janas_mcp *m, const struct janas_json *list)
         const struct janas_json *ro =
             janas_json_get(janas_json_get(t, "annotations"), "readOnlyHint");
         w->read_only = !ro ? -1 : ro->type == JANAS_JSON_TRUE ? 1 : 0;
+        /* MCP Apps: its view, a ui:// resource of its server (and the
+           older flat key), and who may call it */
+        const struct janas_json *meta = janas_json_get(t, "_meta");
+        const struct janas_json *ui = janas_json_get(meta, "ui");
+        const char *view = janas_json_str(janas_json_get(ui, "resourceUri"));
+        if (!view)
+            view = janas_json_str(janas_json_get(meta, "ui/resourceUri"));
+        if (view && !strncmp(view, "ui://", 5))
+            w->view = strdup(view);
+        const struct janas_json *vis = janas_json_get(ui, "visibility");
+        if (vis && vis->type == JANAS_JSON_ARRAY) {
+            int model = 0;
+            for (const struct janas_json *e = vis->child; e; e = e->next)
+                model |= janas_json_is(e, "model");
+            w->app_only = !model;
+        }
         w->name = dup_n(name->s, name->n);
         w->description = janas_json_str(d) ? dup_n(d->s, d->n) : dup_n("", 0);
         w->schema = sb.p;
@@ -102,6 +119,7 @@ int janas_mcp_take_tools(struct janas_mcp *m, const struct janas_json *list)
             free(w->description);
             free(w->schema);
             free(w->params);
+            free(w->view);
             return -1;
         }
         m->n_tools++;

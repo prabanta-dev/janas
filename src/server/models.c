@@ -46,6 +46,20 @@ static yyjson_mut_val *model_obj(struct srv_req *r, yyjson_mut_doc *d)
        it runs on this machine */
     yyjson_mut_obj_add_str(d, o, "description",
                            srv_engine_describe(r->srv->engine));
+    /* what Janas cannot do of what the model can (janas_llm_limits), one
+       line each: for a program to show, and its user to report */
+    char lim[2048];
+    int32_t ln = 0;
+    yyjson_mut_val *la = yyjson_mut_obj_add_arr(d, o, "limits");
+    if (janas_llm_limits(srv_engine_llm(r->srv->engine), lim, sizeof lim,
+                         &ln) == JANAS_LLM_OK)
+        for (char *p = lim; *p;) {
+            char *e = strchr(p, '\n');
+            size_t n = e ? (size_t)(e - p) : strlen(p);
+            if (n)
+                yyjson_mut_arr_add_strncpy(d, la, p, n);
+            p += n + (e != NULL);
+        }
     if (r->srv->cfg.test) { /* for the test page: Janas presents itself */
         yyjson_mut_val *j = yyjson_mut_obj_add_obj(d, o, "janas");
         yyjson_mut_obj_add_str(d, j, "system",

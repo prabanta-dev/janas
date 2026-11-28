@@ -25,6 +25,10 @@ struct janas_proc {
 /* No terminal at all: nothing can be asked of the user (setsid; on
    Windows no console). */
 #define JANAS_PROC_DETACHED 2
+/* Detached, and outliving this process: on Windows outside its job (whose
+   end would end it), for the program that finishes Brebus's update once
+   Brebus has ended. janas_proc_wait and janas_proc_kill still reach it. */
+#define JANAS_PROC_OUTLIVE 4
 
 /*
  * Starts argv[0] - a path, or a name looked for in PATH (on Windows a .cmd

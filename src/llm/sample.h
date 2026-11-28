@@ -9,6 +9,10 @@
  * presence and frequency penalties over the tokens picked since the last
  * mark, a filter that says which tokens may come next (a grammar), and the
  * log-probability of the token picked with the most likely alternatives.
+ * And llama.cpp's chain (struct janas_sample_more): the repetition
+ * penalty, DRY, top-n-sigma, typical, XTC, mirostat, the dynamic
+ * temperature, in the order asked; with none of it the plain draw is the
+ * one it always was, to the bit.
  *
  * The random sequence advances by one number per draw whatever is on, so a
  * reply with the same seed and the same settings is the same text.
@@ -20,6 +24,49 @@
 
 #define JANAS_SAMPLE_MAX_TOP 20 /* alternatives reported at most */
 
+/* The stages of the chain, as llama.cpp names them (--samplers):
+   penalties and dry change the whole row first, wherever they stand. */
+enum janas_sample_stage {
+    JANAS_STAGE_PENALTIES = 1,
+    JANAS_STAGE_DRY,
+    JANAS_STAGE_TOP_N_SIGMA,
+    JANAS_STAGE_TOP_K,
+    JANAS_STAGE_TYPICAL,
+    JANAS_STAGE_TOP_P,
+    JANAS_STAGE_MIN_P,
+    JANAS_STAGE_XTC,
+    JANAS_STAGE_TEMPERATURE,
+};
+#define JANAS_SAMPLE_MAX_STAGES 16
+
+/*
+ * The rest of the sampling, all off when zero: what llama.cpp offers
+ * beyond the plain draw, with its meanings.
+ */
+struct janas_sample_more {
+    /* a token among the last last_n picked (0: since the mark): its logit
+       divided by repeat when positive, multiplied when not (1 or 0: off);
+       the window of the presence and frequency penalties too */
+    float repeat;
+    int32_t last_n;
+    float typical_p;   /* locally typical sampling (0 or 1: off) */
+    float top_n_sigma; /* logits within n standard deviations of the top */
+    float xtc_probability, xtc_threshold; /* exclude the top choices */
+    /* DRY: a token that would go on repeating a run of the last dry_last_n
+       tokens (0: since the mark) longer than allowed loses multiplier x
+       base^(length - allowed); runs do not cross the breakers' tokens */
+    float dry_multiplier, dry_base;
+    int32_t dry_allowed, dry_last_n;
+    int32_t mirostat; /* 1 or 2, its tau and eta; 0: off */
+    float mirostat_tau, mirostat_eta;
+    /* dynamic temperature: temperature +- range, by the entropy^exponent */
+    float dynatemp_range, dynatemp_exponent;
+    /* the order (0 stages: Janas's own, top_k, temperature, top_p,
+       min_p, with the others where llama.cpp puts them) */
+    uint8_t stage[JANAS_SAMPLE_MAX_STAGES];
+    int32_t n_stage;
+};
+
 struct janas_sample_params {
     float temperature; /* 0: the most likely token */
     int32_t top_k;     /* 0: no limit */
@@ -27,7 +74,13 @@ struct janas_sample_params {
     float min_p;
     float presence, frequency; /* penalties, OpenAI's meaning */
     int32_t logprobs; /* alternatives to report, 0..20; -1: none at all */
+    struct janas_sample_more more;
 };
+
+/* The stages named as llama.cpp names them ("penalties;dry;top_k;..." or
+   its letters "edkypmxt"), separated by ';', ',' or spaces: their count,
+   or -1 for a name it does not know. */
+int janas_sample_stages(const char *names, uint8_t *stage, int max);
 
 /*
  * Which tokens may come next. allows(ctx, t) is asked only while
@@ -62,12 +115,16 @@ void janas_sampler_set(struct janas_sampler *s,
    clears them). Returns 0, or -1 (an id out of the vocabulary, memory). */
 int janas_sampler_bias(struct janas_sampler *s, const int32_t *ids,
                        const float *bias, uint32_t n);
+/* DRY's breakers: for each token of the vocabulary, 1 when its text holds
+   one of them (NULL: none); the sampler keeps the pointer. */
+void janas_sampler_breakers(struct janas_sampler *s, const uint8_t *is);
 /* The filter (NULL: none); the sampler keeps the pointer's contents. */
 void janas_sampler_filter(struct janas_sampler *s,
                           const struct janas_sample_filter *f);
 /* The random sequence n draws back, as if the last n picks had not been
    made: a speculative pass draws for drafts that a reply cut short never
-   returns. The penalties' counts are not undone (a mark resets them). */
+   returns. The tokens the penalties and DRY count, and mirostat's state,
+   go back with it. */
 void janas_sampler_rewind(struct janas_sampler *s, uint32_t n);
 /* The penalties count the tokens picked from here on. */
 void janas_sampler_mark(struct janas_sampler *s);

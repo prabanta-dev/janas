@@ -90,6 +90,47 @@ static int thinks(const struct janas_jns *j)
     return r;
 }
 
+/* the sampling the file recommends, by the server's names */
+static void recommended(const struct janas_jns *j, char *out, size_t len)
+{
+    static const struct {
+        const char *key, *name;
+        int whole;
+    } K[] = {{"general.sampling.temp", "temperature", 0},
+             {"general.sampling.top_k", "top_k", 1},
+             {"general.sampling.top_p", "top_p", 0},
+             {"general.sampling.min_p", "min_p", 0},
+             {"general.sampling.penalty_repeat", "repeat_penalty", 0},
+             {"general.sampling.penalty_last_n", "repeat_last_n", 1},
+             {"general.sampling.mirostat", "mirostat", 1},
+             {"general.sampling.mirostat_tau", "mirostat_tau", 0},
+             {"general.sampling.mirostat_eta", "mirostat_eta", 0},
+             {"general.sampling.xtc_probability", "xtc_probability", 0},
+             {"general.sampling.xtc_threshold", "xtc_threshold", 0}};
+    size_t at = 0;
+    out[at++] = '{';
+    out[at] = 0;
+    for (size_t i = 0; i < sizeof K / sizeof *K; i++) {
+        char v[32];
+        uint32_t u;
+        float f;
+        if (K[i].whole && janas_jns_meta_u32(j, K[i].key, &u) == 0)
+            snprintf(v, sizeof v, "%d", u >= 1u << 30 ? -1 : (int)u);
+        else if (!K[i].whole && janas_jns_meta_f32(j, K[i].key, &f) == 0 &&
+                 f >= 0 && f < 1e6f)
+            snprintf(v, sizeof v, "%g", (double)f);
+        else
+            continue;
+        int w = snprintf(out + at, len - at, "%s\"%s\": %s", at > 1 ? ", " : "",
+                         K[i].name, v);
+        if (w < 0 || (size_t)w >= len - at - 1)
+            break;
+        at += (size_t)w;
+    }
+    out[at++] = '}';
+    out[at] = 0;
+}
+
 int janas_models_scan(const char *dir, struct janas_model_file *out, int max)
 {
     DIR *d = opendir(dir);
@@ -127,6 +168,7 @@ int janas_models_scan(const char *dir, struct janas_model_file *out, int max)
                  has_token(&j, "<|fim_suffix|>") &&
                  has_token(&j, "<|fim_middle|>");
         m->thinks = chat && thinks(&j);
+        recommended(&j, m->sampling, sizeof m->sampling);
         janas_jns_close(&j);
         if (!chat)
             continue;

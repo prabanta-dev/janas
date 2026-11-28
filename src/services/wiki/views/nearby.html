@@ -1,0 +1,139 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Around a place</title>
+<style>
+<!--include base.css-->
+h1 { font-size: 15px; margin: 0 0 6px; font-weight: 600; }
+ol { list-style: none; margin: 8px 0 0; padding: 0; max-height: 280px; overflow: auto; border-top: 1px solid var(--color-border-primary); }
+li { padding: 5px 4px; border-bottom: 1px solid var(--color-border-primary); cursor: pointer; display: flex; gap: 8px; align-items: baseline; }
+li:hover, li.on { background: var(--color-background-secondary); }
+li b { min-width: 4.2em; text-align: right; font-variant-numeric: tabular-nums; color: var(--color-text-secondary); font-weight: 500; }
+#card { margin-top: 8px; padding: 8px; border-radius: 8px; background: var(--color-background-secondary); }
+#card[hidden] { display: none; }
+#card h2 { font-size: 15px; margin: 0 0 2px; }
+</style></head>
+<body>
+<h1 id="title"></h1>
+<div class="mapbox" id="mapbox"></div>
+<div id="card" hidden></div>
+<div class="vtools" id="tools"></div>
+<ol id="list"></ol>
+<p class="note" id="credit"></p>
+<script>
+<!--include world.js-->
+<!--include map.js-->
+<!--include app.js-->
+<!--include float.js-->
+<!--include export.js-->
+const W = {
+  title: {en: "Wikipedia around {p}, within {k} km", it: "Wikipedia intorno a {p}, entro {k} km", fr: "Wikipédia autour de {p}, à moins de {k} km", es: "Wikipedia alrededor de {p}, a menos de {k} km", de: "Wikipedia rund um {p}, im Umkreis von {k} km", pt: "Wikipédia à volta de {p}, a menos de {k} km"},
+  titlept: {en: "Wikipedia within {k} of the point chosen: {n}", it: "Wikipedia entro {k} dal punto scelto: {n}", fr: "Wikipédia à moins de {k} du point choisi : {n}", es: "Wikipedia a menos de {k} del punto elegido: {n}", de: "Wikipedia im Umkreis von {k} um den gewählten Punkt: {n}", pt: "Wikipédia a menos de {k} do ponto escolhido: {n}"},
+  sight: {en: "Wikipedia in sight: {n}", it: "Wikipedia in vista: {n}", fr: "Wikipédia en vue : {n}", es: "Wikipedia a la vista: {n}", de: "Wikipedia in Sicht: {n}", pt: "Wikipédia à vista: {n}"},
+  most: {en: "Wikipedia gives places within 10 km at most.", it: "Wikipedia dà luoghi entro 10 km al massimo.", fr: "Wikipédia donne des lieux à 10 km au plus.", es: "Wikipedia da lugares a 10 km como mucho.", de: "Wikipedia liefert Orte im Umkreis von höchstens 10 km.", pt: "A Wikipédia dá locais a 10 km no máximo."},
+  open: {en: "Open it on Wikipedia", it: "Aprila su Wikipedia", fr: "L'ouvrir sur Wikipédia", es: "Abrirla en Wikipedia", de: "Auf Wikipedia öffnen", pt: "Abrir na Wikipédia"},
+  credit: {en: "Pages and places: Wikipedia (CC BY-SA 4.0). Map: Natural Earth (public domain), drawn here, nothing fetched.", it: "Pagine e luoghi: Wikipedia (CC BY-SA 4.0). Mappa: Natural Earth (pubblico dominio), disegnata qui, senza scaricare nulla.", fr: "Pages et lieux : Wikipédia (CC BY-SA 4.0). Carte : Natural Earth (domaine public), dessinée ici, rien n'est téléchargé.", es: "Páginas y lugares: Wikipedia (CC BY-SA 4.0). Mapa: Natural Earth (dominio público), dibujado aquí, sin descargar nada.", de: "Seiten und Orte: Wikipedia (CC BY-SA 4.0). Karte: Natural Earth (gemeinfrei), hier gezeichnet, nichts geladen.", pt: "Páginas e locais: Wikipédia (CC BY-SA 4.0). Mapa: Natural Earth (domínio público), desenhado aqui, sem descarregar nada."},
+};
+const t = (k, v) => App.t(W[k]).replace(/\{(\w+)\}/g, (_, n) => v && v[n] !== undefined ? v[n] : "");
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => "&#" + c.charCodeAt(0) + ";");
+const dist = (km) => km < 1 ? new Intl.NumberFormat(App.ctx.locale).format(Math.round(km * 100) * 10) + " m"
+  : new Intl.NumberFormat(App.ctx.locale, {maximumFractionDigits: 1}).format(km) + " km";
+let items = [], pick = -1, data = {};
+let credit = () => {};
+const map = MapView(document.getElementById("mapbox"), {layer: "osm", onpick: (p) => p && choose(items.indexOf(p), true), onlayer: () => credit(),
+  /* without a circle, the list is of those in sight */
+  onmove: () => { if (!circle && items.length) listing(); },
+  /* a circle drawn: the pages around it asked (10 km at most, Wikipedia's
+     limit); removed: those in sight */
+  oncircle: (c) => {
+    if (!c) { circle = null; map.circled(false); listing(); paint(); return; }
+    circle = {lat: c.lat, lon: c.lon, km: Math.max(0.1, Math.min(10, c.km)), place: "", cut: c.km > 10};
+    map.circled(true);
+    ask().catch(() => {}); listing(); paint();
+  }});
+/* the circle of interest: the place asked about, one drawn, or none
+   (removed): the list is of the pages inside it, nearest first, or of
+   those in sight */
+let circle = null, listed = [], asks = 0;
+async function ask() {
+  if (!App.canCall()) return false;
+  const n = ++asks, r = await App.callTool("wiki_nearby", {latitude: +circle.lat.toFixed(5), longitude: +circle.lon.toFixed(5), radius_km: +circle.km.toFixed(2), limit: 30, language: data.lang || "en"});
+  if (!r || !r.structuredContent || r.isError) throw new Error((r && r.content && r.content[0] && r.content[0].text || "").slice(0, 80));
+  if (n === asks) show(r, true);
+  return true;
+}
+/* the title and the list, from the pages and the circle */
+function listing() {
+  for (const p of items)
+    if (circle) p.km = geoFar(circle.lat, circle.lon, p.lat, p.lon)[0];
+    else delete p.km;
+  const b = map.bounds();
+  listed = items.map((p, i) => i).filter((i) => circle ? items[i].km <= circle.km : geoIn(b, items[i].lat, items[i].lon));
+  if (circle) listed.sort((i, j) => items[i].km - items[j].km);
+  const n = listed.length;
+  document.getElementById("title").textContent = circle
+    ? (circle.place ? t("title", {p: circle.place, k: circle.km}) + ": " + n : t("titlept", {k: dist(circle.km), n}) + (circle.cut ? " " + t("most") : ""))
+    : t("sight", {n});
+  document.getElementById("list").innerHTML = listed.map((i) => { const p = items[i];
+    return `<li data-i="${i}"${i === pick ? ' class="on"' : ""}><b>${p.km !== undefined ? esc(dist(p.km)) : ""}</b><span>${esc(p.title)}${p.desc ? ` <span class="note">${esc(p.desc)}</span>` : ""}</span></li>`; }).join("");
+  for (const li of document.querySelectorAll("#list li[data-i]")) li.onclick = () => choose(+li.dataset.i);
+}
+Floats.init();
+function paint() {
+  map.set(items, (g, at) => {
+    if (circle) drawCircle(g, at, circle);
+    items.forEach((p, i) => {
+      const [x, y] = at(p.lon, p.lat);
+      g.beginPath(); g.arc(x, y, i === pick ? 7 : 5, 0, 2 * Math.PI);
+      g.fillStyle = "#c1121f"; g.fill();
+      g.lineWidth = i === pick ? 2.5 : 1; g.strokeStyle = "#fff"; g.stroke();
+    });
+  });
+}
+function choose(i, fromMap) {
+  pick = i;
+  for (const li of document.querySelectorAll("#list li")) li.classList.toggle("on", +li.dataset.i === i);
+  const card = document.getElementById("card");
+  if (i < 0) { card.hidden = true; paint(); App.size(); return; }
+  const p = items[i];
+  card.innerHTML = `<h2>${esc(p.title)}</h2><div class="note">${esc(p.desc || "")}${p.km !== undefined ? " · " + esc(dist(p.km)) : ""}</div><button class="link" id="go">${esc(t("open"))}</button>`;
+  App.closer(card, () => choose(-1));
+  card.hidden = false;
+  document.getElementById("go").onclick = () => App.openLink(`https://${data.lang || "en"}.wikipedia.org/wiki/${encodeURIComponent(p.title.replace(/ /g, "_"))}`);
+  if (!fromMap) map.center(p.lon, p.lat);
+  paint(); App.size();
+}
+let xbtn = null;
+function show(r, keep) {
+  /* its table, to export: each page a row */
+  if (!xbtn) xbtn = Exporter.button(document.getElementById("tools"), () => ({
+    name: document.getElementById("title").textContent,
+    columns: [{key: "title", label: Exporter.label("name")}, {key: "desc", label: Exporter.label("desc")}, {key: "km", label: Exporter.label("km")},
+      {key: "lat", label: Exporter.label("lat")}, {key: "lon", label: Exporter.label("lon")}, {key: "url", label: Exporter.label("url")}],
+    rows: listed.map((i) => items[i]).map((p) => ({title: p.title, desc: p.desc || "", km: p.km ?? "", lat: p.lat, lon: p.lon,
+      url: `https://${data.lang || "en"}.wikipedia.org/wiki/${encodeURIComponent(p.title.replace(/ /g, "_"))}`})),
+  }));
+  data = r.structuredContent || {};
+  items = data.places || [];
+  if (!keep) {
+    circle = data.lat !== undefined && data.km ? {lat: data.lat, lon: data.lon, km: data.km, place: data.name || ""} : null;
+    map.circled(!!circle);
+  }
+  pick = -1;
+  listing();
+  credit = () => { document.getElementById("credit").textContent = mapCredit(t("credit"), map.layer()); };
+  credit();
+  /* a circle drawn: the zoom kept */
+  if (keep) { choose(-1); return; }
+  const pts = items.map((p) => [p.lon, p.lat]);
+  if (data.lat !== undefined) {
+    const dl = data.km / 111.32, dn = dl / Math.cos(data.lat * Math.PI / 180);
+    pts.push([data.lon - dn, data.lat - dl], [data.lon + dn, data.lat + dl]);
+  }
+  map.fit(pts, 0.1);
+  choose(-1);
+}
+App.on("result", show);
+App.on("context", () => paint());
+App.start("janas-wiki");
+</script>
+</body></html>

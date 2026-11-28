@@ -203,3 +203,30 @@ int janas_api_media_register(janas_llm_chat *c, uint32_t base, uint32_t from)
     }
     return 0;
 }
+
+/* Is the picture one the transcript keeps (lent to the conversation)? Only
+   those stay where they are from one turn to the next. */
+static int lent(const janas_llm_chat *c, const struct cpic *p)
+{
+    for (size_t i = 0; i < c->n_msgs; i++) {
+        const struct cmsg *m = &c->msgs[i];
+        if (m->pics_lent && m->n_pics && p >= m->pics &&
+            p < m->pics + m->n_pics)
+            return 1;
+    }
+    return 0;
+}
+
+void janas_api_media_held(janas_llm_chat *c)
+{
+    free(c->media_done);
+    c->media_done = NULL;
+    c->n_media_done = 0;
+    size_t n = 0;
+    while (n < c->n_idpics && lent(c, c->idpics[n].pic))
+        n++;
+    if (n && (c->media_done = malloc(n * sizeof(*c->media_done)))) {
+        memcpy(c->media_done, c->idpics, n * sizeof(*c->media_done));
+        c->n_media_done = n;
+    }
+}

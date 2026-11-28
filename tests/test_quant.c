@@ -38,7 +38,7 @@ static double act(const struct janas_block_q8k *x, int b, int i, int t)
 {
     int b32 = t == JANAS_Q8_0 || t == JANAS_Q4_0 || t == JANAS_Q4_1 ||
               t == JANAS_Q5_1 || t == JANAS_IQ4_NL || t == JANAS_MXFP4 ||
-              t == JANAS_Q5_0 || t == JANAS_Q2_0;
+              t == JANAS_Q5_0 || t == JANAS_Q2_0 || t == JANAS_NVFP4;
     return b32 ? (double)x[b].d32[i / 32] * x[b].qs32[i]
                : (double)x[b].d * x[b].qs[i];
 }
@@ -1028,6 +1028,64 @@ static void test_dot_mxfp4(void)
     }
     free(w);
     free(w8);
+    free(x);
+    free(xf);
+    free(wf);
+}
+
+/*
+ * NVFP4 (unsloth's experts of Inkling-2-Mini): the reference against a
+ * float product over the dequantized weights, the kernels (single, 1-17
+ * vectors, rows: AVX2 on x86, NEON on ARM) equal to it to the bit, with
+ * every UE4M3 scale byte.
+ */
+static void test_dot_nvfp4(void)
+{
+    enum { NB = 8, N = NB * JANAS_QK, NV = 17 };
+    struct janas_block_nvfp4 *w = malloc(NB * 4 * sizeof(*w));
+    struct janas_block_q8k *x = malloc(NV * NB * sizeof(*x));
+    float *xf = malloc(N * sizeof(float)), *wf = malloc(N * sizeof(float));
+    float rows[4];
+    for (int trial = 0; trial < 100; trial++) {
+        unsigned char *pw = (unsigned char *)w;
+        for (size_t i = 0; i < NB * 4 * sizeof(*w); i++)
+            pw[i] = (unsigned char)rnd();
+        for (int v = 0; v < NV; v++) {
+            for (int i = 0; i < N; i++)
+                xf[i] = rndf(-1.0f, 1.0f);
+            janas_q8k_quantize(xf, x + v * NB, N);
+        }
+        janas_nvfp4_dequantize(w, wf, N);
+        double expect = 0.0, mag = 0.0;
+        for (int b = 0; b < NB; b++)
+            for (int i = 0; i < JANAS_QK; i++) {
+                double p =
+                    (double)wf[b * JANAS_QK + i] * act(x, b, i, JANAS_NVFP4);
+                expect += p;
+                mag += fabs(p);
+            }
+        float ref = janas_nvfp4_dot_ref(w, x, NB);
+        CHECK(fabs(ref - expect) <= 1e-5 * mag + 1e-6, "nvfp4 ref %g vs %g",
+              ref, expect);
+        float fast = janas_dot(JANAS_NVFP4, w, x, NB);
+        CHECK(fast == ref, "nvfp4 fast %g vs ref %g", fast, ref);
+        for (int nv = 1; nv <= NV; nv++) {
+            float out[NV];
+            janas_dot_multi(JANAS_NVFP4, w, x, NB, (size_t)nv, NB, out, 1);
+            for (int v = 0; v < nv; v++) {
+                float r = janas_nvfp4_dot_ref(w, x + v * NB, NB);
+                CHECK(out[v] == r, "nvfp4 multi nv %d v %d: %g vs %g", nv, v,
+                      out[v], r);
+            }
+        }
+        /* four rows of two super-blocks each, the matrix read row by row */
+        janas_dot_rows(JANAS_NVFP4, w, 2 * 4 * sizeof(*w), x, 2, 4, rows);
+        for (int r = 0; r < 4; r++) {
+            float one = janas_nvfp4_dot_ref(w + 8 * r, x, 2);
+            CHECK(rows[r] == one, "nvfp4 rows %d: %g vs %g", r, rows[r], one);
+        }
+    }
+    free(w);
     free(x);
     free(xf);
     free(wf);
@@ -2221,6 +2279,7 @@ int main(void)
     test_dot_q5k_q8_0();
     test_dot_iq4();
     test_dot_mxfp4();
+    test_dot_nvfp4();
     test_dot_q4_0_q5_1();
     test_dot_q5_0_q2_0();
     test_multi_rows_long();

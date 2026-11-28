@@ -16,6 +16,12 @@ A page is thousands of tokens, which a model reads before it can say a word - ov
 
 The answer of `wiki_page` has two parts, each marked with its audience as MCP provides: a note for the model, and the page for the user. `janas-chat` shows the user's part as it is and gives the model only the note; a client that does not heed the audience gives the model both.
 
+## The page as Wikipedia writes it
+
+In Brebus, and in any client that shows MCP Apps' views, `wiki_page` shows the page as Wikipedia writes it (`ui://wiki/page`, `views/page.html`): the infobox, the tables, the pictures, the notes, its sections to jump to. Only for such a client the service asks Wikipedia for the page's HTML too (`action=parse`); a client of text gets the text alone and no request more. The view keeps of the HTML only the elements and attributes of a page's text, and pictures only from Wikimedia's servers of files (`upload.wikimedia.org`, `thumb.wikimedia.org`, the only places it may reach); a link to another page opens it in the view, through `wiki_page`, with a way back; any other link opens in the browser. The licence, CC BY-SA 4.0, and the page's address are always shown.
+
+`wiki_nearby` shows its places on a map in such a client (`ui://wiki/nearby`): each page a red point, the place asked about and its circle, the list by distance, a page's line and a way to open it on Wikipedia. The map's land is Natural Earth's, drawn in the page: at the scale of a town it shows little more than the coast.
+
 ## Where the data comes from
 
 | Data | Source | Key |
@@ -24,7 +30,7 @@ The answer of `wiki_page` has two parts, each marked with its audience as MCP pr
 | where the user is | [GeoJS](https://www.geojs.io), [ipwho.is](https://ipwho.is) | none |
 
 - **The text** is Wikipedia's, under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/): every answer gives the page's address, and the model is told to give it as the source.
-- **It is plain text**: the tables and the boxes beside the text (the infobox's population, dates) are not in it.
+- **It is plain text** for a client of text: the tables and the boxes beside the text (the infobox's population, dates) are not in it; the view has them.
 - **Requests carry a User-Agent** naming the program and where it lives, as [Wikimedia's policy](https://meta.wikimedia.org/wiki/User-Agent_policy) asks: `janas-wiki/<version> (https://github.com/prabanta-dev/janas)`. One request at a time, and the answers are kept for an hour, so that a page read and then a section of it cost one request.
 - **Wikipedia is not news**: the model is told to say so when a question is about today.
 

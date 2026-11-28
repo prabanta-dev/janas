@@ -5,7 +5,8 @@
  * share. services/common/https_get.c fetches, adsb.c reads the community ADS-B
  * networks (adsb.lol, adsb.fi as the fallback), route.c asks adsbdb for a
  * callsign's route and an airline's codes, schedule.c asks AviationStack
- * for the times (with a key of the user's), tools.c offers the tools.
+ * for the times (with a key of the user's), track.c asks the OpenSky
+ * Network for the way an aircraft has flown, tools.c offers the tools.
  */
 #ifndef JANAS_FLIGHTS_H
 #define JANAS_FLIGHTS_H
@@ -55,6 +56,9 @@ struct fl_route {
    could not be asked. Its routes come from the community and are wrong
    for many low-cost callsigns, which are reused. */
 int fl_route(const char *callsign, struct fl_route *r);
+/* the same from what was asked in the last hour alone: 1, 0, or -2 when
+   it was not asked */
+int fl_route_kept(const char *callsign, struct fl_route *r);
 
 /* The ICAO code of an airline given its IATA code ("FR" -> "RYR"), from
    adsbdb: 1, 0 when unknown, -1 when it could not be asked. */
@@ -99,6 +103,14 @@ int fl_sched_parse(const char *text, size_t len, struct fl_sched **v, size_t *n,
                    char *err, size_t err_len);
 
 void fl_sched_free(void);
+
+/* ---- track.c ---- */
+
+/* The way the aircraft of ICAO address hex (6 lowercase hex digits) has
+   flown so far, from the OpenSky Network: a JSON array of [unix time, lat,
+   lon, feet or null (0 on the ground)] appended to out, [] when the
+   network has not heard it. 0, or -1 with the reason in err. */
+int fl_track(const char *hex, struct janas_buf *out, char *err, size_t err_len);
 
 /* ---- layouts.c ---- */
 

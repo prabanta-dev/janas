@@ -15,6 +15,18 @@ A place is a name or an address, best with its town ("Via Roma 10, Trapani", "St
 
 Every answer is data with a layout (see [the services](../README.md)): `janas-chat` shows the user the whole of it in the user's language - the steps, the journeys leg by leg, the list of places - and gives the model only a brief of the figures, from which it answers in a line or two. A route of a hundred steps costs the model the same as one of ten.
 
+## On a map
+
+In Brebus, and in any client that shows MCP Apps' views, every tool's answer opens on a map (`ui://maps/map`, `views/map.html`), OpenStreetMap's by default, over the whole pane, the rest in a panel floating over it:
+
+- **A route**: the way drawn, the other ways under it, grey, each chosen from the panel (its time, length, roads, tolls or ferry); the start (A), the end (B), the place passed through; the steps listed, a step chosen shown on the map. Car, bike or on foot, without tolls, motorways or ferries, start and end swapped: the route asked again from the panel.
+- **Journeys by public transport**: each journey in the panel (its times, length, changes); the one chosen drawn leg by leg in its transport's colour (train, bus, coach, metro, tram, ferry), the walks dotted, the stops where a leg begins and ends; its legs listed, a leg chosen fills the map. The time to leave at, or to arrive by: asked again.
+- **What is near**: each place a pin, its card (address, opening hours, phone, how far and which way, a link to OpenStreetMap); the kind of place chosen from the panel; the circle asked about drawn, and the map's circle buttons draw another (the places around it asked, within 10 km) or remove it (the list then of those in sight).
+- **A place**: its pin and its card. A place or an address looked for from the panel's search; a point of the map pressed a while, or clicked with the right button: what is there.
+- From any place's card: directions to it (from where you started, "Start from here", or from where you are), or journeys by public transport to it.
+
+Only for such a client the answers carry what the map needs: each way as its source encodes it (a polyline), where each step begins, the ends and the way of each leg, the places' coordinates. A client of text gets the text alone.
+
 ## Where the data comes from
 
 | Data | Source | Key |
@@ -50,6 +62,8 @@ claude mcp add maps -- /path/to/janas-maps
 ```
 
 ## What has been run
+
+27 November 2026, the map in Brebus (an isolated instance, Chromium driven by a script): the Colosseum to Piazza Navona by car (three ways, 16 steps, each placed on the map; the fourth chosen), then on foot from the panel (27 steps); Trapani to Palermo's central station by public transport at 9:00 (five journeys, the first drawn: a walk, a regional train to Marsala, a walk, a coach to Palermo, a walk); "Pantheon, Roma" from the search; a point beside it, by the right button (Chiesa di Santo Stefano del Cacco); directions to it from its card. Overpass did not answer that evening (both instances; its status page gave 502): the places around were drawn from an answer made by hand in its form (twelve pharmacies around Piazza Venezia: pins, list, card, the circle of 1 km, then removed).
 
 2 October 2026, over the protocol, in the release and AddressSanitizer builds, with `LANG=it_IT.UTF-8`:
 

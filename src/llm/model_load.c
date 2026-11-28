@@ -1080,6 +1080,24 @@ struct janas_llm_model *janas_llm_model_load(const char *path,
        context stops there and the caller is told (janas_llm_describe) */
     m->n_ctx_train = 0;
     meta_u32(m, "context_length", &m->n_ctx_train);
+    /* a rope scaling this engine does not apply (DeepSeek-V4's YaRN is
+       applied, model_ds4.c): its longer context is not had, the length
+       before it is the most; said (janas_llm_model_rope_unread) */
+    {
+        char key[128], type[16] = "";
+        snprintf(key, sizeof key, "%.32s.rope.scaling.type", m->j.h.arch);
+        m->rope_unread[0] = 0;
+        if (!m->a->ds4 &&
+            janas_jns_meta_str(&m->j, key, type, sizeof type) == 0 && type[0] &&
+            strcmp(type, "none") != 0) {
+            uint32_t orig = 0;
+            snprintf(m->rope_unread, sizeof m->rope_unread, "%s", type);
+            if (meta_u32(m, "rope.scaling.original_context_length", &orig) ==
+                    0 &&
+                orig && (!m->n_ctx_train || orig < m->n_ctx_train))
+                m->n_ctx_train = orig;
+        }
+    }
     m->n_ctx = o->n_ctx;
     if (m->n_ctx_train && m->n_ctx > m->n_ctx_train)
         m->n_ctx = m->n_ctx_train;
@@ -1815,6 +1833,11 @@ const char *janas_llm_model_gpu_why(const struct janas_llm_model *m)
 uint32_t janas_llm_model_n_ctx(const struct janas_llm_model *m)
 {
     return m->n_ctx;
+}
+
+const char *janas_llm_model_rope_unread(const struct janas_llm_model *m)
+{
+    return m->rope_unread;
 }
 
 uint32_t janas_llm_model_n_ctx_train(const struct janas_llm_model *m)

@@ -7,6 +7,12 @@
  * operations in the same order as the CPU, so that a product split between
  * the two gives the same bits as either alone.
  *
+ * Apple's GPUs through Metal (gpu_metal.m) compile the same file at run
+ * time as Metal's shading language (__METAL_VERSION__ below): the pointers
+ * there say where they point (GLOBAL the GPU's buffers, PRIV a thread's
+ * own), a kernel takes its thread's index and its buffers as arguments
+ * (KARGS), FMA is Metal's exact fma; elsewhere these say nothing.
+ *
  * Compiled by build.sh with clang to PTX (--cuda-device-only, no CUDA
  * headers or libraries: none of NVIDIA's toolkit), -ffp-contract=off so
  * that no product is fused with a sum the CPU rounds apart; the driver
@@ -87,6 +93,40 @@ INLINE void barrier(void)
 }
 #define SHARED static __attribute__((shared))
 
+#elif defined(__METAL_VERSION__) /* an Apple GPU's code, through Metal */
+
+#include <metal_stdlib>
+using namespace metal;
+
+#define INLINE static inline
+#define KERNEL kernel void
+#define GLOBAL device
+#define PRIV thread
+#define FMA(a, b, c) fma(a, b, c)
+#define U64 ulong
+
+typedef uint u32;
+typedef ushort u16;
+typedef uchar u8;
+
+INLINE int dp4a(u32 a, u32 b, int c)
+{
+    for (u32 k = 0; k < 32u; k += 8u)
+        c += (int)(char)(u8)(a >> k) * (int)(char)(u8)(b >> k);
+    return c;
+}
+INLINE float h2f(u32 h) { return float(as_type<half>((u16)h)); }
+INLINE float bits_f(u32 u) { return as_type<float>(u); }
+/* the thread's row, and the products' arguments, as Metal passes them */
+#define row_index() row_index_
+#define KARGS(WT)                                                              \
+    GLOBAL const WT *w [[buffer(0)]], GLOBAL const u32 *x [[buffer(1)]],       \
+        GLOBAL float *y [[buffer(2)]], constant u32 &rows [[buffer(3)]],       \
+        constant u32 &nb [[buffer(4)]], constant u32 &nv [[buffer(5)]],        \
+        constant u32 &xs [[buffer(6)]], constant u32 &ys [[buffer(7)]]
+#define KARG_KIND , constant u32 &kind [[buffer(8)]]
+#define KARG_ROW , u32 row_index_ [[thread_position_in_grid]]
+
 #else /* the same kernels as C on the CPU, one row a call, to check their
          arithmetic against the CPU's kernels where there is no card
          (job/tests/c/cuda_host_check.c) */
@@ -136,6 +176,22 @@ INLINE u32 row_index(void) { return cuda_host_row; }
 
 #endif
 
+#if !defined(__METAL_VERSION__) /* where pointers say nothing of where */
+#define GLOBAL
+#define PRIV
+#define FMA_BUILTIN 1
+#define U64_LL 1
+#define KARGS(WT)                                                              \
+    const WT *w, const u32 *x, float *y, u32 rows, u32 nb, u32 nv, u32 xs,     \
+        u32 ys
+#define KARG_KIND , u32 kind
+#define KARG_ROW
+#endif
+#if defined(FMA_BUILTIN)
+#define FMA(a, b, c) __builtin_fmaf(a, b, c)
+#define U64 unsigned long long
+#endif
+
 #define GPU_BLOCK_WORDS 80 /* 320 bytes */
 
 /* bits [o, o + n) of w */
@@ -151,8 +207,8 @@ INLINE int hi16(u32 w) { return (int)(short)(w >> 16); }
 
 /* Q4_K: 144 bytes a block - d and dmin (halves), 12 bytes of scales and
    mins of 6 bits, 128 of quants in nibbles */
-INLINE void blk_q4k(const u32 *W, const u32 *X, float *a, int *is, float *m,
-                    int *im)
+INLINE void blk_q4k(GLOBAL const u32 *W, GLOBAL const u32 *X, PRIV float *a,
+                    PRIV int *is, PRIV float *m, PRIV int *im)
 {
     u32 h0 = W[0], h1 = W[1], h2 = W[2], h3 = W[3];
     float d = h2f(h0 & 0xffffu), dmin = h2f(h0 >> 16);
@@ -163,7 +219,7 @@ INLINE void blk_q4k(const u32 *W, const u32 *X, float *a, int *is, float *m,
         sc[j + 4u] = bits(h3, 8u * j, 4) | (bits(h1, 8u * j + 6u, 2) << 4);
         mn[j + 4u] = bits(h3, 8u * j + 4u, 4) | (bits(h2, 8u * j + 6u, 2) << 4);
     }
-    const u32 *q = W + 4u;
+    GLOBAL const u32 *q = W + 4u;
     int isum = 0;
     for (u32 c = 0; c < 4u; c++) {
         int lo = 0, hi = 0;
@@ -186,8 +242,8 @@ INLINE void blk_q4k(const u32 *W, const u32 *X, float *a, int *is, float *m,
 
 /* Q5_K: 176 bytes a block - the header of Q4_K, 32 bytes of fifth bits
    (bit s of each byte for sub-block s), 128 of quants in nibbles */
-INLINE void blk_q5k(const u32 *W, const u32 *X, float *a, int *is, float *m,
-                    int *im)
+INLINE void blk_q5k(GLOBAL const u32 *W, GLOBAL const u32 *X, PRIV float *a,
+                    PRIV int *is, PRIV float *m, PRIV int *im)
 {
     u32 h0 = W[0], h1 = W[1], h2 = W[2], h3 = W[3];
     float d = h2f(h0 & 0xffffu), dmin = h2f(h0 >> 16);
@@ -198,7 +254,7 @@ INLINE void blk_q5k(const u32 *W, const u32 *X, float *a, int *is, float *m,
         sc[j + 4u] = bits(h3, 8u * j, 4) | (bits(h1, 8u * j + 6u, 2) << 4);
         mn[j + 4u] = bits(h3, 8u * j + 4u, 4) | (bits(h2, 8u * j + 6u, 2) << 4);
     }
-    const u32 *qh = W + 4u, *q = W + 12u;
+    GLOBAL const u32 *qh = W + 4u, *q = W + 12u;
     int isum = 0;
     for (u32 c = 0; c < 4u; c++) {
         u32 s0 = 2u * c, s1 = 2u * c + 1u;
@@ -224,8 +280,8 @@ INLINE void blk_q5k(const u32 *W, const u32 *X, float *a, int *is, float *m,
 
 /* Q6_K: 210 bytes a block - 128 of the low 4 bits, 64 of the high 2, 16
    scales (int8), d (half) - rows starting on even bytes: read in halves */
-INLINE void blk_q6k(const u16 *W, const u32 *X, float *a, int *is, float *m,
-                    int *im)
+INLINE void blk_q6k(GLOBAL const u16 *W, GLOBAL const u32 *X, PRIV float *a,
+                    PRIV int *is, PRIV float *m, PRIV int *im)
 {
     u32 wd[53];
     for (u32 k = 0; k < 52u; k++)
@@ -266,8 +322,8 @@ INLINE void blk_q6k(const u16 *W, const u32 *X, float *a, int *is, float *m,
 
 /* Q3_K: 110 bytes a block - 32 of the high bits (hmask), 64 of the low two
    (qs), 12 of 6-bit scales, d (half) - rows starting on even bytes */
-INLINE void blk_q3k(const u16 *W, const u32 *X, float *a, int *is, float *m,
-                    int *im)
+INLINE void blk_q3k(GLOBAL const u16 *W, GLOBAL const u32 *X, PRIV float *a,
+                    PRIV int *is, PRIV float *m, PRIV int *im)
 {
     u32 wd[28];
     for (u32 k = 0; k < 27u; k++)
@@ -316,8 +372,8 @@ INLINE u32 iq4_table(u32 w) /* each byte's nibble through IQ4_NL's levels */
         r |= ((u32)IQ4[(w >> k) & 15u] & 0xffu) << k;
     return r;
 }
-INLINE void blk_iq4xs(const u32 *W, const u32 *X, float *a, int *is, float *m,
-                      int *im)
+INLINE void blk_iq4xs(GLOBAL const u32 *W, GLOBAL const u32 *X, PRIV float *a,
+                      PRIV int *is, PRIV float *m, PRIV int *im)
 {
     u32 w0 = W[0], sl = W[1], sh = w0 >> 16;
     float d = h2f(w0 & 0xffffu);
@@ -342,25 +398,24 @@ INLINE void blk_iq4xs(const u32 *W, const u32 *X, float *a, int *is, float *m,
 /* one thread a row: y = sum of fma(a, i) over the blocks, less the
    minimums' (DM) - the kernels the CPU runs too, to check them */
 #define ROW_KERNEL(name, WT, WORDS, BLK, DM)                                   \
-    KERNEL name(const WT *w, const u32 *x, float *y, u32 rows, u32 nb, u32 nv, \
-                u32 xs, u32 ys)                                                \
+    KERNEL name(KARGS(WT) KARG_ROW)                                                \
     {                                                                          \
         u32 row = row_index();                                                 \
         if (row >= rows)                                                       \
             return;                                                            \
         for (u32 v = 0; v < nv; v++) {                                         \
-            const WT *W = w + (unsigned long long)row * nb * WORDS;            \
-            const u32 *X = x + (unsigned long long)v * xs * GPU_BLOCK_WORDS;   \
+            GLOBAL const WT *W = w + (U64)row * nb * WORDS;            \
+            GLOBAL const u32 *X = x + (U64)v * xs * GPU_BLOCK_WORDS;   \
             float acc = 0.0f, accm = 0.0f;                                     \
             for (u32 b = 0; b < nb; b++, W += WORDS, X += GPU_BLOCK_WORDS) {   \
                 float a, m;                                                    \
                 int i, j;                                                      \
                 BLK(W, X, &a, &i, &m, &j);                                     \
-                acc = __builtin_fmaf(a, (float)i, acc);                        \
+                acc = FMA(a, (float)i, acc);                        \
                 if (DM)                                                        \
-                    accm = __builtin_fmaf(m, (float)j, accm);                  \
+                    accm = FMA(m, (float)j, accm);                  \
             }                                                                  \
-            y[(unsigned long long)v * ys + row] = DM ? acc - accm : acc;       \
+            y[(U64)v * ys + row] = DM ? acc - accm : acc;       \
         }                                                                      \
     }
 
@@ -379,8 +434,7 @@ ROW_KERNEL(iq4xs_matvec, u32, 34u, blk_iq4xs, 0)
    WARP_NB blocks at most. */
 #define WARP_NB 256u
 #define WARP_KERNEL(name, WT, WORDS, BLK, DM)                                  \
-    KERNEL name(const WT *w, const u32 *x, float *y, u32 rows, u32 nb, u32 nv, \
-                u32 xs, u32 ys)                                                \
+    KERNEL name(KARGS(WT) KARG_ROW)                                                \
     {                                                                          \
         SHARED float sa[4][WARP_NB], sm[4][WARP_NB];                            \
         SHARED int si[4][WARP_NB], sj[4][WARP_NB];                              \
@@ -389,19 +443,19 @@ ROW_KERNEL(iq4xs_matvec, u32, 34u, blk_iq4xs, 0)
         for (u32 v = 0; v < nv; v++) {                                         \
             if (row < rows)                                                    \
                 for (u32 b = lane; b < nb; b += 32u)                           \
-                    BLK(w + ((unsigned long long)row * nb + b) * WORDS,        \
-                        x + ((unsigned long long)v * xs + b) * GPU_BLOCK_WORDS,\
+                    BLK(w + ((U64)row * nb + b) * WORDS,        \
+                        x + ((U64)v * xs + b) * GPU_BLOCK_WORDS,\
                         &sa[wi][b], &si[wi][b], &sm[wi][b], &sj[wi][b]);       \
             barrier();                                                         \
             if (row < rows && lane == 0u) {                                    \
                 float acc = 0.0f, accm = 0.0f;                                 \
                 for (u32 b = 0; b < nb; b++) {                                 \
-                    acc = __builtin_fmaf(sa[wi][b], (float)si[wi][b], acc);    \
+                    acc = FMA(sa[wi][b], (float)si[wi][b], acc);    \
                     if (DM)                                                    \
-                        accm = __builtin_fmaf(sm[wi][b], (float)sj[wi][b],     \
+                        accm = FMA(sm[wi][b], (float)sj[wi][b],     \
                                               accm);                           \
                 }                                                              \
-                y[(unsigned long long)v * ys + row] = DM ? acc - accm : acc;   \
+                y[(U64)v * ys + row] = DM ? acc - accm : acc;   \
             }                                                                  \
             barrier();                                                         \
         }                                                                      \
@@ -425,31 +479,30 @@ WARP_KERNEL(iq4xs_matvec_w, u32, 34u, blk_iq4xs, 0)
    eight added at the end as janas_hsum8 does. The activations in blocks of
    32 with a scale each (the Q8_K block's qs32 and d32: gpu_cuda.c converts
    them so for this type). Rows of whole groups of 256. */
-KERNEL q80_matvec(const u16 *w, const u32 *x, float *y, u32 rows, u32 nb,
-                  u32 nv, u32 xs, u32 ys)
+KERNEL q80_matvec(KARGS(u16) KARG_ROW)
 {
     u32 row = row_index();
     if (row >= rows)
         return;
     for (u32 v = 0; v < nv; v++) {
-        const u16 *W = w + (unsigned long long)row * nb * 136u;
-        const u32 *X = x + (unsigned long long)v * xs * GPU_BLOCK_WORDS;
+        GLOBAL const u16 *W = w + (U64)row * nb * 136u;
+        GLOBAL const u32 *X = x + (U64)v * xs * GPU_BLOCK_WORDS;
         float acc[8] = {0, 0, 0, 0, 0, 0, 0, 0};
         for (u32 b = 0; b < nb; b++, W += 136u, X += GPU_BLOCK_WORDS)
             for (u32 k = 0; k < 8u; k++) {
-                const u16 *B = W + 17u * k;
+                GLOBAL const u16 *B = W + 17u * k;
                 float d = h2f(B[0]);
                 int dot = 0;
                 for (u32 i = 0; i < 8u; i++)
                     dot = dp4a((u32)B[1u + 2u * i] | ((u32)B[2u + 2u * i] << 16),
                                X[8u * k + i], dot);
                 float s = d * bits_f(X[72u + k]);
-                acc[k] = __builtin_fmaf(s, (float)dot, acc[k]);
+                acc[k] = FMA(s, (float)dot, acc[k]);
             }
         float a04 = acc[0] + acc[4], a26 = acc[2] + acc[6];
         float a15 = acc[1] + acc[5], a37 = acc[3] + acc[7];
         float e = a04 + a26, o = a15 + a37;
-        y[(unsigned long long)v * ys + row] = e + o;
+        y[(U64)v * ys + row] = e + o;
     }
 }
 
@@ -465,7 +518,7 @@ KERNEL q80_matvec(const u16 *w, const u32 *x, float *y, u32 rows, u32 nb,
    of 256; the activations in blocks of 32 (the Q8_K's qs32, bsums32, d32).
    The weights are read by the byte: blocks start anywhere. ---- */
 
-INLINE u32 le32(const u8 *p)
+INLINE u32 le32(GLOBAL const u8 *p)
 {
     return (u32)p[0] | ((u32)p[1] << 8) | ((u32)p[2] << 16) | ((u32)p[3] << 24);
 }
@@ -509,7 +562,7 @@ INLINE u32 table4(u32 w, u32 kind) /* each byte's nibble through the table */
     }
     return r;
 }
-INLINE float hsum8(const float *a)
+INLINE float hsum8(PRIV const float *a)
 {
     float a04 = a[0] + a[4], a26 = a[2] + a[6];
     float a15 = a[1] + a[5], a37 = a[3] + a[7];
@@ -517,8 +570,7 @@ INLINE float hsum8(const float *a)
     return e + o;
 }
 
-KERNEL b32_matvec(const u8 *w, const u32 *x, float *y, u32 rows, u32 nb,
-                  u32 nv, u32 xs, u32 ys, u32 kind)
+KERNEL b32_matvec(KARGS(u8) KARG_KIND KARG_ROW)
 {
     u32 row = row_index();
     if (row >= rows)
@@ -531,8 +583,8 @@ KERNEL b32_matvec(const u8 *w, const u32 *x, float *y, u32 rows, u32 nb,
     int five = kind == 3u || kind == 5u;
     int off = kind == 0u ? 8 : kind == 5u ? 16 : kind == 6u ? 1 : 0;
     for (u32 v = 0; v < nv; v++) {
-        const u8 *G = w + (unsigned long long)row * nb * GB;
-        const u32 *X = x + (unsigned long long)v * xs * GPU_BLOCK_WORDS;
+        GLOBAL const u8 *G = w + (U64)row * nb * GB;
+        GLOBAL const u32 *X = x + (U64)v * xs * GPU_BLOCK_WORDS;
         float acc[8] = {0, 0, 0, 0, 0, 0, 0, 0}, accm[8] = {0, 0, 0, 0, 0, 0, 0, 0};
         for (u32 b = 0; b < nb; b++, G += GB, X += GPU_BLOCK_WORDS)
             for (u32 k = 0; k < 8u; k++) {
@@ -589,8 +641,8 @@ KERNEL b32_matvec(const u8 *w, const u32 *x, float *y, u32 rows, u32 nb,
                 }
                 if (kind == 7u) {
                     float s0 = d * d32, s1 = m * d32;
-                    acc[k] = __builtin_fmaf(s0, (float)dl, acc[k]);
-                    acc[k] = __builtin_fmaf(s1, (float)dh, acc[k]);
+                    acc[k] = FMA(s0, (float)dl, acc[k]);
+                    acc[k] = FMA(s1, (float)dh, acc[k]);
                     continue;
                 }
                 int dot = dl + dh;
@@ -598,16 +650,16 @@ KERNEL b32_matvec(const u8 *w, const u32 *x, float *y, u32 rows, u32 nb,
                 if (off)
                     dot -= off * asum;
                 float s = d * d32;
-                acc[k] = __builtin_fmaf(s, (float)dot, acc[k]);
+                acc[k] = FMA(s, (float)dot, acc[k]);
                 if (dm) {
                     float sm = m * d32;
-                    accm[k] = __builtin_fmaf(sm, (float)asum, accm[k]);
+                    accm[k] = FMA(sm, (float)asum, accm[k]);
                 }
             }
         float r = hsum8(acc);
         if (dm)
             r = r + hsum8(accm);
-        y[(unsigned long long)v * ys + row] = r;
+        y[(U64)v * ys + row] = r;
     }
 }
 

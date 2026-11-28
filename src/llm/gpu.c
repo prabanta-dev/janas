@@ -547,7 +547,8 @@ static int tiles_exact(void)
 
 /* An NVIDIA card through CUDA's driver (hip 0) or an AMD one through HIP
    (1), gpu_cuda.c: its products split by rows as Vulkan's are, what it has
-   no kernel for on the CPU */
+   no kernel for on the CPU. On macOS the same interface is Apple's GPU
+   through Metal (gpu_metal.m, hip 0). */
 static struct janas_gpu *drv_create(int hip, char *err, size_t err_len)
 {
     struct janas_gpu *g = calloc(1, sizeof(*g));
@@ -573,8 +574,9 @@ static struct janas_gpu *vk_create(char *err, size_t err_len);
 
 /* Vulkan, the GPU of every maker, with the products, the prompt's tiles,
    the experts and the whole token; where there is no Vulkan (a server's
-   card with its maker's driver alone), NVIDIA's CUDA, then AMD's HIP.
-   JANAS_GPU_API=vulkan, cuda or hip takes that one alone; any other
+   card with its maker's driver alone), NVIDIA's CUDA, then AMD's HIP; on
+   macOS, where none of them is, Apple's Metal.
+   JANAS_GPU_API=vulkan, cuda, hip or metal takes that one alone; any other
    value is refused, said in err, rather than read as the default order
    (issue #73: a mistyped name ran Vulkan without a word). */
 struct janas_gpu *janas_gpu_create(char *err, size_t err_len)
@@ -583,13 +585,26 @@ struct janas_gpu *janas_gpu_create(char *err, size_t err_len)
     if (api && !*api)
         api = NULL;
     if (api && strcmp(api, "vulkan") && strcmp(api, "cuda") &&
-        strcmp(api, "hip")) {
+        strcmp(api, "hip") && strcmp(api, "metal")) {
         snprintf(err, err_len,
                  "JANAS_GPU_API=%.40s is not an API Janas knows: vulkan, "
-                 "cuda or hip",
+                 "cuda, hip or metal",
                  api);
         return NULL;
     }
+#if defined(__APPLE__)
+    if (api && strcmp(api, "metal")) {
+        snprintf(err, err_len, "JANAS_GPU_API=%.40s: on macOS only metal", api);
+        return NULL;
+    }
+    (void)vk_create;
+    return drv_create(0, err, err_len); /* Metal (gpu_metal.m) */
+#else
+    if (api && !strcmp(api, "metal")) {
+        snprintf(err, err_len, "JANAS_GPU_API=metal: Metal is macOS's");
+        return NULL;
+    }
+#endif
     if (api && !strcmp(api, "cuda"))
         return drv_create(0, err, err_len);
     if (api && !strcmp(api, "hip"))
@@ -855,7 +870,8 @@ static struct janas_gpu *vk_create(char *err, size_t err_len)
         g->pipe_id5 = VK_NULL_HANDLE;
     /* qwen4exp's types for the fast prompt (Q5_0 and Q2_0 tiles, iq4nl_mmq
        KIND 2 and 3) and its experts' (b32_mmid KIND 0, 2, 3: IQ4_NL, Q5_0,
-       Q2_0): without them those products stay with the CPU */
+       Q2_0), and NVFP4's experts (KIND 4: Inkling-2-Mini's in unsloth's
+       files): without them those products stay with the CPU */
     if (make_pipeline(g, janas_spv_iq4nl_mmq, sizeof(janas_spv_iq4nl_mmq),
                       &g->sm_mm50, &g->pipe_mm50, 2, NV_PER_GROUP,
                       g->sg) != VK_SUCCESS)
@@ -864,7 +880,7 @@ static struct janas_gpu *vk_create(char *err, size_t err_len)
                       &g->sm_mm20, &g->pipe_mm20, 3, NV_PER_GROUP,
                       g->sg) != VK_SUCCESS)
         g->pipe_mm20 = VK_NULL_HANDLE;
-    for (int i = 0; i < 3; i++)
+    for (int i = 0; i < 4; i++)
         if (make_pipeline(g, janas_spv_b32_mmid, sizeof(janas_spv_b32_mmid),
                           &g->sm_idb[i], &g->pipe_idb[i],
                           i ? (uint32_t)i + 1 : 0, NV_PER_GROUP,
@@ -1261,7 +1277,7 @@ void janas_gpu_destroy(struct janas_gpu *g)
             g->vkDestroyPipeline(g->dev, g->pipe_mm20, NULL);
         if (g->sm_mm20)
             g->vkDestroyShaderModule(g->dev, g->sm_mm20, NULL);
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < 4; i++) {
             if (g->pipe_idb[i])
                 g->vkDestroyPipeline(g->dev, g->pipe_idb[i], NULL);
             if (g->sm_idb[i])
@@ -2938,12 +2954,13 @@ static int experts_id(struct janas_gpu *g, struct janas_pool *pool,
     int type = t[s0].type;
     if (n * 48 > g->ts.bytes || n > 2 * 128 + 8)
         return experts_off(g, n, type, "more products than its table");
-    /* b32_mmid.comp: IQ4_NL, Q5_0, Q2_0 (pipe_idb 0, 1, 2); iqk_mmid.comp:
+    /* b32_mmid.comp: IQ4_NL, Q5_0, Q2_0, NVFP4 (pipe_idb 0-3); iqk_mmid.comp:
        Q2_K, the IQ1, IQ2 and IQ3 kinds, IQ4_XS */
-    int ib = type == JANAS_IQ4_NL ? 0
-             : type == JANAS_Q5_0 ? 1
-             : type == JANAS_Q2_0 ? 2
-                                  : -1;
+    int ib = type == JANAS_IQ4_NL  ? 0
+             : type == JANAS_Q5_0  ? 1
+             : type == JANAS_Q2_0  ? 2
+             : type == JANAS_NVFP4 ? 3
+                                   : -1;
     int im = iqm_kind(type);
     if (!(type == JANAS_Q4_K || type == JANAS_Q6_K ||
           (type == JANAS_MXFP4 && g->pipe_idmx) ||

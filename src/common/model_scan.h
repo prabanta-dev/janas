@@ -27,6 +27,10 @@ struct janas_model_file {
     int coder;     /* made for code (its name says so) */
     int thinks;    /* can reason before answering, as the engine reads it
                       (src/llm/api.c, find_format_in) */
+    /* the sampling its makers recommend, as its file says it
+       (general.sampling.*), a JSON object of the server's names:
+       {"temperature": 1, "top_k": 20, "top_p": 0.95}; {} none */
+    char sampling[256];
 };
 
 /* The chat models of dir (the .jns files, not the prediction files,

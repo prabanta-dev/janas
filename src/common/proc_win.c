@@ -260,7 +260,7 @@ int janas_proc_start(struct janas_proc *p, const char *const argv[],
                                          .hStdError = std[2]},
                          .lpAttributeList = attrs};
     DWORD how = CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT;
-    if (flags & JANAS_PROC_DETACHED)
+    if (flags & (JANAS_PROC_DETACHED | JANAS_PROC_OUTLIVE))
         how |= CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP;
     else if (flags & JANAS_PROC_GROUP)
         how |= CREATE_NEW_PROCESS_GROUP;
@@ -268,7 +268,9 @@ int janas_proc_start(struct janas_proc *p, const char *const argv[],
        each console program it starts a window of its own: none */
     if (!GetConsoleWindow())
         how |= CREATE_NO_WINDOW;
-    job = CreateJobObjectA(NULL, NULL);
+    /* outliving this process: no job of its, and out of the one this
+       process may be in, where that job lets it go */
+    job = flags & JANAS_PROC_OUTLIVE ? NULL : CreateJobObjectA(NULL, NULL);
     if (job) {
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION li = {0};
         li.BasicLimitInformation.LimitFlags =
@@ -276,8 +278,13 @@ int janas_proc_start(struct janas_proc *p, const char *const argv[],
         SetInformationJobObject(job, JobObjectExtendedLimitInformation, &li,
                                 sizeof li);
     }
-    if (!CreateProcessA(NULL, cmd.p, NULL, NULL, TRUE, how, envp, dir,
-                        &si.StartupInfo, &pi)) {
+    BOOL made = FALSE;
+    if (flags & JANAS_PROC_OUTLIVE)
+        made = CreateProcessA(NULL, cmd.p, NULL, NULL, TRUE,
+                              how | CREATE_BREAKAWAY_FROM_JOB, envp, dir,
+                              &si.StartupInfo, &pi);
+    if (!made && !CreateProcessA(NULL, cmd.p, NULL, NULL, TRUE, how, envp, dir,
+                                 &si.StartupInfo, &pi)) {
         snprintf(err, err_len, "cannot start %s: error %lu", argv[0],
                  (unsigned long)GetLastError());
         errno = ENOEXEC;

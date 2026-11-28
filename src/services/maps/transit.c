@@ -97,13 +97,15 @@ int mp_tool_transit(const struct janas_json *args, struct janas_buf *b)
     int status =
         url.oom ? -1 : mp_fetch(url.p, TRANSIT_KEEP_S, &body, err, sizeof err);
     janas_buf_free(&url);
-    struct mp_transit tr;
+    static struct mp_transit tr; /* large; its ways freed after each call */
+    memset(&tr, 0, sizeof tr);
     int ok = status == 200 &&
              mp_read_transit(body.p, body.n, &tr, err, sizeof err) == 0;
     if (status > 0 && status != 200)
         snprintf(err, sizeof err, "Transitous: HTTP %d", status);
     janas_buf_free(&body);
     if (!ok) {
+        mp_transit_free(&tr);
         struct janas_buf out = {0};
         janas_buf_printf(&out, "No journeys from %s to %s: %s.", from.name,
                          to.name, err);
@@ -113,6 +115,7 @@ int mp_tool_transit(const struct janas_json *args, struct janas_buf *b)
         snprintf(tr.tz, sizeof tr.tz, "%s", tz);
     struct janas_buf d = {0};
     mp_transit_data(&d, &from, &to, &tr);
+    mp_transit_free(&tr);
     return mp_answer(b, "maps_transit", &d, MP_TRANSIT_LAYOUT,
                      MP_TRANSIT_BRIEF);
 }

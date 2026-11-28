@@ -41,6 +41,9 @@ const ICON = {
   more: '<circle cx="6" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="18" cy="12" r="1.2"/>',
   down: '<path d="M6 9l6 6 6-6"/>',
   pulse: '<path d="M3 12h4l2.5-6 4 12 2.5-6H21"/>',
+  zin: '<circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5M8 10.5h5M10.5 8v5"/>',
+  zout: '<circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5M8 10.5h5"/>',
+  zfit: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/><rect x="8" y="8" width="8" height="8" rx="1"/>',
 };
 const icon = (n) => `<svg viewBox="0 0 24 24" aria-hidden="true">${ICON[n] || ""}</svg>`;
 
@@ -104,14 +107,14 @@ function chatRow(c, where) {
   const d = document.createElement("button");
   d.type = "button";
   d.className = "c";
-  d.textContent = c.title || "New chat";
+  d.textContent = chatTitle(c.title);
   d.title = d.textContent + (c.model ? " · " + c.model : "");
   d.onclick = () => goChat(where, c.id);
   const m = document.createElement("button");
   m.type = "button";
   m.className = "rmore";
-  m.title = "This chat: rename, move, export, archive, delete";
-  m.setAttribute("aria-label", "Menu of this chat");
+  m.title = T("This chat: rename, move, export, archive, delete");
+  m.setAttribute("aria-label", T("Menu of this chat"));
   m.innerHTML = icon("more");
   m.onclick = (e) => {
     e.stopPropagation();
@@ -126,7 +129,7 @@ function drawTree() {
   const fl = $("#freelist");
   fl.innerHTML = "";
   for (const c of free.filter((c) => !c.archived)) fl.append(chatRow(c, tree.free));
-  if (!fl.children.length) fl.innerHTML = '<div class="empty note">None yet.</div>';
+  if (!fl.children.length) fl.innerHTML = `<div class="empty note">${T("None yet.")}</div>`;
   const pl = $("#projlist");
   pl.innerHTML = "";
   const arch = free.filter((c) => c.archived).map((c) => [c, tree.free]);
@@ -137,8 +140,8 @@ function drawTree() {
     h.className = "phead";
     h.title = p.path;
     h.innerHTML = `<span class="arrow"></span>${icon("folder")}<span class="pname">${esc(p.name)}</span>
-      <button class="gadd" type="button" title="A new chat in ${esc(p.name)}" aria-label="New chat in this project">+</button>
-      <button class="gadd" type="button" title="${esc(p.name)}: its documents, services and folders" aria-label="Project settings">${icon("more")}</button>`;
+      <button class="gadd" type="button" title="${T("A new chat in {p}", {p: esc(p.name)})}" aria-label="${T("New chat in this project")}">+</button>
+      <button class="gadd" type="button" title="${T("{p}: its documents, services and folders", {p: esc(p.name)})}" aria-label="${T("Project settings")}">${icon("more")}</button>`;
     h.onclick = (e) => {
       if (e.target.closest(".gadd")) return;
       shut["p:" + p.path] = !shut["p:" + p.path]; keepShut(); drawTree();
@@ -147,19 +150,18 @@ function drawTree() {
     add.onclick = () => goChat(p.path, "new");
     more.onclick = async () => {
       if (p.path !== ws.path) await wsOpen(p.path, false);
-      wsShow(true);
-      readServices(); /* mcp.json may have changed since */
+      psShow("gen");
     };
     const list = document.createElement("div");
     list.className = "plist";
     const chats = p.chats.chats || [];
     for (const c of chats.filter((c) => !c.archived)) list.append(chatRow(c, p.path));
-    if (!list.children.length) list.innerHTML = '<div class="empty note">No chats yet.</div>';
+    if (!list.children.length) list.innerHTML = `<div class="empty note">${T("No chats yet.")}</div>`;
     arch.push(...chats.filter((c) => c.archived).map((c) => [c, p.path]));
     g.append(h, list);
     pl.append(g);
   }
-  if (!tree.projects.length) pl.innerHTML = '<div class="empty note">A project keeps a folder of yours with its documents, files and chats: + makes one.</div>';
+  if (!tree.projects.length) pl.innerHTML = `<div class="empty note">${T("A project keeps a folder of yours with its documents, files and chats: + makes one.")}</div>`;
   const al = $("#archlist");
   al.innerHTML = "";
   for (const [c, where] of arch) al.append(chatRow(c, where));
@@ -184,7 +186,7 @@ for (const h of document.querySelectorAll("#tree .grp > .ghead"))
   };
 $("#addchat").onclick = () => newFree();
 /* a new project: a folder chosen, or made in Documents/Brebus */
-$("#addproj").onclick = () => wsShow(true, true);
+$("#addproj").onclick = () => wsShow(true);
 
 /* a chat of a project (or of the free chats) opened; "new": a new one */
 async function goChat(where, id) {
@@ -195,10 +197,10 @@ async function goChat(where, id) {
 
 /* ---- the chat's own bar: its title, a menu of what can be done ---- */
 function chatBar() {
-  const t = cur ? cur.title || "New chat" : "";
+  const t = cur ? chatTitle(cur.title) : "";
   $("#ctitle").firstChild.textContent = t;
   $("#ctitle").hidden = !cur;
-  $("#cwhere").textContent = ws.free ? "" : ws.name ? "in " + ws.name : "";
+  $("#cwhere").textContent = ws.free ? "" : ws.name ? T("in {name}", {name: ws.name}) : "";
   $("#cwhere").title = ws.free ? "" : ws.path;
   const arch = !!(cur && cur.archived);
   $("#archbar").hidden = !arch;
@@ -209,15 +211,15 @@ function chatMenu(at) {
   if (!cur) return;
   const arch = !!cur.archived;
   popMenu(at, [
-    {label: "Rename", icon: "pencil", run: renameConv},
-    {label: "Move to…", icon: "move", note: ws.free ? "a project" : "another project, or the free chats", run: () => moveConv(at)},
-    {label: "Duplicate", icon: "copy", note: "a copy to take another way", run: () => branchConv(cur)},
-    {label: "Compact now", icon: "fold", note: "the earlier messages summarized, to make room", run: compactNow},
-    {label: "Export", icon: "export", note: "Markdown, text or PDF", run: exportConv},
-    {label: "In a new window", icon: "window", run: () => window.open("/#chat/" + cur.id, "_blank")},
+    {label: T("Rename"), icon: "pencil", run: renameConv},
+    {label: T("Move to…"), icon: "move", note: ws.free ? T("a project") : T("another project, or the free chats"), run: () => moveConv(at)},
+    {label: T("Duplicate"), icon: "copy", note: T("a copy to take another way"), run: () => branchConv(cur)},
+    {label: T("Compact now"), icon: "fold", note: T("the earlier messages summarized, to make room"), run: compactNow},
+    {label: T("Export"), icon: "export", note: T("Markdown, text or PDF"), run: exportConv},
+    {label: T("In a new window"), icon: "window", run: () => window.open("/#chat/" + cur.id, "_blank")},
     "-",
-    {label: arch ? "Restore" : "Archive", icon: arch ? "restore" : "archive", note: arch ? "back among the chats" : "kept to read, no longer continued", run: () => archiveConv(!arch)},
-    {label: "Delete", icon: "trash", danger: true, run: deleteConv},
+    {label: arch ? T("Restore") : T("Archive"), icon: arch ? "restore" : "archive", note: arch ? T("back among the chats") : T("kept to read, no longer continued"), run: () => archiveConv(!arch)},
+    {label: T("Delete"), icon: "trash", danger: true, run: deleteConv},
   ]);
 }
 $("#ctitle").onclick = () => chatMenu($("#ctitle"));
@@ -229,31 +231,31 @@ function rowMenu(c, where, at) {
   const save = async (x) => { x.updated = Date.now();
     await fetch(url(c.id), {method: "POST", body: JSON.stringify(x)}); refreshTree(); };
   popMenu(at, [
-    {label: "Open", icon: "chat", run: () => goChat(where, c.id)},
-    {label: "Rename", icon: "pencil", run: async () => {
+    {label: T("Open"), icon: "chat", run: () => goChat(where, c.id)},
+    {label: T("Rename"), icon: "pencil", run: async () => {
       const x = await load(); if (!x) return;
-      const t = await input("A title for this chat", x.title || "");
+      const t = await input(T("A title for this chat"), x.title || "");
       if (t === null) return;
       x.title = t.trim(); await save(x);
     }},
-    {label: "Move to…", icon: "move", note: "another project, or the free chats", run: () => {
-      const places = [...(where === tree.free ? [] : [{label: "The free chats", path: ""}]),
+    {label: T("Move to…"), icon: "move", note: T("another project, or the free chats"), run: () => {
+      const places = [...(where === tree.free ? [] : [{label: T("The free chats"), path: ""}]),
         ...tree.projects.filter((p) => p.path !== where).map((p) => ({label: p.name, path: p.path}))];
-      if (!places.length) { say("There is no other project yet: + beside Projects makes one."); return; }
+      if (!places.length) { say(T("There is no other project yet: + beside Projects makes one.")); return; }
       popMenu(at, places.map((p) => ({label: p.label, icon: p.path ? "folder" : "chat", note: p.path, run: async () => {
         const r = await fetch("/brebus/chats/move", {method: "POST", body: JSON.stringify({id: c.id, from: where, to: p.path})});
-        if (!r.ok) say((await r.json()).error || "not moved");
+        if (!r.ok) say((await r.json()).error || T("not moved"));
         refreshTree();
       }})));
     }},
-    {label: "Duplicate", icon: "copy", note: "a copy to take another way", run: async () => { const x = await load(); if (x) branchConv(x, undefined, where); }},
-    {label: "Export", icon: "export", note: "Markdown or text", run: async () => { const x = await load(); if (x) exportConv(x); }},
+    {label: T("Duplicate"), icon: "copy", note: T("a copy to take another way"), run: async () => { const x = await load(); if (x) branchConv(x, undefined, where); }},
+    {label: T("Export"), icon: "export", note: T("Markdown or text"), run: async () => { const x = await load(); if (x) exportConv(x); }},
     "-",
-    {label: c.archived ? "Restore" : "Archive", icon: c.archived ? "restore" : "archive",
-     note: c.archived ? "back among the chats" : "kept to read, no longer continued",
+    {label: c.archived ? T("Restore") : T("Archive"), icon: c.archived ? "restore" : "archive",
+     note: c.archived ? T("back among the chats") : T("kept to read, no longer continued"),
      run: async () => { const x = await load(); if (!x) return; x.archived = !c.archived; await save(x); }},
-    {label: "Delete", icon: "trash", danger: true, run: async () => {
-      if (!await yes(`"${c.title || "New chat"}" and its messages are deleted.`, "Delete this chat?", "Delete")) return;
+    {label: T("Delete"), icon: "trash", danger: true, run: async () => {
+      if (!await yes(T('"{t}" and its messages are deleted.', {t: chatTitle(c.title)}), T("Delete this chat?"), T("Delete"))) return;
       await fetch(url(c.id), {method: "DELETE"}); refreshTree();
     }},
   ]);
@@ -267,15 +269,15 @@ async function archiveConv(on) {
 $("#unarch").onclick = () => archiveConv(false);
 /* the chat moved to another project, or to the free chats */
 async function moveConv(at) {
-  const places = [...(ws.free ? [] : [{label: "The free chats", path: ""}]),
+  const places = [...(ws.free ? [] : [{label: T("The free chats"), path: ""}]),
     ...tree.projects.filter((p) => p.path !== ws.path).map((p) => ({label: p.name, path: p.path}))];
-  if (!places.length) { say("There is no other project yet: + beside Projects makes one."); return; }
+  if (!places.length) { say(T("There is no other project yet: + beside Projects makes one.")); return; }
   popMenu(at || $("#ctitle"), places.map((p) => ({label: p.label, icon: p.path ? "folder" : "chat", note: p.path, run: async () => {
     /* saved already: saving it again here would hold the file open
        while it is moved */
     const r = await fetch("/brebus/chats/move", {method: "POST", body: JSON.stringify({id: cur.id, to: p.path})});
     const j = await r.json();
-    if (!r.ok) { say(j.error || "not moved"); return; }
+    if (!r.ok) { say(j.error || T("not moved")); return; }
     await goChat(p.path || tree.free, cur.id);
   }})));
 }
@@ -284,24 +286,24 @@ async function moveConv(at) {
 $("#modelbtn").onclick = () => {
   const names = Object.keys(modelInfo).filter((n) => !n.startsWith("__")).sort();
   const items = names.map((n) => ({label: n, icon: "model", on: server.running && server.model === n,
-    note: `${gib(modelInfo[n].bytes)}${modelInfo[n].vision ? " · sees pictures" : ""}${isLoaded(n) && server.model !== n ? " · loaded" : ""}`,
+    note: `${gib(modelInfo[n].bytes)}${modelInfo[n].vision ? " · " + T("sees pictures") : ""}${isLoaded(n) && server.model !== n ? " · " + T("loaded") : ""}`,
     run: () => useModel(n)}));
   /* no Unload here: the chat needs a model (My models and Server have it) */
-  items.push("-", {label: "Other models…", icon: "compass", note: "Discover", run: () => show("discover")});
+  items.push("-", {label: T("Other models…"), icon: "compass", note: T("Discover"), run: () => show("discover")});
   popMenu($("#modelbtn"), items, true);
 };
 function useModel(name) {
   if (server.running && server.model === name) return;
   return whileLoading(async () => {
     if (!isLoaded(name)) {
-      $("#loaded").textContent = "Loading " + name + "…";
+      $("#loaded").textContent = T("Loading {m}…", {m: name});
       delete ctxOf[name]; /* loaded anew: its context asked again */
     }
     sendButton(); /* the field says so, and waits */
     const r = await fetch("/brebus/server/start", {method: "POST",
       body: JSON.stringify({model: name, ...(settings[name] || {})})});
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) say(j.error || name + " did not start");
+    if (!r.ok) say(j.error || T("{m} did not start", {m: name}));
     else remember(name);
     await status();
   });
@@ -311,11 +313,11 @@ $("#modelset").onclick = async () => {
   const name = server.running ? server.model : nextModel();
   if (!name || !modelInfo[name]) return;
   let changed = false;
-  await dialog({title: "Settings of " + name, html: `<p class="note">How this model runs: kept for it, used each time it is loaded.</p>${setForm(modelInfo[name])}`,
+  await dialog({title: T("Settings of {m}", {m: name}), html: `<p class="note">${T("How this model runs: kept for it, used each time it is loaded.")}</p>${setForm(modelInfo[name])}`,
     ready: (box) => { const f = box.querySelector("form"); f.onchange = () => { changed = true; saveSettings(f); }; },
-    buttons: [{label: "Close", value: "ok", primary: true}]});
+    buttons: [{label: T("Close"), value: "ok", primary: true}]});
   if (changed && server.running && server.model === name &&
-      await yes("Load it again now, to use them?", "Settings saved", "Load again")) {
+      await yes(T("Load it again now, to use them?"), T("Settings saved"), T("Load again"))) {
     await fetch("/brebus/server/stop", {method: "POST", body: JSON.stringify({model: name})});
     await useModel(name);
   }
@@ -331,15 +333,15 @@ async function findChats() {
   const models = [...new Set([...tree.free_chats.chats, ...tree.projects.flatMap((p) => p.chats.chats || [])]
     .map((c) => c.model).filter(Boolean))].sort().map((m) => `<option>${esc(m)}</option>`).join("");
   let timer = 0, hits = [];
-  await dialog({title: "Find a chat", wide: true, html: `<div class="srvset find">
-      <input class="fq" type="search" placeholder="Words to find (empty: every chat the filters keep)" spellcheck="false">
+  await dialog({title: T("Find a chat"), wide: true, html: `<div class="srvset find">
+      <input class="fq" type="search" placeholder="${T("Words to find (empty: every chat the filters keep)")}" spellcheck="false">
       <div class="row">
-        <label>In <select class="fin"><option value="all">titles and messages</option><option value="mine">my messages only</option><option value="titles">titles only</option></select></label>
-        <label>Where <select class="fwhere"><option value="">everywhere</option><option value="free">the free chats</option>${projects}</select></label>
+        <label>${T("In")} <select class="fin"><option value="all">${T("titles and messages")}</option><option value="mine">${T("my messages only")}</option><option value="titles">${T("titles only")}</option></select></label>
+        <label>${T("Where")} <select class="fwhere"><option value="">${T("everywhere")}</option><option value="free">${T("the free chats")}</option>${projects}</select></label>
       </div><div class="row">
-        <label>When <select class="fsince"><option value="0">any time</option><option value="1">today</option><option value="7">the last week</option><option value="30">the last month</option><option value="365">the last year</option></select></label>
-        <label>Model <select class="fmodel"><option value="">any</option>${models}</select></label>
-        <label class="tog farchl"><input type="checkbox" class="farch" checked> archived too</label>
+        <label>${T("When")} <select class="fsince"><option value="0">${T("any time")}</option><option value="1">${T("today")}</option><option value="7">${T("the last week")}</option><option value="30">${T("the last month")}</option><option value="365">${T("the last year")}</option></select></label>
+        <label>${T("Model")} <select class="fmodel"><option value="">${T("any")}</option>${models}</select></label>
+        <label class="tog farchl"><input type="checkbox" class="farch" checked> ${T("archived too")}</label>
       </div>
       <div class="fcount note"></div>
       <div class="fres"></div></div>`,
@@ -353,16 +355,17 @@ async function findChats() {
         const j = await ask("chats/search?" + p);
         const res = v(".fres");
         hits = j.chats;
-        res.innerHTML = j.chats.length ? "" : '<p class="note empty">Nothing found.</p>';
+        res.innerHTML = j.chats.length ? "" : `<p class="note empty">${T("Nothing found.")}</p>`;
         j.chats.forEach((h, i) => {
           const b = document.createElement("button");
           b.type = "button"; b.className = "hit"; b.dataset.k = i;
-          b.innerHTML = `<span class="l1"><b>${esc(h.title || "New chat")}</b><span class="when">${new Date(h.updated).toLocaleDateString()}</span></span>` +
-            `<span class="l2">${h.free ? "Chats" : "Project " + esc(h.workspace_name)}${h.model ? " · " + esc(h.model) : ""}${h.archived ? " · archived" : ""}</span>` +
+          b.innerHTML = `<span class="l1"><b>${esc(chatTitle(h.title))}</b><span class="when">${dateOnly(h.updated)}</span></span>` +
+            `<span class="l2">${h.free ? T("Chats") : T("Project {p}", {p: esc(h.workspace_name)})}${h.model ? " · " + esc(h.model) : ""}${h.archived ? " · " + T("archived") : ""}</span>` +
             (h.snippet ? `<span class="l3">${esc(h.snippet)}</span>` : "");
           res.append(b);
         });
-        box.querySelector(".fcount").textContent = j.chats.length ? `${j.chats.length}${j.more ? "+" : ""} found` : "";
+        box.querySelector(".fcount").textContent = !j.chats.length ? ""
+          : j.more ? T("{n}+ chats found", {n: num(j.chats.length)}) : Tn(j.chats.length, "{n} chat found", "{n} chats found");
       };
       /* one listener for the list: a result opens its chat */
       box.querySelector(".fres").addEventListener("click", (e) => {
@@ -377,7 +380,7 @@ async function findChats() {
       run();
       setTimeout(() => box.querySelector(".fq").focus());
     },
-    buttons: [{label: "Close", value: "ok", primary: true}]});
+    buttons: [{label: T("Close"), value: "ok", primary: true}]});
 }
 document.addEventListener("keydown", (e) => {
   if (!(e.ctrlKey || e.metaKey) || e.altKey || dialogOpen()) return;
@@ -399,7 +402,7 @@ document.addEventListener("keydown", (e) => {
   const side = $("#side");
   try { const w = +localStorage.getItem("brebus.sidew"); if (w >= 200) document.documentElement.style.setProperty("--sidew", w + "px"); } catch (e) {}
   const g = document.createElement("div");
-  g.id = "sidegrip"; g.title = "Drag to widen";
+  g.id = "sidegrip"; g.title = T("Drag to widen");
   side.append(g);
   g.addEventListener("pointerdown", (e) => {
     e.preventDefault();
@@ -430,16 +433,16 @@ $("#chatmore").onclick = () => {
   }
   if (arts.length) {
     items.push(...arts.map((t) => t.pic
-      ? {label: t.pic.title, icon: "art", note: "picture in the project", run: () => artShowFile(t.pic.path, t.pic.title)}
-      : {label: t, icon: "art", note: "artifact", run: () => artShow(t)}));
-  } else items.push({label: "No artifacts yet", icon: "art", note: "pages, drawings, programs the model makes", run: () => {}});
+      ? {label: t.pic.title, icon: "art", note: T("picture in the project"), run: () => artShowFile(t.pic.path, t.pic.title)}
+      : {label: t, icon: "art", note: T("artifact"), run: () => artShow(t)}));
+  } else items.push({label: T("No artifacts yet"), icon: "art", note: T("pages, drawings, programs the model makes"), run: () => {}});
   items.push("-");
   const files = cur.messages.flatMap((m) => m.attached || []);
   if (files.length)
     items.push(...files.map((f) => ({label: f.name, icon: "file", note: f.path,
       run: () => fetch("/brebus/open", {method: "POST", body: JSON.stringify({path: f.path})})})));
-  else items.push({label: "No files attached", icon: "file", note: "+ under the field attaches one", run: () => {}});
-  items.push("-", {label: "Instructions and answer", icon: "sliders", note: "the model's role, how free it is, the answer's form", run: chatSettings});
+  else items.push({label: T("No files attached"), icon: "file", note: T("+ under the field attaches one"), run: () => {}});
+  items.push("-", {label: T("Instructions and answer"), icon: "sliders", note: T("the model's role, how free it is, the answer's form"), run: chatSettings});
   popMenu($("#chatmore"), items);
 };
 
@@ -451,7 +454,7 @@ function speakButton() {
   const b = $("#speak");
   b.innerHTML = icon(speakOn ? "speakOn" : "speakOff");
   b.setAttribute("aria-pressed", speakOn ? "true" : "false");
-  b.title = speakOn ? "The replies are read aloud: click to stop" : "Read the replies aloud";
+  b.title = speakOn ? T("The replies are read aloud: click to stop") : T("Read the replies aloud");
   b.hidden = !("speechSynthesis" in window);
 }
 $("#speak").onclick = () => {
@@ -479,8 +482,8 @@ function thinkButton() {
   const on = thinkNow();
   put(b, "innerHTML", icon("brain"));
   b.setAttribute("aria-pressed", on ? "true" : "false");
-  put(b, "title", on ? "The model reasons before it answers, in this chat: slower, better on hard questions. Click to stop"
-                     : "Let the model reason before it answers, in this chat: slower, better on hard questions");
+  put(b, "title", on ? T("The model reasons before it answers, in this chat: slower, better on hard questions. Click to stop")
+                     : T("Let the model reason before it answers, in this chat: slower, better on hard questions"));
 }
 async function readReasons() {
   const name = server.running && server.model;
@@ -527,10 +530,10 @@ function ctxRing() {
   r.classList.toggle("warm", f >= 0.7 && f < 0.9);
   r.classList.toggle("full", f >= 0.9);
   /* the details in a popup of their own (below); the label for readers */
-  r.ariaLabel = !used ? "The model's memory of this chat: nothing used yet"
-    : `The model's memory of this chat: ${used.toLocaleString()} of ${size ? size.toLocaleString() : "?"} tokens` +
-      (size ? ` (${Math.round(f * 100)}%)` : "") +
-      (f >= COMPACT_AT ? ". Nearly full: the earlier messages will be summarized before the next one is sent." : "");
+  r.ariaLabel = !used ? T("The model's memory of this chat: nothing used yet")
+    : (size ? T("The model's memory of this chat: {used} of {size} tokens ({p}%)", {used: num(used), size: num(size), p: num(Math.round(f * 100))})
+            : T("The model's memory of this chat: {used} of {size} tokens", {used: num(used), size: "?"})) +
+      (f >= COMPACT_AT ? T(". Nearly full: the earlier messages will be summarized before the next one is sent.") : "");
 }
 
 /* ---- dictation: the field empty, the send button is a microphone; the
@@ -539,29 +542,56 @@ async function dictate() {
   if (rec) { rec.stop(); return; }
   /* no speech model yet: offered, with what it is and where it comes from */
   if (!speechModels.length) {
-    const d = await dialog({title: "Dictation needs a speech model",
-      text: "Your voice is written by OpenAI's Whisper, run on this computer: nothing you say leaves it. whisper-small (0.49 GB) is downloaded from Hugging Face (prabanta-dev/whisper-small-JNS) and checked against its published fingerprint. Settings, Voice, has a larger, more accurate one.",
-      buttons: [{label: "Get it", value: "get", primary: true}, {label: "Not now", value: "no"}]});
+    const d = await dialog({title: T("Dictation needs a speech model"),
+      text: T("Your voice is written by OpenAI's Whisper, run on this computer: nothing you say leaves it. whisper-small (0.49 GB) is downloaded from Hugging Face (prabanta-dev/whisper-small-JNS) and checked against its published fingerprint. Settings, Voice, has a larger, more accurate one."),
+      buttons: [{label: T("Get it"), value: "get", primary: true}, {label: T("Not now"), value: "no"}]});
     if (d.button === "get") { show("discover"); getModel("whisper-small"); }
     return;
   }
   let stream;
   try { stream = await navigator.mediaDevices.getUserMedia({audio: true}); }
-  catch (e) { say("The microphone is not available: " + e.message, "Dictation"); return; }
+  catch (e) { say(T("The microphone is not available: {e}", {e: e.message}), T("Dictation")); return; }
+  /* the sound itself, through Web Audio, sent as a WAV file: not
+     MediaRecorder, whose WebM or Ogg needs the system's codecs (WebKitGTK
+     records through GStreamer, and without its plugins the recording comes
+     out empty, issue #81), where a WAV is read by Janas itself */
+  let ctx;
+  try { ctx = new (window.AudioContext || window.webkitAudioContext)(); }
+  catch (e) { stream.getTracks().forEach((t) => t.stop()); say(T("The microphone is not available: {e}", {e: e.message}), T("Dictation")); return; }
+  if (ctx.state === "suspended") await ctx.resume().catch(() => {});
+  const src = ctx.createMediaStreamSource(stream);
+  const node = ctx.createScriptProcessor(4096, 1, 1);
   const parts = [];
-  const mr = new MediaRecorder(stream);
-  rec = mr;
-  mr.ondataavailable = (e) => { if (e.data.size) parts.push(e.data); };
-  mr.onstop = async () => {
+  let samples = 0;
+  const most = ctx.sampleRate * 600; /* ten minutes at most */
+  node.onaudioprocess = (e) => {
+    if (samples >= most) return;
+    const x = e.inputBuffer.getChannelData(0);
+    parts.push(new Float32Array(x));
+    samples += x.length;
+  };
+  src.connect(node);
+  node.connect(ctx.destination); /* a processor runs only when connected */
+  rec = {stop: async () => {
+    node.onaudioprocess = null;
+    try { src.disconnect(); node.disconnect(); } catch (e) {}
     stream.getTracks().forEach((t) => t.stop());
+    const rate = ctx.sampleRate;
+    ctx.close().catch(() => {});
     rec = null; sendButton();
-    const blob = new Blob(parts, {type: mr.mimeType || "audio/webm"});
-    if (!blob.size) return;
-    $("#loaded").textContent = "writing what you said…";
+    /* silence all through is not nothing to say: it is said */
+    let peak = 0;
+    for (const p of parts) for (let i = 0; i < p.length; i += 16) peak = Math.max(peak, Math.abs(p[i]));
+    if (!samples || peak < 1e-4) {
+      say(T("No sound came from the microphone: check that the right one is chosen in the system's sound settings, and that it is not muted."), T("Dictation"));
+      return;
+    }
+    const blob = wavBlob(parts, samples, rate);
+    $("#loaded").textContent = T("writing what you said…");
     try {
       if (!await ensureModel()) return;
       const fd = new FormData();
-      fd.append("file", blob, "voice." + ((mr.mimeType || "").includes("ogg") ? "ogg" : "webm"));
+      fd.append("file", blob, "voice.wav");
       fd.append("model", "whisper");
       const r = await fetch("/v1/audio/transcriptions", {method: "POST", body: fd});
       const j = await r.json().catch(() => ({}));
@@ -569,16 +599,32 @@ async function dictate() {
         const t = $("#ask");
         t.value = (t.value ? t.value + " " : "") + j.text.trim();
         growAsk(); t.focus();
+        if (!j.text.trim()) say(T("Whisper heard no words in it."), T("Dictation"));
       } else {
         const why = (j.error && (j.error.message || j.error)) || "";
         say(/speech model/i.test(why)
-          ? "Dictation needs a speech model (Whisper): get one in Settings, Voice. It is used from the next time the chat's model is loaded."
-          : "The voice could not be written" + (why ? ": " + why : "."), "Dictation");
+          ? T("Dictation needs a speech model (Whisper): get one in Settings, Voice. It is used from the next time the chat's model is loaded.")
+          : why ? T("The voice could not be written: {why}", {why}) : T("The voice could not be written."), T("Dictation"));
       }
     } finally { status(); }
-  };
-  mr.start();
+  }};
   sendButton();
+}
+
+/* mono samples as a 16-bit PCM WAV file */
+function wavBlob(parts, n, rate) {
+  const b = new ArrayBuffer(44 + 2 * n), v = new DataView(b);
+  const str = (o, t) => { for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
+  str(0, "RIFF"); v.setUint32(4, 36 + 2 * n, true); str(8, "WAVE");
+  str(12, "fmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  str(36, "data"); v.setUint32(40, 2 * n, true);
+  let o = 44;
+  for (const p of parts) for (let i = 0; i < p.length && o < 44 + 2 * n; i++, o += 2) {
+    const x = Math.max(-1, Math.min(1, p[i]));
+    v.setInt16(o, x < 0 ? x * 0x8000 : x * 0x7fff, true);
+  }
+  return new Blob([b], {type: "audio/wav"});
 }
 
 /* the carets that say "a menu here"; the engine's monitor by the speaker */
@@ -600,19 +646,19 @@ $("#monbtn").onclick = () => window.open("/monitor", "_blank", "noopener");
     const used = ctxUsed(), size = ctxSize();
     const name = server.running ? server.model : nextModel();
     const f = size ? Math.min(1, used / size) : 0;
-    const words = (n) => "about " + Math.round(n * 0.75).toLocaleString() + " words";
+    const words = (n) => T("about {n} words", {n: num(Math.round(n * 0.75))});
     pop = document.createElement("div");
     pop.className = "ctxpop";
-    pop.innerHTML = `<b>The model's memory of this chat</b>
+    pop.innerHTML = `<b>${T("The model's memory of this chat")}</b>
       <div class="bar${f >= 0.9 ? " full" : f >= 0.7 ? " warm" : ""}"><i style="width:${(f * 100).toFixed(1)}%"></i></div>
-      <dl><dt>Used</dt><dd>${used.toLocaleString()} tokens${size ? ` (${Math.round(f * 100)}%)` : ""}</dd>
-        <dt>Room</dt><dd>${size ? size.toLocaleString() + " tokens" : "not known yet"}</dd>
-        ${size ? `<dt>Left</dt><dd>${Math.max(0, size - used).toLocaleString()} tokens, ${words(Math.max(0, size - used))}</dd>` : ""}
-        <dt>Model</dt><dd>${esc(name || "none")}</dd></dl>
-      <p>Everything the model reads counts: your messages, its replies, the documents found, the tools' results. ${
-        f >= COMPACT_AT ? "It is nearly full: before your next message the earlier ones are summarized, and the model reads the summary in their place."
-        : f >= 0.7 ? "At 80% the earlier messages are summarized, to make room."
-        : "When it fills up, the earlier messages are summarized to make room (Compact now, in the chat's menu, does it at once)."} The room is set in the model's settings (the gear).</p>`;
+      <dl><dt>${T("Used")}</dt><dd>${size ? T("{n} tokens ({p}%)", {n: num(used), p: num(Math.round(f * 100))}) : T("{n} tokens", {n: num(used)})}</dd>
+        <dt>${T("Room")}</dt><dd>${size ? T("{n} tokens", {n: num(size)}) : T("not known yet")}</dd>
+        ${size ? `<dt>${T("Left")}</dt><dd>${T("{n} tokens, {w}", {n: num(Math.max(0, size - used)), w: words(Math.max(0, size - used))})}</dd>` : ""}
+        <dt>${T("Model")}</dt><dd>${esc(name || T("none"))}</dd></dl>
+      <p>${T("Everything the model reads counts: your messages, its replies, the documents found, the tools' results.")} ${
+        f >= COMPACT_AT ? T("It is nearly full: before your next message the earlier ones are summarized, and the model reads the summary in their place.")
+        : f >= 0.7 ? T("At 80% the earlier messages are summarized, to make room.")
+        : T("When it fills up, the earlier messages are summarized to make room (Compact now, in the chat's menu, does it at once).")} ${T("The room is set in the model's settings (the gear).")}</p>`;
     document.body.append(pop);
     const r = ring.getBoundingClientRect();
     pop.style.left = Math.max(8, Math.min(r.left + r.width / 2 - 140, innerWidth - 288)) + "px";
@@ -623,7 +669,8 @@ $("#monbtn").onclick = () => window.open("/monitor", "_blank", "noopener");
   ring.addEventListener("mouseleave", later);
 }
 
-/* ---- Voice, in Settings: dictation's model (Whisper, downloaded from
+/* ---- Voice, in Settings (each model's line in English, put into the
+   page's language where shown): dictation's model (Whisper, downloaded from
    the catalog, checked), the voices that read the replies aloud ---- */
 const SPEECH = [["whisper-small", "small and quick: for dictation on most computers"],
                 ["whisper-large-v3-turbo", "more accurate, for long recordings and difficult sound: wants more memory"]];
@@ -631,32 +678,33 @@ function drawVoice() {
   const box = $("#voicecard");
   if (!box) return;
   const have = SPEECH.filter(([n]) => speechModels.includes(n));
-  const size = (n) => { const c = catalog && catalog.models.find((m) => m.name === n); return c ? c.download_gb.toFixed(2) + " GB" : ""; };
+  const size = (n) => { const c = catalog && catalog.models.find((m) => m.name === n); return c ? Number(c.download_gb).toLocaleString(LOCALE, {minimumFractionDigits: 2, maximumFractionDigits: 2}) + " GB" : ""; };
   const voices = "speechSynthesis" in window ? speechSynthesis.getVoices() : [];
   const lang = (navigator.language || "en").slice(0, 2);
   const mine = voices.filter((v) => v.lang.toLowerCase().startsWith(lang));
   let chosen = "";
   try { chosen = localStorage.getItem("brebus.voice") || ""; } catch (e) {}
   box.innerHTML = `
-    <div class="vrow"><b>Dictation</b>
-      <span class="note">The microphone under the field writes what you say, through a speech model (OpenAI's Whisper) that runs on this computer: nothing leaves it.</span>
-      ${SPEECH.map(([n, what]) => `<div class="vline"><span><b>${esc(n)}</b> <small>${esc(size(n))} · ${esc(what)}</small></span>
+    <div class="vrow"><b>${T("Dictation")}</b>
+      <span class="note">${T("The microphone under the field writes what you say, through a speech model (OpenAI's Whisper) that runs on this computer: nothing leaves it.")}</span>
+      ${SPEECH.map(([n, what]) => `<div class="vline"><span><b>${esc(n)}</b> <small>${esc(size(n))} · ${esc(T(what))}</small></span>
         ${speechModels.includes(n)
-          ? `<span class="badge fits">installed</span><button class="act quiet vrm" data-m="${esc(n)}" title="Delete it from this computer">Remove</button>`
-          : `<button class="act quiet vget" data-m="${esc(n)}" title="Download it from Hugging Face, checked against its published fingerprint">Get</button>`}</div>`).join("")}
-      ${have.length && server.running ? '<span class="note">A model just got is used from the next time the chat\'s model loads.</span>' : ""}
+          ? `<span class="badge fits">${T("installed")}</span><button class="act quiet vrm" data-m="${esc(n)}" title="${T("Delete it from this computer")}">${T("Remove")}</button>`
+          : `<button class="act quiet vget" data-m="${esc(n)}" title="${T("Download it from Hugging Face, checked against its published fingerprint")}">${T("Get")}</button>`}</div>`).join("")}
+      ${have.length && server.running ? `<span class="note">${T("A model just got is used from the next time the chat's model loads.")}</span>` : ""}
     </div>
-    <div class="vrow"><b>Reading aloud</b>
-      <span class="note">The speaker under the field reads the replies with this computer's own voices${voices.length ? "" : " - none found here: on Linux, install speech-dispatcher with a voice (espeak-ng)"}. Janas's own voices will come with its speech synthesis.</span>
-      ${voices.length ? `<label>Voice <select id="voicesel"><option value="">this computer's default for ${esc(lang)}</option>
+    <div class="vrow"><b>${T("Reading aloud")}</b>
+      <span class="note">${voices.length ? T("The speaker under the field reads the replies with this computer's own voices.")
+        : T("The speaker under the field reads the replies with this computer's own voices - none found here: on Linux, install speech-dispatcher with a voice (espeak-ng).")} ${T("Janas's own voices will come with its speech synthesis.")}</span>
+      ${voices.length ? `<label>${T("Voice")} <select id="voicesel"><option value="">${T("this computer's default for {lang}", {lang: esc(lang)})}</option>
         ${(mine.length ? mine : voices).map((v) => `<option value="${esc(v.name)}"${v.name === chosen ? " selected" : ""}>${esc(v.name)} (${esc(v.lang)})</option>`).join("")}</select></label>` : ""}
     </div>`;
   for (const b of box.querySelectorAll(".vget")) b.onclick = () => getModel(b.dataset.m);
   for (const b of box.querySelectorAll(".vrm"))
     b.onclick = async () => {
-      if (!await yes(`${b.dataset.m} is deleted from this computer; dictation will offer it again.`, "Remove this speech model?", "Remove")) return;
+      if (!await yes(T("{m} is deleted from this computer; dictation will offer it again.", {m: b.dataset.m}), T("Remove this speech model?"), T("Remove"))) return;
       const r = await fetch("/brebus/models/remove", {method: "POST", body: JSON.stringify({name: b.dataset.m})});
-      if (!r.ok) say((await r.json()).error || "not removed: unload the chat's model first, which uses it");
+      if (!r.ok) say((await r.json()).error || T("not removed: unload the chat's model first, which uses it"));
       await mine();
     };
   const sel = box.querySelector("#voicesel");
@@ -664,107 +712,3 @@ function drawVoice() {
 }
 if ("speechSynthesis" in window) speechSynthesis.onvoiceschanged = () => drawVoice();
 
-/* ---- Skills, in Settings: instructions the model reads when a task needs
-   them, in the format of Claude's (a folder with SKILL.md); every chat's in
-   the folder beside mcp.json, a project's own in its .brebus/skills ---- */
-async function drawSkills() {
-  const box = $("#skillcard");
-  if (!box) return;
-  let j;
-  try { j = await ask("skills"); } catch (e) { return; }
-  const rows = j.skills.map((s) =>
-    `<div class="svc"><label><input type="checkbox" data-n="${esc(s.name)}"${s.on ? " checked" : ""}> <b>${esc(s.name)}</b> <small>${esc((s.description || "no description") + (s.project ? " · this project's own" : ""))}</small></label>` +
-    (s.project ? "" : `<button type="button" class="act quiet skrm" data-n="${esc(s.name)}" title="Its folder is deleted from Brebus's skills">Remove</button>`) + "</div>").join("");
-  box.innerHTML = `<p class="note">Instructions for particular tasks, which the model reads when a task needs them: skills in the format of Claude's, a folder with a SKILL.md, work here as they are. Those for every chat are in <code>${esc(j.dir)}</code>, a project's own in its <code>.brebus/skills</code>.</p>
-    <div id="sklist">${rows || '<div class="note">None yet.</div>'}</div>
-    <form class="hfget" id="skadd" onsubmit="return false"><input name="path" spellcheck="false" placeholder="a folder with SKILL.md, to copy among every chat's skills">
-      <button class="act quiet browse" type="button" id="skbrowse" title="Choose the folder in the system's window"${ws.window ? "" : " hidden"}>Browse…</button>
-      <button class="act" type="submit" title="Copy the skill's folder among every chat's skills">Add</button></form>`;
-  for (const c of box.querySelectorAll("#sklist input"))
-    c.onchange = async () => {
-      const off = [...box.querySelectorAll("#sklist input")].filter((x) => !x.checked).map((x) => x.dataset.n);
-      settings._skills = {off};
-      await fetch("/brebus/settings", {method: "POST", body: JSON.stringify(settings)});
-      readTools();
-    };
-  for (const b of box.querySelectorAll(".skrm"))
-    b.onclick = async () => {
-      if (!await yes(`The skill ${b.dataset.n} and its folder are deleted from Brebus's skills.`, "Remove this skill?", "Remove")) return;
-      await fetch("/brebus/skills/remove", {method: "POST", body: JSON.stringify({name: b.dataset.n})});
-      drawSkills(); readTools();
-    };
-  $("#skbrowse").onclick = async () => {
-    const p = await pick(false, "A skill's folder (with its SKILL.md)");
-    if (p) $("#skadd").path.value = p;
-  };
-  $("#skadd").onsubmit = async () => {
-    const path = $("#skadd").path.value.trim();
-    if (!path) return false;
-    const r = await fetch("/brebus/skills/add", {method: "POST", body: JSON.stringify({path})});
-    const k = await r.json();
-    say(r.ok ? `The skill ${k.name} is added: the model sees it from the next message.` : k.error, r.ok ? "Added" : "Not added");
-    drawSkills(); readTools();
-    return false;
-  };
-}
-
-/* ---- Connectors, in Settings: services of the web that speak MCP, a
-   click each (their sign-in in a project's settings, Services), and
-   desktop extensions (.mcpb, Claude Desktop's), installed from a file ---- */
-async function drawConnectors() {
-  const box = $("#conncard");
-  if (!box) return;
-  let cat, mine;
-  try { [cat, mine] = await Promise.all([ask("connectors/catalog"), ask("connectors")]); } catch (e) { return; }
-  const web = cat.remote.map((c) =>
-    `<div class="svc"><label><b>${esc(c.title)}</b> <small>${esc(c.about)}</small></label>` +
-    `<button type="button" class="act ${c.added ? "quiet " : ""}cnweb" data-id="${esc(c.id)}" data-on="${c.added ? 1 : ""}" title="${c.added ? "Taken out of mcp.json" : "Added to mcp.json: then Sign in from a project's settings, Services"}">${c.added ? "Remove" : "Add"}</button></div>`).join("");
-  const ext = mine.installed.map((c) =>
-    `<div class="svc"><label><b>${esc(c.display_name)}</b> <small>${esc((c.version ? "v" + c.version + " · " : "") + (c.description || ""))}</small></label>` +
-    `<button type="button" class="act quiet cnrm" data-n="${esc(c.name)}" title="Its folder and its entry in mcp.json are removed">Remove</button></div>`).join("");
-  box.innerHTML = `<p class="note">Services and programs the model can use, through MCP. Those of the web sign in from a project's settings (its ⋯), Services, where each one added is listed.</p>
-    <h4>Services on the web</h4><div class="cnlist">${web}</div>
-    <h4>Desktop extensions</h4>
-    <p class="note">MCP Bundles (.mcpb), as Claude Desktop installs them: a program that reaches an application of this computer. Brebus asks for the settings it needs and installs it in <code>${esc(mine.dir)}</code>.</p>
-    <div class="cnlist">${ext || '<div class="note">None yet.</div>'}</div>
-    <form class="hfget" id="cnadd" onsubmit="return false"><input name="path" spellcheck="false" placeholder="an extension's .mcpb file">
-      <button class="act quiet browse" type="button" id="cnbrowse" title="Choose the file in the system's window"${ws.window ? "" : " hidden"}>Browse…</button>
-      <button class="act" type="submit" title="Look at it, then install it">Install</button></form>`;
-  for (const b of box.querySelectorAll(".cnweb"))
-    b.onclick = async () => {
-      await fetch(b.dataset.on ? "/brebus/connectors/drop" : "/brebus/connectors/add", {method: "POST", body: JSON.stringify({id: b.dataset.id})});
-      drawConnectors(); readServices();
-    };
-  for (const b of box.querySelectorAll(".cnrm"))
-    b.onclick = async () => {
-      if (!await yes(`${b.dataset.n} and its folder are removed, and its entry in mcp.json.`, "Remove this extension?", "Remove")) return;
-      await fetch("/brebus/connectors/remove", {method: "POST", body: JSON.stringify({name: b.dataset.n})});
-      drawConnectors(); readServices();
-    };
-  $("#cnbrowse").onclick = async () => {
-    const p = await pick(true, "A desktop extension (.mcpb)");
-    if (p) $("#cnadd").path.value = p;
-  };
-  $("#cnadd").onsubmit = async () => {
-    const path = $("#cnadd").path.value.trim();
-    if (!path) return false;
-    const r = await fetch("/brebus/connectors/inspect", {method: "POST", body: JSON.stringify({path})});
-    const m = await r.json();
-    if (!r.ok) { say(m.error || "not an extension", "Not installed"); return false; }
-    if (!m.runs) { say(`${m.display_name}: ${m.why}.`, "Not installed"); return false; }
-    const fields = m.user_config.map((f) =>
-      `<label>${esc(f.title)}${f.required ? "" : " (optional)"}
-        <input class="cnf" data-k="${esc(f.key)}" type="${f.sensitive ? "password" : f.type === "number" ? "number" : "text"}" value="${f.default === null || f.default === undefined ? "" : esc(String(f.default))}" spellcheck="false">
-        ${f.description ? `<span class="note">${esc(f.description)}</span>` : ""}</label>`).join("");
-    const d = await dialog({title: `Install ${m.display_name}?`,
-      html: `<div class="srvset plainset"><p class="note">${esc(m.description || "")}${m.version ? " (v" + esc(m.version) + ")" : ""}. Its program runs on this computer when the model opens it, with your settings below; it is not in a cage.</p>${fields}</div>`,
-      read: (b) => Object.fromEntries([...b.querySelectorAll(".cnf")].map((i) => [i.dataset.k, i.type === "number" && i.value !== "" ? +i.value : i.value])),
-      buttons: [{label: "Install", value: "ok", primary: true}, {label: "Cancel", value: "no"}]});
-    if (d.button !== "ok") return false;
-    const ri = await fetch("/brebus/connectors/install", {method: "POST", body: JSON.stringify({path, config: d.form})});
-    const k = await ri.json();
-    say(ri.ok ? `${m.display_name} is installed: the model can open it, as the other services.` : k.error, ri.ok ? "Installed" : "Not installed");
-    drawConnectors(); readServices();
-    return false;
-  };
-}

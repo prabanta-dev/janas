@@ -26,6 +26,22 @@
 #include "common/mcp_stdio.h"
 #include "llm/json.h"
 
+/*
+ * A view of the program's tools (MCP Apps, the extension
+ * io.modelcontextprotocol/ui): a page of HTML the client shows with a
+ * tool's result, in a frame of its own, a tool naming it in its _meta
+ * ("ui": {"resourceUri": uri}). Served by resources/list and
+ * resources/read, as text/html;profile=mcp-app; csp, when it is not NULL,
+ * the members of its _meta.ui.csp (the domains it reaches: "\"resource
+ * Domains\": [...]"), else none: it reaches nothing outside itself.
+ */
+struct janas_mcps_view {
+    const char *uri; /* "ui://quakes/map" */
+    const char *name;
+    const char *html;
+    const char *csp;
+};
+
 struct janas_mcps {
     /* given by the program */
     const char *name;         /* serverInfo name, "janas-mcp" */
@@ -38,6 +54,9 @@ struct janas_mcps {
        there is not, 1 when it was cancelled (nothing is answered) */
     int (*tools_call)(void *ctx, const struct janas_json *params,
                       struct janas_buf *b);
+    /* its views, or none */
+    const struct janas_mcps_view *views;
+    int n_views;
 
     /* the server's own */
     struct janas_mcp_proc in;
@@ -66,6 +85,18 @@ int janas_mcps_poll(struct janas_mcps *s);
 /* A result of one text item, for tools/call: the members into b. */
 void janas_mcps_text_result(struct janas_buf *b, const char *t, size_t n,
                             int is_error);
+
+/* Whether the client of the request being served shows MCP Apps' views
+   (it declared io.modelcontextprotocol/ui): a tool that has one may then
+   give it more than its text. */
+int janas_mcps_client_views(void);
+
+/* A result as janas_mcps_split_result's, with data for a view besides
+   (structuredContent: a JSON object, not read by the model). */
+void janas_mcps_split_result_data(struct janas_buf *b, const char *model,
+                                  size_t model_n, const char *user,
+                                  size_t user_n, const char *data,
+                                  size_t data_n);
 
 /* A result of two text items: one for the model alone, one for the user
    alone (their annotations' audience), for a client that shows the user's

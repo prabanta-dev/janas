@@ -25,11 +25,28 @@ end sub
 '' the parameter blocks as llm.h lays them out on x86-64
 #ifdef __FB_64BIT__
 #assert sizeof(janas_llm_params) = 64
-#assert sizeof(janas_llm_chat_params) = 80
+#assert sizeof(janas_llm_chat_params) = 520
 #assert sizeof(janas_llm_chat_stats) = 232
 #assert offsetof(janas_llm_params, reserve_bytes) = 48
 #assert offsetof(janas_llm_params, min_quality) = 60
 #assert offsetof(janas_llm_chat_params, max_reasoning) = 72
+#assert offsetof(janas_llm_chat_params, repeat_penalty) = 76
+#assert offsetof(janas_llm_chat_params, repeat_last_n) = 80
+#assert offsetof(janas_llm_chat_params, typical_p) = 84
+#assert offsetof(janas_llm_chat_params, top_n_sigma) = 88
+#assert offsetof(janas_llm_chat_params, xtc_probability) = 92
+#assert offsetof(janas_llm_chat_params, xtc_threshold) = 96
+#assert offsetof(janas_llm_chat_params, dry_multiplier) = 100
+#assert offsetof(janas_llm_chat_params, dry_base) = 104
+#assert offsetof(janas_llm_chat_params, dry_allowed_length) = 108
+#assert offsetof(janas_llm_chat_params, dry_last_n) = 112
+#assert offsetof(janas_llm_chat_params, dry_breakers) = 116
+#assert offsetof(janas_llm_chat_params, mirostat) = 372
+#assert offsetof(janas_llm_chat_params, mirostat_tau) = 376
+#assert offsetof(janas_llm_chat_params, mirostat_eta) = 380
+#assert offsetof(janas_llm_chat_params, dynatemp_range) = 384
+#assert offsetof(janas_llm_chat_params, dynatemp_exponent) = 388
+#assert offsetof(janas_llm_chat_params, samplers) = 392
 #assert offsetof(janas_llm_chat_stats, reasoning_cut) = 188
 #assert offsetof(janas_llm_chat_stats, route) = 192
 #assert offsetof(janas_llm_chat_stats, route_domain) = 196
@@ -56,9 +73,22 @@ check(Janas.McpServer.AbiVersion() = JANAS_MCP_ABI, "the MCP library's ABI")
 scope '' the options, with the library's defaults
     dim as Janas.ChatOptions co
     check(co.size = sizeof(janas_llm_chat_params), "ChatOptions.size")
-    check(abs(co.Temperature - 0.7) < 1e-6, "the default temperature")
-    check(co.top_k = 20 andalso co.speculate = 1 andalso co.recap = 1, _
+    check(co.Temperature = -1 andalso co.top_p = -1 andalso co.min_p = -1, _
+          "the default temperature, top_p, min_p: the model's")
+    check(co.top_k = -1 andalso co.speculate = 1 andalso co.recap = 1, _
           "the default top_k, speculate, recap")
+    check(co.repeat_penalty = -1 andalso co.repeat_last_n = -1 andalso _
+          co.xtc_probability = -1 andalso co.xtc_threshold = -1 andalso _
+          co.mirostat = -1 andalso co.mirostat_tau = -1 andalso _
+          co.mirostat_eta = -1, "the default llama.cpp's sampling: the model's")
+    check(abs(co.dry_base - 1.75) < 1e-6 andalso co.dry_allowed_length = 2 _
+          andalso co.typical_p = 1 andalso co.dynatemp_exponent = 1 andalso _
+          co.dry_multiplier = 0 andalso co.dry_breakers = "" andalso _
+          co.samplers = "", "the default DRY, typical, dynatemp, samplers")
+    co.samplers = "top_k;temperature"
+    co.dry_breakers = "[""\n""]"
+    check(co.samplers = "top_k;temperature" andalso _
+          len(co.dry_breakers) = 6, "the samplers and the breakers set")
     check(co.Thinking = Janas.ThinkMode.ModelDefault, "the default thinking")
     co.Temperature = 0
     co.max_reply = 48

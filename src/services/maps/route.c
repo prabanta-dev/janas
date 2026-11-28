@@ -110,7 +110,7 @@ static int osrm(const struct mp_place *pt[], int n, int m, struct mp_routes *rs,
     for (int i = 0; i < n; i++)
         janas_buf_printf(&url, "%s%.6f,%.6f", i ? ";" : "", pt[i]->lon,
                          pt[i]->lat);
-    janas_buf_puts(&url, "?overview=false&steps=true&alternatives=true");
+    janas_buf_puts(&url, "?overview=full&steps=true&alternatives=true");
     int status =
         url.oom ? -1 : mp_fetch(url.p, ROUTE_KEEP_S, &body, err, err_len);
     janas_buf_free(&url);

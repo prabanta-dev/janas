@@ -34,14 +34,29 @@ static void msg_free(struct tmsg *m)
         free(m->calls[k].args);
     }
     free(m->calls);
+    janas_api_pics_free(m->pics, m->n_pics);
     *m = (struct tmsg){0};
 }
 
 void janas_api_tr_clear(janas_llm_chat *c)
 {
+    /* the pictures go with the transcript: the conversation loaded no
+       longer has them, nor the session's account of them */
+    for (size_t i = 0; i < c->n_msgs; i++)
+        if (c->msgs[i].pics_lent) {
+            c->msgs[i].pics = NULL;
+            c->msgs[i].n_pics = 0;
+            c->msgs[i].pics_lent = 0;
+        }
+    free(c->media_done);
+    c->media_done = NULL;
+    c->n_media_done = 0;
     for (size_t i = 0; i < c->n_tr; i++)
         msg_free(&c->tr[i]);
     c->n_tr = 0;
+    c->tr_from = 0;
+    free(c->tr_recap);
+    c->tr_recap = NULL;
     c->tr_reply = c->tr_pending = 0;
     free(c->tr_title);
     c->tr_title = NULL;
@@ -258,16 +273,104 @@ void janas_api_tr_from_msgs(janas_llm_chat *c)
  * not fit, the oldest exchanges are left out of what is loaded, a question
  * with what followed it at a time; the record keeps them.
  */
+/*
+ * The exchanges tr[a .. b) summed up by the model, with the summary of
+ * those before them, into c->tr_recap: a request on the side, its words in
+ * the model's template, the conversation left as it was. When it cannot be
+ * had, the summary stays what it was.
+ */
+static void recap(janas_llm_chat *c, size_t a, size_t b)
+{
+    /* the text of at most half the context, its end kept: about four
+       bytes a token */
+    size_t most = (size_t)c->llm->n_ctx * 2;
+    struct janas_buf t = {0}, ask = {0};
+    for (size_t i = a; i < b; i++) {
+        const struct tmsg *m = &c->tr[i];
+        if (m->role == JANAS_LLM_ROLE_SYSTEM)
+            continue;
+        janas_buf_puts(&t, m->role == JANAS_LLM_ROLE_USER        ? "User: "
+                           : m->role == JANAS_LLM_ROLE_ASSISTANT ? "Assistant: "
+                                                                 : "Tool: ");
+        janas_buf_puts(&t, m->text ? m->text : "");
+        janas_buf_puts(&t, "\n\n");
+    }
+    const char *body = t.p ? t.p : "";
+    size_t bn = t.n;
+    if (bn > most) {
+        body += bn - most;
+        bn = most;
+    }
+    janas_buf_puts(&ask, "Sum up this part of a conversation between a user "
+                         "and you in about 100 words, keeping the names, the "
+                         "facts and anything you were asked to remember. "
+                         "Write only the summary.\n\n");
+    if (c->tr_recap) {
+        janas_buf_puts(&ask, "What came before it, summed up: ");
+        janas_buf_puts(&ask, c->tr_recap);
+        janas_buf_puts(&ask, "\n\n");
+    }
+    janas_buf_put(&ask, body, bn);
+    char out[4096];
+    int32_t len = 0;
+    if (!ask.oom &&
+        janas_llm_chat_aside(c, NULL, 0, ask.p, (int32_t)ask.n, 400, out,
+                             (int32_t)sizeof out - 1, &len) == JANAS_LLM_OK &&
+        len > 0) {
+        out[len] = 0;
+        char *r = strdup(out);
+        if (r) {
+            free(c->tr_recap);
+            c->tr_recap = r;
+        }
+    }
+    janas_buf_free(&t);
+    janas_buf_free(&ask);
+}
+
+/* The system message the conversation is loaded with: the chat's, and the
+   summary of what no longer fits after it */
+static char *system_with_recap(const janas_llm_chat *c)
+{
+    if (!c->tr_recap)
+        return c->system ? strdup(c->system) : NULL;
+    struct janas_buf b = {0};
+    if (c->system && *c->system) {
+        janas_buf_puts(&b, c->system);
+        janas_buf_puts(&b, "\n\n");
+    }
+    janas_buf_puts(&b, "The earlier part of this conversation, which no "
+                       "longer fits, summed up: ");
+    janas_buf_puts(&b, c->tr_recap);
+    janas_buf_put(&b, "", 1);
+    if (b.oom) {
+        janas_buf_free(&b);
+        return NULL;
+    }
+    return b.p;
+}
+
 int32_t janas_api_tr_resume(janas_llm_chat *c, const char *text, size_t n,
                             int32_t n_res, const char *const *texts,
                             const int32_t *lens)
 {
     janas_api_tr_finish(c);
     size_t from = c->n_tr && c->tr[0].role == JANAS_LLM_ROLE_SYSTEM ? 1 : 0;
-    char *sys = c->system ? strdup(c->system) : NULL;
-    if (c->system && !sys)
+    /* where an earlier turn left off, when it had to: the same start, so
+       that what is computed stays */
+    if (c->tr_from > from && c->tr_from < c->n_tr)
+        from = c->tr_from;
+    char *sys = system_with_recap(c);
+    if ((c->system || c->tr_recap) && !sys)
         return janas_api_fail(JANAS_LLM_ENOMEM, "out of memory");
     int32_t rc;
+    /* the pictures queued are the new question's, not the first one's
+       that chat_add meets: set aside, lent to it below, and the
+       transcript's once it is asked */
+    struct cpic *qp = c->pics;
+    size_t qn = c->n_pics;
+    c->pics = NULL;
+    c->n_pics = 0;
     for (;;) {
         janas_llm_chat_begin(c);
         rc = sys ? janas_llm_chat_add(c, JANAS_LLM_ROLE_SYSTEM, sys, -1)
@@ -277,32 +380,99 @@ int32_t janas_api_tr_resume(janas_llm_chat *c, const char *text, size_t n,
             if (m->role == JANAS_LLM_ROLE_SYSTEM)
                 continue;
             rc = janas_llm_chat_add(c, m->role, m->text, -1);
+            if (rc == JANAS_LLM_OK) {
+                /* its pictures and its reasoning, for the template */
+                struct cmsg *cm = &c->msgs[c->n_msgs - 1];
+                if (m->n_pics && !cm->n_pics) {
+                    cm->pics = m->pics;
+                    cm->n_pics = m->n_pics;
+                    cm->pics_lent = 1;
+                }
+                if (m->reasoning && !(cm->reason = strdup(m->reasoning)))
+                    rc = janas_api_fail(JANAS_LLM_ENOMEM, "out of memory");
+                else if (cm->reason)
+                    cm->n_reason = strlen(cm->reason);
+            }
             for (size_t k = 0; rc == JANAS_LLM_OK && k < m->n_calls; k++)
                 rc = janas_llm_chat_add_call(c, m->calls[k].name, -1,
                                              m->calls[k].args, -1);
         }
-        if (rc == JANAS_LLM_OK && !texts)
+        if (rc == JANAS_LLM_OK && !texts) {
             rc = janas_llm_chat_add(c, JANAS_LLM_ROLE_USER, text, (int32_t)n);
+            if (rc == JANAS_LLM_OK && qn) {
+                struct cmsg *q = &c->msgs[c->n_msgs - 1];
+                q->pics = qp;
+                q->n_pics = qn;
+                q->pics_lent = 1;
+            }
+        }
         for (int32_t i = 0; rc == JANAS_LLM_OK && texts && i < n_res; i++)
             rc = janas_llm_chat_add(c, JANAS_LLM_ROLE_TOOL, texts[i],
                                     lens ? lens[i] : -1);
-        if (rc == JANAS_LLM_OK)
+        if (rc == JANAS_LLM_OK) {
+            /* a run forgets the chat's system message (a caller's
+               conversation carries its own): this one's stays */
+            char *keep = c->system;
+            c->system = NULL;
             rc = janas_api_run(c);
+            free(c->system);
+            c->system = keep;
+        }
         if (rc != JANAS_LLM_EFULL && rc != JANAS_LLM_ELIMIT)
             break;
-        /* the oldest exchange out: up to the next question */
-        size_t k = from + 1;
+        /* the oldest exchanges out, up to a question: a quarter of the
+           messages at once, so that the start (and what is computed of
+           it) stays the same for the turns that follow, rather than
+           moving at every turn */
+        size_t left = c->n_tr - from, k = from + 1 + left / 4;
         while (k < c->n_tr && c->tr[k].role != JANAS_LLM_ROLE_USER)
             k++;
+        if (k >= c->n_tr) {
+            k = from + 1; /* then one exchange at a time */
+            while (k < c->n_tr && c->tr[k].role != JANAS_LLM_ROLE_USER)
+                k++;
+        }
         if (k >= c->n_tr)
             break; /* the last exchange alone does not fit */
+        if (c->p.recap)
+            recap(c, from, k); /* what goes, summed up first */
         from = k;
+        free(sys);
+        sys = system_with_recap(c);
     }
+    c->tr_from = from;
     free(sys);
-    if (rc != JANAS_LLM_OK)
+    if (rc != JANAS_LLM_OK) {
+        /* not asked: the pictures wait for the next question again */
+        for (size_t i = 0; qn && i < c->n_msgs; i++)
+            if (c->msgs[i].pics == qp) {
+                c->msgs[i].pics = NULL;
+                c->msgs[i].n_pics = 0;
+                c->msgs[i].pics_lent = 0;
+            }
+        if (qn) {
+            janas_api_pics_free(c->pics, c->n_pics);
+            c->pics = qp;
+            c->n_pics = qn;
+        }
         return rc;
+    }
     c->tr_pending = 0;
     janas_api_tr_turn(c, text, n, n_res, texts, lens); /* the reply: begun */
+    /* the question's pictures, kept with it: the template writes them
+       again every turn */
+    if (qn && c->n_tr && c->tr[c->n_tr - 1].role == JANAS_LLM_ROLE_USER) {
+        c->tr[c->n_tr - 1].pics = qp;
+        c->tr[c->n_tr - 1].n_pics = qn;
+    } else if (qn) {
+        janas_api_pics_free(qp, qn); /* nowhere to keep them */
+        for (size_t i = 0; i < c->n_msgs; i++)
+            if (c->msgs[i].pics == qp) {
+                c->msgs[i].pics = NULL;
+                c->msgs[i].n_pics = 0;
+                c->msgs[i].pics_lent = 0;
+            }
+    }
     return JANAS_LLM_OK;
 }
 

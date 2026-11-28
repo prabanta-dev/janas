@@ -20,7 +20,14 @@
 int main(void)
 {
 #ifndef _WIN32
-    alarm(120); /* a reply that never ends fails here, not for ever */
+    /* a reply that never ends fails here, not for ever: two minutes, ten
+       under the sanitizers, which make it seven times slower (121 s under
+       AddressSanitizer on a busy machine, 27 Nov 2026) */
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+    alarm(600);
+#else
+    alarm(120);
+#endif
 #endif
     char dir[4096], path[4200];
     if (janas_models_dir(dir, sizeof dir) != 0) {

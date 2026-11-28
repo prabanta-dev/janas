@@ -108,14 +108,20 @@ export interface ModelStatus {
 export interface ChatOptions {
     /** The system message; only before the first message (or after reset). */
     system?: string;
-    /** 0: always the most likely token (0.7). */
-    temperature?: number;
-    /** 0: no limit (20). */
-    topK?: number;
-    /** (0.8) */
-    topP?: number;
-    /** (0) */
-    minP?: number;
+    /**
+     * 0: always the most likely token. Left out, null or -1: the model's
+     * own, as its file recommends, else Janas's 0.7. (The same for topK,
+     * topP, minP, repeatPenalty, repeatLastN, xtcProbability, xtcThreshold,
+     * mirostat, mirostatTau and mirostatEta: see sampling() for what a chat
+     * ends up with.)
+     */
+    temperature?: number | null;
+    /** 0: no limit; the model's, else 20. */
+    topK?: number | null;
+    /** 1: no limit; the model's, else 0.8. */
+    topP?: number | null;
+    /** 0: no limit; the model's, else 0. */
+    minP?: number | null;
     /** 0: a new one each chat (default). */
     seed?: number;
     /** Draft tokens ahead when it pays: the same text, sooner (true). */
@@ -132,10 +138,88 @@ export interface ChatOptions {
     thinking?: boolean | null;
     /** When the context fills, a recap of the oldest exchanges stays in it (true). */
     recap?: boolean;
+    /** OpenAI's: a token's logit loses this once it has appeared (0). */
     presencePenalty?: number;
+    /** OpenAI's: and this for every time it has (0). */
     frequencyPenalty?: number;
+    /*
+     * llama.cpp's sampling, with its names and meanings: off unless set, or
+     * the model's where the file says.
+     */
+    /** A token among the last repeatLastN: its logit divided by this when positive, multiplied when not; 1: off (the model's, else 1). */
+    repeatPenalty?: number | null;
+    /** The window of repeatPenalty, presencePenalty and frequencyPenalty; 0: the whole reply (the model's, else 0). */
+    repeatLastN?: number | null;
+    /** Locally typical sampling; 1: off. */
+    typicalP?: number;
+    /** Only the logits within n standard deviations of the best; 0: off. */
+    topNSigma?: number;
+    /** XTC: with this probability, every choice more likely than xtcThreshold but the least likely of them is left out; 0: off (the model's, else 0). */
+    xtcProbability?: number | null;
+    /** (the model's, else 0.1) */
+    xtcThreshold?: number | null;
+    /** DRY: a token that would go on repeating a run longer than dryAllowedLength loses dryMultiplier x dryBase^(length - allowed) of its logit; 0: off. */
+    dryMultiplier?: number;
+    /** (1.75) */
+    dryBase?: number;
+    /** (2) */
+    dryAllowedLength?: number;
+    /** The tokens DRY looks back at; 0: the whole reply. */
+    dryLastN?: number;
+    /** Where DRY's runs stop; null: llama.cpp's ["\n", ":", "\"", "*"]; []: nowhere. At most 255 bytes as JSON. */
+    dryBreakers?: string[] | null;
+    /** Mirostat 1 or 2 in place of topK, topP...; 0: off (the model's, else 0). */
+    mirostat?: number | null;
+    /** The surprise mirostat aims at (the model's, else 5). */
+    mirostatTau?: number | null;
+    /** The rate it learns at (the model's, else 0.1). */
+    mirostatEta?: number | null;
+    /** The temperature +- this, hotter where the model is unsure; 0: off. */
+    dynatempRange?: number;
+    /** The entropy to this power (1). */
+    dynatempExponent?: number;
+    /**
+     * The order of the stages: llama.cpp's names ("penalties", "dry",
+     * "top_n_sigma", "top_k", "typ_p", "top_p", "min_p", "xtc",
+     * "temperature"), as an array or separated by ';', or its letters
+     * ("edskypmxt"); penalties and dry change the whole row first wherever
+     * they stand. null or "": the model's, else Janas's (top_n_sigma, top_k,
+     * typ_p, temperature, top_p, min_p, xtc).
+     */
+    samplers?: string | string[] | null;
     /** Conversations kept computed besides the current one, for load() switching between several (0). */
     keep?: number;
+}
+
+/** The sampling a chat replies with (chat.sampling()): the options by their names, every one resolved. */
+export interface Sampling {
+    temperature: number;
+    topK: number;
+    topP: number;
+    minP: number;
+    presencePenalty: number;
+    frequencyPenalty: number;
+    repeatPenalty: number;
+    repeatLastN: number;
+    typicalP: number;
+    topNSigma: number;
+    xtcProbability: number;
+    xtcThreshold: number;
+    dryMultiplier: number;
+    dryBase: number;
+    dryAllowedLength: number;
+    dryLastN: number;
+    /** llama.cpp's when none were given */
+    dryBreakers: string[];
+    mirostat: number;
+    mirostatTau: number;
+    mirostatEta: number;
+    dynatempRange: number;
+    dynatempExponent: number;
+    /** 0: a new one each chat */
+    seed: number;
+    /** the stages in order, llama.cpp's names */
+    samplers: string[];
 }
 
 export type Role = "system" | "user" | "assistant" | "tool";
@@ -163,6 +247,11 @@ export declare class Chat {
     load(messages: readonly Message[], options?: ReplyOptions): Reply;
     /** New parameters, from the next reply on (and the system message, before the first). */
     set(options: ChatOptions): Promise<void>;
+    /**
+     * What the chat samples with: its parameters, the model's own in place
+     * of those left to it, and Janas's where the model says nothing.
+     */
+    sampling(): Promise<Sampling>;
     /** Forgets the conversation, and the system message. */
     reset(): Promise<void>;
     /** Stops its replies and ends it: the model may have another. */

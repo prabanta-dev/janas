@@ -35,6 +35,17 @@ char *srv_json_text(yyjson_val *v, size_t *n);
 
 /* request_opts.c: the parameters of both endpoints, and those only chat
    has (tools, response_format, logprobs...). */
+/* --sampling: a JSON object of the requests' sampling fields (temperature,
+   top_k, llama.cpp's...), the sampling of those that do not say; checked
+   as a request would be: 0, or -1 with why */
+int srv_sampling_defaults(const char *json, char *why, size_t why_len);
+/* those defaults into a job's parameters */
+void srv_sampling_apply(struct srv_job *j);
+/* --chat-template-kwargs, and a request's template and keywords into the
+   job (j->tmpl, j->kwargs), with OpenAI's reasoning_effort (or NULL) */
+int srv_kwargs_defaults(const char *json, char *why, size_t why_len);
+int srv_template_opts(yyjson_val *root, yyjson_val *kw, const char *effort,
+                      struct srv_job *j);
 int srv_read_params(struct srv_perr *e, struct srv_parsed *pr, yyjson_val *root,
                     struct srv_job *j, int chat);
 int srv_read_chat_opts(struct srv_perr *e, struct srv_parsed *pr,

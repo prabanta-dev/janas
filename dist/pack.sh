@@ -47,6 +47,9 @@ for f in "${progs[@]}"; do
     install -m 755 "$B/$f$EXE" "$P/"
 done
 [ "$OS" = linux ] && install -m 644 dist/brebus.pam "$P/brebus.pam"
+# Brebus's languages but English, data it reads beside itself
+install -d "$P/brebus-lang"
+install -m 644 src/brebus/lang/*.json "$P/brebus-lang/"
 if [ "$OS" = windows ]; then
     # Brebus's window: WebView2's loader beside brebus.exe, from Microsoft's
     # SDK (src/third_party/webview2/README.md), checked

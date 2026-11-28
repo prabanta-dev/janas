@@ -48,19 +48,13 @@ static int ours(const WCHAR *uri)
     return uri && !wcsncmp(uri, own, wcslen(own));
 }
 
-/* another site's page: the browser's, as a link clicked */
+/* another site's page: the browser's, as a link clicked (outside.c) */
 static void open_outside(const WCHAR *uri)
 {
-    /* never this machine's own addresses (Brebus, its servers) */
-    const WCHAR *h = uri ? wcsstr(uri, L"://") : NULL;
-    h = h ? h + 3 : L"";
-    static const WCHAR *const lo[] = {L"127.", L"localhost",    L"[::1]",
-                                      L"0.",   L"[::ffff:127.", L"[0:"};
-    for (size_t i = 0; i < sizeof lo / sizeof *lo; i++)
-        if (!_wcsnicmp(h, lo[i], wcslen(lo[i])))
-            return;
-    if (uri && (!wcsncmp(uri, L"https://", 8) || !wcsncmp(uri, L"http://", 7)))
-        ShellExecuteW(NULL, L"open", uri, NULL, NULL, SW_SHOWNORMAL);
+    char u[4096];
+    if (uri &&
+        WideCharToMultiByte(CP_UTF8, 0, uri, -1, u, sizeof u, NULL, NULL) > 0)
+        brebus_open_outside(u);
 }
 
 /* ---- the handlers WebView2 calls back: objects of a single instance
@@ -412,7 +406,7 @@ int brebus_window_on(void)
 /* the page's zoom, asked by the page: set on the window's thread */
 int brebus_window_zoom(double z)
 {
-    if (!(z >= 0.5 && z <= 3) || !brebus_window_on())
+    if (!(z >= 0.25 && z <= 4) || !brebus_window_on())
         return -1;
     return PostMessageW(main_win, WM_ZOOM, (WPARAM)(z * 1000 + 0.5), 0) ? 0
                                                                         : -1;
@@ -491,9 +485,13 @@ int brebus_window(const char *url, volatile sig_atomic_t *quit, char *why,
     }
     MultiByteToWideChar(CP_UTF8, 0, url, -1, own,
                         (int)(sizeof own / sizeof *own));
-    /* "?window": the page knows it is the window's, its zoom its own */
-    static WCHAR start[100];
-    _snwprintf(start, sizeof start / sizeof *start, L"%ls?window", own);
+    /* "?window": the page knows it is the window's, its zoom its own;
+       lang= the system's languages, which the page speaks */
+    static WCHAR start[300];
+    char langs[160];
+    brebus_sys_langs(langs, sizeof langs);
+    _snwprintf(start, sizeof start / sizeof *start, L"%ls?window&lang=%hs", own,
+               langs);
     start[sizeof start / sizeof *start - 1] = 0;
     start_url = start;
     stop = quit;

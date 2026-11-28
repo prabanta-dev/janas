@@ -18,20 +18,46 @@ void janas_llm_chat_params_default(struct janas_llm_chat_params *p)
 {
     memset(p, 0, sizeof(*p));
     p->size = sizeof(*p);
-    p->temperature = 0.7f;
-    p->top_k = 20;
-    p->top_p = 0.8f;
+    /* the sampling: the model's own (api_sampling.c) */
+    p->temperature = p->top_p = p->min_p = -1;
+    p->top_k = -1;
+    p->repeat_penalty = -1;
+    p->repeat_last_n = -1;
+    p->typical_p = 1;
+    p->xtc_probability = p->xtc_threshold = -1;
+    p->dry_base = 1.75f;
+    p->dry_allowed_length = 2;
+    p->mirostat = -1;
+    p->mirostat_tau = p->mirostat_eta = -1;
+    p->dynatemp_exponent = 1;
     p->speculate = 1;
     p->thinking = -1;
     p->recap = 1;
 }
 
+/* A seed of its own for each chat and each change of its parameters: the
+   time to the nanosecond and a count, mixed. Until 26 Nov 2026 the time in
+   seconds alone: two requests in the same second drew the same words. */
+static uint64_t fresh_seed(const janas_llm_chat *c)
+{
+    static _Atomic uint64_t count;
+    struct timespec ts = {0}, mono = {0};
+    clock_gettime(CLOCK_REALTIME, &ts);
+    clock_gettime(CLOCK_MONOTONIC, &mono);
+    ts.tv_nsec ^= mono.tv_nsec;
+    uint64_t z = ((uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec) ^
+                 (uint64_t)(uintptr_t)c ^ (++count * 0x9e3779b97f4a7c15ull);
+    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ull;
+    z = (z ^ (z >> 27)) * 0x94d049bb133111ebull;
+    z ^= z >> 31;
+    return z ? z : 1;
+}
+
 static int32_t gen_options(const janas_llm_chat *c, struct janas_gen_options *o)
 {
     const struct janas_llm_chat_params *p = &c->p;
-    if (!(p->temperature >= 0) || p->top_k < 0 || !(p->top_p >= 0) ||
-        !(p->min_p >= 0) || p->max_reply < 0 || p->max_reasoning < 0 ||
-        p->top_logprobs < 0 || p->top_logprobs > JANAS_SAMPLE_MAX_TOP ||
+    if (p->max_reply < 0 || p->max_reasoning < 0 || p->top_logprobs < 0 ||
+        p->top_logprobs > JANAS_SAMPLE_MAX_TOP ||
         !(p->presence_penalty >= -2 && p->presence_penalty <= 2) ||
         !(p->frequency_penalty >= -2 && p->frequency_penalty <= 2))
         return janas_api_fail(JANAS_LLM_EINVAL, "invalid chat parameters");
@@ -55,17 +81,14 @@ static int32_t gen_options(const janas_llm_chat *c, struct janas_gen_options *o)
     o->spec_k = mtp ? 8 : 4;
     o->spec_auto = 1;
     o->eos = -1;
-    o->temperature = p->temperature;
-    o->top_k = p->top_k;
-    o->top_p = p->top_p;
-    o->min_p = p->min_p;
-    o->presence_penalty = p->presence_penalty;
-    o->frequency_penalty = p->frequency_penalty;
+    /* the sampling, the model's where the chat leaves it (the chat is
+       not changed: its breakers are a cache) */
+    int32_t rc = janas_api_sampling_options((janas_llm_chat *)c, o);
+    if (rc != JANAS_LLM_OK)
+        return rc;
     o->logprobs = p->logprobs != 0;
     o->top_logprobs = p->top_logprobs;
-    o->seed = p->seed ? p->seed
-                      : (uint64_t)time(NULL) * 0x9e3779b97f4a7c15ull ^
-                            (uint64_t)(uintptr_t)c;
+    o->seed = p->seed ? p->seed : fresh_seed(c);
     memcpy(o->stop, c->llm->stop, sizeof(o->stop));
     o->n_stop = c->llm->n_stop;
     return JANAS_LLM_OK;
@@ -178,6 +201,7 @@ void janas_llm_chat_destroy(janas_llm_chat *c)
     janas_api_tools_free(c);
     janas_api_msgs_free(c);
     janas_api_keep_free(c); /* before the session: it may be written */
+    janas_api_sampling_free(c);
     janas_llm_session_destroy(c->s);
     janas_llm_model_seq_free(c->llm->m, c->seq);
     free(c->system);
@@ -191,6 +215,8 @@ void janas_llm_chat_destroy(janas_llm_chat *c)
     free(c->rtext);
     janas_api_pics_free(c->pics, c->n_pics);
     free(c->idpics);
+    free(c->media_done);
+    janas_api_template_chat_free(c);
     free(c);
 }
 
@@ -793,14 +819,24 @@ int32_t janas_llm_chat_prepare(janas_llm_chat *c, int32_t *done, int32_t *total)
             return 0; /* the conversation has started */
         c->n_ids = c->n_text = 0;
         c->n_idpics = 0;
-        int err = janas_api_begin_sequence(c);
-        if (c->system || c->tools_sys || c->llm->format == FORMAT_GEMMA ||
-            janas_api_think_note(c))
-            err |= janas_api_add_system(c, c->system,
-                                        c->system ? strlen(c->system) : 0);
-        err |= janas_api_flush_text(c);
-        if (err)
-            return janas_api_fail(JANAS_LLM_ENOMEM, "out of memory");
+        if (janas_api_template_on(c)) {
+            /* the system message as the template writes it, alone: when
+               it cannot be (a template that wants a question), nothing is
+               read ahead */
+            if (janas_api_template_system(c) != JANAS_LLM_OK) {
+                c->n_ids = 0;
+                return 0;
+            }
+        } else {
+            int err = janas_api_begin_sequence(c);
+            if (c->system || c->tools_sys || c->llm->format == FORMAT_GEMMA ||
+                janas_api_think_note(c))
+                err |= janas_api_add_system(c, c->system,
+                                            c->system ? strlen(c->system) : 0);
+            err |= janas_api_flush_text(c);
+            if (err)
+                return janas_api_fail(JANAS_LLM_ENOMEM, "out of memory");
+        }
         if (c->n_ids < 2)
             return 0; /* nothing worth reading ahead */
         c->sys_tokens = (uint32_t)c->n_ids;
@@ -1006,6 +1042,10 @@ static int32_t send_turn(janas_llm_chat *c, const char *text, size_t n,
                          int32_t n_res, const char *const *texts,
                          const int32_t *lens)
 {
+    /* the whole conversation, through the model's template, each turn:
+       what it shares with the one computed is not read again */
+    if (janas_api_template_on(c))
+        return janas_api_tr_resume(c, text, n, n_res, texts, lens);
     janas_api_tr_finish(c); /* the reply before, if it was cut short */
     janas_api_prep_start(c);
     /* Gemma: the tools answer inside the model's turn, each answer named

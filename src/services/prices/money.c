@@ -104,8 +104,14 @@ int pr_tool_currency(const struct janas_json *args, struct janas_buf *b)
     janas_buf_free(&body);
     if (!ok)
         return pr_fail(b, "The rates could not be read: %s.", err);
-    struct janas_buf data = {0};
+    struct janas_buf data = {0}, hist = {0};
     pr_fx_data(&data, amount, from, &fx, source);
+    /* the days before, for a view's chart (not of a day asked) */
+    int days = date ? 0 : pr_history_days(args);
+    if (days)
+        pr_history_fx(&hist, from, list, days);
+    pr_with_history(&data, &hist);
+    janas_buf_free(&hist);
     return pr_answer(b, "prices_currency", &data, PR_FX_LAYOUT, PR_FX_BRIEF);
 }
 
@@ -170,8 +176,13 @@ int pr_tool_crypto(const struct janas_json *args, struct janas_buf *b)
         return pr_fail(b, "The price of %s could not be read: %s.", q, err);
     for (char *s = coin.symbol; *s; s++)
         *s = (char)toupper((unsigned char)*s);
-    struct janas_buf data = {0};
+    struct janas_buf data = {0}, hist = {0};
     pr_coin_data(&data, &coin, source);
+    int days = found ? pr_history_days(args) : 0;
+    if (days)
+        pr_history_coin(&hist, coin.id, cur, days);
+    pr_with_history(&data, &hist);
+    janas_buf_free(&hist);
     return pr_answer(b, "prices_crypto", &data, PR_COIN_LAYOUT, PR_COIN_BRIEF);
 }
 
@@ -249,7 +260,13 @@ int pr_tool_stock(const struct janas_json *args, struct janas_buf *b)
         return pr_fail(b, "The price of %s could not be read: %s.", s, err);
     if (!q.name[0])
         snprintf(q.name, sizeof q.name, "%s", q.symbol);
-    struct janas_buf data = {0};
+    struct janas_buf data = {0}, hist = {0};
     pr_quote_data(&data, &q);
+    /* its daily closes: a call of the user's key more, for a view alone */
+    int days = pr_history_days(args);
+    if (days)
+        pr_history_stock(&hist, q.symbol, days);
+    pr_with_history(&data, &hist);
+    janas_buf_free(&hist);
     return pr_answer(b, "prices_stock", &data, PR_QUOTE_LAYOUT, PR_QUOTE_BRIEF);
 }

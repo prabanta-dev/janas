@@ -63,14 +63,15 @@ function artShow(title, version) {
   if (!vs.length) return;
   const k = version === undefined ? vs.length - 1 : version;
   const a = vs[k];
-  artShown = {title, k}; fileShown = null;
+  artShown = {title, k}; fileShown = null; viewShown = null;
+  $("#artzoom").hidden = false;
   $("#artdown").hidden = $("#artcopy").hidden = false;
   if ($("#artpane").hidden && innerWidth < 1500 && !$("#side").classList.contains("mini")) {
     navMini(true, false); navAuto = true;
   }
   $("#artpane").hidden = false;
   $("#arttitle").textContent = title;
-  $("#artver").innerHTML = vs.map((v, i) => `<option value="${i}"${i === k ? " selected" : ""}>version ${i + 1}</option>`).join("");
+  $("#artver").innerHTML = vs.map((v, i) => `<option value="${i}"${i === k ? " selected" : ""}>${T("version {n}", {n: num(i + 1)})}</option>`).join("");
   $("#artver").hidden = vs.length < 2;
   const body = $("#artbody");
   body.innerHTML = "";
@@ -105,11 +106,11 @@ $("#artver").onchange = () => artShow(artShown.title, +$("#artver").value);
 async function artRename() {
   if (!artShown) return;
   const from = artShown.title;
-  const to = ((await input("A name for this artifact", from)) || "").trim().replace(/"/g, "'");
+  const to = ((await input(T("A name for this artifact"), from)) || "").trim().replace(/"/g, "'");
   if (!to || to === from) return;
-  if (artTitles().has(to)) { say(`There is an artifact named ${to} in this chat already.`); return; }
+  if (artTitles().has(to)) { say(T("There is an artifact named {name} in this chat already.", {name: to})); return; }
   const r = await fetch("/brebus/artifacts/rename", {method: "POST", body: JSON.stringify({from, to})});
-  if (!r.ok) { say((await r.json()).error || "not renamed"); return; }
+  if (!r.ok) { say((await r.json()).error || T("not renamed")); return; }
   for (const m of cur.messages) {
     if (m.role !== "assistant" || !m.content) continue;
     for (const p of artParts(m.content))
@@ -129,7 +130,7 @@ async function artRename() {
   drawLog();
   artShow(to);
 }
-$("#arttitle").title = "Click to rename";
+$("#arttitle").title = T("Click to rename");
 $("#arttitle").onclick = () => artRename();
 let artMode = "preview", artFrame = null;
 for (const b of $("#artview").children)
@@ -141,7 +142,7 @@ function artWide(on) {
   $("#artpane").classList.toggle("full", on);
   const b = $("#artfull");
   b.setAttribute("aria-pressed", on ? "true" : "false");
-  b.title = on ? "Back beside the chat" : "Wide, over the chat";
+  b.title = on ? T("Back beside the chat") : T("Wide, over the chat");
 }
 $("#artfull").onclick = () => artWide(!$("#artpane").classList.contains("full"));
 $("#artdown").onclick = () => {
@@ -175,10 +176,12 @@ window.addEventListener("message", async (e) => {
   if (!f || e.source !== f.el.contentWindow || e.origin !== "null" || !e.data) return;
   const d = e.data;
   if (d.janasReady) {
-    const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+    const dark = isDark();
     f.el.contentWindow.postMessage({janasArtifact: {type: f.art.type, content: f.art.content, title: f.art.title, dark, zoom: artZoomNow()}}, "*");
   } else if (d.janasZoomStep !== undefined) {
     artZoomSet(Math.sign(+d.janasZoomStep) || 0);
+  } else if (d.janasZoomIs !== undefined) {
+    artZoomFitted(+d.janasZoomIs);
   } else if (d.janasError) {
     /* each error once, the first ones kept */
     const pre = $("#arterr pre");
@@ -232,9 +235,9 @@ async function artCall(f, c) {
        so, once for each artifact and file */
     const okKey = f.title + "\u0000" + a.path;
     if (!ws.window && !artFileOk.has(okKey)) {
-      const b = (await dialog({title: `The artifact "${f.title}" asks to read ${a.name}`,
-        text: "It will be able to show it, and could send it to a web site it goes to. Allow only if you trust what it does.",
-        buttons: [{label: "Allow", value: "yes", primary: true}, {label: "Don't allow", value: "no"}]})).button;
+      const b = (await dialog({title: T("The artifact \"{title}\" asks to read {name}", {title: f.title, name: a.name}),
+        text: T("It will be able to show it, and could send it to a web site it goes to. Allow only if you trust what it does."),
+        buttons: [{label: T("Allow"), value: "yes", primary: true}, {label: T("Don't allow"), value: "no"}]})).button;
       if (b !== "yes") throw new Error("the user did not allow reading " + a.name);
       artFileOk.add(okKey);
     }
@@ -269,7 +272,7 @@ function loadLib(js, css) {
 async function highlight(pre) {
   try {
     await loadLib("@highlightjs/cdn-assets@11.10.0/highlight.min.js",
-      matchMedia("(prefers-color-scheme: dark)").matches ? "@highlightjs/cdn-assets@11.10.0/styles/github-dark.min.css"
+      isDark() ? "@highlightjs/cdn-assets@11.10.0/styles/github-dark.min.css"
                                                          : "@highlightjs/cdn-assets@11.10.0/styles/github.min.css");
     const lang = (pre.dataset.lang || "").toLowerCase();
     const r = lang && hljs.getLanguage(lang) ? hljs.highlight(pre.textContent, {language: lang})
@@ -293,7 +296,7 @@ async function drawDiagram(pre) {
     let svg = diagrams.get(src);
     if (!svg) {
       await loadLib("mermaid@11.4.1/dist/mermaid.min.js");
-      const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+      const dark = isDark();
       mermaid.initialize({startOnLoad: false, securityLevel: "strict", suppressErrorRendering: true,
         theme: dark ? "dark" : "default", htmlLabels: false, flowchart: {htmlLabels: false}});
       const id = "brebus-diagram-" + ++diagramN;
@@ -305,7 +308,7 @@ async function drawDiagram(pre) {
     const fig = document.createElement("figure");
     fig.className = "diagram";
     const img = new Image();
-    img.alt = "A diagram"; img.title = "A diagram, drawn from the text the model wrote";
+    img.alt = T("A diagram"); img.title = T("A diagram, drawn from the text the model wrote");
     img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
     /* at the size Mermaid drew it, narrower only where the chat is */
     const vb = svg.match(/viewBox="[-\d.]+ [-\d.]+ ([\d.]+) ([\d.]+)"/);
@@ -339,7 +342,7 @@ async function decorate(el) {
   } catch (e) {}
 }
 $("#artclose").onclick = () => {
-  $("#artpane").hidden = true; artShown = null; fileShown = null;
+  $("#artpane").hidden = true; artShown = null; fileShown = null; viewShown = null;
   artWide(false);
   if (navAuto) { navMini(false, false); navAuto = false; }
 };

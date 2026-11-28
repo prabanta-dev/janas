@@ -49,7 +49,8 @@ int janas_tls_make_cert(const char *cert, const char *key,
 int janas_tls_fingerprint(const char *cert, char *out, size_t cap);
 /* A file made readable by its owner alone: on Windows, where its mode says
    nothing, an access list of the user alone, not inherited from its
-   folder (on other systems the caller's mode, 0600, already says it).
+   folder; on other systems mode 0600, whatever the umask gave a file made
+   by fopen.
    0, or -1. */
 int janas_tls_private(const char *path);
 /* The certificates of a PEM file trusted too, by the sessions opened after

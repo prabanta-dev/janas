@@ -303,15 +303,42 @@ static int remove_tree(const char *dir, int depth)
     return rmdir(dir) == 0 ? 0 : -1;
 }
 
+int brebus_skills_install(const char *src, const char *folder, char *name,
+                          size_t name_n, char *err, size_t en)
+{
+    char dst[4400], root[4200];
+    struct skill s;
+    if (read_skill(src, folder, &s) != 0) {
+        snprintf(err, en, "no SKILL.md in that folder");
+        return -1;
+    }
+    if (janas_skills_dir(root, sizeof root) != 0) {
+        snprintf(err, en, "no folder for the skills");
+        return -1;
+    }
+    snprintf(dst, sizeof dst, "%s/%s", root, s.name);
+    struct stat st;
+    if (stat(dst, &st) == 0) {
+        snprintf(err, en, "a skill named %s is there already", s.name);
+        return -1;
+    }
+    if (copy_tree(src, dst, 0) != 0) {
+        remove_tree(dst, 0);
+        snprintf(err, en, "the folder could not be copied");
+        return -1;
+    }
+    snprintf(name, name_n, "%s", s.name);
+    return 0;
+}
+
 int brebus_skills_add(struct brebus *b, const char *body, size_t n,
                       struct janas_buf *out)
 {
-    char err[200], dst[4400], root[4200];
+    char err[200], name[128] = "";
     struct janas_json_doc *d =
         n ? janas_json_parse(body, n, err, sizeof err) : NULL;
     const char *src =
         d ? janas_json_str(janas_json_get(janas_json_root(d), "path")) : NULL;
-    struct skill s;
     const char *folder = src ? strrchr(src, '/') : NULL;
 #ifdef _WIN32
     const char *bs = src ? strrchr(src, '\\') : NULL;
@@ -322,25 +349,14 @@ int brebus_skills_add(struct brebus *b, const char *body, size_t n,
     int rc = -1;
     if (src && !brebus_confined(b, src))
         snprintf(err, sizeof err, "a skill of your own folder");
-    else if (!src || !*src || read_skill(src, folder, &s) != 0)
+    else if (!src || !*src)
         snprintf(err, sizeof err, "no SKILL.md in that folder");
-    else if (janas_skills_dir(root, sizeof root) != 0)
-        snprintf(err, sizeof err, "no folder for the skills");
-    else {
-        snprintf(dst, sizeof dst, "%s/%s", root, s.name);
-        struct stat st;
-        if (stat(dst, &st) == 0)
-            snprintf(err, sizeof err, "a skill named %s is there already",
-                     s.name);
-        else if (copy_tree(src, dst, 0) != 0) {
-            remove_tree(dst, 0);
-            snprintf(err, sizeof err, "the folder could not be copied");
-        } else
-            rc = 0;
-    }
+    else
+        rc = brebus_skills_install(src, folder, name, sizeof name, err,
+                                   sizeof err);
     janas_json_free(d);
     janas_buf_puts(out, rc ? "{\"error\": " : "{\"name\": ");
-    str(out, rc ? err : s.name);
+    str(out, rc ? err : name);
     janas_buf_puts(out, "}");
     return rc;
 }

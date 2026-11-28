@@ -18,6 +18,14 @@
 
 /* INSTRUCTIONS, from SKILL.md beside this file (build.sh) */
 #include "skill.h"
+/* VIEW_map, from views/map.html (build.sh): the earthquakes on a map, for
+   a client that shows MCP Apps' views */
+#include "views.h"
+
+static const struct janas_mcps_view views[] = {{.uri = "ui://quakes/map",
+                                                .name = "Earthquakes on a map",
+                                                .html = VIEW_map,
+                                                .csp = NULL}};
 
 static void usage(void)
 {
@@ -43,7 +51,9 @@ int main(int argc, char **argv)
                              .version = JANAS_VERSION,
                              .instructions = INSTRUCTIONS,
                              .tools_list = qk_tools_list,
-                             .tools_call = qk_tools_call};
+                             .tools_call = qk_tools_call,
+                             .views = views,
+                             .n_views = 1};
     if (janas_mcps_open(&srv) != 0) {
         fprintf(stderr, "janas-quakes: cannot set its output aside\n");
         return 1;

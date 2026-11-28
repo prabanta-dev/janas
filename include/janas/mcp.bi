@@ -124,6 +124,24 @@ declare function janas_mcp_result_json(byval m as const janas_mcp ptr, _
                                        byval buf as zstring ptr, _
                                        byval cap as long, _
                                        byval length as long ptr) as long
+'' MCP Apps (see mcp.h): views declared, a tool's view, whether the view
+'' alone calls it, a resource of the server read.
+declare sub janas_mcp_views(byval on_ as long)
+declare function janas_mcp_tool_view(byval m as const janas_mcp ptr, _
+                                     byval name_ as const zstring ptr, _
+                                     byval name_len as long, _
+                                     byval buf as zstring ptr, _
+                                     byval cap as long, _
+                                     byval length as long ptr) as long
+declare function janas_mcp_tool_app_only(byval m as const janas_mcp ptr, _
+                                         byval name_ as const zstring ptr, _
+                                         byval name_len as long) as long
+declare function janas_mcp_read(byval m as janas_mcp ptr, _
+                                byval uri as const zstring ptr, _
+                                byval uri_len as long, _
+                                byval buf as zstring ptr, _
+                                byval cap as long, _
+                                byval length as long ptr) as long
 declare sub janas_mcp_cancel(byval m as janas_mcp ptr)
 
 end extern

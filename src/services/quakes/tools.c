@@ -17,7 +17,8 @@
 #include "services/common/template.h"
 
 #define READS                                                                  \
-    "\"annotations\": {\"readOnlyHint\": true, \"openWorldHint\": true}"
+    "\"annotations\": {\"readOnlyHint\": true, \"openWorldHint\": true}, "     \
+    "\"_meta\": {\"ui\": {\"resourceUri\": \"ui://quakes/map\"}}"
 #define PLACE_ARG                                                              \
     "\"place\": {\"type\": \"string\", \"description\": \"a town, a region "   \
     "or a sea; leave it out for where the user is\"}"

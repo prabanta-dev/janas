@@ -42,7 +42,8 @@ static void svc_tools(struct janas_buf *out, int *first, struct janas_buf *cat);
 static void svc_read_only(struct janas_buf *out, int *k);
 static void svc_servers(struct janas_buf *out);
 static int svc_call(struct brebus *b, const char *name, const char *args,
-                    size_t an, struct janas_buf *out);
+                    size_t an, int for_view, struct janas_buf *out);
+static int view_may_call(const char *server, const char *name);
 
 void brebus_service_exe(const struct brebus *b, const char *name, char *out,
                         size_t n)
@@ -203,6 +204,8 @@ void brebus_tools_stop(struct brebus *b)
 
 int brebus_tools_start(struct brebus *b)
 {
+    /* Brebus shows the views of MCP Apps: its servers are told so */
+    janas_mcp_views(1);
     char ws[4096];
     if (brebus_ws_path(b, ws, sizeof ws) != 0)
         return -1;
@@ -402,6 +405,17 @@ int brebus_tools_call(struct brebus *b, const char *body, size_t n,
         body && n ? janas_json_parse(body, n, err, sizeof err) : NULL;
     const struct janas_json *o = d ? janas_json_root(d) : NULL;
     const char *name = o ? janas_json_str(janas_json_get(o, "name")) : NULL;
+    /* a call a view makes (MCP Apps): to a tool of its own server alone,
+       which the view may call, and which only reads */
+    const char *from =
+        o ? janas_json_str(janas_json_get(o, "from_view")) : NULL;
+    if (from && (!name || view_may_call(from, name) != 0)) {
+        janas_buf_puts(out, "{\"result\": \"a view may call only the "
+                            "tools of its own server that only read\", "
+                            "\"is_error\": true}");
+        janas_json_free(d);
+        return 0;
+    }
     const struct janas_json *args = o ? janas_json_get(o, "arguments") : NULL;
     struct janas_buf a = {0};
     /* the arguments as the model wrote them (a string of JSON) or as an
@@ -439,7 +453,7 @@ int brebus_tools_call(struct brebus *b, const char *body, size_t n,
         janas_json_free(d);
         return 0;
     }
-    if (name && svc_call(b, name, a.p, a.n, out)) {
+    if (name && svc_call(b, name, a.p, a.n, from != NULL, out)) {
         pthread_mutex_unlock(&b->tools_mu);
         janas_buf_free(&a);
         janas_json_free(d);
@@ -833,6 +847,11 @@ void brebus_services_get(struct brebus *b, struct janas_buf *out)
         janas_buf_puts(out, ", \"about\": ");
         str(out, svcs[i].user ? "a server of yours (mcp.json)"
                               : janas_service_about(svcs[i].name));
+        /* a server of the user's: where it is (its address or command) */
+        if (svcs[i].user) {
+            janas_buf_puts(out, ", \"where\": ");
+            str(out, svcs[i].url[0] ? svcs[i].url : svcs[i].ident);
+        }
         janas_buf_printf(out, ", \"user\": %s, \"on\": %s, \"open\": %s",
                          svcs[i].user ? "true" : "false",
                          svcs[i].on ? "true" : "false",
@@ -940,7 +959,7 @@ static void svc_read_only(struct janas_buf *out, int *k)
 /* tools_mu held: a call to the services: 1 when it was one (out filled),
    0 when not theirs */
 static int svc_call(struct brebus *b, const char *name, const char *args,
-                    size_t an, struct janas_buf *out)
+                    size_t an, int for_view, struct janas_buf *out)
 {
     if (!strcmp(name, JANAS_OPEN_SERVICE)) {
         char err[160];
@@ -1004,13 +1023,38 @@ static int svc_call(struct brebus *b, const char *name, const char *args,
             janas_buf_puts(out, ", \"is_error\": true}");
             return 1;
         }
-        static char res[1 << 20];
+        /* the whole result too, for a view: a page of Wikipedia's HTML */
+        static char res[4 << 20];
         int32_t len = 0;
         janas_mcp_result(svcs[i].m, res, sizeof res, &len);
         janas_buf_puts(out, "{\"result\": ");
         janas_json_write_str(out, res, (size_t)len);
-        janas_buf_printf(out, ", \"is_error\": %s}",
+        janas_buf_printf(out, ", \"is_error\": %s",
                          janas_mcp_result_error(svcs[i].m) ? "true" : "false");
+        /* MCP Apps: the tool's view, and the whole result for it; a
+           view's own call given the whole result too, its tool having a
+           view or not (a tool for views alone, _meta.ui.visibility) */
+        char vu[1024];
+        int32_t vl = 0;
+        int has_view = janas_mcp_tool_view(svcs[i].m, tool, -1, vu, sizeof vu,
+                                           &vl) == JANAS_MCP_OK;
+        if (!has_view && for_view &&
+            janas_mcp_result_json(svcs[i].m, res, sizeof res, &len) ==
+                JANAS_MCP_OK) {
+            janas_buf_puts(out, ", \"raw\": ");
+            janas_buf_put(out, res, (size_t)len);
+        } else if (has_view && janas_mcp_result_json(svcs[i].m, res, sizeof res,
+                                                     &len) == JANAS_MCP_OK) {
+            janas_buf_puts(out, ", \"view\": {\"server\": ");
+            str(out, svcs[i].name);
+            janas_buf_puts(out, ", \"prefix\": ");
+            str(out, svcs[i].prefix);
+            janas_buf_puts(out, ", \"uri\": ");
+            janas_json_write_str(out, vu, (size_t)vl);
+            janas_buf_puts(out, "}, \"raw\": ");
+            janas_buf_put(out, res, (size_t)len);
+        }
+        janas_buf_puts(out, "}");
         return 1;
     }
     return 0;
@@ -1169,4 +1213,119 @@ static void svc_servers(struct janas_buf *out)
         str(out, svcs[i].version);
         janas_buf_puts(out, "}");
     }
+}
+
+/* ---- MCP Apps: the views of the servers' tools ---- */
+
+/* 0 when the view of server may call the tool named (with its prefix):
+   the server's own, open, and a tool that only reads and that a view may
+   call (_meta.ui.visibility) */
+static int view_may_call(const char *server, const char *name)
+{
+    const struct svc *s = svc_named(server);
+    if (!s || !s->m || strncmp(name, s->prefix, strlen(s->prefix)))
+        return -1;
+    const char *tool = name + strlen(s->prefix);
+    return janas_mcp_tool_read_only(s->m, tool, -1) == 1 ? 0 : -1;
+}
+
+/* a domain a view declares: https://host[:port], or a host's subdomains
+   ("https://" and "*." before the host), nothing that could widen it */
+static int domain_ok(const char *d)
+{
+    if (strncmp(d, "https://", 8))
+        return 0;
+    const char *h = d + 8;
+    if (!strncmp(h, "*.", 2))
+        h += 2;
+    size_t n = strspn(h, "abcdefghijklmnopqrstuvwxyz0123456789.-");
+    if (!n || h[0] == '.' || h[0] == '-')
+        return 0;
+    if (h[n] == ':') {
+        size_t p = strspn(h + n + 1, "0123456789");
+        return p > 0 && p < 6 && !h[n + 1 + p];
+    }
+    return !h[n];
+}
+
+static void csp_list(struct janas_buf *c, const struct janas_json *a)
+{
+    for (const struct janas_json *e =
+             a && a->type == JANAS_JSON_ARRAY ? a->child : NULL;
+         e; e = e->next) {
+        const char *s = janas_json_str(e);
+        if (s && strlen(s) < 256 && domain_ok(s)) {
+            janas_buf_puts(c, " ");
+            janas_buf_puts(c, s);
+        }
+    }
+}
+
+int brebus_view(struct brebus *b, const char *server, const char *uri,
+                const char *tiles, struct janas_buf *html,
+                struct janas_buf *csp, char *why, size_t wn)
+{
+    if (!server || !uri || strncmp(uri, "ui://", 5)) {
+        snprintf(why, wn, "no such view");
+        return -1;
+    }
+    pthread_mutex_lock(&b->tools_mu);
+    struct svc *s = svc_named(server);
+    static char res[1 << 22];
+    int32_t len = 0;
+    int rc = -1;
+    if (!s || (!s->m && svc_start(b, s) != 0))
+        snprintf(why, wn, "the server %s is not open", server);
+    else if (janas_mcp_read(s->m, uri, -1, res, sizeof res, &len) !=
+             JANAS_MCP_OK)
+        snprintf(why, wn, "%s", janas_mcp_last_error());
+    else
+        rc = 0;
+    pthread_mutex_unlock(&b->tools_mu);
+    if (rc)
+        return -1;
+    char err[160];
+    struct janas_json_doc *d =
+        janas_json_parse(res, (size_t)len, err, sizeof err);
+    const struct janas_json *c =
+        d ? janas_json_get(janas_json_root(d), "contents") : NULL;
+    const struct janas_json *item =
+        c && c->type == JANAS_JSON_ARRAY ? c->child : NULL;
+    const char *mime =
+        item ? janas_json_str(janas_json_get(item, "mimeType")) : NULL;
+    const struct janas_json *text = item ? janas_json_get(item, "text") : NULL;
+    if (!mime || strncmp(mime, "text/html", 9) || !janas_json_str(text)) {
+        snprintf(why, wn, "the view is not a page of HTML");
+        janas_json_free(d);
+        return -1;
+    }
+    janas_buf_put(html, text->s, text->n);
+    /* its policy: nothing reached but what it declares, as MCP Apps
+       builds it, and never anything but https */
+    const struct janas_json *k = janas_json_get(
+        janas_json_get(janas_json_get(item, "_meta"), "ui"), "csp");
+    janas_buf_puts(csp, "default-src 'none'; script-src 'unsafe-inline'");
+    csp_list(csp, janas_json_get(k, "resourceDomains"));
+    janas_buf_puts(csp, "; style-src 'unsafe-inline'");
+    csp_list(csp, janas_json_get(k, "resourceDomains"));
+    janas_buf_puts(csp, "; img-src data: blob:");
+    if (tiles && *tiles) {
+        janas_buf_puts(csp, " ");
+        janas_buf_puts(csp, tiles);
+    }
+    csp_list(csp, janas_json_get(k, "resourceDomains"));
+    janas_buf_puts(csp, "; font-src data:");
+    csp_list(csp, janas_json_get(k, "resourceDomains"));
+    janas_buf_puts(csp, "; media-src data: blob:");
+    csp_list(csp, janas_json_get(k, "resourceDomains"));
+    janas_buf_puts(csp, "; connect-src");
+    size_t at = csp->n;
+    csp_list(csp, janas_json_get(k, "connectDomains"));
+    if (csp->n == at)
+        janas_buf_puts(csp, " 'none'");
+    janas_buf_puts(csp, "; frame-src 'none'; object-src 'none'; base-uri "
+                        "'none'; form-action 'none'; frame-ancestors 'self'; "
+                        "sandbox allow-scripts");
+    janas_json_free(d);
+    return html->oom || csp->oom ? -1 : 0;
 }

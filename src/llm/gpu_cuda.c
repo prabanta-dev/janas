@@ -13,6 +13,7 @@
  * Without them (no clang with nvptx, no lld for AMD's when building) there
  * is no such card to open, and the GPU is Vulkan's alone.
  */
+#if !defined(__APPLE__) /* macOS: the same interface is gpu_metal.m's */
 #include "gpu_cuda.h"
 
 #include <stdint.h>
@@ -20,6 +21,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "gpu_drv.h"
 #include "quant.h"
 
 #if defined(JANAS_GPU_CUDA) || defined(JANAS_GPU_HIP)
@@ -86,24 +88,7 @@ typedef unsigned long long CUdeviceptr;
        unsigned, CUstream, void **, void **))                                  \
     X(cuGetErrorString, hipDrvGetErrorString, (CUresult, const char **))
 
-#define GPU_BLOCK 320       /* a Q8_K block as the kernels read it */
-#define X_STAGE (64u << 20) /* the activations of a group */
-#define Y_STAGE (32u << 20) /* the rows a group's products give */
-#define MAX_PENDING 64
-#define MAX_XCACHE 16
 #define ROWS_A_BLOCK 128 /* threads of a kernel's block */
-
-struct region {
-    const uint8_t *host;
-    size_t bytes;
-    CUdeviceptr dev;
-    int mapped; /* janas_cuda_alloc's: the card reads the host's in place */
-};
-
-struct pending {
-    float *y;
-    size_t rows, nv, y_stride, off;
-};
 
 struct janas_cuda {
     void *lib;
@@ -120,12 +105,11 @@ struct janas_cuda {
     char name[256], about[512];
     int cc_major, cc_minor, driver;
     size_t mem_total, room, used;
-    struct region *rg;
-    size_t n_rg, cap_rg;
+    struct drv_regions regs;
     uint8_t *xh; /* the stages, pinned on the host, and their copies */
     float *yh;
     CUdeviceptr xd, yd;
-    struct pending pend[MAX_PENDING];
+    struct drv_pending pend[MAX_PENDING];
     size_t n_pend;
     int busy, broken;
     int hip;       /* AMD's HIP, not NVIDIA's CUDA */
@@ -293,11 +277,11 @@ void janas_cuda_destroy(struct janas_cuda *c)
         return;
     if (c->ctx) {
         c->cuCtxSetCurrent(c->ctx);
-        for (size_t i = 0; i < c->n_rg; i++)
-            if (c->rg[i].mapped)
-                c->cuMemFreeHost((void *)c->rg[i].host);
+        for (size_t i = 0; i < c->regs.n; i++)
+            if (c->regs.rg[i].mapped)
+                c->cuMemFreeHost((void *)c->regs.rg[i].host);
             else
-                c->cuMemFree_v2(c->rg[i].dev);
+                c->cuMemFree_v2(c->regs.rg[i].dev);
         if (c->xd)
             c->cuMemFree_v2(c->xd);
         if (c->yd)
@@ -312,7 +296,7 @@ void janas_cuda_destroy(struct janas_cuda *c)
             c->cuModuleUnload(c->mod);
         c->cuCtxDestroy_v2(c->ctx);
     }
-    free(c->rg);
+    free(c->regs.rg);
     if (c->lib)
         dlclose(c->lib);
     free(c);
@@ -345,29 +329,8 @@ size_t janas_cuda_local_room(const struct janas_cuda *c)
     return c->room > c->used ? c->room - c->used : 0;
 }
 
-static struct region *add_region(struct janas_cuda *c)
-{
-    if (c->n_rg == c->cap_rg) {
-        size_t cap = c->cap_rg ? 2 * c->cap_rg : 64;
-        struct region *r = realloc(c->rg, cap * sizeof(*r));
-        if (!r)
-            return NULL;
-        c->rg = r;
-        c->cap_rg = cap;
-    }
-    return &c->rg[c->n_rg++];
-}
-
-/* the region holding [p, p + bytes), or NULL */
-static const struct region *find(const struct janas_cuda *c, const void *p,
-                                 size_t bytes)
-{
-    const uint8_t *q = p;
-    for (size_t i = 0; i < c->n_rg; i++)
-        if (q >= c->rg[i].host && q + bytes <= c->rg[i].host + c->rg[i].bytes)
-            return &c->rg[i];
-    return NULL;
-}
+#define find(c, p, bytes) drv_find(&(c)->regs, p, bytes)
+#define add_region(c) drv_add_region(&(c)->regs)
 
 int janas_cuda_import(struct janas_cuda *c, const void *p, size_t bytes)
 {
@@ -383,12 +346,12 @@ int janas_cuda_import(struct janas_cuda *c, const void *p, size_t bytes)
         c->cuMemFree_v2(d);
         return -1;
     }
-    struct region *r = add_region(c);
+    struct drv_region *r = add_region(c);
     if (!r) {
         c->cuMemFree_v2(d);
         return -1;
     }
-    *r = (struct region){.host = p, .bytes = bytes, .dev = d};
+    *r = (struct drv_region){.host = p, .bytes = bytes, .dev = d};
     c->used += bytes;
     return 0;
 }
@@ -402,18 +365,18 @@ void *janas_cuda_alloc(struct janas_cuda *c, size_t bytes)
     if (c->cuMemHostAlloc(&p, bytes,
                           CU_HOSTALLOC_PORTABLE | CU_HOSTALLOC_DEVICEMAP))
         return NULL;
-    struct region *r = NULL;
+    struct drv_region *r = NULL;
     if (c->cuMemHostGetDevicePointer_v2(&d, p, 0) || !(r = add_region(c))) {
         c->cuMemFreeHost(p);
         return NULL;
     }
-    *r = (struct region){.host = p, .bytes = bytes, .dev = d, .mapped = 1};
+    *r = (struct drv_region){.host = p, .bytes = bytes, .dev = d, .mapped = 1};
     return p;
 }
 
 int janas_cuda_sync(struct janas_cuda *c, void *p, size_t bytes, int to_device)
 {
-    const struct region *r = find(c, p, bytes);
+    const struct drv_region *r = find(c, p, bytes);
     if (!r || c->busy)
         return -1;
     if (r->mapped)
@@ -426,31 +389,17 @@ int janas_cuda_sync(struct janas_cuda *c, void *p, size_t bytes, int to_device)
                : 0;
 }
 
-/* b32_matvec's kind of a type, -1 if it is not one of its (as gpu.c's) */
-static int b32_kind(int type)
-{
-    return type == JANAS_Q4_0     ? 0
-           : type == JANAS_IQ4_NL ? 1
-           : type == JANAS_Q4_1   ? 2
-           : type == JANAS_Q5_1   ? 3
-           : type == JANAS_MXFP4  ? 4
-           : type == JANAS_Q5_0   ? 5
-           : type == JANAS_Q2_0   ? 6
-           : type == JANAS_NVFP4  ? 7
-                                  : -1;
-}
-
 /* the types the kernels compute */
 static CUfunction kernel_of(const struct janas_cuda *c, int type)
 {
-    return type == JANAS_Q4_K     ? c->q4k
-           : type == JANAS_Q6_K   ? c->q6k
-           : type == JANAS_Q5_K   ? c->q5k
-           : type == JANAS_Q3_K   ? c->q3k
-           : type == JANAS_Q8_0   ? c->q80
-           : b32_kind(type) >= 0  ? c->b32
-           : type == JANAS_IQ4_XS ? c->iq4xs
-                                  : NULL;
+    return type == JANAS_Q4_K        ? c->q4k
+           : type == JANAS_Q6_K      ? c->q6k
+           : type == JANAS_Q5_K      ? c->q5k
+           : type == JANAS_Q3_K      ? c->q3k
+           : type == JANAS_Q8_0      ? c->q80
+           : drv_b32_kind(type) >= 0 ? c->b32
+           : type == JANAS_IQ4_XS    ? c->iq4xs
+                                     : NULL;
 }
 
 /* the kernel with 32 threads a row, for rows of 256 blocks at most (the
@@ -468,18 +417,6 @@ static CUfunction warp_of(const struct janas_cuda *c, int type, size_t nb)
                                   : NULL;
 }
 
-/* its name, for the reports */
-static const char *kernel_name(int type)
-{
-    return type == JANAS_Q4_K     ? "q4k_matvec"
-           : type == JANAS_Q6_K   ? "q6k_matvec"
-           : type == JANAS_Q5_K   ? "q5k_matvec"
-           : type == JANAS_Q3_K   ? "q3k_matvec"
-           : type == JANAS_Q8_0   ? "q80_matvec"
-           : type == JANAS_IQ4_XS ? "iq4xs_matvec"
-                                  : "b32_matvec";
-}
-
 int janas_cuda_can(const struct janas_cuda *c,
                    const struct janas_matvec_task *t)
 {
@@ -490,35 +427,6 @@ int janas_cuda_can(const struct janas_cuda *c,
         return 0;
     return find(c, t->w, t->rows * janas_qtype_row_bytes(t->type, t->cols)) !=
            NULL;
-}
-
-/* Q8_K vectors as the kernels read them, as gpu.c's convert_x: the quants,
-   the sums, the scale; for the weights in blocks of 32 (k32) the same 256
-   in blocks of 32 with a scale each */
-static void convert_x(uint8_t *dst, const struct janas_block_q8k *x, size_t xs,
-                      size_t nv, size_t nb, int k32)
-{
-    for (size_t v = 0; v < nv; v++)
-        for (size_t b = 0; b < nb; b++, dst += GPU_BLOCK) {
-            const struct janas_block_q8k *s = x + v * xs + b;
-            memset(dst, 0, GPU_BLOCK);
-            if (k32) {
-                memcpy(dst, s->qs32, JANAS_QK);
-                memcpy(dst + JANAS_QK, s->bsums32, sizeof(s->bsums32));
-                memcpy(dst + JANAS_QK + sizeof(s->bsums32), s->d32,
-                       sizeof(s->d32));
-            } else {
-                memcpy(dst, s->qs, JANAS_QK);
-                memcpy(dst + JANAS_QK, s->bsums, sizeof(s->bsums));
-                memcpy(dst + JANAS_QK + sizeof(s->bsums), &s->d, sizeof(float));
-            }
-        }
-}
-
-/* the types that read the activations in blocks of 32 */
-static int in_32(int type)
-{
-    return type == JANAS_Q8_0 || b32_kind(type) >= 0;
 }
 
 int janas_cuda_begin(struct janas_cuda *c,
@@ -545,7 +453,7 @@ int janas_cuda_begin(struct janas_cuda *c,
             return -1;
         size_t nb = t->cols / JANAS_QK, nv = t->n_vec ? t->n_vec : 1;
         size_t xs = t->x_stride ? t->x_stride : nb, k = 0;
-        int k32 = in_32(t->type);
+        int k32 = drv_in_32(t->type);
         while (k < n_xc &&
                !(xc[k].x == t->x && xc[k].nv == nv && xc[k].xs == xs &&
                  xc[k].nb == nb && xc[k].k32 == k32))
@@ -554,7 +462,7 @@ int janas_cuda_begin(struct janas_cuda *c,
             size_t bytes = nv * nb * GPU_BLOCK;
             if (n_xc == MAX_XCACHE || x_used + bytes > X_STAGE)
                 return -1;
-            convert_x(c->xh + x_used, t->x, xs, nv, nb, k32);
+            drv_convert_x(c->xh + x_used, t->x, xs, nv, nb, k32);
             xc[k].k32 = k32;
             xc[k].x = t->x;
             xc[k].nv = nv;
@@ -575,7 +483,7 @@ int janas_cuda_begin(struct janas_cuda *c,
         size_t nb = t->cols / JANAS_QK, nv = t->n_vec ? t->n_vec : 1;
         size_t rows = gpu_rows[i];
         size_t ybytes = rows * nv * sizeof(float);
-        const struct region *r =
+        const struct drv_region *r =
             find(c, t->w, rows * janas_qtype_row_bytes(t->type, t->cols));
         if (!r || c->n_pend == MAX_PENDING || y_used + ybytes > Y_STAGE) {
             c->cuStreamSynchronize(c->st); /* nothing left running */
@@ -585,7 +493,7 @@ int janas_cuda_begin(struct janas_cuda *c,
         CUdeviceptr x = c->xd + xk[i], y = c->yd + y_used;
         uint32_t a_rows = (uint32_t)rows, a_nb = (uint32_t)nb,
                  a_nv = (uint32_t)nv, a_xs = (uint32_t)nb, a_ys = a_rows;
-        uint32_t a_kind = (uint32_t)b32_kind(t->type); /* b32_matvec's */
+        uint32_t a_kind = (uint32_t)drv_b32_kind(t->type); /* b32_matvec's */
         void *args[] = {&w,    &x,    &y,    &a_rows, &a_nb,
                         &a_nv, &a_xs, &a_ys, &a_kind};
         /* 32 threads a row where the type has such a kernel: 4 rows a block */
@@ -596,14 +504,14 @@ int janas_cuda_begin(struct janas_cuda *c,
         if (c->cuLaunchKernel(wf ? wf : kernel_of(c, t->type), blocks, 1, 1,
                               ROWS_A_BLOCK, 1, 1, 0, c->st, args, NULL))
             goto broke;
-        snprintf(c->last, sizeof c->last, "%s%s (%s)", kernel_name(t->type),
+        snprintf(c->last, sizeof c->last, "%s%s (%s)", drv_kernel_name(t->type),
                  wf ? "_w" : "", c->hip ? "HIP" : "CUDA");
-        c->pend[c->n_pend++] =
-            (struct pending){.y = t->y,
-                             .rows = rows,
-                             .nv = nv,
-                             .y_stride = t->y_stride ? t->y_stride : t->rows,
-                             .off = y_used};
+        c->pend[c->n_pend++] = (struct drv_pending){
+            .y = t->y,
+            .rows = rows,
+            .nv = nv,
+            .y_stride = t->y_stride ? t->y_stride : t->rows,
+            .off = y_used};
         y_used += ybytes;
     }
     if (y_used && c->cuMemcpyDtoHAsync_v2(c->yh, c->yd, y_used, c->st))
@@ -631,7 +539,7 @@ int janas_cuda_finish(struct janas_cuda *c, int *waited)
         return -1;
     }
     for (size_t i = 0; i < c->n_pend; i++) {
-        const struct pending *p = &c->pend[i];
+        const struct drv_pending *p = &c->pend[i];
         const float *src = (const float *)((const uint8_t *)c->yh + p->off);
         for (size_t v = 0; v < p->nv; v++)
             memcpy(p->y + v * p->y_stride, src + v * p->rows,
@@ -720,3 +628,4 @@ const char *janas_cuda_last(const struct janas_cuda *c)
 }
 
 #endif
+#endif /* !__APPLE__ */

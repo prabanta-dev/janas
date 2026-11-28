@@ -1,0 +1,546 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Maps</title>
+<style>
+<!--include base.css-->
+h1 { font-size: 15px; margin: 0 0 6px; font-weight: 600; }
+.msearch { display: flex; gap: 6px; margin: 4px 0 6px; }
+.msearch[hidden] { display: none; }
+.msearch input { flex: 1; min-width: 0; font: inherit; padding: 5px 9px; border-radius: 8px; border: 1px solid var(--color-border-primary);
+  background: var(--color-background-primary); color: var(--color-text-primary); }
+.msearch button, .mbtn { font: 12px var(--font-sans, sans-serif); padding: 4px 10px; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--color-border-primary); background: var(--color-background-primary); color: var(--color-text-primary); }
+.msearch button:hover, .mbtn:hover { border-color: var(--color-ring-primary); }
+.mopts { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin: 2px 0 6px; font-size: 12px; }
+.mopts[hidden] { display: none; }
+.seg { display: inline-flex; border: 1px solid var(--color-border-primary); border-radius: 8px; overflow: hidden; }
+.seg button { font: 12px var(--font-sans, sans-serif); padding: 4px 10px; border: 0; background: none; color: var(--color-text-primary); cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--color-border-primary); }
+.seg button.on { background: var(--color-ring-primary); color: #fff; }
+.mopts label { display: inline-flex; gap: 5px; align-items: center; cursor: pointer; }
+.mopts select, .mopts input[type=time] { font: inherit; padding: 2px 4px; border-radius: 6px; border: 1px solid var(--color-border-primary);
+  background: var(--color-background-primary); color: var(--color-text-primary); }
+#ways { display: flex; flex-direction: column; gap: 4px; margin: 0 0 6px; }
+#ways:empty { display: none; }
+#ways button { all: unset; display: block; cursor: pointer; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--color-border-primary); font-size: 13px; }
+#ways button:hover { border-color: var(--color-ring-primary); }
+#ways button.on { border-color: var(--color-ring-primary); box-shadow: inset 3px 0 0 var(--color-ring-primary); }
+#ways b { font-weight: 600; }
+#ways .tag { display: inline-block; margin-left: 6px; padding: 0 5px; border-radius: 4px; font-size: 11px; background: var(--color-background-secondary); color: var(--color-text-secondary); }
+ol { list-style: none; margin: 4px 0 0; padding: 0; max-height: 320px; overflow: auto; border-top: 1px solid var(--color-border-primary); }
+li { padding: 6px 4px; border-bottom: 1px solid var(--color-border-primary); cursor: pointer; display: grid; grid-template-columns: 1.6em 1fr auto; gap: 8px; align-items: baseline; }
+li.plain { grid-template-columns: 1fr; cursor: default; }
+li:hover, li.on { background: var(--color-background-secondary); }
+li .n { color: var(--color-text-secondary); font-variant-numeric: tabular-nums; text-align: right; }
+li .sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; background: var(--c); }
+#card { margin-top: 8px; padding: 8px; border-radius: 8px; background: var(--color-background-secondary); }
+#card[hidden] { display: none; }
+#card h2 { font-size: 14px; margin: 0 0 4px; }
+#card dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 10px; margin: 4px 0; }
+#card dt { color: var(--color-text-secondary); }
+#card dd { margin: 0; overflow-wrap: anywhere; }
+#card .acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+</style></head>
+<body>
+<h1 id="title"></h1>
+<div class="mapbox" id="mapbox"></div>
+<div class="msearch" id="search"><input type="search" id="q" autocomplete="off"><button type="button" id="go"></button></div>
+<div class="mopts" id="opts" hidden></div>
+<div id="card" hidden></div>
+<div class="vtools" id="tools"></div>
+<div id="ways"></div>
+<ol id="list"></ol>
+<p class="note" id="credit"></p>
+<script>
+<!--include world.js-->
+<!--include map.js-->
+<!--include app.js-->
+<!--include float.js-->
+<!--include export.js-->
+const W = {
+  search: {en: "Look for a place or an address", it: "Cerca un luogo o un indirizzo", fr: "Chercher un lieu ou une adresse", es: "Buscar un lugar o una dirección", de: "Einen Ort oder eine Adresse suchen", pt: "Procurar um local ou uma morada"},
+  go: {en: "Find", it: "Cerca", fr: "Chercher", es: "Buscar", de: "Suchen", pt: "Procurar"},
+  route: {en: "{a} → {b}", it: "{a} → {b}", fr: "{a} → {b}", es: "{a} → {b}", de: "{a} → {b}", pt: "{a} → {b}"},
+  car: {en: "Car", it: "Auto", fr: "Voiture", es: "Coche", de: "Auto", pt: "Carro"},
+  bike: {en: "Bike", it: "Bici", fr: "Vélo", es: "Bici", de: "Fahrrad", pt: "Bicicleta"},
+  foot: {en: "On foot", it: "A piedi", fr: "À pied", es: "A pie", de: "Zu Fuß", pt: "A pé"},
+  tolls: {en: "No tolls", it: "Senza pedaggi", fr: "Sans péages", es: "Sin peajes", de: "Ohne Maut", pt: "Sem portagens"},
+  highways: {en: "No motorways", it: "Senza autostrade", fr: "Sans autoroutes", es: "Sin autopistas", de: "Ohne Autobahnen", pt: "Sem autoestradas"},
+  ferries: {en: "No ferries", it: "Senza traghetti", fr: "Sans ferries", es: "Sin ferris", de: "Ohne Fähren", pt: "Sem ferries"},
+  swap: {en: "Swap start and end", it: "Inverti partenza e arrivo", fr: "Inverser départ et arrivée", es: "Invertir salida y llegada", de: "Start und Ziel tauschen", pt: "Trocar partida e chegada"},
+  toll: {en: "tolls", it: "pedaggi", fr: "péages", es: "peajes", de: "Maut", pt: "portagens"},
+  ferry: {en: "ferry", it: "traghetto", fr: "ferry", es: "ferri", de: "Fähre", pt: "ferry"},
+  altsteps: {en: "The way step by step is given for the first route only.", it: "Le indicazioni passo per passo ci sono solo per il primo percorso.", fr: "Les indications pas à pas ne sont données que pour le premier itinéraire.", es: "Las indicaciones paso a paso solo están para la primera ruta.", de: "Die Wegbeschreibung gibt es nur für die erste Route.", pt: "As indicações passo a passo existem só para o primeiro percurso."},
+  cut: {en: "{n} more steps not listed.", it: "Altri {n} passi non elencati.", fr: "{n} étapes de plus non listées.", es: "{n} pasos más no listados.", de: "{n} weitere Schritte nicht aufgeführt.", pt: "Mais {n} passos não listados."},
+  osm: {en: "Open it on OpenStreetMap", it: "Aprilo su OpenStreetMap", fr: "L'ouvrir sur OpenStreetMap", es: "Abrirlo en OpenStreetMap", de: "Auf OpenStreetMap öffnen", pt: "Abrir no OpenStreetMap"},
+  leave: {en: "Leave at", it: "Parti alle", fr: "Partir à", es: "Salir a las", de: "Abfahrt um", pt: "Partir às"},
+  arrive: {en: "Arrive by", it: "Arriva entro le", fr: "Arriver avant", es: "Llegar antes de", de: "Ankunft bis", pt: "Chegar até às"},
+  now: {en: "now", it: "ora", fr: "maintenant", es: "ahora", de: "jetzt", pt: "agora"},
+  again: {en: "Look again", it: "Cerca di nuovo", fr: "Chercher à nouveau", es: "Buscar de nuevo", de: "Neu suchen", pt: "Procurar de novo"},
+  direct: {en: "direct", it: "diretto", fr: "direct", es: "directo", de: "direkt", pt: "direto"},
+  changes: {en: "{n} changes", it: "{n} cambi", fr: "{n} correspondances", es: "{n} transbordos", de: "{n} Umstiege", pt: "{n} transbordos"},
+  change1: {en: "1 change", it: "1 cambio", fr: "1 correspondance", es: "1 transbordo", de: "1 Umstieg", pt: "1 transbordo"},
+  walk: {en: "Walk", it: "A piedi", fr: "À pied", es: "A pie", de: "Fußweg", pt: "A pé"},
+  live: {en: "live", it: "in tempo reale", fr: "en temps réel", es: "en tiempo real", de: "live", pt: "em tempo real"},
+  journeys: {en: "{a} → {b}: {n} journeys", it: "{a} → {b}: {n} viaggi", fr: "{a} → {b} : {n} trajets", es: "{a} → {b}: {n} viajes", de: "{a} → {b}: {n} Verbindungen", pt: "{a} → {b}: {n} viagens"},
+  near: {en: "{w} within {r} of {p}: {n}", it: "{w} entro {r} da {p}: {n}", fr: "{w} à moins de {r} de {p} : {n}", es: "{w} a menos de {r} de {p}: {n}", de: "{w} im Umkreis von {r} um {p}: {n}", pt: "{w} a menos de {r} de {p}: {n}"},
+  nearpt: {en: "{w} within {r} of the point chosen: {n}", it: "{w} entro {r} dal punto scelto: {n}", fr: "{w} à moins de {r} du point choisi : {n}", es: "{w} a menos de {r} del punto elegido: {n}", de: "{w} im Umkreis von {r} um den gewählten Punkt: {n}", pt: "{w} a menos de {r} do ponto escolhido: {n}"},
+  sight: {en: "{w} in sight: {n}", it: "{w} in vista: {n}", fr: "{w} en vue : {n}", es: "{w} a la vista: {n}", de: "{w} in Sicht: {n}", pt: "{w} à vista: {n}"},
+  most: {en: "OpenStreetMap is asked within 10 km at most.", it: "OpenStreetMap si interroga entro 10 km al massimo.", fr: "OpenStreetMap est interrogé à 10 km au plus.", es: "OpenStreetMap se consulta a 10 km como mucho.", de: "OpenStreetMap wird im Umkreis von höchstens 10 km gefragt.", pt: "O OpenStreetMap é consultado a 10 km no máximo."},
+  kind: {en: "Look for", it: "Cerca", fr: "Chercher", es: "Buscar", de: "Suchen", pt: "Procurar"},
+  address: {en: "Address", it: "Indirizzo", fr: "Adresse", es: "Dirección", de: "Adresse", pt: "Morada"},
+  hours: {en: "Hours", it: "Orari", fr: "Horaires", es: "Horario", de: "Öffnungszeiten", pt: "Horário"},
+  phone: {en: "Phone", it: "Telefono", fr: "Téléphone", es: "Teléfono", de: "Telefon", pt: "Telefone"},
+  what: {en: "What", it: "Cos'è", fr: "Quoi", es: "Qué es", de: "Was", pt: "O que é"},
+  coords: {en: "Coordinates", it: "Coordinate", fr: "Coordonnées", es: "Coordenadas", de: "Koordinaten", pt: "Coordenadas"},
+  dist: {en: "Distance", it: "Distanza", fr: "Distance", es: "Distancia", de: "Entfernung", pt: "Distância"},
+  to: {en: "Directions to here", it: "Indicazioni fin qui", fr: "Itinéraire vers ici", es: "Cómo llegar aquí", de: "Route hierher", pt: "Direções para aqui"},
+  from: {en: "Start from here", it: "Parti da qui", fr: "Partir d'ici", es: "Salir desde aquí", de: "Von hier starten", pt: "Partir daqui"},
+  transit: {en: "By public transport", it: "Con i mezzi pubblici", fr: "En transports en commun", es: "En transporte público", de: "Mit Öffis", pt: "De transportes públicos"},
+  startset: {en: "Start: {p}. Now choose where to go.", it: "Partenza: {p}. Ora scegli dove andare.", fr: "Départ : {p}. Choisissez maintenant où aller.", es: "Salida: {p}. Ahora elige adónde ir.", de: "Start: {p}. Wähle jetzt das Ziel.", pt: "Partida: {p}. Agora escolhe para onde ir."},
+  here: {en: "What is here", it: "Cosa c'è qui", fr: "Ce qu'il y a ici", es: "Qué hay aquí", de: "Was ist hier", pt: "O que há aqui"},
+  press: {en: "Press a point of the map a while, or click it with the right button: what is there.", it: "Tieni premuto un punto della mappa, o cliccalo col tasto destro: cosa c'è lì.", fr: "Appuyez longuement sur un point de la carte, ou cliquez-le du bouton droit : ce qu'il y a là.", es: "Mantén pulsado un punto del mapa, o haz clic derecho: qué hay ahí.", de: "Einen Punkt der Karte lange drücken oder rechts anklicken: was dort ist.", pt: "Mantém premido um ponto do mapa, ou clica com o botão direito: o que há lá."},
+  asking: {en: "Asking…", it: "Chiedo…", fr: "Je demande…", es: "Consultando…", de: "Frage nach…", pt: "A perguntar…"},
+  none: {en: "None found.", it: "Nessuno trovato.", fr: "Aucun trouvé.", es: "Ninguno encontrado.", de: "Keines gefunden.", pt: "Nenhum encontrado."},
+  step: {en: "Step", it: "Passo", fr: "Étape", es: "Paso", de: "Schritt", pt: "Passo"},
+  name: {en: "Name", it: "Nome", fr: "Nom", es: "Nombre", de: "Name", pt: "Nome"},
+  line: {en: "Line", it: "Linea", fr: "Ligne", es: "Línea", de: "Linie", pt: "Linha"},
+  dep: {en: "Leaves", it: "Parte", fr: "Départ", es: "Sale", de: "Ab", pt: "Parte"},
+  arr: {en: "Arrives", it: "Arriva", fr: "Arrivée", es: "Llega", de: "An", pt: "Chega"},
+  fromst: {en: "From", it: "Da", fr: "De", es: "Desde", de: "Von", pt: "De"},
+  tost: {en: "To", it: "A", fr: "À", es: "A", de: "Nach", pt: "Para"},
+  credit: {en: "Data © OpenStreetMap contributors (ODbL), through {s}.", it: "Dati © OpenStreetMap contributors (ODbL), tramite {s}.", fr: "Données © contributeurs d'OpenStreetMap (ODbL), via {s}.", es: "Datos © colaboradores de OpenStreetMap (ODbL), a través de {s}.", de: "Daten © OpenStreetMap-Mitwirkende (ODbL), über {s}.", pt: "Dados © contribuidores do OpenStreetMap (ODbL), através de {s}."},
+};
+/* the kinds maps_nearby knows (nearby.c's MP_KINDS), in words */
+const KINDS = {
+  fuel: {en: "Fuel", it: "Distributori", fr: "Carburant", es: "Gasolineras", de: "Tankstellen", pt: "Combustível"},
+  charging: {en: "Charging points", it: "Ricariche elettriche", fr: "Bornes de recharge", es: "Puntos de carga", de: "Ladestationen", pt: "Postos de carregamento"},
+  parking: {en: "Parking", it: "Parcheggi", fr: "Parkings", es: "Aparcamientos", de: "Parkplätze", pt: "Estacionamentos"},
+  pharmacy: {en: "Pharmacies", it: "Farmacie", fr: "Pharmacies", es: "Farmacias", de: "Apotheken", pt: "Farmácias"},
+  hospital: {en: "Hospitals", it: "Ospedali", fr: "Hôpitaux", es: "Hospitales", de: "Krankenhäuser", pt: "Hospitais"},
+  doctor: {en: "Doctors", it: "Medici", fr: "Médecins", es: "Médicos", de: "Ärzte", pt: "Médicos"},
+  atm: {en: "Cash machines", it: "Bancomat", fr: "Distributeurs de billets", es: "Cajeros", de: "Geldautomaten", pt: "Multibancos"},
+  bank: {en: "Banks", it: "Banche", fr: "Banques", es: "Bancos", de: "Banken", pt: "Bancos"},
+  post_office: {en: "Post offices", it: "Uffici postali", fr: "Bureaux de poste", es: "Oficinas de correos", de: "Postämter", pt: "Correios"},
+  police: {en: "Police", it: "Polizia e carabinieri", fr: "Police", es: "Policía", de: "Polizei", pt: "Polícia"},
+  supermarket: {en: "Supermarkets", it: "Supermercati", fr: "Supermarchés", es: "Supermercados", de: "Supermärkte", pt: "Supermercados"},
+  restaurant: {en: "Restaurants", it: "Ristoranti", fr: "Restaurants", es: "Restaurantes", de: "Restaurants", pt: "Restaurantes"},
+  cafe: {en: "Cafés", it: "Caffè", fr: "Cafés", es: "Cafeterías", de: "Cafés", pt: "Cafés"},
+  bar: {en: "Bars", it: "Bar e pub", fr: "Bars", es: "Bares", de: "Bars", pt: "Bares"},
+  hotel: {en: "Hotels", it: "Alberghi", fr: "Hôtels", es: "Hoteles", de: "Hotels", pt: "Hotéis"},
+  toilets: {en: "Toilets", it: "Bagni pubblici", fr: "Toilettes", es: "Aseos", de: "Toiletten", pt: "Casas de banho"},
+  train_station: {en: "Train stations", it: "Stazioni", fr: "Gares", es: "Estaciones de tren", de: "Bahnhöfe", pt: "Estações de comboio"},
+  bus_stop: {en: "Bus stops", it: "Fermate dell'autobus", fr: "Arrêts de bus", es: "Paradas de autobús", de: "Bushaltestellen", pt: "Paragens de autocarro"},
+  museum: {en: "Museums", it: "Musei", fr: "Musées", es: "Museos", de: "Museen", pt: "Museus"},
+  attraction: {en: "Sights", it: "Attrazioni", fr: "Curiosités", es: "Atracciones", de: "Sehenswürdigkeiten", pt: "Atrações"},
+};
+/* a leg's kind of transport in words, and its colour on the map */
+const MODES = {
+  WALK: ["walk", "#7a7a7a"], BUS: [{en: "Bus", it: "Autobus", fr: "Bus", es: "Autobús", de: "Bus", pt: "Autocarro"}, "#e8710a"],
+  COACH: [{en: "Coach", it: "Pullman", fr: "Car", es: "Autocar", de: "Fernbus", pt: "Autocarro"}, "#c25400"],
+  TRAM: [{en: "Tram", it: "Tram", fr: "Tram", es: "Tranvía", de: "Straßenbahn", pt: "Elétrico"}, "#188038"],
+  SUBWAY: [{en: "Metro", it: "Metro", fr: "Métro", es: "Metro", de: "U-Bahn", pt: "Metro"}, "#1967d2"],
+  METRO: [{en: "Metro", it: "Metro", fr: "Métro", es: "Metro", de: "U-Bahn", pt: "Metro"}, "#1967d2"],
+  FERRY: [{en: "Ferry", it: "Traghetto", fr: "Ferry", es: "Ferri", de: "Fähre", pt: "Ferry"}, "#00838f"],
+  AIRPLANE: [{en: "Flight", it: "Volo", fr: "Vol", es: "Vuelo", de: "Flug", pt: "Voo"}, "#5f6368"],
+};
+const TRAIN = [{en: "Train", it: "Treno", fr: "Train", es: "Tren", de: "Zug", pt: "Comboio"}, "#9334e6"];
+const modeOf = (m) => MODES[m] || (/RAIL|TRAIN/.test(m || "") ? TRAIN : [{en: m || "", it: m || ""}, "#1a73e8"]);
+const t = (k, v) => App.t(W[k]).replace(/\{(\w+)\}/g, (_, n) => v && v[n] !== undefined ? v[n] : "");
+const tw = (o) => typeof o === "string" ? t(o) : App.t(o);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => "&#" + c.charCodeAt(0) + ";");
+const num = (x, d) => new Intl.NumberFormat(App.ctx.locale, {maximumFractionDigits: d || 0}).format(x);
+const distText = (o) => o.km ? num(o.km, o.km < 10 ? 1 : 0) + " km" : o.m ? num(o.m) + " m" : "";
+const kmText = (km) => km < 1 ? num(Math.round(km * 100) * 10) + " m" : num(km, km < 10 ? 1 : 0) + " km";
+const timeText = (o) => (o.h ? o.h + " h " : "") + (o.min !== undefined ? o.min + " min" : "");
+const clock = (c) => c ? c.at + (c.date ? ` (${c.day}/${c.mon})` : "") : "";
+const placeName = (p) => p ? p.name || p.address || "" : "";
+const ll = (p) => +p.lat.toFixed(6) + "," + +p.lon.toFixed(6);
+/* Google's encoded polylines (Valhalla: 6 decimals, OSRM: 5): [[lat, lon]] */
+function decode(s, prec) {
+  const f = 10 ** (prec || 5), out = [];
+  let i = 0, lat = 0, lon = 0;
+  while (i < s.length) {
+    for (let k = 0; k < 2; k++) {
+      let b, sh = 0, r = 0;
+      do { b = s.charCodeAt(i++) - 63; r |= (b & 31) << sh; sh += 5; } while (b >= 32 && i < s.length);
+      const d = r & 1 ? ~(r >> 1) : r >> 1;
+      if (k) lon += d; else lat += d;
+    }
+    out.push([lat / f, lon / f]);
+  }
+  return out;
+}
+
+/* what is shown: a route (kind "route"), journeys ("transit"), places
+   around ("near"), a place ("find"); asked: the tool and arguments of the
+   answer shown, asked again with a change (the mode, a time, a kind) */
+let kind = "", data = {}, asked = null, asks = 0;
+let routes = [], sel = 0, steps = [], trips = [], tsel = 0, items = [], listed = [], place = null;
+let pick = -1, stepAt = null, start = null, circle = null, credit = () => {};
+/* the names of the ends the view knows (a place found, pressed), for a
+   route or journeys it asks by their coordinates */
+let labels = null;
+const map = MapView(document.getElementById("mapbox"), {layer: "osm",
+  onpick: (p) => { if (p && p.poi) choose(items.indexOf(p), true); },
+  onlayer: () => credit(),
+  onmove: () => { if (kind === "near" && !circle && items.length) listing(); },
+  /* "what is here": the point pressed, named */
+  onpress: (lon, lat) => ask("maps_find", {place: lat.toFixed(6) + "," + lon.toFixed(6)}).catch(() => {}),
+  /* a circle drawn around places of a kind: those around it asked (10 km
+     at most); removed: those in sight */
+  oncircle: (c) => {
+    if (!c) { circle = null; map.circled(false); if (kind === "near") listing(); paint(); return; }
+    circle = {lat: c.lat, lon: c.lon, km: Math.max(0.1, Math.min(10, c.km)), place: "", cut: c.km > 10};
+    map.circled(true); paint();
+    ask("maps_nearby", {what: (asked && asked[1].what) || "pharmacy", place: circle.lat.toFixed(6) + "," + circle.lon.toFixed(6), radius: +circle.km.toFixed(2)}, true).catch(() => {});
+  }});
+Floats.init();
+
+/* a tool of this server asked from the view; its answer shown (keep: the
+   zoom kept) */
+async function ask(tool, args, keep, names) {
+  if (!App.canCall()) return false;
+  const n = ++asks;
+  const was = labels;
+  labels = names || (keep && (tool === "maps_route" || tool === "maps_transit") ? was : null);
+  document.getElementById("credit").textContent = t("asking");
+  const r = await App.callTool(tool, args);
+  if (n !== asks) return false;
+  if (!r || !r.structuredContent || r.isError) {
+    document.getElementById("credit").textContent = (r && r.content && r.content[0] && r.content[0].text || "").slice(0, 200);
+    return false;
+  }
+  asked = [tool, args];
+  show(r, keep);
+  return true;
+}
+
+function paint() {
+  map.set(kind === "near" ? items : place ? [place] : [], (g, at) => {
+    const line = (pts, w, c, dash) => {
+      if (pts.length < 2) return;
+      g.beginPath();
+      pts.forEach(([la, lo], i) => { const [x, y] = at(lo, la); if (i) g.lineTo(x, y); else g.moveTo(x, y); });
+      g.lineJoin = "round"; g.lineCap = "round"; g.setLineDash(dash || []); g.lineWidth = w; g.strokeStyle = c; g.stroke(); g.setLineDash([]);
+    };
+    const dot = (lat, lon, r, fill, stroke, label) => {
+      const [x, y] = at(lon, lat);
+      g.beginPath(); g.arc(x, y, r, 0, 2 * Math.PI); g.fillStyle = fill; g.fill();
+      g.lineWidth = 2; g.strokeStyle = stroke; g.stroke();
+      if (label) { g.fillStyle = "#fff"; g.font = "bold 10px sans-serif"; g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(label, x, y + 0.5); g.textAlign = "start"; g.textBaseline = "alphabetic"; }
+    };
+    const pin = (lat, lon, c, on) => {
+      const [x, y] = at(lon, lat), s = on ? 1.35 : 1;
+      g.save(); g.translate(x, y); g.scale(s, s);
+      g.beginPath(); g.moveTo(0, 0); g.bezierCurveTo(-2, -6, -8, -9, -8, -15); g.arc(0, -15, 8, Math.PI, 0); g.bezierCurveTo(8, -9, 2, -6, 0, 0);
+      g.shadowColor = "#0005"; g.shadowBlur = 3; g.fillStyle = c; g.fill(); g.shadowBlur = 0; g.shadowColor = "transparent";
+      g.lineWidth = 1.2; g.strokeStyle = "#fff"; g.stroke();
+      g.beginPath(); g.arc(0, -15, 3, 0, 2 * Math.PI); g.fillStyle = "#fff"; g.fill();
+      g.restore();
+    };
+    if (circle) drawCircle(g, at, circle);
+    if (kind === "route") {
+      /* the others under, the one chosen over them, on a white casing */
+      routes.forEach((r, i) => { if (i !== sel) line(r.pts, 5, "#7d8b99aa"); });
+      const r = routes[sel];
+      if (r) { line(r.pts, 9, "#ffffffdd"); line(r.pts, 5.5, "#1a73e8"); }
+      if (data.via) dot(data.via.lat, data.via.lon, 6, "#5f6368", "#fff");
+      if (data.from) dot(data.from.lat, data.from.lon, 8, "#188038", "#fff", "A");
+      if (data.to) dot(data.to.lat, data.to.lon, 8, "#d93025", "#fff", "B");
+      if (stepAt) dot(stepAt[0], stepAt[1], 6, "#fff", "#1a73e8");
+    }
+    if (kind === "transit") {
+      const tr = trips[tsel];
+      if (tr) {
+        tr.legs.forEach((l, i) => { if (l.pts.length > 1) { if (!l.walk) line(l.pts, 8, "#ffffffdd"); line(l.pts, l.walk ? 3.5 : 5.5, modeOf(l.mode)[1], l.walk ? [2, 6] : null); } });
+        tr.legs.forEach((l, i) => { if (!l.walk && l.flat !== undefined) { dot(l.flat, l.flon, 4.5, "#fff", modeOf(l.mode)[1]); dot(l.tlat, l.tlon, 4.5, "#fff", modeOf(l.mode)[1]); } });
+        if (pick >= 0 && tr.legs[pick] && tr.legs[pick].pts.length > 1) line(tr.legs[pick].pts, 2, "#fff");
+      }
+      if (data.from) dot(data.from.lat, data.from.lon, 8, "#188038", "#fff", "A");
+      if (data.to) dot(data.to.lat, data.to.lon, 8, "#d93025", "#fff", "B");
+    }
+    if (kind === "near") {
+      if (data.place && !circle) dot(data.place.lat, data.place.lon, 5, "#5f6368", "#fff");
+      items.forEach((p, i) => { if (i !== pick) pin(p.lat, p.lon, "#d93025"); });
+      if (pick >= 0 && items[pick]) pin(items[pick].lat, items[pick].lon, "#a50e0e", true);
+    }
+    if (place) pin(place.lat, place.lon, "#d93025", true);
+    if (start) dot(start.lat, start.lon, 7, "#188038", "#fff", "A");
+  });
+}
+
+/* the card of a place: its words, and what can be done from it */
+function card(p, rows) {
+  const c = document.getElementById("card");
+  c.innerHTML = `<h2>${esc(placeName(p))}</h2><dl>${rows.filter((r) => r[1]).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join("")}</dl>` +
+    `<div class="acts"><button type="button" class="mbtn" data-a="to">${esc(t("to"))}</button><button type="button" class="mbtn" data-a="from">${esc(t("from"))}</button>` +
+    `<button type="button" class="mbtn" data-a="transit">${esc(t("transit"))}</button>` +
+    (p.osm || p.link ? `<button type="button" class="link" data-a="osm">${esc(t("osm"))}</button>` : "") + `</div>`;
+  const there = ll(p);
+  const names = {to: placeName(p), from: start ? start.name : ""};
+  c.querySelector('[data-a="to"]').onclick = () => ask("maps_route", Object.assign({to: there, mode: (asked && asked[1].mode) || "car"}, start ? {from: ll(start)} : {}), false, names).catch(() => {});
+  c.querySelector('[data-a="transit"]').onclick = () => ask("maps_transit", Object.assign({to: there}, start ? {from: ll(start)} : {}), false, names).catch(() => {});
+  c.querySelector('[data-a="from"]').onclick = () => {
+    start = {lat: p.lat, lon: p.lon, name: placeName(p)};
+    document.getElementById("credit").textContent = t("startset", {p: start.name});
+    paint();
+  };
+  const o = c.querySelector('[data-a="osm"]');
+  if (o) o.onclick = () => App.openLink(p.osm ? "https://www.openstreetmap.org/" + p.osm : p.link);
+  App.closer(c, () => { c.hidden = true; pick = -1; if (kind === "find") { place = null; } listing(); paint(); App.size(); });
+  c.hidden = false;
+}
+
+/* a row of the list chosen: a step, a leg, a place */
+function choose(i, fromMap) {
+  pick = i;
+  for (const li of document.querySelectorAll("#list li[data-i]")) li.classList.toggle("on", +li.dataset.i === i);
+  if (kind === "route") {
+    const s = steps[i];
+    stepAt = s && s.pt;
+    if (stepAt) map.view(stepAt[1], stepAt[0], Math.max(16, Math.min(17, map.zoom())));
+  } else if (kind === "transit") {
+    const l = trips[tsel] && trips[tsel].legs[i];
+    if (l && l.pts.length > 1) map.fit(l.pts.map(([la, lo]) => [lo, la]), 0.3);
+    else if (l && l.flat !== undefined) map.view(l.flon, l.flat, 16);
+  } else if (kind === "near") {
+    const p = items[i];
+    if (!p) { document.getElementById("card").hidden = true; paint(); return; }
+    card(p, [[t("address"), esc(p.address)], [t("hours"), esc(p.hours)], [t("phone"), esc(p.phone)],
+      [t("dist"), esc([distText(p), p.dir].filter(Boolean).join(" "))]]);
+    if (!fromMap) map.view(p.lon, p.lat, Math.max(16, map.zoom()));
+  }
+  paint(); App.size();
+}
+
+/* the options over the list: a route's mode and what to avoid, a
+   journey's time, the kind of places */
+function options() {
+  const o = document.getElementById("opts");
+  o.hidden = !["route", "transit", "near"].includes(kind) || !App.canCall();
+  o.innerHTML = "";
+  if (o.hidden) return;
+  /* the arguments asked, with the ends of the answer when they were not
+     given (where the user is stays so) */
+  const args = Object.assign({}, asked ? asked[1] : {});
+  if ((kind === "route" || kind === "transit") && data.to && !args.to) args.to = ll(data.to);
+  if ((kind === "route" || kind === "transit") && data.from && !args.from && !data.from.how) args.from = ll(data.from);
+  if (kind === "route" && data.via && !args.via) args.via = ll(data.via);
+  if (kind === "near" && !args.what) args.what = data.what;
+  if (kind === "near" && data.place && !args.place && !data.place.how) args.place = ll(data.place);
+  if (kind === "route") {
+    const seg = document.createElement("span");
+    seg.className = "seg";
+    for (const m of ["car", "bike", "foot"]) {
+      const b = document.createElement("button");
+      b.type = "button"; b.textContent = t(m); b.className = (data.mode || "car") === m ? "on" : "";
+      b.onclick = () => ask("maps_route", Object.assign({}, args, {mode: m}), true).catch(() => {});
+      seg.appendChild(b);
+    }
+    o.appendChild(seg);
+    if ((data.mode || "car") === "car")
+      for (const a of ["tolls", "highways", "ferries"]) {
+        const l = document.createElement("label");
+        l.innerHTML = `<input type="checkbox"> <span></span>`;
+        l.lastChild.textContent = t(a);
+        const c = l.firstChild;
+        c.checked = (args.avoid || []).includes(a);
+        c.onchange = () => {
+          const av = new Set(args.avoid || []);
+          if (c.checked) av.add(a); else av.delete(a);
+          ask("maps_route", Object.assign({}, args, {avoid: [...av]}), true).catch(() => {});
+        };
+        o.appendChild(l);
+      }
+    const sw = document.createElement("button");
+    sw.type = "button"; sw.className = "mbtn"; sw.textContent = "⇅ " + t("swap");
+    sw.onclick = () => {
+      const a = Object.assign({}, args, {from: args.to || ll(data.to), to: args.from || ll(data.from)});
+      delete a.via;
+      ask("maps_route", a, true, {from: end("to"), to: end("from")}).catch(() => {});
+    };
+    o.appendChild(sw);
+  }
+  if (kind === "transit") {
+    const seg = document.createElement("span");
+    seg.className = "seg";
+    let by = !!args.arrive_by;
+    const bs = ["leave", "arrive"].map((k, i) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.textContent = t(k); b.className = by === !!i ? "on" : "";
+      b.onclick = () => { by = !!i; bs.forEach((x, j) => x.classList.toggle("on", by === !!j)); };
+      seg.appendChild(b);
+      return b;
+    });
+    const tm = document.createElement("input");
+    tm.type = "time";
+    tm.value = /^\d\d:\d\d$/.test(args.when || "") ? args.when : (args.when || "").slice(-5);
+    const go = document.createElement("button");
+    go.type = "button"; go.className = "mbtn"; go.textContent = t("again");
+    go.onclick = () => {
+      const a = Object.assign({}, args);
+      if (tm.value) a.when = tm.value; else delete a.when;
+      if (by && tm.value) a.arrive_by = true; else delete a.arrive_by;
+      ask("maps_transit", a, true).catch(() => {});
+    };
+    o.append(seg, tm, go);
+  }
+  if (kind === "near") {
+    const l = document.createElement("label"), s = document.createElement("select");
+    l.textContent = t("kind") + " ";
+    for (const k of Object.keys(KINDS)) { const op = document.createElement("option"); op.value = k; op.textContent = App.t(KINDS[k]); s.appendChild(op); }
+    s.value = data.what || args.what || "pharmacy";
+    s.onchange = () => {
+      const a = circle ? {what: s.value, place: circle.lat.toFixed(6) + "," + circle.lon.toFixed(6), radius: +circle.km.toFixed(2)} : Object.assign({}, args, {what: s.value});
+      ask("maps_nearby", a, true).catch(() => {});
+    };
+    l.appendChild(s);
+    o.appendChild(l);
+  }
+}
+
+/* an end's name: the one the view knows, else the answer's */
+const end = (k) => (labels && labels[k]) || placeName(data[k]);
+/* the title and the list, from what is shown */
+function listing() {
+  const list = document.getElementById("list"), ways = document.getElementById("ways"), title = document.getElementById("title");
+  ways.innerHTML = "";
+  let rows = "";
+  if (kind === "route") {
+    title.textContent = t("route", {a: end("from"), b: end("to")});
+    if (routes.length > 1 || routes.length) ways.innerHTML = routes.map((r, i) =>
+      `<button type="button" data-w="${i}" class="${i === sel ? "on" : ""}"><b>${esc(timeText(r))}</b> · ${esc(distText(r))}` +
+      `${r.roads ? " · " + esc(r.roads) : ""}${r.toll ? `<span class="tag">${esc(t("toll"))}</span>` : ""}${r.ferry ? `<span class="tag">${esc(t("ferry"))}</span>` : ""}</button>`).join("");
+    for (const b of ways.querySelectorAll("button")) b.onclick = () => { sel = +b.dataset.w; stepAt = null; pick = -1; listing(); paint(); };
+    if (sel === 0) {
+      rows = steps.map((s, i) => `<li data-i="${i}" class="${i === pick ? "on" : ""}"><span class="n">${i + 1}</span><span>${esc(s.text)}</span><span class="note">${esc(distText(s))}</span></li>`).join("");
+      if (data.cut) rows += `<li class="plain note">${esc(t("cut", {n: data.cut}))}</li>`;
+    } else rows = `<li class="plain note">${esc(t("altsteps"))}</li>`;
+  } else if (kind === "transit") {
+    title.textContent = t("journeys", {a: end("from"), b: end("to"), n: trips.length});
+    ways.innerHTML = trips.map((tr, i) =>
+      `<button type="button" data-w="${i}" class="${i === tsel ? "on" : ""}"><b>${esc(clock(tr.dep))} → ${esc(clock(tr.arr))}</b> · ${esc(timeText(tr))} · ` +
+      `${esc(tr.transfers ? (tr.transfers === 1 ? t("change1") : t("changes", {n: tr.transfers})) : t("direct"))}</button>`).join("");
+    for (const b of ways.querySelectorAll("button")) b.onclick = () => { tsel = +b.dataset.w; pick = -1; listing(); fitTrip(); };
+    const tr = trips[tsel];
+    rows = tr ? tr.legs.map((l, i) => { const [w, c] = modeOf(l.mode);
+      return `<li data-i="${i}" class="${i === pick ? "on" : ""}"><span class="sw" style="--c:${c}"></span><span><b>${esc(l.walk ? t("walk") : [tw(w), l.line].filter(Boolean).join(" "))}</b>` +
+        `${l.headsign ? " → " + esc(l.headsign) : ""}<br><span class="note">${esc(l.from)} → ${esc(l.to)}${l.agency ? " · " + esc(l.agency) : ""}${l.live ? " · " + esc(t("live")) : ""}</span></span>` +
+        `<span class="note">${esc(clock(l.dep))}–${esc(clock(l.arr))}${l.walk && distText(l) ? "<br>" + esc(distText(l)) : ""}</span></li>`; }).join("") : "";
+  } else if (kind === "near") {
+    for (const p of items)
+      if (circle) { const [d, dir] = geoFar(circle.lat, circle.lon, p.lat, p.lon); p.cd = d; p.km = d >= 1 ? +d.toFixed(d < 10 ? 1 : 0) : 0; p.m = d < 1 ? Math.max(10, Math.round(d * 100) * 10) : 0; p.dir = d * 1000 >= 10 ? dir : ""; }
+    const b = map.bounds();
+    listed = items.map((p, i) => i).filter((i) => circle ? items[i].cd <= circle.km : geoIn(b, items[i].lat, items[i].lon));
+    if (circle) listed.sort((i, j) => items[i].cd - items[j].cd);
+    const w = App.t(KINDS[data.what] || {en: data.what || ""}), n = listed.length;
+    title.textContent = circle
+      ? (circle.place ? t("near", {w, r: kmText(circle.km), p: circle.place, n}) : t("nearpt", {w, r: kmText(circle.km), n}) + (circle.cut ? " " + t("most") : ""))
+      : t("sight", {w, n});
+    rows = listed.map((i) => { const p = items[i];
+      return `<li data-i="${i}" class="${i === pick ? "on" : ""}"><span class="n">${listed.indexOf(i) + 1}</span><span>${esc(p.name || App.t(KINDS[data.what] || {en: ""}))}` +
+        `${p.address ? `<br><span class="note">${esc(p.address)}</span>` : ""}</span><span class="note">${esc([distText(p), p.dir].filter(Boolean).join(" "))}</span></li>`; }).join("");
+    if (!n) rows = `<li class="plain note">${esc(t("none"))}</li>`;
+  } else if (kind === "find") {
+    title.textContent = placeName(place) || t("here");
+    rows = `<li class="plain note">${esc(t("press"))}</li>`;
+  }
+  list.innerHTML = rows;
+  for (const li of list.querySelectorAll("li[data-i]")) li.onclick = () => choose(+li.dataset.i);
+}
+
+function fitTrip() {
+  const tr = trips[tsel], pts = [];
+  if (tr) for (const l of tr.legs) for (const [la, lo] of l.pts) pts.push([lo, la]);
+  if (data.from) pts.push([data.from.lon, data.from.lat]);
+  if (data.to) pts.push([data.to.lon, data.to.lat]);
+  if (pts.length) map.fit(pts, 0.15);
+  paint();
+}
+
+/* the search: a place or an address found (the view's sandbox has no
+   forms: Enter or the button) */
+function words() {
+  const q = document.getElementById("q");
+  q.placeholder = t("search"); document.getElementById("go").textContent = t("go");
+  document.getElementById("search").hidden = !App.canCall();
+}
+function find() { const v = document.getElementById("q").value.trim(); if (v) ask("maps_find", {place: v}).catch(() => {}); }
+document.getElementById("go").onclick = find;
+document.getElementById("q").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); find(); } });
+let xbtn = null;
+function show(r, keep) {
+  data = r.structuredContent || {};
+  /* a tool's error: said, the search still there */
+  if (r.isError && !r.structuredContent) {
+    words();
+    document.getElementById("title").textContent = (r.content && r.content[0] && r.content[0].text || "").slice(0, 300);
+    App.size();
+    return;
+  }
+  if (!asked) asked = [App.toolName(), App.input() || {}];
+  const was = kind;
+  kind = data.steps || data.alternatives || data.shape || data.n_steps !== undefined ? "route" : data.trips ? "transit" : data.items && data.what ? "near" : data.place && data.link ? "find" : "";
+  pick = -1; stepAt = null; place = null; routes = []; steps = []; trips = []; items = [];
+  document.getElementById("card").hidden = true;
+  if (kind === "route") {
+    routes = [data].concat(data.alternatives || []).map((x) => Object.assign({}, x, {pts: [].concat(...(x.shape || []).map((s) => decode(s, x.prec)))}));
+    /* where each step begins: its leg's point */
+    const legs = (data.shape || []).map((s) => decode(s, data.prec));
+    steps = (data.steps || []).map((s) => Object.assign({}, s, {pt: s.at !== undefined && legs[s.leg] && legs[s.leg][s.at] ? legs[s.leg][s.at] : null}));
+    if (sel >= routes.length || was !== "route") sel = 0;
+    start = null; circle = null; map.circled(false);
+  } else if (kind === "transit") {
+    trips = (data.trips || []).map((x) => Object.assign({}, x, {legs: (x.legs || []).map((l) => Object.assign({}, l,
+      {pts: l.geom ? decode(l.geom, l.prec) : l.flat !== undefined ? [[l.flat, l.flon], [l.tlat, l.tlon]] : []}))}));
+    tsel = 0; start = null; circle = null; map.circled(false);
+  } else if (kind === "near") {
+    items = (data.items || []).filter((p) => p.lat !== undefined).map((p) => Object.assign(p, {poi: true}));
+    if (!circle || !keep) {
+      circle = data.place ? {lat: data.place.lat, lon: data.place.lon, km: data.radius || 2, place: placeName(data.place)} : null;
+      map.circled(!!circle);
+    }
+  } else if (kind === "find") {
+    place = Object.assign({}, data.place, {kind: data.kind, osm: data.osm, link: data.link});
+  }
+  /* its table, to export: the steps, the legs, the places */
+  if (!xbtn) xbtn = Exporter.button(document.getElementById("tools"), () => {
+    const name = document.getElementById("title").textContent;
+    if (kind === "route") return {name, columns: [{key: "n", label: "#"}, {key: "text", label: t("step")}, {key: "dist", label: t("dist")}, {key: "lat", label: Exporter.label("lat")}, {key: "lon", label: Exporter.label("lon")}],
+      rows: (sel === 0 ? steps : []).map((s, i) => ({n: i + 1, text: s.text, dist: distText(s), lat: s.pt ? s.pt[0] : "", lon: s.pt ? s.pt[1] : ""}))};
+    if (kind === "transit") return {name, columns: [{key: "mode", label: t("line")}, {key: "from", label: t("fromst")}, {key: "dep", label: t("dep")}, {key: "to", label: t("tost")}, {key: "arr", label: t("arr")}, {key: "agency", label: "Agency"}],
+      rows: (trips[tsel] ? trips[tsel].legs : []).map((l) => ({mode: l.walk ? t("walk") : [tw(modeOf(l.mode)[0]), l.line].filter(Boolean).join(" "), from: l.from, dep: clock(l.dep), to: l.to, arr: clock(l.arr), agency: l.agency || ""}))};
+    if (kind === "near") return {name, columns: [{key: "name", label: t("name")}, {key: "address", label: t("address")}, {key: "hours", label: t("hours")}, {key: "phone", label: t("phone")},
+      {key: "dist", label: t("dist")}, {key: "lat", label: Exporter.label("lat")}, {key: "lon", label: Exporter.label("lon")}, {key: "osm", label: "OpenStreetMap"}],
+      rows: listed.map((i) => items[i]).map((p) => ({name: p.name || "", address: p.address || "", hours: p.hours || "", phone: p.phone || "", dist: distText(p), lat: p.lat, lon: p.lon, osm: p.osm ? "https://www.openstreetmap.org/" + p.osm : ""}))};
+    return {name, columns: [{key: "name", label: t("name")}, {key: "address", label: t("address")}, {key: "lat", label: Exporter.label("lat")}, {key: "lon", label: Exporter.label("lon")}],
+      rows: place ? [{name: place.name || "", address: place.address || "", lat: place.lat, lon: place.lon}] : []};
+  });
+  words();
+  const src = kind === "route" ? data.source || "Valhalla" : kind === "transit" ? "Transitous" : kind === "near" ? "Overpass" : "Nominatim";
+  credit = () => { document.getElementById("credit").textContent = mapCredit(t("credit", {s: src}), map.layer()); };
+  credit();
+  options();
+  listing();
+  /* where to look: the whole route, the first journey, the places, the place */
+  if (kind === "route") {
+    const pts = routes.length && routes[0].pts.length ? routes.flatMap((r) => r.pts).map(([la, lo]) => [lo, la]) : [data.from, data.to].filter(Boolean).map((p) => [p.lon, p.lat]);
+    map.fit(pts, 0.12);
+  } else if (kind === "transit") fitTrip();
+  else if (kind === "near" && !keep) {
+    const pts = items.map((p) => [p.lon, p.lat]);
+    if (circle) { const dl = circle.km / 111.32, dn = dl / Math.cos(circle.lat * Math.PI / 180); pts.push([circle.lon - dn, circle.lat - dl], [circle.lon + dn, circle.lat + dl]); }
+    if (pts.length) map.fit(pts, 0.1);
+    listing();
+  } else if (kind === "find" && place) {
+    map.view(place.lon, place.lat, Math.max(16, keep ? map.zoom() : 0));
+    card(place, [[t("address"), esc(place.address)], [t("what"), esc((place.kind || "").replace(/^[a-z_]+=/, "").replace(/_/g, " "))], [t("coords"), esc(ll(place))]]);
+  }
+  paint(); App.size();
+}
+App.on("result", (r) => { asked = null; show(r); });
+App.on("context", () => paint());
+App.start("janas-maps");
+</script>
+</body></html>

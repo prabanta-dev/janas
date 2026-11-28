@@ -185,6 +185,17 @@ void pr_jnum(struct janas_buf *b, const char *key, double v, int decimals);
 /* A number with its decimals for a price: 2, 4 or 6 as it is small */
 int pr_decimals(double v);
 void pr_jplace(struct janas_buf *b, const char *key, const struct pr_place *p);
+/* history.c: a price over the last days for a view's chart, asked only of
+   a client that shows views or when the request gives "days" (0: not
+   asked); each into h, the "history" of the data (pr_with_history) */
+int pr_history_days(const struct janas_json *args);
+void pr_history_fx(struct janas_buf *h, const char *from, const char *list,
+                   int days);
+void pr_history_coin(struct janas_buf *h, const char *id, const char *cur,
+                     int days);
+void pr_history_stock(struct janas_buf *h, const char *symbol, int days);
+void pr_with_history(struct janas_buf *data, const struct janas_buf *h);
+
 void pr_fx_data(struct janas_buf *b, double amount, const char *from,
                 const struct pr_fx *fx, const char *source);
 void pr_coin_data(struct janas_buf *b, const struct pr_coin *c,

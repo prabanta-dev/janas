@@ -8,12 +8,14 @@
  */
 #include <dirent.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "brebus.h"
 #include "common/catalog.h"
 #include "common/model_scan.h"
 #include "common/sysinfo.h"
+#include "llm/jns.h"
 
 #ifndef JANAS_VERSION
 #define JANAS_VERSION "unknown"
@@ -103,10 +105,11 @@ static void models(struct brebus *b, struct janas_buf *o)
         janas_buf_printf(o,
                          ", \"bytes\": %llu, \"context\": %u, \"fim\": %d, "
                          "\"recurrent\": %d, \"coder\": %d, \"thinks\": %d, "
-                         "\"vision\": %d}",
+                         "\"vision\": %d, \"recommended\": %s}",
                          (unsigned long long)m[i].bytes, m[i].ctx, m[i].fim,
                          m[i].recurrent, m[i].coder, m[i].thinks,
-                         brebus_model_sees(b->models_dir, m[i].name));
+                         brebus_model_sees(b->models_dir, m[i].name),
+                         m[i].sampling[0] ? m[i].sampling : "{}");
     }
     janas_buf_puts(o, "]}");
 }
@@ -193,6 +196,8 @@ static void catalog(struct janas_buf *o)
         str(o, e->what);
         janas_buf_puts(o, ", \"file\": ");
         str(o, e->out);
+        janas_buf_puts(o, ", \"repo\": ");
+        str(o, e->repo ? e->repo : "");
         janas_buf_printf(o,
                          ", \"download_gb\": %.2f, \"ram_gb\": %d, \"fits\": "
                          "%d, \"chat\": %d, \"test_only\": %d, \"speech\": %d}",
@@ -201,6 +206,127 @@ static void catalog(struct janas_buf *o)
                          e->speech);
     }
     janas_buf_puts(o, "]}");
+}
+
+/*
+ * A model's chat template, as its file has it: {"template": "..."}, or
+ * {"error": "..."}; for My models to show and to start a template of the
+ * user's own from.
+ */
+int brebus_model_template(struct brebus *b, const char *name,
+                          struct janas_buf *out)
+{
+    static struct janas_model_file m[JANAS_MODELS_MAX];
+    int n = janas_models_scan(b->models_dir, m, JANAS_MODELS_MAX), at = -1;
+    for (int i = 0; name && i < n; i++)
+        if (!strcmp(m[i].name, name))
+            at = i;
+    if (at < 0) {
+        janas_buf_puts(out, "{\"error\": \"no model named so\"}");
+        return 404;
+    }
+    struct janas_jns j;
+    char err[256];
+    size_t cap = (size_t)1 << 20;
+    char *t = malloc(cap);
+    int got = -1;
+    if (t && janas_jns_open(m[at].path, &j, err, sizeof err) == 0) {
+        got = janas_jns_meta_str(&j, "tokenizer.chat_template", t, cap);
+        janas_jns_close(&j);
+    }
+    if (got != 0) {
+        free(t);
+        janas_buf_puts(out, "{\"error\": \"the model's file has no chat "
+                            "template\"}");
+        return 404;
+    }
+    janas_buf_puts(out, "{\"template\": ");
+    janas_json_write_str(out, t, strlen(t));
+    janas_buf_puts(out, "}");
+    free(t);
+    return 200;
+}
+
+/* a key of the model's file as text into the card (when it has it) */
+static void card_str(struct janas_buf *o, const struct janas_jns *j,
+                     const char *key, const char *as)
+{
+    char v[2048];
+    if (janas_jns_meta_str(j, key, v, sizeof v) != 0 || !v[0])
+        return;
+    janas_buf_printf(o, ", \"%s\": ", as);
+    janas_json_write_str(o, v, strlen(v));
+}
+
+/*
+ * A model's card, from its file: what its makers and its converter wrote
+ * of it (GGUF's general.*): its name, size, licence and the licence's
+ * address, the model it was made from, who quantized it, its repository,
+ * its tags, its description. {"name": ...}, or {"error": ...}.
+ */
+int brebus_model_card(struct brebus *b, const char *name, struct janas_buf *out)
+{
+    static struct janas_model_file m[JANAS_MODELS_MAX];
+    int n = janas_models_scan(b->models_dir, m, JANAS_MODELS_MAX), at = -1;
+    for (int i = 0; name && i < n; i++)
+        if (!strcmp(m[i].name, name))
+            at = i;
+    struct janas_jns j;
+    char err[256];
+    if (at < 0 || janas_jns_open(m[at].path, &j, err, sizeof err) != 0) {
+        janas_buf_puts(out, "{\"error\": \"no model named so\"}");
+        return 404;
+    }
+    janas_buf_puts(out, "{\"file\": ");
+    const char *f = strrchr(m[at].path, '/');
+    f = f ? f + 1 : m[at].path;
+    janas_json_write_str(out, f, strlen(f));
+    card_str(out, &j, "general.name", "name");
+    card_str(out, &j, "general.organization", "organization");
+    card_str(out, &j, "general.size_label", "size");
+    card_str(out, &j, "general.finetune", "finetune");
+    card_str(out, &j, "general.license", "license");
+    card_str(out, &j, "general.license.name", "license_name");
+    card_str(out, &j, "general.license.link", "license_link");
+    card_str(out, &j, "general.quantized_by", "quantized_by");
+    card_str(out, &j, "general.repo_url", "repo_url");
+    card_str(out, &j, "general.url", "url");
+    card_str(out, &j, "general.description", "description");
+    uint32_t nb = 0;
+    if (janas_jns_meta_u32(&j, "general.base_model.count", &nb) == 0 && nb) {
+        janas_buf_puts(out, ", \"base\": [");
+        for (uint32_t i = 0; i < nb && i < 8; i++) {
+            char k[96];
+            janas_buf_puts(out, i ? ", {\"i\": 0" : "{\"i\": 0");
+            snprintf(k, sizeof k, "general.base_model.%u.name", i);
+            card_str(out, &j, k, "name");
+            snprintf(k, sizeof k, "general.base_model.%u.organization", i);
+            card_str(out, &j, k, "organization");
+            snprintf(k, sizeof k, "general.base_model.%u.repo_url", i);
+            card_str(out, &j, k, "repo_url");
+            janas_buf_puts(out, "}");
+        }
+        janas_buf_puts(out, "]");
+    }
+    uint64_t nt = 0;
+    const uint8_t *tp = NULL;
+    if (janas_jns_meta_strings(&j, "general.tags", &nt, &tp) == 0 && nt) {
+        /* each a 64-bit length, then its bytes */
+        janas_buf_puts(out, ", \"tags\": [");
+        for (uint64_t i = 0; i < nt && i < 32; i++) {
+            uint64_t len;
+            memcpy(&len, tp, sizeof len);
+            tp += sizeof len;
+            janas_buf_puts(out, i ? ", " : "");
+            janas_json_write_str(out, (const char *)tp,
+                                 len < 256 ? (size_t)len : 256);
+            tp += len;
+        }
+        janas_buf_puts(out, "]");
+    }
+    janas_buf_puts(out, "}");
+    janas_jns_close(&j);
+    return 200;
 }
 
 int brebus_api(struct brebus *b, const char *what, struct janas_buf *out)

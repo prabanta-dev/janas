@@ -20,6 +20,14 @@
 
 /* INSTRUCTIONS, from SKILL.md beside this file (build.sh) */
 #include "skill.h"
+/* VIEW_chart, from views/chart.html (build.sh): a price over the last
+   days, for a client that shows MCP Apps' views */
+#include "views.h"
+
+static const struct janas_mcps_view views[] = {{.uri = "ui://prices/chart",
+                                                .name = "A price over time",
+                                                .html = VIEW_chart,
+                                                .csp = NULL}};
 
 static void usage(void)
 {
@@ -71,7 +79,9 @@ int main(int argc, char **argv)
                              .version = JANAS_VERSION,
                              .instructions = INSTRUCTIONS,
                              .tools_list = pr_tools_list,
-                             .tools_call = pr_tools_call};
+                             .tools_call = pr_tools_call,
+                             .views = views,
+                             .n_views = 1};
     if (janas_mcps_open(&srv) != 0) {
         fprintf(stderr, "janas-prices: cannot set its output aside\n");
         return 1;

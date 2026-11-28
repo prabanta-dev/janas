@@ -278,9 +278,15 @@ static int valhalla_trip(const struct janas_json *trip, struct mp_route *r,
     if (steps)
         r->step = calloc(MP_STEPS, sizeof *r->step);
     const struct janas_json *legs = janas_json_get(trip, "legs");
+    int leg = 0;
+    r->prec = 6; /* Valhalla's */
+    janas_buf_puts(&r->shape, "[");
     for (const struct janas_json *l =
              legs && legs->type == JANAS_JSON_ARRAY ? legs->child : NULL;
-         l; l = l->next) {
+         l; l = l->next, leg++) {
+        const char *sh = str(l, "shape");
+        janas_buf_puts(&r->shape, leg ? ", " : "");
+        janas_json_write_str(&r->shape, sh ? sh : "", sh ? strlen(sh) : 0);
         const struct janas_json *ms = janas_json_get(l, "maneuvers");
         for (const struct janas_json *m =
                  ms && ms->type == JANAS_JSON_ARRAY ? ms->child : NULL;
@@ -292,13 +298,18 @@ static int valhalla_trip(const struct janas_json *trip, struct mp_route *r,
             if (!t || !r->step)
                 continue;
             if (r->n_step < MP_STEPS) {
-                copy(r->step[r->n_step].text, sizeof r->step[0].text, t);
-                r->step[r->n_step++].km = km;
+                struct mp_step *st = &r->step[r->n_step++];
+                copy(st->text, sizeof st->text, t);
+                st->km = km;
+                st->leg = leg;
+                st->at = (int)janas_json_num(
+                    janas_json_get(m, "begin_shape_index"), -1);
             } else {
                 r->cut++;
             }
         }
     }
+    janas_buf_puts(&r->shape, "]");
     if (rd)
         roads_line(rd, r->roads, sizeof r->roads);
     free(rd);
@@ -375,6 +386,12 @@ int mp_read_osrm(const char *text, size_t n, struct mp_routes *rs, char *err,
         o->min = janas_json_num(janas_json_get(r, "duration"), NAN) / 60;
         if (isnan(o->km) || isnan(o->min))
             continue;
+        /* its way, the whole of it (overview=full): OSRM's polyline */
+        const char *g = str(r, "geometry");
+        o->prec = 5;
+        janas_buf_puts(&o->shape, "[");
+        janas_json_write_str(&o->shape, g ? g : "", g ? strlen(g) : 0);
+        janas_buf_puts(&o->shape, "]");
         const struct janas_json *legs = janas_json_get(r, "legs");
         for (const struct janas_json *l =
                  legs && legs->type == JANAS_JSON_ARRAY ? legs->child : NULL;
@@ -400,6 +417,7 @@ void mp_routes_free(struct mp_routes *rs)
     for (int i = 0; i < MP_ROUTES; i++) {
         free(rs->r[i].step);
         rs->r[i].step = NULL;
+        janas_buf_free(&rs->r[i].shape);
     }
 }
 
@@ -408,6 +426,15 @@ void mp_routes_free(struct mp_routes *rs)
 static void leg_place(char *to, size_t cap, const struct janas_json *p)
 {
     copy(to, cap, str(p, "name"));
+}
+
+void mp_transit_free(struct mp_transit *tr)
+{
+    for (int i = 0; i < tr->n && i < MP_TRIPS; i++)
+        for (int k = 0; k < MP_LEGS; k++) {
+            free(tr->t[i].leg[k].geom);
+            tr->t[i].leg[k].geom = NULL;
+        }
 }
 
 int mp_read_transit(const char *text, size_t n, struct mp_transit *tr,
@@ -451,11 +478,26 @@ int mp_read_transit(const char *text, size_t n, struct mp_transit *tr,
             g->walk_m = janas_json_num(janas_json_get(l, "distance"), NAN);
             const struct janas_json *rt = janas_json_get(l, "realTime");
             g->real_time = rt && rt->type == JANAS_JSON_TRUE;
+            /* for a map: its ends and its way */
+            const struct janas_json *f = janas_json_get(l, "from"),
+                                    *e = janas_json_get(l, "to");
+            g->flat = num(f, "lat");
+            g->flon = num(f, "lon");
+            g->tlat = num(e, "lat");
+            g->tlon = num(e, "lon");
+            const struct janas_json *lg = janas_json_get(l, "legGeometry");
+            const char *pts = str(lg, "points");
+            g->geom = pts ? strdup(pts) : NULL;
+            g->prec = (int)janas_json_num(janas_json_get(lg, "precision"), 6);
             if (!tr->tz[0])
                 copy(tr->tz, sizeof tr->tz,
                      str(janas_json_get(l, "from"), "tz"));
             if (g->mode[0])
                 t->n_leg++;
+            else { /* not kept: its slot taken by the next */
+                free(g->geom);
+                g->geom = NULL;
+            }
         }
         tr->n++;
     }

@@ -212,8 +212,8 @@ struct janas_gpu {
     VkShaderModule sm_id4, sm_id6, sm_id6s, sm_idmx, sm_id3, sm_id5;
     VkPipeline pipe_id4, pipe_id6, pipe_id6s, pipe_idmx, pipe_id3, pipe_id5;
     /* ... and in blocks of 32 or 64 (b32_mmid.comp): IQ4_NL, Q5_0, Q2_0 */
-    VkShaderModule sm_idb[3];
-    VkPipeline pipe_idb[3];
+    VkShaderModule sm_idb[4];
+    VkPipeline pipe_idb[4];
     /* bf16 weights on float vectors, bit for bit (bf16_matvec.comp) */
     VkShaderModule sm_b16;
     VkPipeline pipe_b16;

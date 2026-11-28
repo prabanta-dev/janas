@@ -43,6 +43,17 @@
 
 static _Thread_local char last_error[512];
 
+/* MCP Apps: declared by a client that shows views (Brebus) */
+int janas_mcp_views_on;
+#define UI_EXT                                                                 \
+    "\"extensions\":{\"io.modelcontextprotocol/ui\":{\"mimeTypes\":"           \
+    "[\"text/html;profile=mcp-app\"]}}"
+
+void janas_mcp_views(int32_t on)
+{
+    janas_mcp_views_on = on != 0;
+}
+
 int32_t janas_mcp_fail(int32_t code, const char *fmt, ...)
 {
     va_list ap;
@@ -97,7 +108,10 @@ static void params(struct janas_buf *b, const struct janas_mcp *m,
                           "\"janas\",\"version\":");
         janas_json_write_str(b, JANAS_VERSION, strlen(JANAS_VERSION));
         janas_buf_puts(b, "},\"io.modelcontextprotocol/clientCapabilities\""
-                          ":{}}");
+                          ":{");
+        if (janas_mcp_views_on)
+            janas_buf_puts(b, UI_EXT);
+        janas_buf_puts(b, "}}");
         if (n)
             janas_buf_puts(b, ",");
     }
@@ -270,7 +284,10 @@ static int32_t initialize(struct janas_mcp *m)
     m->modern = 0;
     struct janas_buf b = {0};
     janas_buf_puts(&b, "\"protocolVersion\":\"" JANAS_MCP_LEGACY "\","
-                       "\"capabilities\":{},\"clientInfo\":{\"name\":"
+                       "\"capabilities\":{");
+    if (janas_mcp_views_on)
+        janas_buf_puts(&b, UI_EXT);
+    janas_buf_puts(&b, "},\"clientInfo\":{\"name\":"
                        "\"janas\",\"version\":");
     janas_json_write_str(&b, JANAS_VERSION, strlen(JANAS_VERSION));
     janas_buf_puts(&b, "}");
@@ -709,12 +726,16 @@ int32_t janas_mcp_tools(const janas_mcp *m, const char *prefix,
                                  : (size_t)prefix_len;
     struct janas_buf b = {0}, name = {0};
     janas_buf_puts(&b, "[");
+    int first = 1;
     for (size_t i = 0; i < m->n_tools; i++) {
         const struct janas_mcp_tool *t = &m->tools[i];
+        if (t->app_only)
+            continue; /* its view's alone: not the model's */
         name.n = 0;
         janas_buf_put(&name, prefix, pn);
         janas_buf_puts(&name, t->name);
-        janas_buf_puts(&b, i ? ", " : "");
+        janas_buf_puts(&b, first ? "" : ", ");
+        first = 0;
         janas_buf_puts(&b,
                        "{\"type\": \"function\", \"function\": {\"name\": ");
         janas_json_write_str(&b, name.p ? name.p : "", name.n);
@@ -741,6 +762,36 @@ static int ended(struct janas_mcp *m)
     if (!m->p.proc.id || m->p.eof)
         return 1;
     return janas_proc_wait(&m->p.proc, 0, NULL) == 1;
+}
+
+static const struct janas_mcp_tool *tool_named(const janas_mcp *m,
+                                               const char *name, int32_t len)
+{
+    size_t n = len < 0 ? strlen(name) : (size_t)len;
+    for (size_t i = 0; m && name && i < m->n_tools; i++)
+        if (strlen(m->tools[i].name) == n &&
+            memcmp(m->tools[i].name, name, n) == 0)
+            return &m->tools[i];
+    return NULL;
+}
+
+int32_t janas_mcp_tool_view(const janas_mcp *m, const char *name,
+                            int32_t name_len, char *buf, int32_t cap,
+                            int32_t *len)
+{
+    if (len)
+        *len = 0;
+    const struct janas_mcp_tool *t = tool_named(m, name, name_len);
+    if (!t || !t->view)
+        return janas_mcp_fail(JANAS_MCP_EINVAL, "no view");
+    return copy_out(t->view, strlen(t->view), buf, cap, len);
+}
+
+int32_t janas_mcp_tool_app_only(const janas_mcp *m, const char *name,
+                                int32_t name_len)
+{
+    const struct janas_mcp_tool *t = tool_named(m, name, name_len);
+    return t ? t->app_only : -1;
 }
 
 int32_t janas_mcp_tool_read_only(const janas_mcp *m, const char *name,
@@ -893,4 +944,43 @@ void janas_mcp_cancel(janas_mcp *m)
 {
     if (m)
         __atomic_store_n(&m->cancel, 1, __ATOMIC_RELAXED);
+}
+
+/* MCP Apps: a resource of the server (its view), the result of
+   resources/read as JSON ({"contents": [...]}) */
+int32_t janas_mcp_read(janas_mcp *m, const char *uri, int32_t uri_len,
+                       char *buf, int32_t cap, int32_t *len)
+{
+    if (len)
+        *len = 0;
+    if (!m || !uri)
+        return janas_mcp_fail(JANAS_MCP_EINVAL, "invalid argument");
+    size_t un = uri_len < 0 ? strlen(uri) : (size_t)uri_len;
+    if (ended(m)) {
+        int32_t rc = connect_server(m);
+        if (rc != JANAS_MCP_OK)
+            return rc;
+    }
+    struct janas_buf b = {0};
+    janas_buf_puts(&b, "\"uri\":");
+    janas_json_write_str(&b, uri, un);
+    struct janas_rpc_msg a;
+    int r =
+        b.oom ? NOMEM : request(m, "resources/read", b.p, b.n, m->wait_ms, &a);
+    janas_buf_free(&b);
+    if (r != ANSWERED)
+        return lost(m, r, "resources/read");
+    int32_t rc;
+    if (a.kind == JANAS_RPC_ERROR) {
+        rc = janas_mcp_fail(JANAS_MCP_EFAIL, "%s: resources/read: %s (%lld)",
+                            m->name, a.message, (long long)a.code);
+    } else {
+        struct janas_buf o = {0};
+        janas_json_write(&o, a.result);
+        rc = o.oom ? janas_mcp_fail(JANAS_MCP_ENOMEM, "out of memory")
+                   : copy_out(o.p ? o.p : "", o.n, buf, cap, len);
+        janas_buf_free(&o);
+    }
+    janas_rpc_free(&a);
+    return rc;
 }

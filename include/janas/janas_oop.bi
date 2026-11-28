@@ -121,6 +121,10 @@ end type
 '' A conversation's parameters: janas_llm_chat_params with the library's
 '' defaults (options.Temperature = 0, options.max_reply = 400,
 '' options.Thinking = Janas.ThinkMode.Off).
+'' The sampling fields left at -1 (temperature, top_k, top_p, min_p,
+'' repeat_penalty, repeat_last_n, xtc_probability, xtc_threshold, mirostat,
+'' mirostat_tau, mirostat_eta) are the model's own; Chat.Sampling says what
+'' a chat ends up with.
 type ChatOptions extends janas_llm_chat_params
     declare constructor()
 end type
@@ -262,6 +266,9 @@ public:
     '' one parameter at a time, from the next reply on
     declare property Temperature(byval t as single)
     declare property MaxReply(byval limit as long)
+    '' the order of the sampling stages, llama.cpp's names by ';' ("": the
+    '' model's, else Janas's)
+    declare property Samplers(byref order as const string)
     declare property Thinking(byval think as ThinkMode)
     '' the system message, before the first message (or after Reset)
     declare property System(byref text as const string)
@@ -285,6 +292,10 @@ public:
     declare function ReadReply(byref handler as ReplyHandler) as boolean
     declare function Ask(byref text as const string) as string
     declare const function Stats() as ReplyStats
+    '' what it samples with: its options, the model's own in place of those
+    '' left negative and Janas's where the model says nothing, samplers in
+    '' llama.cpp's names
+    declare function Sampling() as ChatOptions
     declare function Reset() as boolean
     '' tools: OpenAI's JSON array; whether the model calls them; the calls
     '' of the reply and what they answered (SendResults, in their order)
@@ -990,6 +1001,12 @@ property Chat.MaxReply(byval limit as long)
     SetOptions(settings)
 end property
 
+property Chat.Samplers(byref order as const string)
+    dim as ChatOptions settings = current
+    settings.samplers = left(order, sizeof(settings.samplers) - 1)
+    SetOptions(settings)
+end property
+
 property Chat.Thinking(byval think as ThinkMode)
     dim as ChatOptions settings = current
     settings.thinking = think
@@ -1133,6 +1150,15 @@ function Chat.Stats() as ReplyStats
         janas_llm_chat_stats(hs->chat, cast(janas_llm_chat_stats ptr, @st))
     end if
     return st
+end function
+
+function Chat.Sampling() as ChatOptions
+    dim as ChatOptions settings
+    if Closed() then return settings
+    dim as long rc = janas_llm_chat_sampling(hs->chat, _
+                        cast(janas_llm_chat_params ptr, @settings))
+    if rc <> JANAS_LLM_OK then Fail(rc) else Done_()
+    return settings
 end function
 
 function Chat.Reset() as boolean

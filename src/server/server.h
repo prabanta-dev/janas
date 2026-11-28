@@ -42,8 +42,10 @@ struct srv_config {
     size_t max_body;      /* bytes of a request body at most */
     int max_connections;
     int verbose;
-    int test;             /* serve the test chat page at /test */
-    int monitor;          /* serve the engine's monitor at /monitor */
+    int test;                  /* serve the test chat page at /test */
+    int monitor;               /* serve the engine's monitor at /monitor */
+    const char *chat_template; /* a file whose template every chat uses
+                                  in place of the model's, or NULL */
     int thinking;         /* reasoning when a request does not say: 1, 0, or -1
                              for the model's own default */
     int reasoning_budget; /* the longest reasoning when a request does not
@@ -206,6 +208,9 @@ struct srv_job {
     int32_t format;
     char *schema;
     size_t n_schema;
+    /* the chat template's keywords (a JSON object) and the request's own
+       template, or NULL */
+    char *kwargs, *tmpl;
     int32_t *bias_id;
     float *bias;
     int32_t n_bias;

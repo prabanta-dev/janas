@@ -188,6 +188,29 @@ JANAS_MCP_API int32_t janas_mcp_result_user(const janas_mcp *m, char *buf,
 JANAS_MCP_API int32_t janas_mcp_result_json(const janas_mcp *m, char *buf,
                                             int32_t cap, int32_t *len);
 
+/*
+ * MCP Apps (the extension io.modelcontextprotocol/ui): views of HTML that a
+ * server gives its tools, shown with their results by a client that can
+ * (Brebus). janas_mcp_views(1), before the servers are opened: this
+ * process's client declares that it shows them (it is off by default: a
+ * client of text, janas-chat, does not). janas_mcp_tool_view: a tool's
+ * view, its ui:// address (JANAS_MCP_EINVAL when it has none).
+ * janas_mcp_tool_app_only: 1 for a tool the view alone calls (it is not
+ * among janas_mcp_tools'), 0, -1 for no such tool. janas_mcp_read: a
+ * resource of the server, the result of resources/read as JSON
+ * ({"contents": [{"uri", "mimeType", "text", "_meta"}]}).
+ */
+JANAS_MCP_API void janas_mcp_views(int32_t on);
+JANAS_MCP_API int32_t janas_mcp_tool_view(const janas_mcp *m, const char *name,
+                                          int32_t name_len, char *buf,
+                                          int32_t cap, int32_t *len);
+JANAS_MCP_API int32_t janas_mcp_tool_app_only(const janas_mcp *m,
+                                              const char *name,
+                                              int32_t name_len);
+JANAS_MCP_API int32_t janas_mcp_read(janas_mcp *m, const char *uri,
+                                     int32_t uri_len, char *buf, int32_t cap,
+                                     int32_t *len);
+
 /* Stops the call in progress on m, which then returns an error; the server
    is told (notifications/cancelled). */
 JANAS_MCP_API void janas_mcp_cancel(janas_mcp *m);

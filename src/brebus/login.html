@@ -63,6 +63,13 @@
   <p class="err" id="err"></p>
 </main>
 <script>
+<!--#include brebus/page/i18n.js-->
+</script>
+<script>
+i18nTree(document.body);
+document.title = "Brebus · " + T("Log in");
+</script>
+<script>
 const $ = (id) => document.getElementById(id);
 let setup = "";
 async function post(path, body) {
@@ -82,13 +89,13 @@ $("step1").onsubmit = async (e) => {
     return;
   }
   if (ok) { location.replace("/"); return; }
-  $("err").textContent = j.error || "not logged in";
+  $("err").textContent = j.error || T("not logged in");
 };
 $("step2").onsubmit = async (e) => {
   e.preventDefault();
   $("err").textContent = "";
   const {ok, j} = await post("/brebus/auth/setup", {setup, code: $("code2").value.trim()});
-  if (!ok) { $("err").textContent = j.error || "not confirmed"; return; }
+  if (!ok) { $("err").textContent = j.error || T("not confirmed"); return; }
   $("codes").textContent = "";
   for (const c of j.recovery || []) { const d = document.createElement("div"); d.textContent = c; $("codes").append(d); }
   $("step2").hidden = true; $("step3").hidden = false;

@@ -7,6 +7,7 @@
  */
 #include "files_store.h"
 #include "server.h"
+#include "request.h"
 #include "assistants.h"
 #include "containers.h"
 #include "vectors.h"
@@ -94,6 +95,17 @@ static void usage(FILE *f)
         "  --think on|off    reasoning before replying, for models that do\n"
         "                    it, when a request does not say (default: the\n"
         "                    model's own)\n"
+        "  --sampling JSON   the sampling of the requests that do not say,\n"
+        "                    as a request's own fields: '{\"temperature\":\n"
+        "                    0.6, \"top_p\": 0.95, \"dry_multiplier\": 0.8}'\n"
+        "                    (default: the model's recommendation, its\n"
+        "                    file's general.sampling.*)\n"
+        "  --chat-template FILE  a chat template (Jinja) every chat is\n"
+        "                    written with, in place of the model's own\n"
+        "  --chat-template-kwargs JSON  the template's variables of every\n"
+        "                    request, under a request's own\n"
+        "                    chat_template_kwargs: '{\"enable_thinking\":\n"
+        "                    false}'\n"
         "  --reasoning-budget N  the longest reasoning, in tokens, when a\n"
         "                    request does not say: there the reasoning is\n"
         "                    closed and the model answers (-1: no limit,\n"
@@ -203,6 +215,9 @@ static const char *const OPTIONS[] = {"--help",
                                       "--vad-model",
                                       "--speaker-model",
                                       "--reasoning-budget",
+                                      "--sampling",
+                                      "--chat-template",
+                                      "--chat-template-kwargs",
                                       "--no-mtp",
                                       "--no-gpu",
                                       "--retune",
@@ -402,6 +417,22 @@ int main(int argc, char **argv)
         } else if (!strcmp(a, "--think")) {
             static const char *const on_off[] = {"off", "on"};
             c->thinking = choice(argc, argv, &i, on_off, 2);
+        } else if (!strcmp(a, "--sampling")) {
+            char why[600];
+            if (srv_sampling_defaults(arg(argc, argv, &i), why, sizeof why) !=
+                0) {
+                fprintf(stderr, "janas-server: %s\n", why);
+                exit(2);
+            }
+        } else if (!strcmp(a, "--chat-template")) {
+            c->chat_template = arg(argc, argv, &i);
+        } else if (!strcmp(a, "--chat-template-kwargs")) {
+            char why[300];
+            if (srv_kwargs_defaults(arg(argc, argv, &i), why, sizeof why) !=
+                0) {
+                fprintf(stderr, "janas-server: %s\n", why);
+                exit(2);
+            }
         } else if (!strcmp(a, "--reasoning-budget")) {
             c->reasoning_budget = (int)num(argc, argv, &i, -1, INT32_MAX);
         } else if (!strcmp(a, "--embedding-model")) {
@@ -667,6 +698,20 @@ int main(int argc, char **argv)
             strchr(c->host, ':') ? "[" : "", c->host,
             strchr(c->host, ':') ? "]" : "", (unsigned)c->port,
             c->api_key ? ", with a key" : "");
+    {
+        /* what Janas cannot do of what the model can, said at the start */
+        char lim[2048];
+        int32_t ln = 0;
+        if (janas_llm_limits(srv_engine_llm(s.engine), lim, sizeof lim, &ln) ==
+            JANAS_LLM_OK)
+            for (char *p = lim; *p;) {
+                char *e = strchr(p, '\n');
+                int n = e ? (int)(e - p) : (int)strlen(p);
+                if (n)
+                    fprintf(stderr, "janas-server: limit: %.*s\n", n, p);
+                p += n + (e != NULL);
+            }
+    }
     if (c->test)
         fprintf(stderr, "janas-server: test chat on http://%s%s%s:%u/test\n",
                 strchr(c->host, ':') ? "[" : "",

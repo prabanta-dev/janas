@@ -53,18 +53,48 @@ int32_t janas_llm_chat_aside(janas_llm_chat *c, const char *system,
     c->p.thinking = 0; /* no reasoning: an answer, at once */
     c->in_turn = 0;
     c->n_ids = c->n_text = 0;
-    int err = janas_api_begin_sequence(c);
-    if (system)
-        err |= janas_api_add_message(c, "system", system,
-                                     janas_api_text_len(system, system_len));
-    err |= janas_api_add_message(c, "user", text,
-                                 janas_api_text_len(text, text_len));
-    err |= janas_api_start_reply(c);
+    int err = 0;
+    if (janas_api_template_on(c)) {
+        /* the two messages through the model's template, the chat's own
+           set aside meanwhile */
+        struct cmsg two[2] = {
+            {.role = JANAS_LLM_ROLE_SYSTEM,
+             .text = (char *)system,
+             .n = system ? janas_api_text_len(system, system_len) : 0},
+            {.role = JANAS_LLM_ROLE_USER,
+             .text = (char *)text,
+             .n = janas_api_text_len(text, text_len)}};
+        struct cmsg *msgs = c->msgs;
+        size_t n_msgs = c->n_msgs;
+        char *tools = c->tools_json, *more = c->more_json;
+        c->msgs = system ? two : two + 1;
+        c->n_msgs = system ? 2 : 1;
+        c->tools_json = c->more_json = NULL; /* nothing to call here */
+        uint32_t off;
+        uint32_t sys = c->sys_tokens, last = c->last_at, tt = c->tools_tokens;
+        err = janas_api_template_build(c, &off) != JANAS_LLM_OK;
+        c->sys_tokens = sys, c->last_at = last, c->tools_tokens = tt;
+        c->n_idpics = 0;
+        c->msgs = msgs;
+        c->n_msgs = n_msgs;
+        c->tools_json = tools;
+        c->more_json = more;
+    } else {
+        err = janas_api_begin_sequence(c);
+        if (system)
+            err |= janas_api_add_message(
+                c, "system", system, janas_api_text_len(system, system_len));
+        err |= janas_api_add_message(c, "user", text,
+                                     janas_api_text_len(text, text_len));
+        err |= janas_api_start_reply(c);
+    }
     struct janas_gen_options o;
     int32_t rc = JANAS_LLM_OK;
     struct janas_buf out = {0};
     if (err) {
-        rc = janas_api_fail(JANAS_LLM_ENOMEM, "out of memory");
+        rc = janas_api_template_on(c)
+                 ? JANAS_LLM_EINVAL /* said by the template's build */
+                 : janas_api_fail(JANAS_LLM_ENOMEM, "out of memory");
     } else if (janas_api_options(c, &o) != JANAS_LLM_OK) {
         rc = JANAS_LLM_EINVAL;
     } else {

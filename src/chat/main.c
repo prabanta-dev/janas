@@ -39,6 +39,8 @@
 #include "edit.h"
 #include "layout.h"
 #include "janas/llm.h"
+#include "llm/json.h"
+#include "llm/sample.h"
 #include "markdown.h"
 #include "mcp_chat.h"
 #include "model_menu.h"
@@ -369,9 +371,39 @@ static void usage(void)
         "called Janas,\n"
         "                   and which model it thinks with; \"\" for "
         "none)\n"
-        "  --temp <t>       temperature (default 0.7; 0: greedy)\n"
-        "  --top-k <k>      (default 20)   --top-p <p> (default 0.8)\n"
-        "  --min-p <p>      (default 0)    --seed <n> (default: random)\n"
+        "  --temp <t>       temperature (0: greedy)\n"
+        "  --top-k <k>      --top-p <p>   --min-p <p>\n"
+        "                   the sampling's defaults, here and below, are\n"
+        "                   the model's, as its file recommends; where it\n"
+        "                   says nothing, temperature 0.7, top-k 20,\n"
+        "                   top-p 0.8, min-p 0, and the rest off\n"
+        "  --repeat-penalty <r>  --repeat-last-n <n>\n"
+        "                   llama.cpp's repetition penalty (1: off), over\n"
+        "                   the last n tokens (0 or -1: the whole reply)\n"
+        "  --presence-penalty <p>  --frequency-penalty <p>\n"
+        "                   OpenAI's, -2 to 2 (default 0)\n"
+        "  --typical <p>    locally typical sampling (default 1: off)\n"
+        "  --top-nsigma <n> only the logits within n standard deviations\n"
+        "                   of the best (default 0 or -1: off)\n"
+        "  --xtc-probability <p>  --xtc-threshold <t>\n"
+        "                   XTC (0: off; threshold 0.1)\n"
+        "  --dry-multiplier <m>  --dry-base <b>  --dry-allowed-length <n>\n"
+        "  --dry-penalty-last-n <n>  --dry-sequence-breaker <s>\n"
+        "                   DRY (default 0: off; 1.75, 2, 0 or -1: the\n"
+        "                   whole reply); a breaker each time, \\n for a\n"
+        "                   new line, none for none (default \\n : \" *)\n"
+        "  --mirostat <0|1|2>  --mirostat-lr <eta>  --mirostat-ent <tau>\n"
+        "                   mirostat in place of top-k, top-p... (0: off;\n"
+        "                   0.1, 5)\n"
+        "  --dynatemp-range <r>  --dynatemp-exp <e>\n"
+        "                   the temperature +- r, hotter where the model\n"
+        "                   is unsure (default 0: off; 1)\n"
+        "  --samplers <list>\n"
+        "                   the order of the stages, llama.cpp's names\n"
+        "                   separated by ';' (default: the model's, or\n"
+        "                   top_n_sigma;top_k;typ_p;temperature;top_p;\n"
+        "                   min_p;xtc)\n"
+        "  --seed <n>       (default: random)\n"
         "  --max <tokens>   longest reply (default: no limit)\n"
         "  --no-spec        no speculative decoding\n"
         "  --mode <m>       auto (default), eco or max\n"
@@ -466,7 +498,9 @@ static const struct {
     {"/system", "show the system message"},
     {"/system <text>", "new conversation with this system message"},
     {"/system off", "new conversation with no system message"},
-    {"/temp <t>", "temperature (0: greedy)"},
+    {"/temp [t]",
+     "temperature (0: greedy; -1: the model's); alone, what the chat samples "
+     "with"},
     {"/image <file>",
      "a picture (PNG or JPEG) for your next message, for models that see "
      "(their vision file beside them)"},
@@ -1176,19 +1210,70 @@ struct chat_opts { /* where the words land: main keeps them, this names them */
 /* every option, for the nearest to one mistyped: the first N_ALONE stand
    alone, the others take a value */
 #define N_ALONE 18
-static const char *const OPTIONS[] = {
-    "--no-spec",     "--stats",     "--no-markdown", "--no-gpu",
-    "--no-preload",  "--no-recap",  "--no-mtp",      "--no-mcp",
-    "--no-services", "--all-tools", "--mcp-auto",    "--mcp-instructions",
-    "--tune",        "--no-tune",   "--npu-int8",    "--no-save",
-    "--continue",    "--resume",    "--mtp",         "--draft",
-    "--think",       "--mode",      "--ctx",         "--cache",
-    "--reserve",     "--bits",      "--attention",   "--system",
-    "--mcp-config",  "--progress",  "--temp",        "--top-k",
-    "--top-p",       "--min-p",     "--seed",        "--max",
-    "--head",        "--profile",   "--models",      "--quality",
-    "--prompt-on",   "--drafts-on", "--reply-on",    "--speech-model",
-    "--approvals"};
+static const char *const OPTIONS[] = {"--no-spec",
+                                      "--stats",
+                                      "--no-markdown",
+                                      "--no-gpu",
+                                      "--no-preload",
+                                      "--no-recap",
+                                      "--no-mtp",
+                                      "--no-mcp",
+                                      "--no-services",
+                                      "--all-tools",
+                                      "--mcp-auto",
+                                      "--mcp-instructions",
+                                      "--tune",
+                                      "--no-tune",
+                                      "--npu-int8",
+                                      "--no-save",
+                                      "--continue",
+                                      "--resume",
+                                      "--mtp",
+                                      "--draft",
+                                      "--think",
+                                      "--mode",
+                                      "--ctx",
+                                      "--cache",
+                                      "--reserve",
+                                      "--bits",
+                                      "--attention",
+                                      "--system",
+                                      "--mcp-config",
+                                      "--progress",
+                                      "--temp",
+                                      "--top-k",
+                                      "--top-p",
+                                      "--min-p",
+                                      "--seed",
+                                      "--max",
+                                      "--head",
+                                      "--profile",
+                                      "--models",
+                                      "--quality",
+                                      "--prompt-on",
+                                      "--drafts-on",
+                                      "--reply-on",
+                                      "--speech-model",
+                                      "--approvals",
+                                      "--repeat-penalty",
+                                      "--repeat-last-n",
+                                      "--presence-penalty",
+                                      "--frequency-penalty",
+                                      "--typical",
+                                      "--top-nsigma",
+                                      "--xtc-probability",
+                                      "--xtc-threshold",
+                                      "--dry-multiplier",
+                                      "--dry-base",
+                                      "--dry-allowed-length",
+                                      "--dry-penalty-last-n",
+                                      "--dry-sequence-breaker",
+                                      "--mirostat",
+                                      "--mirostat-lr",
+                                      "--mirostat-ent",
+                                      "--dynatemp-range",
+                                      "--dynatemp-exp",
+                                      "--samplers"};
 #define N_OPTIONS (sizeof OPTIONS / sizeof *OPTIONS)
 
 /* v of option a as a whole number or a number within limits; on a
@@ -1223,6 +1308,60 @@ static int opt_choice(const char *a, const char *v, const char *const *names,
     return k;
 }
 
+/* A hexadecimal digit's value, or -1. */
+static int hex_digit(char c)
+{
+    return c >= '0' && c <= '9'   ? c - '0'
+           : c >= 'a' && c <= 'f' ? c - 'a' + 10
+           : c >= 'A' && c <= 'F' ? c - 'A' + 10
+                                  : -1;
+}
+
+/* --dry-sequence-breaker's v added to the JSON array in list (cap bytes,
+   "" or "[]" for none yet): v with \n, \t, \r, \\ and \xHH read as C
+   reads them, since a line of the settings file cannot hold a new line.
+   0, or -1 when it does not fit. */
+static int breaker_add(char *list, size_t cap, const char *v)
+{
+    char item[256];
+    size_t n = 0;
+    for (const char *s = v; *s; s++) {
+        int c = (unsigned char)*s;
+        if (c == '\\' && s[1]) {
+            s++;
+            c = *s == 'n'   ? '\n'
+                : *s == 't' ? '\t'
+                : *s == 'r' ? '\r'
+                : *s == 'x' && hex_digit(s[1]) >= 0 && hex_digit(s[2]) >= 0
+                    ? (s += 2, hex_digit(s[-1]) * 16 + hex_digit(s[0]))
+                    : (unsigned char)*s;
+        }
+        if (c == 0 || n + 6 >= sizeof item)
+            return -1;
+        if (c == '"' || c == '\\') {
+            item[n++] = '\\';
+            item[n++] = (char)c;
+        } else if (c < 0x20)
+            n += (size_t)snprintf(item + n, sizeof item - n, "\\u%04x", c);
+        else
+            item[n++] = (char)c;
+    }
+    item[n] = 0;
+    size_t at = strlen(list);
+    if (at < 2) { /* none yet */
+        strcpy(list, "[]");
+        at = 2;
+    }
+    int w = snprintf(list + at - 1, cap - (at - 1), "%s\"%s\"]",
+                     at > 2 ? "," : "", item);
+    if (w < 0 || (size_t)w >= cap - (at - 1)) {
+        list[at - 1] = ']'; /* as it was */
+        list[at] = 0;
+        return -1;
+    }
+    return 0;
+}
+
 /* The words of a command line or of the settings file. 0, or -1 with what
    was wrong in why: an option not known (with the nearest), a value that
    is not one. */
@@ -1236,6 +1375,9 @@ static int take_options(int n, char **w, struct chat_opts *o, char *why,
     static const char *const HEAD[] = {"4", "6"};
     static const char *const PROFILES[] = {"quality", "fast"};
     static const char *const QUALITY[] = {"high", "medium", "low"};
+    /* the first --dry-sequence-breaker of a command line or of a file
+       starts the list afresh, the others add to it, as in llama.cpp */
+    int breakers_new = 1;
     for (int i = 0; i < n; i++) {
         const char *a = w[i], *v = i + 1 < n ? w[i + 1] : NULL;
         long long x;
@@ -1417,6 +1559,96 @@ static int take_options(int n, char **w, struct chat_opts *o, char *why,
             if (opt_real(a, v, 0, 1, &r, why, why_len) != 0)
                 return -1;
             o->cp->min_p = (float)r;
+        } else if (strcmp(a, "--repeat-penalty") == 0) {
+            if (opt_real(a, v, 0, 100, &r, why, why_len) != 0)
+                return -1;
+            o->cp->repeat_penalty = (float)r;
+        } else if (strcmp(a, "--repeat-last-n") == 0) {
+            if (opt_int(a, v, -1, INT32_MAX, &x, why, why_len) != 0)
+                return -1;
+            o->cp->repeat_last_n = x < 0 ? 0 : (int32_t)x; /* the reply */
+        } else if (strcmp(a, "--presence-penalty") == 0) {
+            if (opt_real(a, v, -2, 2, &r, why, why_len) != 0)
+                return -1;
+            o->cp->presence_penalty = (float)r;
+        } else if (strcmp(a, "--frequency-penalty") == 0) {
+            if (opt_real(a, v, -2, 2, &r, why, why_len) != 0)
+                return -1;
+            o->cp->frequency_penalty = (float)r;
+        } else if (strcmp(a, "--typical") == 0) {
+            if (opt_real(a, v, 0, 1, &r, why, why_len) != 0)
+                return -1;
+            o->cp->typical_p = (float)r;
+        } else if (strcmp(a, "--top-nsigma") == 0) {
+            if (opt_real(a, v, -1, 100, &r, why, why_len) != 0)
+                return -1;
+            o->cp->top_n_sigma = r < 0 ? 0 : (float)r; /* -1: off */
+        } else if (strcmp(a, "--xtc-probability") == 0) {
+            if (opt_real(a, v, 0, 1, &r, why, why_len) != 0)
+                return -1;
+            o->cp->xtc_probability = (float)r;
+        } else if (strcmp(a, "--xtc-threshold") == 0) {
+            if (opt_real(a, v, 0, 1, &r, why, why_len) != 0)
+                return -1;
+            o->cp->xtc_threshold = (float)r;
+        } else if (strcmp(a, "--dry-multiplier") == 0) {
+            if (opt_real(a, v, 0, 100, &r, why, why_len) != 0)
+                return -1;
+            o->cp->dry_multiplier = (float)r;
+        } else if (strcmp(a, "--dry-base") == 0) {
+            if (opt_real(a, v, 1, 100, &r, why, why_len) != 0)
+                return -1;
+            o->cp->dry_base = (float)r;
+        } else if (strcmp(a, "--dry-allowed-length") == 0) {
+            if (opt_int(a, v, 0, INT32_MAX, &x, why, why_len) != 0)
+                return -1;
+            o->cp->dry_allowed_length = (int32_t)x;
+        } else if (strcmp(a, "--dry-penalty-last-n") == 0) {
+            if (opt_int(a, v, -1, INT32_MAX, &x, why, why_len) != 0)
+                return -1;
+            o->cp->dry_last_n = x < 0 ? 0 : (int32_t)x; /* the reply */
+        } else if (strcmp(a, "--dry-sequence-breaker") == 0) {
+            char *list = o->cp->dry_breakers;
+            if (breakers_new || strcmp(v, "none") == 0)
+                strcpy(list, "[]");
+            breakers_new = 0;
+            if (strcmp(v, "none") != 0 &&
+                breaker_add(list, sizeof o->cp->dry_breakers, v) != 0) {
+                snprintf(why, why_len, "%s: too many, or too long", a);
+                return -1;
+            }
+        } else if (strcmp(a, "--mirostat") == 0) {
+            if (opt_int(a, v, 0, 2, &x, why, why_len) != 0)
+                return -1;
+            o->cp->mirostat = (int32_t)x;
+        } else if (strcmp(a, "--mirostat-lr") == 0) {
+            if (opt_real(a, v, 0, 1, &r, why, why_len) != 0)
+                return -1;
+            o->cp->mirostat_eta = (float)r;
+        } else if (strcmp(a, "--mirostat-ent") == 0) {
+            if (opt_real(a, v, 0, 100, &r, why, why_len) != 0)
+                return -1;
+            o->cp->mirostat_tau = (float)r;
+        } else if (strcmp(a, "--dynatemp-range") == 0) {
+            if (opt_real(a, v, 0, 100, &r, why, why_len) != 0)
+                return -1;
+            o->cp->dynatemp_range = (float)r;
+        } else if (strcmp(a, "--dynatemp-exp") == 0) {
+            if (opt_real(a, v, 0, 100, &r, why, why_len) != 0)
+                return -1;
+            o->cp->dynatemp_exponent = (float)r;
+        } else if (strcmp(a, "--samplers") == 0) {
+            uint8_t st[JANAS_SAMPLE_MAX_STAGES];
+            if (strlen(v) >= sizeof o->cp->samplers ||
+                janas_sample_stages(v, st, JANAS_SAMPLE_MAX_STAGES) < 0) {
+                snprintf(why, why_len,
+                         "%s: llama.cpp's names separated by ';' (penalties, "
+                         "dry, top_n_sigma, top_k, typ_p, top_p, min_p, xtc, "
+                         "temperature) or its letters",
+                         a);
+                return -1;
+            }
+            snprintf(o->cp->samplers, sizeof o->cp->samplers, "%s", v);
         } else if (strcmp(a, "--seed") == 0) {
             if (opt_int(a, v, 0, LLONG_MAX, &x, why, why_len) != 0)
                 return -1;
@@ -1560,6 +1792,44 @@ static char **conf_read(const char *path, int *n, char **store)
     return w;
 }
 
+/* DRY's breakers (a JSON array) as --dry-sequence-breaker lines, escaped
+   as breaker_add reads them */
+static void conf_breakers(FILE *f, const char *list)
+{
+    if (strcmp(list, "[]") == 0) {
+        fprintf(f, "--dry-sequence-breaker none\n");
+        return;
+    }
+    char err[128];
+    struct janas_json_doc *d =
+        janas_json_parse(list, strlen(list), err, sizeof err);
+    const struct janas_json *a = d ? janas_json_root(d) : NULL;
+    if (a && a->type == JANAS_JSON_ARRAY)
+        for (const struct janas_json *e = a->child; e; e = e->next) {
+            if (e->type != JANAS_JSON_STRING || !e->n)
+                continue;
+            fprintf(f, "--dry-sequence-breaker ");
+            for (size_t i = 0; i < e->n; i++) {
+                unsigned char c = (unsigned char)e->s[i];
+                if (c == '\\')
+                    fputs("\\\\", f);
+                else if (c == '\n')
+                    fputs("\\n", f);
+                else if (c == '\t')
+                    fputs("\\t", f);
+                else if (c == '\r')
+                    fputs("\\r", f);
+                else if (c < 0x20 || c == 0x7f ||
+                         (c == ' ' && (i == 0 || i + 1 == e->n)))
+                    fprintf(f, "\\x%02x", c); /* the file trims spaces */
+                else
+                    fputc(c, f);
+            }
+            fputc('\n', f);
+        }
+    janas_json_free(d);
+}
+
 static void conf_write(const char *path, const struct chat_opts *o)
 {
     FILE *f = fopen(path, "w");
@@ -1591,9 +1861,45 @@ static void conf_write(const char *path, const struct chat_opts *o)
             m->mode == JANAS_LLM_MODE_ECO   ? "eco"
             : m->mode == JANAS_LLM_MODE_MAX ? "max"
                                             : "auto");
-    fprintf(f, "--temp %g\n--top-k %d\n--top-p %g\n--min-p %g\n",
-            (double)c->temperature, c->top_k, (double)c->top_p,
-            (double)c->min_p);
+    /* the sampling only where it was set: the rest stays the model's (a
+       negative value) or the library's */
+    struct janas_llm_chat_params d;
+    janas_llm_chat_params_default(&d);
+#define CONF_REAL(field, word)                                                 \
+    if (c->field >= 0 && c->field != d.field)                                  \
+        fprintf(f, word " %g\n", (double)c->field);
+#define CONF_INT(field, word)                                                  \
+    if (c->field >= 0 && c->field != d.field)                                  \
+        fprintf(f, word " %d\n", (int)c->field);
+    CONF_REAL(temperature, "--temp")
+    CONF_INT(top_k, "--top-k")
+    CONF_REAL(top_p, "--top-p")
+    CONF_REAL(min_p, "--min-p")
+    CONF_REAL(repeat_penalty, "--repeat-penalty")
+    CONF_INT(repeat_last_n, "--repeat-last-n")
+    if (c->presence_penalty != d.presence_penalty)
+        fprintf(f, "--presence-penalty %g\n", (double)c->presence_penalty);
+    if (c->frequency_penalty != d.frequency_penalty)
+        fprintf(f, "--frequency-penalty %g\n", (double)c->frequency_penalty);
+    CONF_REAL(typical_p, "--typical")
+    CONF_REAL(top_n_sigma, "--top-nsigma")
+    CONF_REAL(xtc_probability, "--xtc-probability")
+    CONF_REAL(xtc_threshold, "--xtc-threshold")
+    CONF_REAL(dry_multiplier, "--dry-multiplier")
+    CONF_REAL(dry_base, "--dry-base")
+    CONF_INT(dry_allowed_length, "--dry-allowed-length")
+    CONF_INT(dry_last_n, "--dry-penalty-last-n")
+    if (c->dry_breakers[0])
+        conf_breakers(f, c->dry_breakers);
+    CONF_INT(mirostat, "--mirostat")
+    CONF_REAL(mirostat_eta, "--mirostat-lr")
+    CONF_REAL(mirostat_tau, "--mirostat-ent")
+    CONF_REAL(dynatemp_range, "--dynatemp-range")
+    CONF_REAL(dynatemp_exponent, "--dynatemp-exp")
+#undef CONF_REAL
+#undef CONF_INT
+    if (c->samplers[0])
+        fprintf(f, "--samplers %s\n", c->samplers);
     if (c->max_reply)
         fprintf(f, "--max %d\n", c->max_reply);
     if (c->thinking && c->max_reasoning > 0)
@@ -1646,6 +1952,58 @@ static void conf_write(const char *path, const struct chat_opts *o)
     fclose(f);
     term_printf(&term, "written to %s (the system message is not kept)\n",
                 path);
+}
+
+/* What the chat samples with, for /temp alone: the model's where nothing
+   was asked, Janas's where its file says nothing either, marked default;
+   the stages that are off are left out. */
+static void show_sampling(const janas_llm_chat *c,
+                          const struct janas_llm_chat_params *asked_p)
+{
+    struct janas_llm_chat_params s;
+    memset(&s, 0, sizeof s);
+    s.size = sizeof s;
+    if (janas_llm_chat_sampling(c, &s) != JANAS_LLM_OK) {
+        term_printf(&term, "%s\n", janas_llm_last_error());
+        return;
+    }
+    const char *own = " (default)"; /* the model's, or Janas's */
+    term_printf(&term, "temperature %g%s, top-k %d%s, top-p %g%s, min-p %g%s\n",
+                (double)s.temperature, asked_p->temperature < 0 ? own : "",
+                s.top_k, asked_p->top_k < 0 ? own : "", (double)s.top_p,
+                asked_p->top_p < 0 ? own : "", (double)s.min_p,
+                asked_p->min_p < 0 ? own : "");
+    if (s.repeat_penalty != 1 && s.repeat_last_n)
+        term_printf(&term, "repeat penalty %g over the last %d tokens\n",
+                    (double)s.repeat_penalty, s.repeat_last_n);
+    else if (s.repeat_penalty != 1)
+        term_printf(&term, "repeat penalty %g over the whole reply\n",
+                    (double)s.repeat_penalty);
+    if (s.presence_penalty || s.frequency_penalty)
+        term_printf(&term, "presence penalty %g, frequency penalty %g\n",
+                    (double)s.presence_penalty, (double)s.frequency_penalty);
+    if (s.typical_p < 1)
+        term_printf(&term, "typical p %g\n", (double)s.typical_p);
+    if (s.top_n_sigma > 0)
+        term_printf(&term, "top n sigma %g\n", (double)s.top_n_sigma);
+    if (s.xtc_probability > 0)
+        term_printf(&term, "XTC probability %g, threshold %g\n",
+                    (double)s.xtc_probability, (double)s.xtc_threshold);
+    if (s.dry_multiplier > 0)
+        term_printf(&term,
+                    "DRY multiplier %g, base %g, allowed length %d, last %d "
+                    "tokens (0: the whole reply), breakers %s\n",
+                    (double)s.dry_multiplier, (double)s.dry_base,
+                    s.dry_allowed_length, s.dry_last_n,
+                    s.dry_breakers[0] ? s.dry_breakers : "llama.cpp's");
+    if (s.mirostat > 0)
+        term_printf(&term, "mirostat %d, tau %g, eta %g\n", s.mirostat,
+                    (double)s.mirostat_tau, (double)s.mirostat_eta);
+    if (s.dynatemp_range > 0)
+        term_printf(&term, "dynamic temperature +-%g, exponent %g\n",
+                    (double)s.dynatemp_range, (double)s.dynatemp_exponent);
+    term_printf(&term, "stages %s%s\n", s.samplers,
+                asked_p->samplers[0] ? "" : own);
 }
 
 /* The MCP servers and their tools, for /mcp. */
@@ -2708,6 +3066,8 @@ int main(int argc, char **argv)
                 cp.temperature = (float)atof(arg);
                 if (janas_llm_chat_set_params(c, &cp) != JANAS_LLM_OK)
                     term_printf(&term, "%s\n", janas_llm_last_error());
+            } else if (strcmp(msg, "/temp") == 0) {
+                show_sampling(c, &cp);
             } else if (strcmp(msg, "/think") == 0) {
                 char *end;
                 long b = strtol(arg, &end, 10);

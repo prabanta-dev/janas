@@ -1,0 +1,172 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prices</title>
+<style>
+<!--include base.css-->
+h1 { font-size: 15px; margin: 0 0 2px; font-weight: 600; }
+.now { font-size: 13px; color: var(--color-text-secondary); margin-bottom: 6px; }
+.ranges { display: flex; gap: 6px; margin: 6px 0; flex-wrap: wrap; }
+.ranges button { background: var(--color-background-secondary); border: 1px solid var(--color-border-primary); border-radius: 12px;
+  padding: 1px 10px; color: var(--color-text-primary); cursor: pointer; font: inherit; font-size: 13px; }
+.ranges button.on { border-color: var(--color-ring-primary); color: var(--color-ring-primary); font-weight: 600; }
+.chart { position: relative; }
+canvas.plot { display: block; width: 100%; height: 280px; touch-action: none; }
+.tip { position: absolute; pointer-events: none; background: var(--color-background-primary); border: 1px solid var(--color-border-primary);
+  border-radius: 6px; padding: 4px 7px; font-size: 12px; box-shadow: 0 2px 8px #0003; white-space: nowrap; }
+.tip[hidden] { display: none; }
+table.sum { border-collapse: collapse; margin: 8px 0; font-size: 13px; }
+table.sum td, table.sum th { padding: 3px 10px 3px 0; text-align: left; }
+table.sum td.n { text-align: right; font-variant-numeric: tabular-nums; }
+.up { color: #2a9d5f; } .down { color: #d1495b; }
+.key { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+</style></head>
+<body>
+<h1 id="title"></h1>
+<div class="now" id="now"></div>
+<div class="ranges" id="ranges"></div>
+<div class="chart"><canvas class="plot" id="plot"></canvas><div class="tip" id="tip" hidden></div></div>
+<div class="vtools" id="tools"></div>
+<table class="sum" id="sum"></table>
+<p class="note" id="credit"></p>
+<script>
+<!--include app.js-->
+<!--include export.js-->
+<!--include live.js-->
+const W = {
+  fx: {en: "{a} {f} in other currencies", it: "{a} {f} in altre valute", fr: "{a} {f} dans d'autres monnaies", es: "{a} {f} en otras monedas", de: "{a} {f} in anderen Währungen", pt: "{a} {f} noutras moedas"},
+  days: {en: "{n} days", it: "{n} giorni", fr: "{n} jours", es: "{n} días", de: "{n} Tage", pt: "{n} dias"},
+  first: {en: "{d}", it: "{d}", fr: "{d}", es: "{d}", de: "{d}", pt: "{d}"},
+  change: {en: "Change", it: "Variazione", fr: "Variation", es: "Variación", de: "Änderung", pt: "Variação"},
+  nohist: {en: "No history to draw.", it: "Nessuno storico da disegnare.", fr: "Pas d'historique à tracer.", es: "Sin historial que dibujar.", de: "Kein Verlauf zum Zeichnen.", pt: "Sem histórico para desenhar."},
+  src: {ecb_frankfurter: "ECB reference rates, through Frankfurter", ecb: "ECB reference rates", coingecko: "CoinGecko (data provided by CoinGecko)", coinbase: "Coinbase", alphavantage: "Alpha Vantage"},
+  credit: {en: "Data: {s}. Not advice: the sources' figures, as they give them.", it: "Dati: {s}. Non è un consiglio: le cifre delle fonti, come le danno.", fr: "Données : {s}. Pas un conseil : les chiffres des sources, tels qu'elles les donnent.", es: "Datos: {s}. No es un consejo: las cifras de las fuentes, tal como las dan.", de: "Daten: {s}. Keine Beratung: die Zahlen der Quellen, wie sie sie angeben.", pt: "Dados: {s}. Não é um conselho: os números das fontes, como os dão."},
+};
+const t = (k, v) => App.t(W[k]).replace(/\{(\w+)\}/g, (_, n) => v && v[n] !== undefined ? v[n] : "");
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => "&#" + c.charCodeAt(0) + ";");
+const COLORS = ["#3a86ff", "#e76f51", "#2a9d8f", "#e9c46a", "#8338ec", "#fb5607"];
+const fmt = (x) => new Intl.NumberFormat(App.ctx.locale, {maximumSignificantDigits: Math.abs(x) >= 1000 ? 7 : 5}).format(x);
+const pct = (x) => (x >= 0 ? "+" : "") + new Intl.NumberFormat(App.ctx.locale, {maximumFractionDigits: 2}).format(x) + "%";
+const dayText = (d) => new Intl.DateTimeFormat(App.ctx.locale, {day: "numeric", month: "short", year: "numeric", timeZone: "UTC"}).format(new Date(d + "T00:00:00Z"));
+let res = null, tool = "", args = {}, series = [];
+const cv = document.getElementById("plot"), g = cv.getContext("2d");
+let box = null; /* the plot's area and scales, for the pointer */
+function draw(hover) {
+  const dpr = window.devicePixelRatio || 1, Wd = cv.clientWidth, H = cv.clientHeight;
+  cv.width = Math.round(Wd * dpr); cv.height = Math.round(H * dpr);
+  g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, Wd, H);
+  const css = (n, d) => getComputedStyle(document.documentElement).getPropertyValue(n).trim() || d;
+  if (!series.length) { g.fillStyle = css("--color-text-secondary", "#777"); g.fillText(t("nohist"), 10, 20); return; }
+  /* one currency against the others: each series as its change in %,
+     unless there is one series alone, drawn in its own units */
+  const rel = series.length > 1;
+  const val = (s, v) => rel ? (v / s.points[0][1] - 1) * 100 : v;
+  let lo = Infinity, hi = -Infinity;
+  for (const s of series) for (const p of s.points) { const v = val(s, p[1]); lo = Math.min(lo, v); hi = Math.max(hi, v); }
+  if (lo === hi) { lo -= 1; hi += 1; }
+  const pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
+  const days = series[0].points.map((p) => p[0]);
+  const L = 56, R = 10, T = 10, B = 24, pw = Wd - L - R, ph = H - T - B;
+  const X = (i, n) => L + (n > 1 ? (i / (n - 1)) * pw : pw / 2), Y = (v) => T + (1 - (v - lo) / (hi - lo)) * ph;
+  box = {L, R, T, B, pw, ph, X, Y, val, rel, days};
+  /* the grid, five lines, their values */
+  g.font = "11px " + css("--font-sans", "sans-serif"); g.textBaseline = "middle";
+  for (let k = 0; k <= 4; k++) {
+    const v = lo + ((hi - lo) * k) / 4, y = Y(v);
+    g.strokeStyle = css("--color-border-primary", "#ddd"); g.lineWidth = 1;
+    g.beginPath(); g.moveTo(L, y); g.lineTo(Wd - R, y); g.stroke();
+    g.fillStyle = css("--color-text-secondary", "#777"); g.textAlign = "right";
+    g.fillText(rel ? pct(v) : fmt(v), L - 6, y);
+  }
+  /* the first day, the middle one, the last: inside the chart's width */
+  g.textBaseline = "top";
+  [[0, "left"], [Math.floor((days.length - 1) / 2), "center"], [days.length - 1, "right"]].forEach(([i, al]) => {
+    if (!days[i]) return;
+    g.textAlign = al; g.fillText(dayText(days[i]), X(i, days.length), H - B + 6);
+  });
+  series.forEach((s, k) => {
+    g.strokeStyle = COLORS[k % COLORS.length]; g.lineWidth = 2; g.beginPath();
+    s.points.forEach((p, i) => { const x = X(i, s.points.length), y = Y(val(s, p[1])); i ? g.lineTo(x, y) : g.moveTo(x, y); });
+    g.stroke();
+  });
+  if (hover !== undefined) {
+    const x = X(hover, days.length);
+    g.strokeStyle = css("--color-text-secondary", "#777"); g.setLineDash([3, 3]);
+    g.beginPath(); g.moveTo(x, T); g.lineTo(x, T + ph); g.stroke(); g.setLineDash([]);
+    series.forEach((s, k) => { const p = s.points[hover]; if (!p) return; g.fillStyle = COLORS[k % COLORS.length];
+      g.beginPath(); g.arc(x, Y(val(s, p[1])), 3.5, 0, 2 * Math.PI); g.fill(); });
+  }
+}
+cv.addEventListener("pointermove", (e) => {
+  if (!box) return;
+  const r = cv.getBoundingClientRect(), n = box.days.length;
+  const i = Math.max(0, Math.min(n - 1, Math.round(((e.clientX - r.left - box.L) / box.pw) * (n - 1))));
+  draw(i);
+  const tip = document.getElementById("tip");
+  tip.innerHTML = `<b>${esc(dayText(box.days[i]))}</b><br>` + series.map((s, k) => s.points[i] ?
+    `<span class="key" style="background:${COLORS[k % COLORS.length]}"></span>${esc(s.name)} ${esc(fmt(s.points[i][1]))}` : "").join("<br>");
+  tip.hidden = false;
+  const x = box.X(i, n);
+  tip.style.left = Math.min(x + 12, cv.clientWidth - tip.offsetWidth - 4) + "px"; tip.style.top = "8px";
+});
+cv.addEventListener("pointerleave", () => { document.getElementById("tip").hidden = true; draw(); });
+let xbtn = null, live = null;
+function show(r) {
+  /* updating by itself, a crypto-asset's alone: the ECB's rates change
+     once a day, a share's source allows a few asks a day */
+  const sc = r.structuredContent || {};
+  if (!live && sc.price !== undefined && sc.cur)
+    live = Live.control(document.getElementById("tools"), {choices: [60, 300, 900], dflt: 300, args: () => args, onresult: (r2) => show(r2)});
+  /* its table, to export: each day a row, each series a column */
+  if (!xbtn) xbtn = Exporter.button(document.getElementById("tools"), () => {
+    const days = [...new Set(series.flatMap((s) => s.points.map((p) => p[0])))].sort();
+    return {name: document.getElementById("title").textContent,
+      columns: [{key: "date", label: Exporter.label("date")}, ...series.map((s, k) => ({key: "s" + k, label: s.name}))],
+      rows: days.map((d) => Object.assign({date: d}, ...series.map((s, k) => { const p = s.points.find((x) => x[0] === d); return {["s" + k]: p ? p[1] : ""}; })))};
+  });
+  res = r;
+  const d = r.structuredContent || {};
+  const h = d.history || {};
+  series = (h.series || []).filter((s) => s.points && s.points.length > 1);
+  /* what it is: the tool's own data, in a line */
+  const title = document.getElementById("title"), now = document.getElementById("now");
+  /* a crypto-asset (cur, change in 24 h), a share (currency, pct), or
+     an amount in currencies (from, items) */
+  tool = (App.ctx.toolInfo && App.ctx.toolInfo.tool && App.ctx.toolInfo.tool.name) || tool;
+  if (d.price !== undefined) {
+    title.textContent = d.name && d.name !== d.symbol ? `${d.name} (${d.symbol})` : d.symbol || d.name || "";
+    const ch = d.cur ? d.change : d.pct;
+    now.textContent = `${fmt(d.price)} ${d.cur || d.currency || ""}` + (typeof ch === "number" && !isNaN(ch) ? ` · ${pct(ch)}` : "");
+  } else if (d.from) {
+    title.textContent = t("fx", {a: fmt(d.amount || 1), f: d.from});
+    now.textContent = (d.items || []).map((x) => `${x.code} ${fmt(x.value)}`).join(" · ");
+  } else { title.textContent = ""; now.textContent = ""; }
+  /* the periods: the tool asked again with its arguments and these days */
+  const rg = document.getElementById("ranges"); rg.textContent = "";
+  for (const n of [7, 30, 90, 365]) {
+    const b = document.createElement("button"); b.type = "button"; b.textContent = t("days", {n});
+    if (h.days === n) b.className = "on";
+    b.onclick = async () => {
+      if (!tool) return;
+      for (const x of rg.children) x.disabled = true;
+      try { const r2 = await App.callTool(tool, Object.assign({}, args, {days: n})); if (r2 && r2.structuredContent) show(r2); }
+      finally { for (const x of rg.children) x.disabled = false; }
+    };
+    rg.appendChild(b);
+  }
+  /* each series: first and last of the period, its change */
+  document.getElementById("sum").innerHTML = series.map((s, k) => {
+    const a = s.points[0][1], z = s.points[s.points.length - 1][1], c = (z / a - 1) * 100;
+    return `<tr><th><span class="key" style="background:${COLORS[k % COLORS.length]}"></span>${esc(s.name)}</th>` +
+      `<td class="n">${esc(fmt(a))}</td><td>→</td><td class="n">${esc(fmt(z))}</td><td class="n ${c >= 0 ? "up" : "down"}">${esc(pct(c))}</td></tr>`;
+  }).join("");
+  const names = W.src;
+  document.getElementById("credit").textContent = t("credit", {s: names[h.source || d.source] || h.source || d.source || ""});
+  draw(); App.size();
+}
+App.on("input", (a) => { args = a || {}; });
+App.on("result", show);
+App.on("context", () => draw());
+window.addEventListener("resize", () => draw());
+App.start("janas-prices");
+</script>
+</body></html>

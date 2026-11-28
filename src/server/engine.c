@@ -139,6 +139,8 @@ void srv_job_release(struct srv_job *j)
         free(j->stop[i]);
     free(j->tools);
     free(j->schema);
+    free(j->kwargs);
+    free(j->tmpl);
     free(j->bias_id);
     free(j->bias);
     free(j->emb);
@@ -309,6 +311,12 @@ static int take_tokens(janas_llm *llm, janas_llm_chat *c, struct srv_job *j,
 static int32_t setup(janas_llm_chat *c, struct srv_job *j)
 {
     int32_t rc = janas_llm_chat_tools(c, j->tools, (int32_t)j->n_tools);
+    /* the request's template and keywords, or none: what an earlier
+       request of this chat set goes */
+    if (rc == JANAS_LLM_OK)
+        rc = janas_llm_chat_template(c, j->tmpl, -1);
+    if (rc == JANAS_LLM_OK)
+        rc = janas_llm_chat_template_kwargs(c, j->kwargs, -1);
     if (rc == JANAS_LLM_OK)
         rc = janas_llm_chat_tool_choice(
             c, j->tool_choice,
@@ -1042,6 +1050,33 @@ struct srv_engine *srv_engine_start(const struct srv_config *cfg, char *err,
         janas_llm_close(e->llm);
         free(e);
         return NULL;
+    }
+    if (cfg->chat_template) {
+        /* every chat's template, in place of the model's */
+        FILE *f = fopen(cfg->chat_template, "rb");
+        char *t = NULL;
+        long n = -1;
+        if (f && fseek(f, 0, SEEK_END) == 0 && (n = ftell(f)) >= 0 &&
+            fseek(f, 0, SEEK_SET) == 0 && (t = malloc((size_t)n + 1)) &&
+            fread(t, 1, (size_t)n, f) == (size_t)n) {
+            t[n] = 0;
+            if (janas_llm_set_template(e->llm, t, (int32_t)n) != JANAS_LLM_OK)
+                snprintf(err, err_len, "%s: %s", cfg->chat_template,
+                         janas_llm_last_error());
+            else
+                n = -2; /* taken */
+        } else {
+            snprintf(err, err_len, "%s: cannot be read", cfg->chat_template);
+        }
+        if (f)
+            fclose(f);
+        free(t);
+        if (n != -2) {
+            janas_llm_chat_destroy(e->chat);
+            janas_llm_close(e->llm);
+            free(e);
+            return NULL;
+        }
     }
     if (cfg->no_gpu)
         janas_llm_set_gpu(e->llm, 0);

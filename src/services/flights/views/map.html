@@ -1,0 +1,349 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flights</title>
+<style>
+<!--include base.css-->
+h1 { font-size: 15px; margin: 0 0 6px; font-weight: 600; }
+.legend { display: flex; flex-wrap: wrap; gap: 10px; margin: 6px 0; }
+.legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; background: var(--c); vertical-align: -1px; }
+ol { list-style: none; margin: 8px 0 0; padding: 0; max-height: 280px; overflow: auto; border-top: 1px solid var(--color-border-primary); }
+li { padding: 5px 4px; border-bottom: 1px solid var(--color-border-primary); cursor: pointer; display: grid; grid-template-columns: 7.5em 1fr auto; gap: 8px; align-items: baseline; }
+li:hover, li.on { background: var(--color-background-secondary); }
+li b { font-variant-numeric: tabular-nums; }
+li.sos b { color: #d62828; }
+li.stale { opacity: 0.55; }
+#card { margin-top: 8px; padding: 8px; border-radius: 8px; background: var(--color-background-secondary); }
+#card[hidden] { display: none; }
+#card dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 10px; margin: 4px 0; }
+#card dt { color: var(--color-text-secondary); }
+#card dd { margin: 0; }
+</style></head>
+<body>
+<h1 id="title"></h1>
+<div class="mapbox" id="mapbox"></div>
+<div class="legend note" id="legend"></div>
+<div id="card" hidden></div>
+<div class="vtools" id="tools"></div>
+<ol id="list"></ol>
+<p class="note" id="credit"></p>
+<script>
+<!--include world.js-->
+<!--include map.js-->
+<!--include app.js-->
+<!--include float.js-->
+<!--include export.js-->
+<!--include live.js-->
+const W = {
+  over: {en: "Aircraft over the {s} now ({t} UTC): {n}", it: "Aerei sopra il {s} ora ({t} UTC): {n}", fr: "Avions au-dessus de {s} maintenant ({t} UTC) : {n}", es: "Aviones sobre {s} ahora ({t} UTC): {n}", de: "Flugzeuge über {s} jetzt ({t} UTC): {n}", pt: "Aviões sobre {s} agora ({t} UTC): {n}"},
+  near: {en: "Aircraft within {r} km of {p} now ({t} UTC): {n}", it: "Aerei entro {r} km da {p} ora ({t} UTC): {n}", fr: "Avions à moins de {r} km de {p} maintenant ({t} UTC) : {n}", es: "Aviones a menos de {r} km de {p} ahora ({t} UTC): {n}", de: "Flugzeuge im Umkreis von {r} km um {p} jetzt ({t} UTC): {n}", pt: "Aviões a menos de {r} km de {p} agora ({t} UTC): {n}"},
+  nearpt: {en: "Aircraft within {r} km of the point chosen now ({t} UTC): {n}", it: "Aerei entro {r} km dal punto scelto ora ({t} UTC): {n}", fr: "Avions à moins de {r} km du point choisi maintenant ({t} UTC) : {n}", es: "Aviones a menos de {r} km del punto elegido ahora ({t} UTC): {n}", de: "Flugzeuge im Umkreis von {r} km um den gewählten Punkt jetzt ({t} UTC): {n}", pt: "Aviões a menos de {r} km do ponto escolhido agora ({t} UTC): {n}"},
+  sight: {en: "Aircraft in sight now ({t} UTC): {n}", it: "Aerei in vista ora ({t} UTC): {n}", fr: "Avions en vue maintenant ({t} UTC) : {n}", es: "Aviones a la vista ahora ({t} UTC): {n}", de: "Flugzeuge in Sicht jetzt ({t} UTC): {n}", pt: "Aviões à vista agora ({t} UTC): {n}"},
+  none: {en: "None now.", it: "Nessuno ora.", fr: "Aucun maintenant.", es: "Ninguno ahora.", de: "Keines jetzt.", pt: "Nenhum agora."},
+  ground: {en: "on the ground", it: "a terra", fr: "au sol", es: "en tierra", de: "am Boden", pt: "no solo"},
+  low: {en: "below 10,000 ft", it: "sotto 10.000 piedi", fr: "sous 10 000 pieds", es: "bajo 10.000 pies", de: "unter 10.000 Fuß", pt: "abaixo de 10.000 pés"},
+  mid: {en: "10,000 to 30,000 ft", it: "da 10.000 a 30.000 piedi", fr: "de 10 000 à 30 000 pieds", es: "de 10.000 a 30.000 pies", de: "10.000 bis 30.000 Fuß", pt: "de 10.000 a 30.000 pés"},
+  high: {en: "higher", it: "più in alto", fr: "plus haut", es: "más alto", de: "höher", pt: "mais alto"},
+  sos: {en: "emergency code", it: "codice d'emergenza", fr: "code d'urgence", es: "código de emergencia", de: "Notfallcode", pt: "código de emergência"},
+  type: {en: "Aircraft", it: "Aereo", fr: "Avion", es: "Avión", de: "Flugzeug", pt: "Avião"},
+  operator: {en: "Operator", it: "Operatore", fr: "Opérateur", es: "Operador", de: "Betreiber", pt: "Operador"},
+  route: {en: "Route", it: "Rotta", fr: "Trajet", es: "Ruta", de: "Strecke", pt: "Rota"},
+  alt: {en: "Altitude", it: "Quota", fr: "Altitude", es: "Altitud", de: "Höhe", pt: "Altitude"},
+  speed: {en: "Speed", it: "Velocità", fr: "Vitesse", es: "Velocidad", de: "Geschwindigkeit", pt: "Velocidade"},
+  where: {en: "Where", it: "Dove", fr: "Où", es: "Dónde", de: "Wo", pt: "Onde"},
+  climb: {en: "climbing", it: "in salita", fr: "en montée", es: "subiendo", de: "steigend", pt: "a subir"},
+  desc: {en: "descending", it: "in discesa", fr: "en descente", es: "descendiendo", de: "sinkend", pt: "a descer"},
+  flown: {en: "Way flown: OpenSky Network.", it: "Rotta percorsa: OpenSky Network.", fr: "Trajet parcouru : OpenSky Network.", es: "Ruta recorrida: OpenSky Network.", de: "Geflogener Weg: OpenSky Network.", pt: "Rota percorrida: OpenSky Network."},
+  credit: {en: "Positions: {n} (ADS-B, open data{l}). Routes: adsbdb. Map: Natural Earth (public domain), drawn here, nothing fetched.", it: "Posizioni: {n} (ADS-B, dati aperti{l}). Rotte: adsbdb. Mappa: Natural Earth (pubblico dominio), disegnata qui, senza scaricare nulla.", fr: "Positions : {n} (ADS-B, données ouvertes{l}). Trajets : adsbdb. Carte : Natural Earth (domaine public), dessinée ici, rien n'est téléchargé.", es: "Posiciones: {n} (ADS-B, datos abiertos{l}). Rutas: adsbdb. Mapa: Natural Earth (dominio público), dibujado aquí, sin descargar nada.", de: "Positionen: {n} (ADS-B, offene Daten{l}). Strecken: adsbdb. Karte: Natural Earth (gemeinfrei), hier gezeichnet, nichts geladen.", pt: "Posições: {n} (ADS-B, dados abertos{l}). Rotas: adsbdb. Mapa: Natural Earth (domínio público), desenhado aqui, sem descarregar nada."},
+};
+const t = (k, v) => App.t(W[k]).replace(/\{(\w+)\}/g, (_, n) => v && v[n] !== undefined ? v[n] : "");
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => "&#" + c.charCodeAt(0) + ";");
+const num = (x) => new Intl.NumberFormat(App.ctx.locale).format(x);
+const feet = (a) => a.ground ? -1 : a.alt_ft !== undefined ? a.alt_ft : a.fl ? +a.fl * 100 : a.ft || 0;
+const color = (a) => a.emergency ? "#d62828" : a.ground ? "#8a8a8a" : feet(a) < 10000 ? "#2a9d8f" : feet(a) < 30000 ? "#e9a23b" : "#3a86ff";
+const altText = (a) => a.ground ? t("ground") : a.fl ? "FL" + a.fl : a.ft !== undefined ? num(a.ft) + " ft" : "";
+/* the card's height: the flight level or the feet, then feet and metres */
+const altFull = (a) => {
+  if (a.ground) return t("ground");
+  const f = a.alt_ft !== undefined ? a.alt_ft : a.fl ? +a.fl * 100 : a.ft;
+  if (f === undefined) return "";
+  /* the flight level always (the service's, or the feet in hundreds), then
+     the feet and the metres */
+  const fl = a.fl || String(Math.max(0, Math.round(f / 100))).padStart(3, "0");
+  return `FL${fl} (${num(f)} ft, ${num(Math.round(f * 0.3048))} m)`;
+};
+const whereOf = (a) => a.airport || (a.where && (a.where.text || a.where.name)) || "";
+const routeOf = (a) => a.route ? `${a.route.from_code || a.route.from} → ${a.route.to_code || a.route.to}` : "";
+let items = [], pick = -1, data = {};
+let credit = () => {};
+const map = MapView(document.getElementById("mapbox"), {onpick: (p) => p && choose(items.indexOf(p), true), onlayer: () => credit(), onmove: () => askBox().catch(() => {}),
+  /* a circle drawn by the user, or removed: the list then of those inside it, or of all in sight */
+  oncircle: (c) => { circle = c ? {lat: c.lat, lon: c.lon, km: c.km, place: ""} : null; map.circled(!!circle); listing(); paint(); }});
+Floats.init();
+/* an aircraft: a small plane, nose along its track */
+/* an airliner seen from above, nose up: a round nose, a body of even
+   width, swept wings with their engines, the tailplane */
+function shape(g) {
+  const R = [[1.25, -6.4], [1.25, -1.6], [9, 3], [9, 4.1], [1.25, 1.7], [1.1, 6.2], [4, 8], [4, 8.9], [0.55, 8.4], [0, 9.2]];
+  g.beginPath();
+  g.moveTo(0, -9); g.quadraticCurveTo(1.25, -8.8, 1.25, -6.4);
+  for (const [x, y] of R.slice(1)) g.lineTo(x, y);
+  for (const [x, y] of R.slice(0, -1).reverse()) g.lineTo(-x, y);
+  g.quadraticCurveTo(-1.25, -8.8, 0, -9); g.closePath();
+  /* the engines, under the wings */
+  for (const x of [3.3, -4.3]) { g.moveTo(x, -1.3); g.lineTo(x + 1, -1.3); g.lineTo(x + 1, 1.3); g.lineTo(x, 1.3); g.closePath(); }
+}
+/* a plane, nose along its track, in its height's colour; the one chosen
+   the same shape, larger and white, with a soft shadow */
+function plane(g, x, y, deg, c, on, faded) {
+  g.save(); g.translate(x, y); g.rotate(((deg || 0) * Math.PI) / 180);
+  if (on) {
+    g.scale(1.6, 1.6); shape(g);
+    g.shadowColor = "rgba(0,0,0,.5)"; g.shadowBlur = 4; g.fillStyle = "#fff"; g.fill();
+    g.shadowColor = "transparent"; g.shadowBlur = 0; g.lineJoin = "round"; g.lineWidth = 0.7; g.strokeStyle = "#000b"; g.stroke();
+    g.restore(); return;
+  }
+  shape(g);
+  g.fillStyle = c; g.fill();
+  g.lineWidth = 0.8; g.strokeStyle = faded ? "#0004" : "#0008"; g.stroke();
+  g.restore();
+}
+/* the colour of a height along the trail: the planes' colours, blended */
+function heightColor(ft, alpha) {
+  const stops = [[0, [42, 157, 143]], [10000, [42, 157, 143]], [20000, [233, 162, 59]], [30000, [233, 162, 59]], [38000, [58, 134, 255]]];
+  let c = stops[stops.length - 1][1];
+  for (let i = 1; i < stops.length; i++)
+    if (ft <= stops[i][0]) {
+      const [f0, c0] = stops[i - 1], [f1, c1] = stops[i], k = f1 > f0 ? Math.max(0, (ft - f0) / (f1 - f0)) : 0;
+      c = c0.map((v, j) => Math.round(v + (c1[j] - v) * k));
+      break;
+    }
+  return `rgba(${c[0]},${c[1]},${c[2]},${alpha})`;
+}
+/* the trail of the plane chosen: the positions this view has received for
+   it (the sources do not give a flight's whole track to programs), half
+   seen through, coloured by its height then */
+const trails = new Map(); /* hex -> [{lat, lon, ft, t}] */
+/* and the way it flew before, from the OpenSky Network, asked when it is
+   chosen (again at most once a minute) */
+const flown = new Map(), flownAt = new Map(); /* hex -> [{lat, lon, ft, t}], when asked */
+function askFlown(hex) {
+  if (!App.canCall() || !hex || Date.now() - (flownAt.get(hex) || 0) < 60000) return;
+  flownAt.set(hex, Date.now());
+  App.callTool("flight_track", {hex}).then((r) => {
+    const p = r && !r.isError && r.structuredContent && r.structuredContent.path;
+    if (!Array.isArray(p)) return;
+    let ft = 0;
+    flown.set(hex, p.map(([tm, lat, lon, f]) => ({lat, lon, ft: ft = f === null ? ft : f, t: tm * 1000})));
+    credit(); paint();
+  }).catch(() => {});
+}
+function drawTrail(g, at, a) {
+  const before = flown.get(a.hex) || [], end = before.length ? before[before.length - 1].t : 0;
+  const tr = before.concat((trails.get(a.hex) || []).filter((p) => p.t > end));
+  if (!tr.length) return;
+  const pts = tr.map((p) => [at(p.lon, p.lat), p.ft]);
+  pts.push([at(a.lon, a.lat), tr[tr.length - 1].ft]);
+  /* butt ends: half seen through, round ones would darken each joint */
+  g.lineCap = "butt"; g.lineWidth = 4;
+  for (let i = 1; i < pts.length; i++) {
+    g.beginPath(); g.moveTo(pts[i - 1][0][0], pts[i - 1][0][1]); g.lineTo(pts[i][0][0], pts[i][0][1]);
+    g.strokeStyle = heightColor((pts[i - 1][1] + pts[i][1]) / 2, 0.55); g.stroke();
+  }
+  /* its points, while they are few (a whole flight is a line) */
+  if (pts.length < 150) for (const [p, ft] of pts.slice(0, -1)) { g.beginPath(); g.arc(p[0], p[1], 2.2, 0, 2 * Math.PI); g.fillStyle = heightColor(ft, 0.7); g.fill(); }
+}
+function paint() {
+  map.set(items, (g, at) => {
+    if (circle) drawCircle(g, at, circle); /* the circle of interest: the place asked about, or one drawn */
+    if (pick >= 0 && items[pick]) drawTrail(g, at, items[pick]);
+    items.forEach((a, i) => { if (a.lat !== undefined && i !== pick) { const [x, y] = at(a.lon, a.lat); plane(g, x, y, a.track, color(a), false, a.stale); } });
+    /* the one chosen over the others */
+    if (pick >= 0 && items[pick]) { const a = items[pick], [x, y] = at(a.lon, a.lat); plane(g, x, y, a.track, color(a), true); }
+  });
+}
+function choose(i, fromMap) {
+  pick = i; credit();
+  for (const li of document.querySelectorAll("#list li")) li.classList.toggle("on", +li.dataset.i === i);
+  const card = document.getElementById("card");
+  if (i < 0) { card.hidden = true; paint(); App.size(); return; }
+  const a = items[i];
+  askFlown(a.hex);
+  const rows = [[t("type"), esc([a.type, a.reg].filter(Boolean).join(" · ") || a.hex)]];
+  if (a.route && a.route.airline) rows.push([t("operator"), esc(a.route.airline)]);
+  if (a.route) rows.push([t("route"), esc(`${a.route.from} (${a.route.from_code}) → ${a.route.to} (${a.route.to_code})`)]);
+  rows.push([t("alt"), esc(altFull(a)) + (a.climbing ? " · " + esc(t("climb")) : a.descending ? " · " + esc(t("desc")) : "")]);
+  if (a.kts !== undefined) rows.push([t("speed"), `${num(a.kts)} kt (${num(Math.round(a.kts * 1.852))} km/h)${a.heading ? " · " + esc(a.heading) : ""}`]);
+  rows.push([t("where"), esc(whereOf(a)) + (a.dist_km !== undefined ? ` · ${num(a.dist_km)} km ${esc(a.dist_dir || "")}` : "")]);
+  if (a.emergency) rows.push(["", `<b style="color:#d62828">${esc(t("sos"))} ${esc(a.emergency)}</b>`]);
+  card.innerHTML = `<dl>${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join("")}</dl>`;
+  App.closer(card, () => choose(-1));
+  card.hidden = false;
+  if (!fromMap && a.lat !== undefined) map.center(a.lon, a.lat);
+  paint(); App.size();
+}
+let xbtn = null, live = null, liveOn = false, asks = 0;
+/* where the user's interest is, from the first answer alone, never moved:
+   its place, its circle, its sea, its title */
+let focus = {};
+/* the circle of interest: the first answer's (a place asked about), one
+   the user draws, or none (a sea; removed): the list is of the planes
+   inside it, nearest first, or of all in sight */
+let circle = null, listed = [];
+const kmText = (km) => km < 10 ? num(+km.toFixed(1)) : num(Math.round(km));
+/* the title and the list, from the planes now and the circle */
+function listing() {
+  for (const a of items)
+    if (circle) { const [d, dir] = geoFar(circle.lat, circle.lon, a.rlat ?? a.lat, a.rlon ?? a.lon); a.dist_km = Math.round(d * 10) / 10; a.dist_dir = dir; }
+    else { delete a.dist_km; delete a.dist_dir; }
+  listed = items.map((a, i) => i);
+  if (circle) listed = listed.filter((i) => items[i].dist_km <= circle.km).sort((i, j) => items[i].dist_km - items[j].dist_km);
+  const n = num(listed.length), tm = data.time || "";
+  document.getElementById("title").textContent = circle
+    ? (circle.place ? t("near", {r: kmText(circle.km), p: circle.place, t: tm, n}) : t("nearpt", {r: kmText(circle.km), t: tm, n}))
+    : focus.sea ? t("over", {s: focus.sea, t: tm, n}) : t("sight", {t: tm, n});
+  const list = document.getElementById("list"), scroll = list.scrollTop;
+  list.innerHTML = listed.length ? listed.map((i) => { const a = items[i];
+    return `<li data-i="${i}" class="${a.emergency ? "sos" : ""}${i === pick ? " on" : ""}${a.stale ? " stale" : ""}"><b>${esc(a.callsign || a.reg || a.hex)}</b><span>${esc(routeOf(a) || whereOf(a))}</span>` +
+      `<span class="note">${esc(altText(a))}${a.kts !== undefined ? " · " + num(a.kts) + " kt" : ""}</span></li>`; }).join("") : `<li>${esc(t("none"))}</li>`;
+  for (const li of document.querySelectorAll("#list li[data-i]")) li.onclick = () => choose(+li.dataset.i);
+  list.scrollTop = scroll;
+}
+/* the question for what is in sight: every aircraft in the map's box (the
+   radius the user asked about still drawn, as where the interest is), and
+   the plane chosen wherever it has flown (follow: never lost) */
+function boxAsk() {
+  const [s, w, n, e] = map.bounds();
+  const la = (s + n) / 2, lo = w <= e ? (w + e) / 2 : ((w + e + 360) / 2 + 180) % 360 - 180;
+  const args = {latitude: +la.toFixed(4), longitude: +lo.toFixed(4), radius_km: Math.max(1, Math.min(460, Math.round(circle ? circle.km : 50))),
+    box: [s, w, n, e].map((v) => +v.toFixed(4))};
+  if (pick >= 0 && items[pick]) args.follow = items[pick].hex;
+  return ["flights_nearby", args];
+}
+/* the box asked now (after the first answer, a move, a zoom), the last
+   question's answer alone drawn */
+async function askBox() {
+  if (!App.canCall()) return false;
+  const n = ++asks, [tool, args] = boxAsk();
+  const r = await App.callTool(tool, args);
+  if (!r || !r.structuredContent || r.isError) throw new Error((r && r.content && r.content[0] && r.content[0].text || "").slice(0, 80));
+  if (n === asks) show(r, true);
+  return true;
+}
+/* where a plane is now, by its last position, track and speed (two
+   minutes ahead at most), while the view updates by itself */
+function ahead(a, now) {
+  const s = Math.min(120, (now - a.t0) / 1000); /* t0: when its position was taken (now less its age) */
+  if (!liveOn || a.ground || a.kts === undefined || a.track === undefined || s <= 0) return [a.rlat, a.rlon];
+  const d = a.kts * 0.514444 * s, tr = a.track * Math.PI / 180;
+  return [a.rlat + d * Math.cos(tr) / 111320, a.rlon + d * Math.sin(tr) / (111320 * Math.cos(a.rlat * Math.PI / 180))];
+}
+/* the planes moved a few times a second; a new position reached in 1.5 s
+   from where the plane was drawn, not jumped to */
+setInterval(() => {
+  if (!liveOn || !items.length) return;
+  const now = Date.now();
+  for (const a of items) {
+    const p = ahead(a, now);
+    if (a.from && now - a.b0 < 1500) {
+      const k = (now - a.b0) / 1500;
+      a.lat = a.from[0] + (p[0] - a.from[0]) * k; a.lon = a.from[1] + (p[1] - a.from[1]) * k;
+    } else { a.lat = p[0]; a.lon = p[1]; }
+  }
+  paint();
+}, 200);
+function show(r, keep) {
+  /* updating by itself: Auto update and how often, the source's
+     positions every few seconds */
+  if (!live) live = Live.control(document.getElementById("tools"), {choices: [1, 2, 5, 10, 15, 30, 60], dflt: 5,
+    /* every aircraft in the map's box, through the same count as a move's
+       question: an older answer never drawn over a newer one */
+    ask: () => askBox(),
+    onswitch: (on) => { liveOn = on; if (!on) for (const a of items) { a.lat = a.rlat; a.lon = a.rlon; } paint(); }});
+  /* its table, to export: each aircraft a row */
+  if (!xbtn) xbtn = Exporter.button(document.getElementById("tools"), () => ({
+    name: document.getElementById("title").textContent,
+    columns: [{key: "flight", label: Exporter.label("flight")}, {key: "reg", label: Exporter.label("reg")}, {key: "type", label: t("type")},
+      {key: "operator", label: t("operator")}, {key: "from", label: Exporter.label("from")}, {key: "to", label: Exporter.label("to")},
+      {key: "fl", label: "FL"}, {key: "ft", label: t("alt") + " (ft)"}, {key: "m", label: t("alt") + " (m)"},
+      {key: "kts", label: t("speed") + " (kt)"}, {key: "kmh", label: t("speed") + " (km/h)"}, {key: "dir", label: Exporter.label("dir")},
+      {key: "where", label: t("where")}, {key: "lat", label: Exporter.label("lat")}, {key: "lon", label: Exporter.label("lon")}, {key: "sos", label: t("sos")}],
+    rows: listed.map((i) => items[i]).map((a) => {
+      const f = a.ground ? 0 : a.alt_ft !== undefined ? a.alt_ft : a.fl ? +a.fl * 100 : a.ft;
+      return {flight: a.callsign || "", reg: a.reg || "", type: a.type || "", operator: a.route && a.route.airline || "",
+        from: a.route ? `${a.route.from} (${a.route.from_code})` : "", to: a.route ? `${a.route.to} (${a.route.to_code})` : "",
+        fl: a.ground ? t("ground") : f !== undefined ? "FL" + (a.fl || String(Math.round(f / 100)).padStart(3, "0")) : "",
+        ft: f ?? "", m: f !== undefined ? Math.round(f * 0.3048) : "", kts: a.kts ?? "", kmh: a.kts !== undefined ? Math.round(a.kts * 1.852) : "",
+        dir: a.heading || "", where: whereOf(a), lat: a.lat, lon: a.lon, sos: a.emergency || ""};
+    }),
+  }));
+  data = r.structuredContent || {};
+  if (!keep) {
+    focus = data;
+    circle = data.lat !== undefined && data.radius ? {lat: data.lat, lon: data.lon, km: data.radius, place: data.place || ""} : null;
+    map.circled(!!circle);
+  }
+  const was = keep ? new Map(items.map((a) => [a.hex, a])) : new Map(), chosen = keep && pick >= 0 && items[pick] ? items[pick].hex : null;
+  const now = Date.now();
+  items = (data.aircraft || []).filter((a) => a.lat !== undefined);
+  /* asked again by itself: the planes in sight alone, and the one chosen
+     wherever it is, under the first answer's title, its sea or circle */
+  if (keep) {
+    const [s, w, n, e] = map.bounds();
+    items = items.filter((a) => a.hex === chosen || (a.lat >= s && a.lat <= n && (w <= e ? a.lon >= w && a.lon <= e : a.lon >= w || a.lon <= e)));
+    data = Object.assign({}, focus, {aircraft: items, time: data.time}); /* the title's count, the radius's */
+  }
+  for (const a of items) {
+    a.rlat = a.lat; a.rlon = a.lon; a.t0 = now - (a.age || 0) * 1000;
+    const o = was.get(a.hex);
+    /* moving by itself: eased from where it was drawn; else where it is */
+    if (o && liveOn) { a.from = [o.lat, o.lon]; a.b0 = now; a.lat = o.lat; a.lon = o.lon; }
+    /* its trail: each new position, with its height */
+    let tr = trails.get(a.hex);
+    if (!tr) trails.set(a.hex, tr = []);
+    const last = tr[tr.length - 1];
+    if (!last || last.lat !== a.rlat || last.lon !== a.rlon) {
+      tr.push({lat: a.rlat, lon: a.rlon, ft: a.ground ? 0 : a.alt_ft !== undefined ? a.alt_ft : a.fl ? +a.fl * 100 : a.ft || 0, t: a.t0});
+      if (tr.length > 3000) tr.splice(0, tr.length - 3000);
+    }
+  }
+  /* a plane not in this answer stays a minute after its last position,
+     moving on its track, faded: the sources miss one now and then */
+  if (keep) {
+    const [s0, w0, n0, e0] = map.bounds();
+    const inSight = (o) => o.lat >= s0 && o.lat <= n0 && (w0 <= e0 ? o.lon >= w0 && o.lon <= e0 : o.lon >= w0 || o.lon <= e0);
+    for (const [hex, o] of was)
+      if (!items.some((a) => a.hex === hex) && now - o.t0 < 60000 && (inSight(o) || hex === chosen)) { o.stale = true; items.push(o); }
+  }
+  document.getElementById("legend").innerHTML = [["#8a8a8a", "ground"], ["#2a9d8f", "low"], ["#e9a23b", "mid"], ["#3a86ff", "high"], ["#d62828", "sos"]]
+    .map(([c, k]) => `<span style="--c:${c}">${esc(t(k))}</span>`).join("");
+  listing();
+  credit = () => {
+    const a = pick >= 0 && items[pick], tr = a && flown.get(a.hex);
+    document.getElementById("credit").textContent = mapCredit(t("credit", {n: data.net || "", l: data.odbl ? ", ODbL" : ""}), map.layer()) + (tr && tr.length ? " " + t("flown") : "");
+  };
+  credit();
+  const pts = items.map((a) => [a.lon, a.lat]);
+  if (data.lat !== undefined) pts.push([data.lon, data.lat]);
+  /* a sea: the whole of it in sight; a place: its circle */
+  if (data.box) pts.push([data.box[1], data.box[0]], [data.box[3], data.box[2]]);
+  if (data.lat !== undefined && data.radius) {
+    const dl = data.radius / 111.32, dn = dl / Math.cos(data.lat * Math.PI / 180);
+    pts.push([data.lon - dn, data.lat - dl], [data.lon + dn, data.lat + dl]);
+  }
+  /* asked again by itself: the zoom, the place and the plane chosen kept */
+  if (keep) {
+    const i = chosen ? items.findIndex((a) => a.hex === chosen) : -1;
+    if (i >= 0 && !document.getElementById("card").hidden) choose(i, true);
+    else { pick = i; for (const li of document.querySelectorAll("#list li")) li.classList.toggle("on", +li.dataset.i === i); paint(); }
+    return;
+  }
+  map.fit(pts, 0.1);
+  choose(-1);
+  /* then every aircraft in the box shown, not only the radius's */
+  setTimeout(() => askBox().catch(() => {}), 400);
+}
+App.on("result", show);
+App.on("context", () => paint());
+App.start("janas-flights");
+</script>
+</body></html>

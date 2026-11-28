@@ -55,7 +55,9 @@ void wx_tools_list(void *ctx, struct janas_buf *b)
         b, "}, \"additionalProperties\": false}}, "
            "{\"name\": \"weather_forecast\", \"title\": \"Weather "
            "forecast\", \"description\": \"The forecast by the day, and "
-           "for the next hours.\", \"inputSchema\": {\"type\": \"object\", "
+           "for the next hours.\", "
+           "\"_meta\": {\"ui\": {\"resourceUri\": \"ui://weather/forecast\"}}, "
+           "\"inputSchema\": {\"type\": \"object\", "
            "\"properties\": {");
     place_props(b);
     janas_buf_puts(

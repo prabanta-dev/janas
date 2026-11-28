@@ -43,6 +43,10 @@ What the service does with its sources:
 - **Names in the country's language.** MeteoAlarm and the Civil Protection write regions and municipalities in Italian (Piemonte, Torino); a place found in the built-in tables, in English, takes its names from Open-Meteo's geocoding.
 - **MET Norway** asks for a User-Agent naming the program: requests carry `janas-weather/<version> https://github.com/prabanta-dev/janas`.
 
+## The forecast, drawn
+
+In Brebus, and in any client that shows MCP Apps' views, `weather_forecast` shows its days as cards (the sky, the highest and lowest, the rain and its chance, the wind and where it blows from) and the next 48 hours as a chart: the temperature, the rain as bars, its chance, the nights shaded, a value under the pointer (`ui://weather/forecast`, `views/forecast.html`). The hours come in the data only for such a client: the text the model reads stays as it was.
+
 ## Running it
 
 ```sh

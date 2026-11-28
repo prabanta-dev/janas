@@ -3,15 +3,15 @@
 /*
  * gpu_fast_check.c - the fast prompt's products of the types in blocks of
  * 32 or 64 (iq4nl_mmq.comp: IQ4_NL, MXFP4, Q5_0, Q2_0) and a mixture's
- * experts in them (b32_mmid.comp: IQ4_NL, Q5_0, Q2_0), rows ending inside
- * a group of 256 among them (qwen4exp's 640), and experts in the 256-block
- * types of iqk_mmid.comp (Q2_K, IQ2_XXS, IQ2_XS, IQ2_S, IQ3_XXS, IQ1_S,
- * IQ1_M, IQ3_S, IQ4_XS) and of q5k_mmid.comp (Q5_K), and the Q4_K and Q6_K
- * tiles (q4k_mmq.comp, q6k_mmq.comp; with JANAS_GPU_TILES_EXACT=1 their _exact
- * variants, which must give the CPU's bits), against the CPU. They round group
- * by group, so not bit for bit: each output within 1e-4 of the largest of its
- * product, and the GPU seen at work (outputs that differ in their last bits).
- * Skips (exit 0) when no GPU is usable.
+ * experts in them (b32_mmid.comp: IQ4_NL, Q5_0, Q2_0, NVFP4), rows ending
+ * inside a group of 256 among them (qwen4exp's 640), and experts in the
+ * 256-block types of iqk_mmid.comp (Q2_K, IQ2_XXS, IQ2_XS, IQ2_S, IQ3_XXS,
+ * IQ1_S, IQ1_M, IQ3_S, IQ4_XS) and of q5k_mmid.comp (Q5_K), and the Q4_K and
+ * Q6_K tiles (q4k_mmq.comp, q6k_mmq.comp; with JANAS_GPU_TILES_EXACT=1 their
+ * _exact variants, which must give the CPU's bits), against the CPU. They round
+ * group by group, so not bit for bit: each output within 1e-4 of the largest of
+ * its product, and the GPU seen at work (outputs that differ in their last
+ * bits). Skips (exit 0) when no GPU is usable.
  *
  * Usage: gpu_fast_check
  */
@@ -39,9 +39,9 @@ static uint32_t rnd(void)
 static size_t block_bytes(int type, size_t *weights)
 {
     /* the 256-block types: their row bytes of 256 */
-    *weights = type == JANAS_Q2_0                ? 64
-               : janas_qtype_row_bytes(type, 32) ? 32
-                                                 : 256;
+    *weights = type == JANAS_Q2_0 || type == JANAS_NVFP4 ? 64
+               : janas_qtype_row_bytes(type, 32)         ? 32
+                                                         : 256;
     return janas_qtype_row_bytes(type, *weights);
 }
 
@@ -56,6 +56,11 @@ static void fill(uint8_t *w, int type, size_t rows, size_t cols)
         uint8_t *blk = w + b * bs;
         if (type == JANAS_MXFP4) {
             blk[0] = (uint8_t)(118 + rnd() % 8);
+            continue;
+        }
+        if (type == JANAS_NVFP4) { /* four UE4M3 scales, 2^-4 to 2^-1 */
+            for (int k = 0; k < 4; k++)
+                blk[k] = (uint8_t)((4 + rnd() % 4) << 3 | rnd() % 8);
             continue;
         }
         uint16_t d = janas_fp32_to_fp16(0.0005f + (rnd() % 1000) * 1e-6f);
@@ -214,8 +219,9 @@ int main(void)
     /* a mixture's experts: 24 of one shape, 1 to 40 tokens each (more
        than 128 in all, as experts_id asks), each its own activations; the
        GPU takes those with the most tokens, the CPU the others */
-    static const int etypes[] = {JANAS_Q2_0, JANAS_Q5_0, JANAS_IQ4_NL};
-    static const char *enames[] = {"Q2_0", "Q5_0", "IQ4_NL"};
+    static const int etypes[] = {JANAS_Q2_0, JANAS_Q5_0, JANAS_IQ4_NL,
+                                 JANAS_NVFP4};
+    static const char *enames[] = {"Q2_0", "Q5_0", "IQ4_NL", "NVFP4"};
     static const size_t eshapes[][2] = {{640, 2560}, {2560, 640}};
     enum { NE = 24 };
     for (size_t ti = 0; ti < sizeof(etypes) / sizeof(*etypes); ti++)

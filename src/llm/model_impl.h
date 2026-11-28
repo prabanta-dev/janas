@@ -354,6 +354,10 @@ struct janas_llm_model {
        where that one left them, in the other buffer */
     int rec_cont;
     uint32_t n_ctx_train; /* what the model was trained for, 0 if unsaid */
+    /* a rope scaling the file asks for that the engine does not apply
+       (YaRN, linear: rope.scaling.type), or "": the context is then held
+       to the length before it (rope.scaling.original_context_length) */
+    char rope_unread[16];
     /* the conversation's state: seq0, the model's own; cur, the one a
        single pass runs (janas_llm_model_forward) */
     struct janas_seq seq0, *cur;

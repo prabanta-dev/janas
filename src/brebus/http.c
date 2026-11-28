@@ -204,8 +204,12 @@ static enum MHD_Result handler(void *cls, struct MHD_Connection *conn,
                      b->tls ? "https" : "http", host),
                 snprintf(own[1], sizeof own[1], "%s", own[0]);
         /* the libraries are anyone's: an artifact's frame, of no origin,
-           asks for them too (its fonts with an Origin: null) */
-        int lib = !strcmp(method, "GET") && !strncmp(url, "/brebus/lib/", 12);
+           asks for them too (its fonts with an Origin: null); so are
+           OpenStreetMap's tiles, which a view's map asks for from its
+           sandbox (Origin: null): public pictures, nothing of the user's */
+        int lib =
+            !strcmp(method, "GET") && (!strncmp(url, "/brebus/lib/", 12) ||
+                                       !strncmp(url, "/brebus/tile/", 13));
         /* a user's own Brebus: its front's requests alone, by its token
            (the front checked the Host, the Origin and the session) */
         const char *ct = MHD_lookup_connection_value(conn, MHD_HEADER_KIND,
@@ -255,6 +259,21 @@ static enum MHD_Result handler(void *cls, struct MHD_Connection *conn,
         return reply(conn, 413, "application/json", no, sizeof no - 1, 1);
     }
     int get = !strcmp(method, "GET"), post = !strcmp(method, "POST");
+    /* the page's language (lang.c), anyone's: the login's page asks for
+       it too */
+    if (get && !strcmp(url, "/brebus/lang.js")) {
+        struct janas_buf o = {0};
+        const char *want =
+            MHD_lookup_connection_value(conn, MHD_GET_ARGUMENT_KIND, "want");
+        if (brebus_lang_js(b->bin_dir, want, &o) != 0) {
+            janas_buf_free(&o);
+            return MHD_NO;
+        }
+        enum MHD_Result ret =
+            reply(conn, 200, "text/javascript; charset=utf-8", o.p, o.n, 0);
+        janas_buf_free(&o);
+        return ret;
+    }
     int models_api =
         !strncmp(url, "/v1/", 4) || !strncmp(url, "/api/", 5) ||
         (get && (!strcmp(url, "/monitor") || !strcmp(url, "/monitor/") ||
@@ -289,7 +308,8 @@ static enum MHD_Result handler(void *cls, struct MHD_Connection *conn,
                                          "/brebus/get/stop",
                                          "/brebus/python/install",
                                          "/brebus/python/remove",
-                                         "/brebus/autostart"};
+                                         "/brebus/autostart",
+                                         "/brebus/update"};
         for (size_t i = 0; i < sizeof NO / sizeof *NO; i++)
             if (!strcmp(url, NO[i]) &&
                 (post || !strcmp(url, "/brebus/autostart"))) {
@@ -344,6 +364,11 @@ static enum MHD_Result handler(void *cls, struct MHD_Connection *conn,
             MHD_destroy_response(rs);
             return ret;
         }
+        /* a tile of OpenStreetMap for a view's map: asked from the view's
+           sandbox, which carries no session; public pictures, nothing of
+           the user's */
+        if (get && !strncmp(url, "/brebus/tile/", 13))
+            goto routes;
         char user[64];
         int admin = 0;
         if (!brebus_auth_user(conn, user, sizeof user, &admin)) {
@@ -708,6 +733,14 @@ routes:
                          brebus_autostart_on() ? "true" : "false");
         return json(conn, rc ? 400 : 200, &o);
     }
+    if (get && !strcmp(url, "/brebus/update")) {
+        brebus_update_status(b, &o);
+        return json(conn, 200, &o);
+    }
+    if (post && !strcmp(url, "/brebus/update")) {
+        int rc = brebus_update_action(b, r->body.p, r->body.n, &o);
+        return json(conn, rc ? 400 : 200, &o);
+    }
     if (get && !strcmp(url, "/brebus/python")) {
         brebus_python_status(&o);
         return json(conn, 200, &o);
@@ -776,6 +809,42 @@ routes:
         int rc = brebus_connector_remove(b, r->body.p, r->body.n, &o);
         return json(conn, rc ? 400 : 200, &o);
     }
+    if (get && !strcmp(url, "/brebus/ext/catalog")) {
+        const char *k =
+            MHD_lookup_connection_value(conn, MHD_GET_ARGUMENT_KIND, "kind");
+        int rc = brebus_ext_catalog(b, k, &o);
+        if (rc)
+            janas_buf_puts(&o, "{\"error\": \"no list\"}");
+        return json(conn, rc ? 404 : 200, &o);
+    }
+    if (get && !strcmp(url, "/brebus/ext/registry")) {
+        const char *q =
+            MHD_lookup_connection_value(conn, MHD_GET_ARGUMENT_KIND, "q");
+        const char *c =
+            MHD_lookup_connection_value(conn, MHD_GET_ARGUMENT_KIND, "cursor");
+        int rc = brebus_ext_registry(b, q, c, &o);
+        return json(conn, rc ? 502 : 200, &o);
+    }
+    if (post && !strcmp(url, "/brebus/mcp/get")) {
+        int rc = brebus_mcp_entry_get(b, r->body.p, r->body.n, &o);
+        return json(conn, rc ? 404 : 200, &o);
+    }
+    if (post && !strcmp(url, "/brebus/mcp/set")) {
+        int rc = brebus_mcp_entry_set(b, r->body.p, r->body.n, &o);
+        return json(conn, rc ? 400 : 200, &o);
+    }
+    if (post && !strcmp(url, "/brebus/mcp/remove")) {
+        int rc = brebus_mcp_entry_remove(b, r->body.p, r->body.n, &o);
+        return json(conn, rc ? 400 : 200, &o);
+    }
+    if (post && !strcmp(url, "/brebus/skills/scan")) {
+        int rc = brebus_skills_scan(b, r->body.p, r->body.n, &o);
+        return json(conn, rc ? 400 : 200, &o);
+    }
+    if (post && !strcmp(url, "/brebus/skills/fetch")) {
+        int rc = brebus_skills_fetch(b, r->body.p, r->body.n, &o);
+        return json(conn, rc ? 400 : 200, &o);
+    }
     if (get && !strcmp(url, "/brebus/skills")) {
         brebus_skills_get(b, &o);
         return json(conn, 200, &o);
@@ -823,6 +892,17 @@ routes:
     }
     if (get && !strcmp(url, "/brebus/projects")) {
         brebus_projects(b, &o);
+        return json(conn, 200, &o);
+    }
+    if (post && !strcmp(url, "/brebus/workspace/forget")) {
+        char why[600];
+        if (brebus_ws_forget(b, r->body.p, r->body.n, why, sizeof why)) {
+            janas_buf_puts(&o, "{\"error\": ");
+            janas_json_write_str(&o, why, strlen(why));
+            janas_buf_puts(&o, "}");
+            return json(conn, 400, &o);
+        }
+        brebus_ws_status(b, &o);
         return json(conn, 200, &o);
     }
     if (post && !strcmp(url, "/brebus/workspace/free")) {
@@ -918,6 +998,88 @@ routes:
         }
         static const char no[] = "{\"error\": \"not a JSON object\"}";
         return reply(conn, 400, "application/json", no, sizeof no - 1, 1);
+    }
+    if (get && !strncmp(url, "/brebus/tile/", 13)) {
+        char why[200];
+        if (brebus_tile(b, url, &o, why, sizeof why) != 0) {
+            janas_buf_free(&o);
+            return reply(conn, 404, "text/plain; charset=utf-8", why,
+                         strlen(why), 0);
+        }
+        struct MHD_Response *rs =
+            MHD_create_response_from_buffer_copy(o.n, o.p);
+        janas_buf_free(&o);
+        if (!rs)
+            return MHD_NO;
+        MHD_add_response_header(rs, "Content-Type", "image/png");
+        MHD_add_response_header(rs, "X-Content-Type-Options", "nosniff");
+        MHD_add_response_header(rs, "Cache-Control", "max-age=86400");
+        /* public pictures: the view (of no origin) may read them back, to
+           save its map */
+        MHD_add_response_header(rs, "Access-Control-Allow-Origin", "*");
+        enum MHD_Result ret = MHD_queue_response(conn, 200, rs);
+        MHD_destroy_response(rs);
+        return ret;
+    }
+    if (get && !strcmp(url, "/brebus/view")) {
+        /* a view of MCP Apps: its own policy, a sandbox of its own, this
+           page its only parent */
+        struct janas_buf h = {0}, c = {0};
+        char why[400], tiles[400] = "";
+        /* this Brebus's own tiles of OpenStreetMap, by the name the page
+           asked it by (a user's Brebus: its front's) */
+        const char *host =
+            MHD_lookup_connection_value(conn, MHD_HEADER_KIND, "Host");
+        const char *fh =
+            b->child ? MHD_lookup_connection_value(conn, MHD_HEADER_KIND,
+                                                   "X-Forwarded-Host")
+                     : NULL;
+        if (fh && *fh && strlen(fh) < 256 && !strpbrk(fh, " /\\;,\"'<>"))
+            host = fh;
+        if (host && strlen(host) < 256 && !strpbrk(host, " /\\;,\"'<>"))
+            snprintf(tiles, sizeof tiles, "%s://%s/brebus/tile/",
+                     b->tls || (b->child && b->front_tls) ? "https" : "http",
+                     host);
+        if (brebus_view(
+                b,
+                MHD_lookup_connection_value(conn, MHD_GET_ARGUMENT_KIND,
+                                            "server"),
+                MHD_lookup_connection_value(conn, MHD_GET_ARGUMENT_KIND, "uri"),
+                tiles, &h, &c, why, sizeof why) != 0) {
+            janas_buf_free(&h);
+            janas_buf_free(&c);
+            return reply(conn, 404, "text/plain; charset=utf-8", why,
+                         strlen(why), 0);
+        }
+        janas_buf_put(&c, "", 1);
+        struct MHD_Response *rs =
+            MHD_create_response_from_buffer_copy(h.n, h.p ? h.p : "");
+        janas_buf_free(&h);
+        if (!rs) {
+            janas_buf_free(&c);
+            return MHD_NO;
+        }
+        MHD_add_response_header(rs, "Content-Type", "text/html; charset=utf-8");
+        MHD_add_response_header(rs, "X-Content-Type-Options", "nosniff");
+        MHD_add_response_header(rs, "Cache-Control", "no-store");
+        MHD_add_response_header(rs, "Referrer-Policy", "no-referrer");
+        MHD_add_response_header(rs, "Content-Security-Policy", c.p);
+        janas_buf_free(&c);
+        enum MHD_Result ret = MHD_queue_response(conn, 200, rs);
+        MHD_destroy_response(rs);
+        return ret;
+    }
+    if (get && !strcmp(url, "/brebus/models/card")) {
+        int st = brebus_model_card(
+            b, MHD_lookup_connection_value(conn, MHD_GET_ARGUMENT_KIND, "name"),
+            &o);
+        return json(conn, st, &o);
+    }
+    if (get && !strcmp(url, "/brebus/models/template")) {
+        int st = brebus_model_template(
+            b, MHD_lookup_connection_value(conn, MHD_GET_ARGUMENT_KIND, "name"),
+            &o);
+        return json(conn, st, &o);
     }
     if (post && !strcmp(url, "/brebus/models/remove")) {
         char err[160], why[300] = "";

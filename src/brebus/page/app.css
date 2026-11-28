@@ -11,14 +11,14 @@
   --sans: system-ui, -apple-system, "Segoe UI", "Noto Sans", sans-serif;
   --mono: ui-monospace, "DejaVu Sans Mono", Menlo, Consolas, monospace;
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #17171a; --panel: #1f1f23; --side: #131316; --line: #2e2e34;
-    --fg: #e4e2dc; --dim: #9a978f; --accent: #e08a4c; --ok: #79b386;
-    --warn: #d89a5c;
-    --mine: #2c2b29; --mine-fg: #e4e2dc;
-    --link: #8bb8ff;
-  }
+/* dark: the system's choice or the user's (theme.js sets the class) */
+:root.dark {
+  --bg: #17171a; --panel: #1f1f23; --side: #131316; --line: #2e2e34;
+  --fg: #e4e2dc; --dim: #9a978f; --accent: #e08a4c; --ok: #79b386;
+  --warn: #d89a5c;
+  --mine: #2c2b29; --mine-fg: #e4e2dc;
+  --link: #8bb8ff;
+  color-scheme: dark;
 }
 * { box-sizing: border-box; }
 a, .text a.link { color: var(--link); text-decoration: underline; text-underline-offset: 2px; }
@@ -156,9 +156,22 @@ main:has(#chat.on) { overflow: hidden; }
 body.drag iframe { pointer-events: none; }
 body.drag { cursor: col-resize; user-select: none; }
 #artpane[hidden] { display: none; }
-.arthead { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.arthead { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 13px; }
 .arthead b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.artbtns { display: flex; gap: 6px; flex-wrap: wrap; }
+.artbtns { display: flex; gap: 2px; flex-wrap: wrap; align-items: center; }
+/* the artifact's bar: small icons, quiet until pointed at */
+.aico { all: unset; box-sizing: border-box; display: inline-flex; align-items: center;
+  justify-content: center; width: 24px; height: 24px; border-radius: 6px; color: var(--dim);
+  cursor: pointer; }
+.aico[hidden] { display: none; }
+.aico:hover, .aico:focus-visible { background: var(--line); color: var(--fg); }
+.aico:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.aico[aria-pressed=true] { color: var(--accent); }
+.aico svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8;
+  stroke-linecap: round; stroke-linejoin: round; }
+.arthead .seg { height: 24px; }
+.arthead .seg button { padding: 0 8px; font-size: 12px; }
+.arthead select { padding: 2px 24px 2px 6px; font-size: 12px; }
 #artver { padding: 3px 6px; border-radius: 6px; border: 1px solid var(--line);
           background: var(--panel); color: var(--fg); }
 #artbody { flex: 1; min-height: 0; overflow: auto; border: 1px solid var(--line);
@@ -166,9 +179,10 @@ body.drag { cursor: col-resize; user-select: none; }
 #artbody iframe { width: 100%; height: 100%; border: 0; background: #fff; display: block; }
 #artbody pre { margin: 0; padding: 12px; font: 13px var(--mono); white-space: pre; }
 #artbody .text { padding: 12px 16px; }
-#artpane.full { position: fixed; inset: 12px; width: auto; z-index: 20; background: var(--bg);
+#artpane.full { position: fixed; inset: 12px; width: auto !important; z-index: 20; /* over the width the grip set */ background: var(--bg);
                 border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg[hidden] { display: none; }
 .seg button { all: unset; cursor: pointer; padding: 3px 10px; font-size: 13px; color: var(--dim); }
 .seg button.on { background: var(--panel); color: var(--fg); }
 #arterr { border: 1px solid #c55; border-radius: 10px; padding: 8px 10px; display: flex;
@@ -289,9 +303,9 @@ input[type=search]::-webkit-search-cancel-button { -webkit-appearance: none; app
 .row-acts { white-space: nowrap; }
 .setf { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; font-size: 13px;
         color: var(--dim); }
-.setf input, .setf select { margin-left: 6px; padding: 4px 6px; border-radius: 6px;
+.setf input:not([type=range]), .setf select { margin-left: 6px; padding: 4px 6px; border-radius: 6px;
         border: 1px solid var(--line); background: var(--panel); color: var(--fg); font: inherit; }
-.setf input { width: 130px; }
+.setf input:not([type=range]) { width: 130px; }
 .hfget { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 16px;
          max-width: 900px; }
 .hfget input { flex: 1; min-width: 260px; padding: 6px 10px; border-radius: 8px;
@@ -357,7 +371,7 @@ main h3 { font-size: 15px; margin: 24px 0 10px; }
 .srvset .note, .note { color: var(--dim); font-size: 12px; }
 .srvset label:has(> input[type=checkbox]) .note { flex-basis: 100%; margin-left: 42px; }
 .srvset .row { display: flex; gap: 8px; align-items: center; }
-.srvset input:not([type=checkbox]), .srvset textarea {
+.srvset input:not([type=checkbox]):not([type=range]), .srvset textarea {
   padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line);
   background: var(--panel); color: var(--fg); font: 13px var(--mono); flex: 1; }
 .srvset textarea { resize: vertical; }
@@ -442,8 +456,8 @@ main h3 { font-size: 15px; margin: 24px 0 10px; }
 
 /* ---- every form control alike, in the page's own style: fields, lists,
    numbers without the system's spinners, check boxes ---- */
-main input:not([type=checkbox]):not([type=radio]), main select, main textarea,
-.dlg input:not([type=checkbox]):not([type=radio]), .dlg select, .dlg textarea {
+main input:not([type=checkbox]):not([type=radio]):not([type=range]), main select, main textarea,
+.dlg input:not([type=checkbox]):not([type=radio]):not([type=range]), .dlg select, .dlg textarea {
   appearance: none; -webkit-appearance: none; box-sizing: border-box;
   padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line);
   background: var(--panel); color: var(--fg); font: 14px var(--sans); line-height: 1.3; }
@@ -452,9 +466,7 @@ main input:focus, main select:focus, main textarea:focus,
 main select, .dlg select { padding-right: 32px; cursor: pointer; background-repeat: no-repeat;
   background-position: right 10px center; background-size: 12px;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2 4l4 4 4-4' fill='none' stroke='%236d6a62' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); }
-@media (prefers-color-scheme: dark) {
-  main select, .dlg select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2 4l4 4 4-4' fill='none' stroke='%239a978f' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); }
-}
+.dark main select, .dark .dlg select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2 4l4 4 4-4' fill='none' stroke='%239a978f' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); }
 input[type=number] { -moz-appearance: textfield; }
 input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button {
   -webkit-appearance: none; margin: 0; }
@@ -598,11 +610,9 @@ main:has(#chat.on) { padding-bottom: 10px; }
 /* the artifact's Preview and Code as tall as the buttons beside them */
 .seg { height: var(--ctl-h); box-sizing: border-box; align-items: stretch; }
 .seg button { display: inline-flex; align-items: center; padding: 0 12px; font-size: 14px; }
-.arthead { gap: 8px; }
+.arthead { gap: 6px; }
 
 /* a service with its sign-in button at the right */
-#svclist .svc { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-#svclist .svc label { min-width: 0; }
 #svclist .svcauth { flex: none; }
 
 /* a diagram of a reply, drawn in its place */
@@ -617,25 +627,31 @@ main:has(#chat.on) { padding-bottom: 10px; }
 .setf.plain details > label, .setf.plain details > p.note { margin-top: 14px; }
 .setf.plain details > p.note { margin-bottom: 0; }
 
-/* the skills, as the services: a row each, its button at the right */
-#sklist .svc { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-#sklist label { display: flex; gap: 8px; align-items: baseline; padding: 3px 0; font-size: 13px; min-width: 0; }
-#sklist small { color: var(--dim); }
-#sklist .skrm { flex: none; }
-#skadd { margin-top: 10px; }
-
-/* the connectors: as the services, a row each with its button */
-#conncard .cnlist .svc { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 /* the rows of a list with a button each: a step between them, so that the
    buttons one under the other never touch */
-#svclist, #sklist, #conncard .cnlist { display: flex; flex-direction: column; gap: 6px; }
-#conncard .cnlist label { display: flex; gap: 8px; align-items: baseline; padding: 3px 0; font-size: 13px; min-width: 0; }
-#conncard .cnlist small { color: var(--dim); }
-#conncard .cnlist button { flex: none; }
-#conncard h4 { margin: 14px 0 6px; font-size: 13px; }
-#cnadd { margin-top: 10px; }
-/* Add and Remove of the same width, in one column */
-#conncard .cnlist button, #sklist .skrm, #svclist .svcauth { min-width: 6.5em; justify-content: center; }
+#svclist { display: flex; flex-direction: column; gap: 6px; }
+#svclist .svc { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+#svclist .svc label { min-width: 0; font-size: 13px; padding: 3px 0; }
+#svclist .svc small { display: block; color: var(--dim); margin-top: 1px; overflow-wrap: anywhere; }
+#svclist .svcauth { min-width: 6.5em; justify-content: center; }
+
+/* Extensions (ext.js): tabs; lists of rows, a name over its line, the
+   buttons at the right, of one width */
+#ext .exttabs { margin: 8px 0 14px; }
+#ext .card { display: flex; flex-direction: column; gap: 6px; }
+#ext .svc { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+#ext .svc label { min-width: 0; font-size: 13px; padding: 3px 0; }
+#ext .svc small { display: block; color: var(--dim); margin-top: 1px; }
+#ext .svc small.mono { font-size: 11px; overflow-wrap: anywhere; }
+/* a description written for the model can be long: three lines, the rest on hover */
+#ext .svc small.desc { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+#ext .exbtns { display: flex; gap: 6px; flex: none; }
+#ext .svc > button, #ext .exbtns button { flex: none; min-width: 6.5em; justify-content: center; }
+#ext .exsearch { width: 100%; max-width: 760px; box-sizing: border-box; padding: 8px 10px; margin: 2px 0 10px; font: inherit;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--fg); }
+#ext form.hfget { margin-top: 8px; }
+.exform .exkind { margin: 12px 0 4px; }
+.exform textarea { width: 100%; box-sizing: border-box; font: 12px var(--mono); }
 /* the page's own picker of the server's folders (from a browser) */
 .wplist { display: flex; flex-direction: column; align-items: stretch; max-height: 50vh; overflow: auto; gap: 2px; }
 .wplist button { text-align: left; justify-content: flex-start; }
@@ -667,15 +683,26 @@ main:has(#chat.on) { padding-bottom: 10px; }
 .sumline .working { display: inline-flex; align-items: center; height: 1.6em; }
 /* zoom: the interface's at the side bar's foot (its percentage in the
    accent while not 100%), the steps in Settings and in the artifact's bar */
-nav .uizoom { display: flex; align-items: center; gap: 10px; padding: 4px 0 4px 10px; color: var(--dim); }
-nav .uizoom[hidden] { display: none; }
-nav .uizoom .seg { margin-left: auto; height: 28px; }
-nav .uizoom .seg button { padding: 0 8px; border-radius: 0; font-size: 13px; color: var(--dim); }
-nav .uizoom .seg button:hover { background: var(--line); color: var(--fg); }
-nav .uizoom.on .seg b { color: var(--accent); }
-nav.mini .uizoom { justify-content: center; padding: 4px 0; }
-nav.mini .uizoom > svg { display: none; }
-nav.mini .uizoom .seg { margin: 0; }
+/* the foot of the side bar: a line under Info, then the interface's zoom
+   and the theme, small menus side by side on the left */
+nav .footsep { border: 0; border-top: 1px solid var(--line); margin: 4px 6px; }
+nav .footrow { display: flex; align-items: center; gap: 4px; padding: 0 4px; flex-wrap: wrap; }
+nav.mini .footrow { flex-direction: column; }
+/* a small menu button: an icon, its value, a caret (zoom, theme) */
+.zmenu { all: unset; box-sizing: border-box; display: inline-flex; align-items: center; gap: 4px;
+  height: 24px; padding: 0 6px; border-radius: 6px; font-size: 12px; color: var(--dim);
+  cursor: pointer; white-space: nowrap; }
+.zmenu[hidden] { display: none; }
+.zmenu:hover, .zmenu:focus-visible { background: var(--line); color: var(--fg); }
+.zmenu:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.zmenu svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8;
+  stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.zmenu b { font-weight: 500; font-variant-numeric: tabular-nums; }
+.zmenu.on b { color: var(--accent); }
+/* the same V as every menu's, centred on the text */
+.zmenu .caret { display: inline-flex; align-items: center; align-self: center; margin-left: 0; vertical-align: middle; color: inherit; opacity: .8; }
+.zmenu .caret svg { width: 14px; height: 14px; stroke-width: 2; }
+nav.mini .zmenu b, nav.mini .zmenu .caret { display: none; }
 nav.mini .uizoom .seg button { min-width: 0; padding: 0 4px; font-size: 12px; }
 .zoomseg button, .btnline .zoomseg button { min-width: 0; padding: 0 9px; justify-content: center; }
 #artzpct, .zoomseg button[data-z="0"] { min-width: 3.4em; font-variant-numeric: tabular-nums; }
@@ -693,5 +720,55 @@ nav.mini .uizoom .seg button { min-width: 0; padding: 0 4px; font-size: 12px; }
 .msg .reasoning { display: flex; align-items: center; gap: 8px; cursor: pointer; min-width: 0; }
 .msg .reasoning .thinkline { color: var(--dim); font-size: 13px; font-style: italic;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
-/* the project dialog for a new project: not the open one's settings */
-#wsdlg.fresh #wsemb, #wsdlg.fresh #wssvc, #wsdlg.fresh #wsro { display: none; }
+/* a project's settings: its name and a close button, tabs, a body of the
+   same height whatever the tab */
+#psdlg .pshead { display: flex; align-items: center; gap: 8px; }
+#psdlg .pshead h2 { flex: 1; margin: 0; overflow-wrap: anywhere; }
+#psdlg .pstabs { margin: 12px 0 8px; }
+#psdlg .box { display: flex; flex-direction: column; overflow: hidden; }
+#psdlg .psbody { overflow: auto; height: min(56vh, 520px); padding-right: 4px; }
+#psdlg .pstab h3:first-child { margin-top: 6px; }
+.act.danger { color: var(--warn); border-color: var(--warn); }
+
+/* a new version installed: said once, at the top (update.js) */
+.updnote { margin: 8px 16px 0; padding: 8px 12px; border-radius: 8px;
+  background: var(--panel); border: 1px solid var(--line);
+  font-size: .92em; }
+.updnote[hidden] { display: none; }
+.updnote a { margin-right: 8px; }
+#updcard [hidden] { display: none; }
+/* the update downloaded: one click restarts Brebus into it (update.js) */
+nav .updbtn { display: flex; align-items: center; gap: 8px; margin: 4px 6px 0;
+  padding: 6px 8px; border: 1px solid var(--accent); border-radius: 8px;
+  color: var(--accent); background: transparent; font-size: 13px; cursor: pointer; }
+nav .updbtn:hover { background: var(--panel); }
+nav .updbtn[hidden] { display: none; }
+nav .updbtn:disabled { opacity: .7; cursor: default; }
+nav.mini .updbtn .lbl { display: none; }
+/* the sampling's fields (sampling.js): side by side where there is room */
+.smpbox .smprow { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 4px 16px; align-items: start; }
+.smpbox .smprow label { margin: 0; display: flex; flex-direction: column; gap: 4px; }
+/* a slider and its field side by side; the slider dimmed while the field
+   is empty (the grey value, the model's) */
+.smpbox .smpctl { display: flex; gap: 8px; align-items: center; }
+.smpbox .smpctl .smprange { flex: 1; min-width: 0; margin: 0; accent-color: var(--accent); }
+.smpbox .smpctl .smprange.idle { opacity: 0.45; }
+.smpbox .smpctl .smp { width: 6.5em; flex: none; }
+.smpbox .smpacts { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: end; margin-top: 8px; }
+
+/* a view of MCP Apps (apps.js): as wide as the message, as tall as it says */
+/* in the pane beside the chat, filling it */
+#artbody iframe.mcpview { background: var(--panel); color-scheme: normal; }
+/* a call's arguments in its question, a value each */
+.dlg dl.dlargs { max-height: 40vh; overflow: auto; }
+.dlg dl.dlargs dd { white-space: pre-wrap; font: 12px var(--mono); }
+.dlg p.note { color: var(--dim); font-size: 13px; }
+
+/* a model's card (My models) */
+dl.cardl { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; margin: 6px 0; }
+dl.cardl dt { color: var(--dim); }
+dl.cardl dd { margin: 0; overflow-wrap: anywhere; }
+
+/* a model's chat template: the field as wide as the form, its Reset under it */
+.tmplbox textarea { display: block; width: 100%; box-sizing: border-box; }
+.tmplbox .tmplreset { display: inline-flex; margin: 6px 0 12px; }

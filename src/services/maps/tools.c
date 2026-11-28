@@ -16,6 +16,11 @@
 #include "maps.h"
 
 /* The model reads all of it before it can use a tool: every word costs. */
+/* every tool only reads, and has a map for a client that shows views (MCP
+   Apps): the view may ask them again */
+#define VIEW                                                                   \
+    "\"annotations\": {\"readOnlyHint\": true, \"openWorldHint\": true}, "     \
+    "\"_meta\": {\"ui\": {\"resourceUri\": \"ui://maps/map\"}}, "
 #define PLACE_TEXT                                                             \
     "A place or an address with its town (\\\"Via Roma 10, Trapani\\\", "      \
     "\\\"Colosseo\\\"), or \\\"lat,lon\\\"."
@@ -24,38 +29,40 @@ void mp_tools_list(void *ctx, struct janas_buf *b)
 {
     (void)ctx;
     janas_buf_puts(
-        b, "\"tools\": [{\"name\": \"maps_route\", \"title\": \"A route by "
-           "road\", \"description\": \"The route between places by car, bike "
-           "or on foot: distance, time, roads, and the way step by step.\", "
-           "\"inputSchema\": {\"type\": \"object\", \"properties\": {\"from\": "
-           "{\"type\": \"string\", \"description\": \"" PLACE_TEXT
-           " Leave it out for where the user is (\\\"near me\\\"): "
-           "never a place only talked of.\"}, \"to\": {\"type\": "
-           "\"string\", \"description\": \"" PLACE_TEXT
-           "\"}, \"via\": {\"type\": \"string\", \"description\": \"A place "
-           "to pass through.\"}, \"mode\": {\"type\": \"string\", \"enum\": "
-           "[\"car\", \"bike\", \"foot\"]}, \"avoid\": {\"type\": \"array\", "
-           "\"items\": {\"type\": \"string\", \"enum\": [\"tolls\", "
-           "\"highways\", \"ferries\"]}}}, \"required\": [\"to\"], "
-           "\"additionalProperties\": false}}, "
-           "{\"name\": \"maps_transit\", \"title\": \"Public transport\", "
-           "\"description\": \"Journeys by train, bus, metro or ferry between "
-           "places, from the timetables.\", \"inputSchema\": {\"type\": "
-           "\"object\", \"properties\": {\"from\": {\"type\": \"string\", "
-           "\"description\": \"" PLACE_TEXT
-           " Leave it out for where the user is (\\\"near me\\\"): "
-           "never a place only talked of.\"}, \"to\": {\"type\": "
-           "\"string\", \"description\": \"" PLACE_TEXT
-           "\"}, \"when\": {\"type\": \"string\", \"description\": \"Local "
-           "time, HH:MM or YYYY-MM-DD HH:MM (default now).\"}, \"arrive_by\": "
-           "{\"type\": \"boolean\", \"description\": \"The time is to arrive "
-           "by, not to leave at.\"}}, \"required\": [\"to\"], "
-           "\"additionalProperties\": false}}, "
-           "{\"name\": \"maps_nearby\", \"title\": \"What is near\", "
-           "\"description\": \"Places of a kind near a place, nearest first: "
-           "fuel, pharmacies, cash machines, stations...\", \"inputSchema\": "
-           "{\"type\": \"object\", \"properties\": {\"what\": {\"type\": "
-           "\"string\", \"enum\": [");
+        b,
+        "\"tools\": [{\"name\": \"maps_route\", " VIEW
+        "\"title\": \"A route by "
+        "road\", \"description\": \"The route between places by car, bike "
+        "or on foot: distance, time, roads, and the way step by step.\", "
+        "\"inputSchema\": {\"type\": \"object\", \"properties\": {\"from\": "
+        "{\"type\": \"string\", \"description\": \"" PLACE_TEXT
+        " Leave it out for where the user is (\\\"near me\\\"): "
+        "never a place only talked of.\"}, \"to\": {\"type\": "
+        "\"string\", \"description\": \"" PLACE_TEXT
+        "\"}, \"via\": {\"type\": \"string\", \"description\": \"A place "
+        "to pass through.\"}, \"mode\": {\"type\": \"string\", \"enum\": "
+        "[\"car\", \"bike\", \"foot\"]}, \"avoid\": {\"type\": \"array\", "
+        "\"items\": {\"type\": \"string\", \"enum\": [\"tolls\", "
+        "\"highways\", \"ferries\"]}}}, \"required\": [\"to\"], "
+        "\"additionalProperties\": false}}, "
+        "{\"name\": \"maps_transit\", " VIEW "\"title\": \"Public transport\", "
+        "\"description\": \"Journeys by train, bus, metro or ferry between "
+        "places, from the timetables.\", \"inputSchema\": {\"type\": "
+        "\"object\", \"properties\": {\"from\": {\"type\": \"string\", "
+        "\"description\": \"" PLACE_TEXT
+        " Leave it out for where the user is (\\\"near me\\\"): "
+        "never a place only talked of.\"}, \"to\": {\"type\": "
+        "\"string\", \"description\": \"" PLACE_TEXT
+        "\"}, \"when\": {\"type\": \"string\", \"description\": \"Local "
+        "time, HH:MM or YYYY-MM-DD HH:MM (default now).\"}, \"arrive_by\": "
+        "{\"type\": \"boolean\", \"description\": \"The time is to arrive "
+        "by, not to leave at.\"}}, \"required\": [\"to\"], "
+        "\"additionalProperties\": false}}, "
+        "{\"name\": \"maps_nearby\", " VIEW "\"title\": \"What is near\", "
+        "\"description\": \"Places of a kind near a place, nearest first: "
+        "fuel, pharmacies, cash machines, stations...\", \"inputSchema\": "
+        "{\"type\": \"object\", \"properties\": {\"what\": {\"type\": "
+        "\"string\", \"enum\": [");
     for (size_t i = 0; i < MP_N_KINDS; i++)
         janas_buf_printf(b, "%s\"%s\"", i ? ", " : "", MP_KINDS[i].name);
     janas_buf_puts(
@@ -66,7 +73,7 @@ void mp_tools_list(void *ctx, struct janas_buf *b)
            "\"radius\": {\"type\": \"number\", \"minimum\": 0.1, "
            "\"maximum\": 10, \"description\": \"km (default 2).\"}}, "
            "\"required\": [\"what\"], \"additionalProperties\": false}}, "
-           "{\"name\": \"maps_find\", \"title\": \"Where a place is\", "
+           "{\"name\": \"maps_find\", " VIEW "\"title\": \"Where a place is\", "
            "\"description\": \"A place's or an address' full address, "
            "coordinates and map link.\", \"inputSchema\": {\"type\": "
            "\"object\", \"properties\": {\"place\": {\"type\": \"string\", "

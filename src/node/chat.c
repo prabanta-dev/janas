@@ -46,8 +46,169 @@ static const char *const chat_known[] = {"system",
                                          "recap",
                                          "presencePenalty",
                                          "frequencyPenalty",
+                                         "repeatPenalty",
+                                         "repeatLastN",
+                                         "typicalP",
+                                         "topNSigma",
+                                         "xtcProbability",
+                                         "xtcThreshold",
+                                         "dryMultiplier",
+                                         "dryBase",
+                                         "dryAllowedLength",
+                                         "dryLastN",
+                                         "dryBreakers",
+                                         "mirostat",
+                                         "mirostatTau",
+                                         "mirostatEta",
+                                         "dynatempRange",
+                                         "dynatempExponent",
+                                         "samplers",
                                          "keep",
                                          NULL};
+
+/* the option is there and null: the model's own, for those that take it */
+static int is_null(napi_env env, napi_value o, const char *name)
+{
+    napi_value v;
+    napi_valuetype t;
+    return o && napi_typeof(env, o, &t) == napi_ok && t == napi_object &&
+           napi_get_named_property(env, o, name, &v) == napi_ok &&
+           napi_typeof(env, v, &t) == napi_ok && t == napi_null;
+}
+
+/* s[0..n) into out as a JSON string; 0 when it does not fit in cap */
+static int json_string(char *out, size_t *at, size_t cap, const char *s,
+                       size_t n)
+{
+    size_t k = *at;
+#define PUT(ch)                                                                \
+    do {                                                                       \
+        if (k + 1 >= cap)                                                      \
+            return 0;                                                          \
+        out[k++] = (ch);                                                       \
+    } while (0)
+    PUT('"');
+    for (size_t i = 0; i < n; i++) {
+        unsigned char ch = (unsigned char)s[i];
+        if (ch == '"' || ch == '\\') {
+            PUT('\\');
+            PUT((char)ch);
+        } else if (ch == '\n') {
+            PUT('\\');
+            PUT('n');
+        } else if (ch == '\t') {
+            PUT('\\');
+            PUT('t');
+        } else if (ch == '\r') {
+            PUT('\\');
+            PUT('r');
+        } else if (ch < 0x20) {
+            if (k + 6 >= cap)
+                return 0;
+            snprintf(out + k, 7, "\\u%04x", ch);
+            k += 6;
+        } else
+            PUT((char)ch);
+    }
+    PUT('"');
+#undef PUT
+    out[k] = 0;
+    *at = k;
+    return 1;
+}
+
+/*
+ * A list of strings into out (cap bytes): dryBreakers as a JSON array,
+ * samplers joined by ';' (or a string as it is), each a name. null: ""
+ * (the model's order, llama.cpp's breakers). 1 with it, 0 when absent, -1 after
+ * throwing.
+ */
+static int opt_list(napi_env env, napi_value o, const char *w, const char *name,
+                    int json, char *out, size_t cap)
+{
+    if (is_null(env, o, name)) {
+        out[0] = 0;
+        return 1;
+    }
+    napi_value v;
+    napi_valuetype t = napi_undefined;
+    if (!o || napi_typeof(env, o, &t) != napi_ok || t != napi_object ||
+        napi_get_named_property(env, o, name, &v) != napi_ok ||
+        napi_typeof(env, v, &t) != napi_ok || t == napi_undefined)
+        return 0;
+    char buf[256];
+    size_t k = 0, n;
+    bool arr = false;
+    if (t == napi_string && !json) {
+        char *s = janas_node_text(env, v, &n);
+        if (!s) {
+            janas_node_throw(env, JANAS_LLM_ENOMEM, "janas: out of memory");
+            return -1;
+        }
+        int fits = n < cap;
+        if (fits)
+            memcpy(out, s, n + 1);
+        free(s);
+        if (!fits)
+            goto long_;
+        return 1;
+    }
+    uint32_t len = 0;
+    if (napi_is_array(env, v, &arr) != napi_ok || !arr ||
+        napi_get_array_length(env, v, &len) != napi_ok)
+        goto bad;
+    if (json)
+        buf[k++] = '[';
+    for (uint32_t i = 0; i < len; i++) {
+        napi_value e;
+        char *s;
+        n = 0;
+        if (napi_get_element(env, v, i, &e) != napi_ok ||
+            !(s = janas_node_text(env, e, &n))) {
+            if (n == SIZE_MAX) {
+                janas_node_throw(env, JANAS_LLM_ENOMEM, "janas: out of memory");
+                return -1;
+            }
+            goto bad;
+        }
+        if (!json && (!n || memchr(s, ';', n))) {
+            free(s);
+            goto bad;
+        }
+        int fits = 1;
+        if (i && k + 1 < cap)
+            buf[k++] = json ? ',' : ';';
+        else if (i)
+            fits = 0;
+        if (fits && json)
+            fits = json_string(buf, &k, cap, s, n);
+        else if (fits) {
+            fits = k + n < cap;
+            if (fits)
+                memcpy(buf + k, s, n), k += n;
+        }
+        free(s);
+        if (!fits)
+            goto long_;
+    }
+    if (json) { /* []: no breakers */
+        if (k + 1 >= cap)
+            goto long_;
+        buf[k++] = ']';
+    }
+    buf[k] = 0;
+    memcpy(out, buf, k + 1);
+    return 1;
+bad:
+    janas_node_type_error(env, "janas: %s: %s must be %s", w, name,
+                          json ? "an array of strings"
+                               : "a string or an array of names");
+    return -1;
+long_:
+    janas_node_type_error(env, "janas: %s: %s must fit in %zu bytes%s", w, name,
+                          cap - 1, json ? " as JSON" : "");
+    return -1;
+}
 
 /* the options of model.chat() and chat.set() over cj->p */
 static int chat_options(napi_env env, napi_value o, const char *w,
@@ -69,19 +230,53 @@ static int chat_options(napi_env env, napi_value o, const char *w,
         return -1;                                                             \
     if (r)                                                                     \
         p->field = (type)i;
-    NUMBER("temperature", temperature, 0, 100)
-    NUMBER("topP", top_p, 0, 1)
-    NUMBER("minP", min_p, 0, 1)
+    /* those the model may recommend: null or -1 for its own */
+#define OWN_NUMBER(name, field, hi)                                            \
+    if (is_null(env, o, name))                                                 \
+        p->field = -1;                                                         \
+    else {                                                                     \
+        NUMBER(name, field, -1, hi)                                            \
+    }
+#define OWN_WHOLE(name, field, hi)                                             \
+    if (is_null(env, o, name))                                                 \
+        p->field = -1;                                                         \
+    else {                                                                     \
+        WHOLE(name, field, int32_t, -1, hi)                                    \
+    }
+    OWN_NUMBER("temperature", temperature, 100)
+    OWN_NUMBER("topP", top_p, 1)
+    OWN_NUMBER("minP", min_p, 1)
+    OWN_WHOLE("topK", top_k, INT32_MAX)
+    OWN_NUMBER("repeatPenalty", repeat_penalty, 100)
+    OWN_WHOLE("repeatLastN", repeat_last_n, INT32_MAX)
+    OWN_NUMBER("xtcProbability", xtc_probability, 1)
+    OWN_NUMBER("xtcThreshold", xtc_threshold, 1)
+    OWN_WHOLE("mirostat", mirostat, 2)
+    OWN_NUMBER("mirostatTau", mirostat_tau, 100)
+    OWN_NUMBER("mirostatEta", mirostat_eta, 1)
     NUMBER("presencePenalty", presence_penalty, -2, 2)
     NUMBER("frequencyPenalty", frequency_penalty, -2, 2)
-    WHOLE("topK", top_k, int32_t, 0, INT32_MAX)
+    NUMBER("typicalP", typical_p, 0, 1)
+    NUMBER("topNSigma", top_n_sigma, 0, 100)
+    NUMBER("dryMultiplier", dry_multiplier, 0, 100)
+    NUMBER("dryBase", dry_base, 1, 100)
+    NUMBER("dynatempRange", dynatemp_range, 0, 100)
+    NUMBER("dynatempExponent", dynatemp_exponent, 0, 100)
+    WHOLE("dryAllowedLength", dry_allowed_length, int32_t, 0, INT32_MAX)
+    WHOLE("dryLastN", dry_last_n, int32_t, 0, INT32_MAX)
     WHOLE("seed", seed, uint64_t, 0, 9007199254740991LL)
     WHOLE("maxReply", max_reply, int32_t, 0, INT32_MAX)
     WHOLE("maxAnswer", max_answer, int32_t, 0, INT32_MAX)
     WHOLE("maxReasoning", max_reasoning, int32_t, 0, INT32_MAX)
     WHOLE("maxInput", max_input, uint32_t, 0, UINT32_MAX)
+#undef OWN_NUMBER
+#undef OWN_WHOLE
 #undef NUMBER
 #undef WHOLE
+    if (opt_list(env, o, w, "dryBreakers", 1, p->dry_breakers,
+                 sizeof p->dry_breakers) < 0 ||
+        opt_list(env, o, w, "samplers", 0, p->samplers, sizeof p->samplers) < 0)
+        return -1;
     if ((r = janas_node_opt_bool(env, o, w, "speculate", &b)) < 0)
         return -1;
     if (r)
@@ -356,6 +551,110 @@ static napi_value chat_reset(napi_env env, napi_callback_info info)
     return p;
 }
 
+static void sampling_run(struct janas_node_job *j)
+{
+    janas_llm_chat *c = j->m->chat;
+    if (!c) {
+        j->rc = JANAS_NODE_ECLOSED;
+        snprintf(j->error, sizeof(j->error), "janas: the chat is closed");
+        return;
+    }
+    j->rc = janas_llm_chat_sampling(c, j->data);
+    if (j->rc != JANAS_LLM_OK)
+        failed(j);
+}
+
+static napi_value json_parse(napi_env env, const char *s)
+{
+    napi_value global, json, fn, arg, out = NULL;
+    if (napi_get_global(env, &global) != napi_ok ||
+        napi_get_named_property(env, global, "JSON", &json) != napi_ok ||
+        napi_get_named_property(env, json, "parse", &fn) != napi_ok ||
+        !(arg = janas_node_string(env, s, strlen(s))) ||
+        napi_call_function(env, json, fn, 1, &arg, &out) != napi_ok)
+        return NULL;
+    return out;
+}
+
+/* the parameters sampled with, by the names of the options */
+static napi_value sampling_value(napi_env env, struct janas_node_job *j)
+{
+    const struct janas_llm_chat_params *p = j->data;
+    napi_value o;
+    if (napi_create_object(env, &o) != napi_ok)
+        return NULL;
+#define PUT(name, field)                                                       \
+    janas_node_put(env, o, name, janas_node_number(env, p->field))
+    PUT("temperature", temperature);
+    PUT("topK", top_k);
+    PUT("topP", top_p);
+    PUT("minP", min_p);
+    PUT("presencePenalty", presence_penalty);
+    PUT("frequencyPenalty", frequency_penalty);
+    PUT("repeatPenalty", repeat_penalty);
+    PUT("repeatLastN", repeat_last_n);
+    PUT("typicalP", typical_p);
+    PUT("topNSigma", top_n_sigma);
+    PUT("xtcProbability", xtc_probability);
+    PUT("xtcThreshold", xtc_threshold);
+    PUT("dryMultiplier", dry_multiplier);
+    PUT("dryBase", dry_base);
+    PUT("dryAllowedLength", dry_allowed_length);
+    PUT("dryLastN", dry_last_n);
+    PUT("mirostat", mirostat);
+    PUT("mirostatTau", mirostat_tau);
+    PUT("mirostatEta", mirostat_eta);
+    PUT("dynatempRange", dynatemp_range);
+    PUT("dynatempExponent", dynatemp_exponent);
+    PUT("seed", seed);
+#undef PUT
+    /* the breakers as a list, llama.cpp's when none were given */
+    napi_value b = json_parse(env, p->dry_breakers[0]
+                                       ? p->dry_breakers
+                                       : "[\"\\n\", \":\", \"\\\"\", \"*\"]");
+    if (b)
+        janas_node_put(env, o, "dryBreakers", b);
+    /* the stages in order, llama.cpp's names */
+    napi_value a;
+    if (napi_create_array_with_length(env, 0, &a) != napi_ok)
+        return NULL;
+    uint32_t n = 0;
+    for (const char *s = p->samplers; *s;) {
+        const char *e = strchr(s, ';');
+        size_t len = e ? (size_t)(e - s) : strlen(s);
+        if (len)
+            napi_set_element(env, a, n++, janas_node_string(env, s, len));
+        s += len + (e != NULL);
+    }
+    janas_node_put(env, o, "samplers", a);
+    return o;
+}
+
+/* what the chat samples with: the model's own in place of those left to
+   it, Janas's where the model says nothing */
+static napi_value chat_sampling(napi_env env, napi_callback_info info)
+{
+    struct janas_node_chat *c = janas_node_self(env, info, &janas_node_chat_tag,
+                                                NULL, NULL, "Chat.sampling");
+    if (!c)
+        return NULL;
+    if (c->closed || c->m->closing)
+        return closed(env, 1, "chat.sampling");
+    struct janas_llm_chat_params *out = calloc(1, sizeof(*out));
+    struct janas_node_job *j = out ? janas_node_job(c->m, sampling_run) : NULL;
+    napi_value p = j ? janas_node_promise(env, &j->deferred) : NULL;
+    if (!p) {
+        free(out);
+        free(j);
+        return janas_node_throw(env, JANAS_LLM_ENOMEM, "janas: out of memory");
+    }
+    out->size = sizeof(*out);
+    j->data = out;
+    j->value = sampling_value;
+    janas_node_post(env, j);
+    return p;
+}
+
 struct image_job {
     void *data;
     size_t n;
@@ -472,6 +771,7 @@ napi_value janas_node_chat_class(napi_env env)
         {.utf8name = "image", .method = chat_image, .attributes = method},
         {.utf8name = "set", .method = chat_set, .attributes = method},
         {.utf8name = "reset", .method = chat_reset, .attributes = method},
+        {.utf8name = "sampling", .method = chat_sampling, .attributes = method},
         {.utf8name = "close", .method = chat_close, .attributes = method},
         {.utf8name = "messages",
          .method = janas_node_chat_messages,

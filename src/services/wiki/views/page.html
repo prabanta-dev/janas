@@ -1,0 +1,156 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wikipedia</title>
+<style>
+<!--include base.css-->
+header h1 { font: 600 22px/1.25 Georgia, "Linux Libertine", "Times New Roman", serif; margin: 2px 0 2px; }
+header .desc { color: var(--color-text-secondary); margin-bottom: 6px; }
+.bar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 4px 0 8px; font-size: 13px; }
+.bar button { font: inherit; }
+nav.toc { display: flex; flex-wrap: wrap; gap: 4px 8px; margin: 0 0 10px; font-size: 13px; }
+nav.toc button { background: var(--color-background-secondary); border: 1px solid var(--color-border-primary); border-radius: 12px;
+  padding: 1px 9px; color: var(--color-text-primary); cursor: pointer; font: inherit; }
+article { line-height: 1.55; overflow-wrap: break-word; }
+article h2 { font: 600 19px/1.3 Georgia, "Linux Libertine", serif; border-bottom: 1px solid var(--color-border-primary); padding-bottom: 2px; margin: 18px 0 8px; }
+article h3 { font-size: 16px; margin: 14px 0 6px; }
+article a { color: var(--color-ring-primary); text-decoration: none; cursor: pointer; }
+article a:hover { text-decoration: underline; }
+article img { max-width: 100%; height: auto; }
+article table { border-collapse: collapse; margin: 8px 0; font-size: 13px; max-width: 100%; display: block; overflow-x: auto; }
+article th, article td { border: 1px solid var(--color-border-primary); padding: 3px 6px; vertical-align: top; }
+article th { background: var(--color-background-secondary); }
+article table.infobox { float: right; clear: right; width: 290px; margin: 0 0 10px 12px; display: table; font-size: 12.5px; }
+article figure, article .thumb { margin: 6px 0; font-size: 12.5px; color: var(--color-text-secondary); }
+article figure[class*="right"], article .tright { float: right; clear: right; margin-left: 12px; max-width: 260px; }
+article sup { line-height: 0; }
+article .toc, article .navbox, article .metadata, article .mw-empty-elt, article .noprint, article .mw-editsection, article style { display: none; }
+@media (max-width: 560px) { article table.infobox, article figure[class*="right"], article .tright { float: none; width: auto; margin: 8px 0; } }
+.lic { margin-top: 14px; }
+.wait { color: var(--color-text-secondary); }
+</style></head>
+<body>
+<header><h1 id="title"></h1><div class="desc" id="desc"></div></header>
+<div class="bar note"><button class="link" id="back" hidden></button><button class="link" id="open"></button></div>
+<nav class="toc" id="toc"></nav>
+<article id="art"></article>
+<p class="note lic" id="lic"></p>
+<script>
+<!--include app.js-->
+const W = {
+  open: {en: "Open it on Wikipedia", it: "Aprila su Wikipedia", fr: "L'ouvrir sur Wikipédia", es: "Abrirla en Wikipedia", de: "Auf Wikipedia öffnen", pt: "Abrir na Wikipédia"},
+  back: {en: "Back to {t}", it: "Torna a {t}", fr: "Revenir à {t}", es: "Volver a {t}", de: "Zurück zu {t}", pt: "Voltar a {t}"},
+  lic: {en: "Text from Wikipedia, under CC BY-SA 4.0; the pictures under their own licences, on their pages.", it: "Testo da Wikipedia, sotto CC BY-SA 4.0; le immagini sotto le proprie licenze, sulle loro pagine.", fr: "Texte de Wikipédia, sous CC BY-SA 4.0 ; les images sous leurs propres licences, sur leurs pages.", es: "Texto de Wikipedia, bajo CC BY-SA 4.0; las imágenes bajo sus propias licencias, en sus páginas.", de: "Text aus Wikipedia, unter CC BY-SA 4.0; die Bilder unter ihren eigenen Lizenzen, auf ihren Seiten.", pt: "Texto da Wikipédia, sob CC BY-SA 4.0; as imagens sob as suas próprias licenças, nas suas páginas."},
+  wait: {en: "Opening {t}…", it: "Apertura di {t}…", fr: "Ouverture de {t}…", es: "Abriendo {t}…", de: "{t} wird geöffnet…", pt: "A abrir {t}…"},
+  fail: {en: "It could not be opened: {e}", it: "Non si è potuta aprire: {e}", fr: "Impossible de l'ouvrir : {e}", es: "No se pudo abrir: {e}", de: "Konnte nicht geöffnet werden: {e}", pt: "Não foi possível abrir: {e}"},
+};
+const t = (k, v) => App.t(W[k]).replace(/\{(\w+)\}/g, (_, n) => v && v[n] !== undefined ? v[n] : "");
+const $ = (id) => document.getElementById(id);
+/* what may stay of the page: these elements, these attributes; the rest
+   goes, its text kept where it is not a script or a style */
+const KEEP = new Set(["p", "h2", "h3", "h4", "h5", "h6", "a", "b", "i", "em", "strong", "sup", "sub", "small", "big", "ul", "ol", "li", "dl", "dt", "dd",
+  "table", "thead", "tbody", "tfoot", "tr", "th", "td", "caption", "img", "figure", "figcaption", "blockquote", "span", "div", "br", "hr",
+  "cite", "abbr", "code", "pre", "q", "s", "u", "mark", "time", "bdi", "wbr", "var", "kbd", "samp", "ruby", "rt", "rp"]);
+const DROP = new Set(["script", "style", "link", "meta", "iframe", "object", "embed", "form", "input", "button", "textarea", "select", "svg", "math", "noscript", "template", "video", "audio", "source"]);
+const ATTRS = {a: ["href", "title"], img: ["src", "srcset", "alt", "width", "height"], td: ["colspan", "rowspan"], th: ["colspan", "rowspan", "scope"],
+  abbr: ["title"], ol: ["start"], time: ["datetime"]};
+/* Wikimedia's servers of files and of thumbnails alone */
+const IMG = /^(https:)?\/\/(upload|thumb)\.wikimedia\.org\//;
+/* an address of a picture: https, without the counting of where it was
+   seen (utm_) */
+const pic = (s) => (s.startsWith("//") ? "https:" + s : s).replace(/[?&]utm_[^ ]*/, "");
+let page = null, past = [];
+function clean(node, out, lang) {
+  for (const n of node.childNodes) {
+    if (n.nodeType === 3) { out.appendChild(document.createTextNode(n.nodeValue)); continue; }
+    if (n.nodeType !== 1) continue;
+    const tag = n.tagName.toLowerCase();
+    if (DROP.has(tag)) continue;
+    if (!KEEP.has(tag)) { clean(n, out, lang); continue; }
+    const e = document.createElement(tag);
+    for (const a of ATTRS[tag] || []) {
+      let v = n.getAttribute(a);
+      if (v === null) continue;
+      if (tag === "img" && a === "src") v = IMG.test(v) ? pic(v) : null;
+      if (tag === "img" && a === "srcset") v = v.split(",").map((s) => s.trim()).filter((s) => IMG.test(s)).map((s) => { const [u, d] = s.split(/\s+/); return pic(u) + (d ? " " + d : ""); }).join(", ") || null;
+      if (v !== null) e.setAttribute(a, v);
+    }
+    if (tag === "img" && !e.getAttribute("src")) continue;
+    /* the classes the look needs, the headings' ids for the sections */
+    const cls = (n.getAttribute("class") || "").split(/\s+/).filter((c) => /^(toc|infobox|navbox|metadata|thumb|tright|tleft|mw-empty-elt|noprint|wikitable|reference|reflist|mw-halign-right|mw-default-size)$/.test(c));
+    if (n.id === "toc") cls.push("toc"); /* the page's own index: the view has its own */
+    if (cls.length) e.className = cls.join(" ");
+    if (/^h[2-6]$/.test(tag) || n.id) { const id = n.id || n.querySelector("[id]")?.id; if (id) e.dataset.anchor = id; }
+    if (tag === "figure" && /right/.test(n.getAttribute("typeof") || "")) e.className = (e.className + " tright").trim();
+    if (tag === "a") {
+      const h = n.getAttribute("href") || "";
+      e.removeAttribute("href");
+      if (h.startsWith("/wiki/") && !/^\/wiki\/[^\/]*:/.test(h)) e.dataset.wiki = decodeURIComponent(h.slice(6).split("#")[0]).replace(/_/g, " ");
+      else if (h.startsWith("#")) e.dataset.jump = h.slice(1);
+      else if (/^https?:\/\//.test(h)) e.dataset.out = h;
+      else if (h.startsWith("//")) e.dataset.out = "https:" + h;
+      else if (h.startsWith("/wiki/")) e.dataset.out = "https://" + lang + ".wikipedia.org" + h;
+    }
+    clean(n, e, lang);
+    out.appendChild(e);
+  }
+}
+function show(r) {
+  const d = r.structuredContent;
+  const art = $("art");
+  art.textContent = "";
+  if (!d || !d.html) { /* no page of HTML: its text */
+    const user = (r.content || []).find((c) => c.annotations && (c.annotations.audience || []).includes("user")) || (r.content || [])[0];
+    art.style.whiteSpace = "pre-wrap"; art.textContent = user ? user.text : "";
+    $("title").textContent = ""; $("desc").textContent = ""; $("toc").textContent = ""; $("open").hidden = true;
+    App.size(); return;
+  }
+  art.style.whiteSpace = "";
+  page = d;
+  $("title").textContent = d.title; $("desc").textContent = d.desc || "";
+  $("open").hidden = false; $("open").textContent = t("open"); $("open").onclick = () => App.openLink(d.url);
+  const doc = new DOMParser().parseFromString(d.html, "text/html");
+  clean(doc.body, art, d.lang || "en");
+  const toc = $("toc"); toc.textContent = "";
+  for (const h of art.querySelectorAll("h2")) {
+    if (h.closest(".toc")) continue;
+    const b = document.createElement("button"); b.type = "button"; b.textContent = h.textContent.trim();
+    b.onclick = () => h.scrollIntoView({behavior: "smooth"}); toc.appendChild(b);
+  }
+  $("lic").textContent = t("lic");
+  $("back").hidden = !past.length;
+  if (past.length) $("back").textContent = t("back", {t: past[past.length - 1].structuredContent.title});
+  if (d.section) {
+    const want = d.section.toLowerCase();
+    const h = [...art.querySelectorAll("h2, h3, h4")].find((x) => x.textContent.trim().toLowerCase().startsWith(want));
+    if (h) setTimeout(() => h.scrollIntoView(), 50);
+  }
+  App.size();
+}
+/* the page's links: another page opened here, the rest in the browser */
+$("art").addEventListener("click", async (e) => {
+  const a = e.target.closest("a");
+  if (!a) return;
+  e.preventDefault();
+  if (a.dataset.jump) { const x = document.getElementById(a.dataset.jump) || $("art").querySelector(`[data-anchor="${CSS.escape(a.dataset.jump)}"]`); if (x) x.scrollIntoView(); return; }
+  if (a.dataset.out) { App.openLink(a.dataset.out); return; }
+  if (!a.dataset.wiki || !page) return;
+  const was = page;
+  $("art").textContent = t("wait", {t: a.dataset.wiki});
+  $("art").className = "wait";
+  try {
+    const r = await App.callTool("wiki_page", {title: a.dataset.wiki, language: page.lang});
+    $("art").className = "";
+    if (r && r.structuredContent && r.structuredContent.html) { past.push({structuredContent: was}); show(r); window.scrollTo(0, 0); }
+    else {
+      /* not opened: said, the page left as it was */
+      show({structuredContent: was});
+      const why = r && (r.content || []).map((c) => c.text || "").join(" ").trim();
+      $("lic").textContent = t("fail", {e: why || "?"});
+    }
+  } catch (x) { $("art").className = ""; show({structuredContent: was}); $("lic").textContent = t("fail", {e: x.message}); }
+});
+$("back").onclick = () => { const p = past.pop(); if (p) { show(p); window.scrollTo(0, 0); } };
+App.on("result", (r) => { past = []; show(r); });
+App.start("janas-wiki");
+</script>
+</body></html>

@@ -10,10 +10,13 @@ async function streamTurn(reply, withTools) {
                 messages: apiMessages().slice(0, -1)};
   /* reasoning: the chat's choice (the button under the field), else the
      model's setting, else off; a model that cannot be told ignores it */
-  body.chat_template_kwargs = {enable_thinking: thinkNow()};
   const p = cur.params || {};
-  if (p.temperature !== undefined) body.temperature = p.temperature;
-  if (p.top_p !== undefined) body.top_p = p.top_p;
+  /* the chat's own template variables under it */
+  body.chat_template_kwargs = {...(p.kwargs || {}), enable_thinking: thinkNow()};
+  /* the sampling the chat set (more.js: SAMPLING); the model's for the rest */
+  for (const x of SAMPLING) if (p[x.k] !== undefined) body[x.k] = p[x.k];
+  if (p.samplers) body.samplers = p.samplers;
+  if (p.dry_sequence_breakers) body.dry_sequence_breakers = p.dry_sequence_breakers;
   if (p.format === "json") body.response_format = {type: "json_object"};
   else if (p.format === "schema" && p.schema)
     try { body.response_format = {type: "json_schema", json_schema: {name: "answer", schema: JSON.parse(p.schema)}}; } catch (e) {}
@@ -70,22 +73,25 @@ async function streamTurn(reply, withTools) {
       }
     }
   } catch (err) {
-    reply.speed = err.name === "AbortError" ? `stopped after ${pieces} pieces` : "failed: " + err.message;
+    /* kept with the reply, in the language of the page that wrote it */
+    reply.speed = err.name === "AbortError" ? Tn(pieces, "stopped after {n} piece", "stopped after {n} pieces")
+      : T("failed: {error}", {error: err.message});
     throw err;
   }
   delete reply.reading; /* the prompt's reading, over */
   /* nothing came, or an error did: said, not left as an empty answer (and
      kept out of what the model is sent next time) */
   if (srvErr || (!sawDone && !reply.content && !reply.think && !calls.length)) {
-    reply.content = srvErr ? "(error) " + srvErr
-      : "(no answer) the model's server ended the reply without a word: it may have stopped (see My models, Server)";
+    reply.content = srvErr ? T("(error) {error}", {error: srvErr})
+      : T("(no answer) the model's server ended the reply without a word: it may have stopped (see My models, Server)");
     reply.failed = true;
     await status().catch(() => {});
     return [];
   }
   const t2 = performance.now();
   if (tokens > 1 && t1)
-    reply.speed = `${tokens} tokens, ${((tokens - 1) / ((t2 - t1) / 1000)).toFixed(1)} tok/s, first after ${((t1 - t0) / 1000).toFixed(2)} s`;
+    reply.speed = T("{tokens} tokens, {rate} tok/s, first after {first} s", {tokens: num(tokens),
+      rate: num(+((tokens - 1) / ((t2 - t1) / 1000)).toFixed(1)), first: num(+((t1 - t0) / 1000).toFixed(2))});
   return calls.filter(Boolean);
 }
 
@@ -162,13 +168,13 @@ async function startModel() {
   await status();
   if (server.running) return true;
   const name = nextModel();
-  if (!name) { say("Get a model first, in My models."); return false; }
-  $("#loaded").textContent = "Loading " + name + "…";
+  if (!name) { say(T("Get a model first, in My models.")); return false; }
+  $("#loaded").textContent = T("Loading {name}…", {name});
   sendButton(); /* the field says so, and waits */
   ctxOf = {};
   const r = await fetch("/brebus/server/start", {method: "POST",
     body: JSON.stringify({model: name, ...(settings[name] || {})})});
-  if (!r.ok) { const j = await r.json().catch(() => ({})); say(j.error || name + " did not start"); }
+  if (!r.ok) { const j = await r.json().catch(() => ({})); say(j.error || T("{name} did not start", {name})); }
   else remember(name);
   await status();
   return r.ok && server.running;
@@ -210,13 +216,7 @@ async function runTurn(um, keep) {
         const name = c.function.name, args = c.function.arguments || "{}";
         const only_reads = tools.read_only.includes(name);
         let res;
-        let pretty = args, what = "It changes something in the workspace. Its arguments:";
-        try {
-          const a = JSON.parse(args);
-          pretty = name === "python" && typeof a.code === "string" ? a.code : JSON.stringify(a, null, 2);
-          if (name === "python") what = "Python code, run in a sandbox: the workspace (read and write) and its folders read only, no network:";
-          if (name === "janas__open_service") what = "It starts one of Janas's services, which gives the model its tools (it may reach the network):";
-        } catch (e) {}
+        const {title, html} = approvalText(name, args);
         /* a tool of the user's servers may be allowed always in this chat,
            for the server it was given to; Janas's own that change something
            are asked every time */
@@ -226,11 +226,10 @@ async function runTurn(um, keep) {
         const good = ap && ap.ident === srv.ident && ap.version === srv.version;
         let ok = only_reads || good;
         if (!ok) {
-          const btns = [{label: "Allow", value: "yes", primary: true}];
-          if (srv) btns.push({label: "Allow always in this chat", value: "always"});
-          btns.push({label: "Don't allow", value: "no"});
-          const b = (await dialog({title: "The model wants to run " + name,
-                html: `${what}<pre class="dargs">${esc(pretty)}</pre>`, buttons: btns})).button;
+          const btns = [{label: T("Allow"), value: "yes", primary: true}];
+          if (srv) btns.push({label: T("Allow always in this chat"), value: "always"});
+          btns.push({label: T("Don't allow"), value: "no"});
+          const b = (await dialog({title, html, buttons: btns})).button;
           ok = b === "yes" || b === "always";
           if (b === "always") {
             cur.approvals = cur.approvals || {};
@@ -243,8 +242,12 @@ async function runTurn(um, keep) {
           res = {result: "The user did not allow this call.", is_error: true, denied: true};
         else
           res = await callTool(name, args);
-        cur.messages.push({role: "tool", tool_call_id: c.id, name, args,
-                           content: res.result, denied: !!res.denied});
+        const tm = {role: "tool", tool_call_id: c.id, name, args,
+                    content: res.result, denied: !!res.denied};
+        /* a view of MCP Apps: where it comes from, and the result for it */
+        if (res.view && res.raw) { tm.view = res.view; tm.raw = res.raw; }
+        cur.messages.push(tm);
+        if (tm.view) artShowView(tm); /* beside the chat, as an artifact */
         if (res.opened) await readTools(); /* the service's tools, from now */
         drawLog();
       }
@@ -252,7 +255,7 @@ async function runTurn(um, keep) {
   } catch (err) {
     if (err.name !== "AbortError") {
       const last = cur.messages[cur.messages.length - 1];
-      if (last && last.role === "assistant" && !last.speed) last.speed = "failed: " + err.message;
+      if (last && last.role === "assistant" && !last.speed) last.speed = T("failed: {error}", {error: err.message});
     }
   } finally {
     const last = cur.messages[cur.messages.length - 1];
@@ -281,8 +284,8 @@ async function sendAsk(ev) {
   if (!text) { if (ev.type === "submit") dictate(); return; }
   if (!ws.path) { wsShow(true); return; }
   if (!await ensureModel()) return;
-  if (!cur) newConv();
-  else await compactIfFull(); /* room made first, the field kept meanwhile */
+  const fresh = !cur;
+  if (fresh) newConv();
   const um = {role: "user", content: text, t: Date.now()};
   if (pending.length) { um.attached = pending; pending = []; drawChips(); }
   cur.messages.push(um);
@@ -292,7 +295,12 @@ async function sendAsk(ev) {
   if (!e) convs.unshift(e = {id: cur.id, title: "", model: cur.model, updated: Date.now(), messages: 0});
   e.title = cur.title;
   $("#ask").value = ""; growAsk();
+  /* the question shown at once and followed: a chat that fills the
+     model's memory is summarized first, under it, in sight (its line at
+     the chat's end), the question itself kept whole after the summary */
+  followLog = true;
   listConvs(); drawLog();
+  if (!fresh) await compactIfFull();
   await runTurn(um);
   if (cur && cur.autoTitle && cur.messages.filter((m) => m.role === "user").length === 1) modelTitle(cur);
 }

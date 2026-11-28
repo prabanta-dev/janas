@@ -1,0 +1,137 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Forecast</title>
+<style>
+<!--include base.css-->
+h1 { font-size: 15px; margin: 0 0 8px; font-weight: 600; }
+.days { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+.day { flex: 0 0 auto; min-width: 92px; padding: 8px; border-radius: 8px; background: var(--color-background-secondary); text-align: center; font-size: 13px; }
+.day .wd { font-weight: 600; }
+.day .ic { font-size: 26px; line-height: 1.3; }
+.day .t { font-variant-numeric: tabular-nums; }
+.day .t b { font-size: 15px; }
+.day .r { color: #3a86ff; }
+.day .w { color: var(--color-text-secondary); }
+.chart { position: relative; margin-top: 10px; }
+canvas.plot { display: block; width: 100%; height: 230px; touch-action: none; }
+.tip { position: absolute; pointer-events: none; background: var(--color-background-primary); border: 1px solid var(--color-border-primary);
+  border-radius: 6px; padding: 4px 7px; font-size: 12px; box-shadow: 0 2px 8px #0003; white-space: nowrap; top: 6px; }
+.tip[hidden] { display: none; }
+.key { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+.legend { display: flex; gap: 12px; font-size: 12px; color: var(--color-text-secondary); margin-top: 2px; }
+</style></head>
+<body>
+<h1 id="title"></h1>
+<div class="vtools" id="tools"></div>
+<div class="days" id="days"></div>
+<div class="chart"><canvas class="plot" id="plot"></canvas><div class="tip" id="tip" hidden></div></div>
+<div class="legend" id="legend"></div>
+<p class="note" id="credit"></p>
+<script>
+<!--include app.js-->
+<!--include export.js-->
+const W = {
+  title: {en: "The forecast for {p}", it: "Le previsioni per {p}", fr: "Les prévisions pour {p}", es: "El pronóstico para {p}", de: "Die Vorhersage für {p}", pt: "A previsão para {p}"},
+  temp: {en: "temperature", it: "temperatura", fr: "température", es: "temperatura", de: "Temperatur", pt: "temperatura"},
+  rain: {en: "rain (mm)", it: "pioggia (mm)", fr: "pluie (mm)", es: "lluvia (mm)", de: "Regen (mm)", pt: "chuva (mm)"},
+  prob: {en: "chance of rain", it: "probabilità di pioggia", fr: "risque de pluie", es: "probabilidad de lluvia", de: "Regenwahrscheinlichkeit", pt: "probabilidade de chuva"},
+  credit: {en: "Forecast: {m}. Times are the place's own{z}.", it: "Previsioni: {m}. Gli orari sono quelli del luogo{z}.", fr: "Prévisions : {m}. Les heures sont celles du lieu{z}.", es: "Pronóstico: {m}. Las horas son las del lugar{z}.", de: "Vorhersage: {m}. Die Zeiten sind die des Ortes{z}.", pt: "Previsão: {m}. As horas são as do local{z}."},
+};
+const t = (k, v) => App.t(W[k]).replace(/\{(\w+)\}/g, (_, n) => v && v[n] !== undefined ? v[n] : "");
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => "&#" + c.charCodeAt(0) + ";");
+const n1 = (x, d) => new Intl.NumberFormat(App.ctx.locale, {maximumFractionDigits: d === undefined ? 0 : d}).format(x);
+/* the sky by its WMO code */
+function icon(c) {
+  if (c === undefined || c === null) return "·";
+  return c === 0 ? "☀️" : c <= 2 ? "⛅" : c === 3 ? "☁️" : c <= 48 ? "🌫️" : c <= 57 ? "🌦️" : c <= 67 ? "🌧️" : c <= 77 ? "🌨️" : c <= 82 ? "🌦️" : c <= 86 ? "🌨️" : "⛈️";
+}
+const ARROW = (deg) => `<span style="display:inline-block;transform:rotate(${(deg + 180) % 360}deg)">↑</span>`;
+let hours = [];
+const cv = document.getElementById("plot"), g = cv.getContext("2d");
+let box = null;
+function draw(hover) {
+  const dpr = window.devicePixelRatio || 1, Wd = cv.clientWidth, H = cv.clientHeight;
+  cv.width = Math.round(Wd * dpr); cv.height = Math.round(H * dpr);
+  g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, Wd, H);
+  if (hours.length < 2) return;
+  const css = (n, d) => getComputedStyle(document.documentElement).getPropertyValue(n).trim() || d;
+  const temps = hours.map((h) => h.temp).filter((x) => x !== undefined);
+  /* the scale in whole steps, four of them at least */
+  const step = Math.max(1, Math.ceil((Math.max(...temps) - Math.min(...temps) + 2) / 4));
+  let lo = Math.floor(Math.min(...temps) / step) * step - step, hi = lo + 4 * step;
+  while (hi < Math.max(...temps)) hi += step;
+  const rmax = Math.max(2, ...hours.map((h) => h.rain || 0));
+  const L = 34, R = 34, T = 10, B = 22, pw = Wd - L - R, ph = H - T - B;
+  const X = (i) => L + (i / (hours.length - 1)) * pw, Y = (v) => T + (1 - (v - lo) / (hi - lo)) * ph;
+  box = {L, pw, X};
+  g.font = "11px " + css("--font-sans", "sans-serif");
+  /* the nights shaded: from 20 to 6 */
+  hours.forEach((h, i) => { const hr = +h.t.slice(11, 13); if (hr >= 20 || hr < 6) { g.fillStyle = css("--color-background-secondary", "#eee"); g.fillRect(X(i) - pw / (hours.length - 1) / 2, T, pw / (hours.length - 1), ph); } });
+  /* rain: bars, its scale on the right */
+  hours.forEach((h, i) => { if (h.rain > 0) { const bh = (h.rain / rmax) * ph * 0.6; g.fillStyle = "#3a86ff88"; g.fillRect(X(i) - 2.5, T + ph - bh, 5, bh); } });
+  g.fillStyle = "#3a86ff"; g.textAlign = "left"; g.textBaseline = "middle";
+  g.fillText(n1(rmax, 1) + " mm", Wd - R + 4, T + ph * 0.4);
+  /* chance of rain: a thin line, 0-100% over the plot's height */
+  g.strokeStyle = "#3a86ff55"; g.lineWidth = 1; g.setLineDash([3, 3]); g.beginPath();
+  hours.forEach((h, i) => { if (h.prob === undefined) return; const y = T + (1 - h.prob / 100) * ph; i ? g.lineTo(X(i), y) : g.moveTo(X(i), y); });
+  g.stroke(); g.setLineDash([]);
+  /* the temperature, its scale on the left */
+  g.fillStyle = css("--color-text-secondary", "#777"); g.textAlign = "right";
+  for (let v = lo; v <= hi; v += step) g.fillText(n1(v) + "°", L - 5, Y(v));
+  g.strokeStyle = "#e76f51"; g.lineWidth = 2.2; g.beginPath();
+  hours.forEach((h, i) => { if (h.temp === undefined) return; i ? g.lineTo(X(i), Y(h.temp)) : g.moveTo(X(i), Y(h.temp)); });
+  g.stroke();
+  /* the hours: each sixth, and each day's start */
+  g.textAlign = "center"; g.textBaseline = "top"; g.fillStyle = css("--color-text-secondary", "#777");
+  hours.forEach((h, i) => { const hr = +h.t.slice(11, 13); if (hr % 6 === 0) g.fillText(hr === 0 ? dayName(h.t, "short") : hr + ":00", X(i), H - B + 6); });
+  if (hover !== undefined) {
+    g.strokeStyle = css("--color-text-secondary", "#777"); g.setLineDash([3, 3]);
+    g.beginPath(); g.moveTo(X(hover), T); g.lineTo(X(hover), T + ph); g.stroke(); g.setLineDash([]);
+  }
+}
+const dayName = (iso, w) => new Intl.DateTimeFormat(App.ctx.locale, {weekday: w || "short", timeZone: "UTC"}).format(new Date(iso.slice(0, 10) + "T12:00:00Z"));
+cv.addEventListener("pointermove", (e) => {
+  if (!box) return;
+  const r = cv.getBoundingClientRect(), i = Math.max(0, Math.min(hours.length - 1, Math.round(((e.clientX - r.left - box.L) / box.pw) * (hours.length - 1))));
+  draw(i);
+  const h = hours[i], tip = document.getElementById("tip");
+  tip.innerHTML = `<b>${esc(dayName(h.t))} ${esc(h.t.slice(11, 16))}</b> ${icon(h.code)}<br>` +
+    (h.temp !== undefined ? `${n1(h.temp, 1)}°` : "") + (h.rain ? ` · ${n1(h.rain, 1)} mm` : "") + (h.prob !== undefined ? ` · ${n1(h.prob)}%` : "") +
+    (h.wind !== undefined ? `<br>${n1(h.wind)} km/h${h.gust ? " (" + n1(h.gust) + ")" : ""} ${h.wind_deg !== undefined ? ARROW(h.wind_deg) : ""}` : "");
+  tip.hidden = false;
+  tip.style.left = Math.min(box.X(i) + 12, cv.clientWidth - tip.offsetWidth - 4) + "px";
+});
+cv.addEventListener("pointerleave", () => { document.getElementById("tip").hidden = true; draw(); });
+let xbtn = null;
+function show(r) {
+  /* its table, to export: each hour a row */
+  if (!xbtn) xbtn = Exporter.button(document.getElementById("tools"), () => ({
+    name: document.getElementById("title").textContent,
+    columns: [{key: "t", label: Exporter.label("time")}, {key: "temp", label: t("temp") + " (°C)"}, {key: "rain", label: t("rain")},
+      {key: "prob", label: t("prob") + " (%)"}, {key: "wind", label: Exporter.label("wind")}, {key: "gust", label: Exporter.label("gust")},
+      {key: "wdir", label: Exporter.label("wdir")}],
+    rows: hours.map((h) => ({t: h.t, temp: h.temp ?? "", rain: h.rain ?? "", prob: h.prob ?? "", wind: h.wind ?? "", gust: h.gust ?? "", wdir: h.wind_deg ?? ""})),
+  }));
+  const d = r.structuredContent || {};
+  document.getElementById("title").textContent = t("title", {p: d.place || ""});
+  const days = d.days || [];
+  document.getElementById("days").innerHTML = days.map((y) => {
+    const wd = new Intl.DateTimeFormat(App.ctx.locale, {weekday: "short", timeZone: "UTC"}).format(new Date(Date.UTC(2023, 0, 1 + y.wd)));
+    return `<div class="day"><div class="wd">${esc(wd)} ${y.day}</div><div class="ic">${y.sky !== undefined ? icon(y.sky) : "·"}</div>` +
+      `<div class="t"><b>${y.tmax !== undefined ? n1(y.tmax) + "°" : ""}</b> ${y.tmin !== undefined ? n1(y.tmin) + "°" : ""}</div>` +
+      `<div class="r">${y.rain ? n1(y.rain, 1) + " mm" : y.no_rain ? "0 mm" : ""}${y.has_prob ? " · " + n1(y.rain_prob) + "%" : ""}</div>` +
+      `<div class="w">${y.wind !== undefined ? n1(y.wind) + " km/h " + (y.wind_deg !== undefined ? ARROW(y.wind_deg) : "") : ""}</div></div>`;
+  }).join("");
+  hours = d.chart || [];
+  document.getElementById("legend").innerHTML = `<span><span class="key" style="background:#e76f51"></span>${esc(t("temp"))}</span>` +
+    `<span><span class="key" style="background:#3a86ff88"></span>${esc(t("rain"))}</span><span>┄ ${esc(t("prob"))}</span>`;
+  const m = d.model ? d.model.source + (d.model.url ? " (" + d.model.url + ")" : "") : "";
+  document.getElementById("credit").textContent = t("credit", {m, z: d.tz ? " (" + d.tz + ")" : ""});
+  draw(); App.size();
+}
+App.on("result", show);
+App.on("context", () => draw());
+window.addEventListener("resize", () => draw());
+App.start("janas-weather");
+</script>
+</body></html>

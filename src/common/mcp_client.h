@@ -32,7 +32,13 @@ struct janas_mcp_tool {
        after a \x1f; NULL for none */
     char *params;
     int read_only; /* annotations.readOnlyHint: 1, 0, or -1 unsaid */
+    /* MCP Apps: its view (_meta.ui.resourceUri), or NULL; and whether the
+       view alone may call it (_meta.ui.visibility without "model") */
+    char *view;
+    int app_only;
 };
+/* whether the client declares MCP Apps' views (janas_mcp_views) */
+extern int janas_mcp_views_on;
 
 struct janas_mcp {
     char *name;         /* for the log */

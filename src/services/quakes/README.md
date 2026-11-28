@@ -26,6 +26,8 @@ The earthquakes for `janas-chat` or any other MCP client (see [the services](../
 
 Every answer is data with a layout (see [the services](../README.md)): `janas-chat` shows you the whole list in your language, and gives the model only a brief, from which it answers in a line or two.
 
+In Brebus, and in any client that shows MCP Apps' views, the three tools show their earthquakes on a map (`ui://quakes/map`, `views/map.html`): a circle each, as large as its magnitude and coloured by its depth, the place asked about marked, the list under the map; a click on a circle or a line shows the earthquake in detail, with a link to its page at INGV or the USGS. The map is drawn in the page from Natural Earth's land (public domain), fetched from nowhere; it moves with the mouse and zooms with the wheel or its buttons, and follows the client's theme and language.
+
 ## Running it
 
 ```sh

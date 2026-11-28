@@ -95,7 +95,7 @@ int janas_proc_start(struct janas_proc *p, const char *const argv[],
     posix_spawnattr_setsigmask(&at, &none);
     posix_spawnattr_setsigdefault(&at, &dflt);
     short f = POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF;
-    if (flags & JANAS_PROC_DETACHED)
+    if (flags & (JANAS_PROC_DETACHED | JANAS_PROC_OUTLIVE))
         f |= POSIX_SPAWN_SETSID; /* a session, and so a group, of its own */
     else if (flags & JANAS_PROC_GROUP) {
         posix_spawnattr_setpgroup(&at, 0);
@@ -111,7 +111,10 @@ int janas_proc_start(struct janas_proc *p, const char *const argv[],
     }
     p->id = pid;
     p->pid = (unsigned long)pid;
-    p->job = flags & (JANAS_PROC_GROUP | JANAS_PROC_DETACHED) ? 1 : 0;
+    p->job =
+        flags & (JANAS_PROC_GROUP | JANAS_PROC_DETACHED | JANAS_PROC_OUTLIVE)
+            ? 1
+            : 0;
     rc = 0;
 out:
     if (have_fa)

@@ -7,6 +7,7 @@
  */
 #include "request.h"
 
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -102,8 +103,131 @@ static int read_store(struct srv_perr *e, struct srv_parsed *pr,
     return (pr->metadata = srv_json_text(md, NULL)) ? 0 : -1;
 }
 
-int srv_read_params(struct srv_perr *e, struct srv_parsed *pr, yyjson_val *root,
-                    struct srv_job *j, int chat)
+/*
+ * llama.cpp's sampling, by its server's names: the numbers into the chat's
+ * parameters (the library checks them with the rest when the reply
+ * starts), the order of its stages (an array of names, or one string),
+ * DRY's breakers (an array of strings) as JSON.
+ */
+static int read_more(struct srv_perr *e, struct srv_parsed *pr,
+                     yyjson_val *root, struct srv_job *j)
+{
+    struct janas_llm_chat_params *p = &j->p;
+    static const struct {
+        const char *name;
+        double lo, hi;
+        size_t at;
+        int whole;
+    } N[] = {
+        {"repeat_penalty", 0, 100,
+         offsetof(struct janas_llm_chat_params, repeat_penalty), 0},
+        {"repeat_last_n", -1, 1e9,
+         offsetof(struct janas_llm_chat_params, repeat_last_n), 1},
+        {"typical_p", 0, 1, offsetof(struct janas_llm_chat_params, typical_p),
+         0},
+        {"top_n_sigma", -1, 100,
+         offsetof(struct janas_llm_chat_params, top_n_sigma), 0},
+        {"xtc_probability", 0, 1,
+         offsetof(struct janas_llm_chat_params, xtc_probability), 0},
+        {"xtc_threshold", 0, 1,
+         offsetof(struct janas_llm_chat_params, xtc_threshold), 0},
+        {"dry_multiplier", 0, 100,
+         offsetof(struct janas_llm_chat_params, dry_multiplier), 0},
+        {"dry_base", 1, 100, offsetof(struct janas_llm_chat_params, dry_base),
+         0},
+        {"dry_allowed_length", 0, 1e6,
+         offsetof(struct janas_llm_chat_params, dry_allowed_length), 1},
+        {"dry_penalty_last_n", -1, 1e9,
+         offsetof(struct janas_llm_chat_params, dry_last_n), 1},
+        {"mirostat", 0, 2, offsetof(struct janas_llm_chat_params, mirostat), 1},
+        {"mirostat_tau", 0, 100,
+         offsetof(struct janas_llm_chat_params, mirostat_tau), 0},
+        {"mirostat_eta", 0, 1,
+         offsetof(struct janas_llm_chat_params, mirostat_eta), 0},
+        {"dynatemp_range", 0, 100,
+         offsetof(struct janas_llm_chat_params, dynatemp_range), 0},
+        {"dynatemp_exponent", 0, 100,
+         offsetof(struct janas_llm_chat_params, dynatemp_exponent), 0},
+    };
+    double x;
+    for (size_t i = 0; i < sizeof N / sizeof *N; i++) {
+        int got =
+            srv_num(yyjson_obj_get(root, N[i].name), N[i].lo, N[i].hi, &x);
+        if (got < 0 || (got && N[i].whole && x != (double)(int64_t)x))
+            return srv_pfail(
+                pr, BAD("invalid_value", "'%s' must be %s from %g to %g.",
+                        N[i].name, N[i].whole ? "a whole number" : "a number",
+                        N[i].lo, N[i].hi));
+        if (!got)
+            continue;
+        /* llama.cpp's -1, the whole context: here the whole reply */
+        if (N[i].whole) {
+            int32_t v = x < 0 ? 0 : (int32_t)x;
+            memcpy((char *)p + N[i].at, &v, sizeof v);
+        } else {
+            float v = x < 0 ? 0 : (float)x;
+            memcpy((char *)p + N[i].at, &v, sizeof v);
+        }
+    }
+    /* the order: ["top_k", "temperature"] or "top_k;temperature" */
+    yyjson_val *sm = yyjson_obj_get(root, "samplers");
+    if (sm) {
+        char o[sizeof p->samplers];
+        size_t at = 0;
+        int ok = yyjson_is_str(sm) || yyjson_is_arr(sm);
+        if (yyjson_is_str(sm)) {
+            ok = yyjson_get_len(sm) < sizeof o;
+            if (ok)
+                memcpy(o, yyjson_get_str(sm), (at = yyjson_get_len(sm)));
+        } else if (ok) {
+            size_t idx, max;
+            yyjson_val *v;
+            yyjson_arr_foreach(sm, idx, max, v)
+            {
+                size_t l = yyjson_get_len(v);
+                if (!yyjson_is_str(v) || !l || at + l + 2 > sizeof o ||
+                    memchr(yyjson_get_str(v), ';', l)) {
+                    ok = 0;
+                    break;
+                }
+                if (at)
+                    o[at++] = ';';
+                memcpy(o + at, yyjson_get_str(v), l);
+                at += l;
+            }
+        }
+        if (!ok)
+            return srv_pfail(pr, BAD("invalid_value",
+                                     "'samplers' is an array of llama.cpp's "
+                                     "stage names, or one string of them."));
+        o[at] = 0;
+        memcpy(p->samplers, o, at + 1);
+    }
+    /* DRY's breakers, as JSON for the library */
+    yyjson_val *br = yyjson_obj_get(root, "dry_sequence_breakers");
+    if (br) {
+        size_t idx, max;
+        yyjson_val *v;
+        int ok = yyjson_is_arr(br);
+        yyjson_arr_foreach(br, idx, max, v) ok &= yyjson_is_str(v);
+        size_t n = 0;
+        char *t = ok ? yyjson_val_write(br, 0, &n) : NULL;
+        if (!t || n >= sizeof p->dry_breakers) {
+            free(t);
+            return srv_pfail(pr, BAD("invalid_value",
+                                     "'dry_sequence_breakers' is an array of "
+                                     "strings, %zu bytes at most as JSON.",
+                                     sizeof p->dry_breakers - 1));
+        }
+        memcpy(p->dry_breakers, t, n + 1);
+        free(t);
+    }
+    return 0;
+}
+
+/* the sampling of a request, or of the defaults: the fields it has */
+static int read_sampling(struct srv_perr *e, struct srv_parsed *pr,
+                         yyjson_val *root, struct srv_job *j)
 {
     double x;
     int got;
@@ -127,6 +251,8 @@ int srv_read_params(struct srv_perr *e, struct srv_parsed *pr, yyjson_val *root,
             pr, BAD("invalid_value", "'min_p' must be between 0 and 1."));
     if (got)
         j->p.min_p = (float)x;
+    if (read_more(e, pr, root, j) != 0)
+        return -1;
     static const char *const pen[] = {"presence_penalty", "frequency_penalty"};
     for (int i = 0; i < 2; i++) {
         if ((got = srv_num(yyjson_obj_get(root, pen[i]), -2, 2, &x)) < 0)
@@ -137,6 +263,127 @@ int srv_read_params(struct srv_perr *e, struct srv_parsed *pr, yyjson_val *root,
         if (got && i == 1)
             j->p.frequency_penalty = (float)x;
     }
+    return 0;
+}
+
+/* --chat-template-kwargs: the template's variables of every request, each
+   request's own over them */
+static yyjson_doc *kw_defaults;
+
+int srv_kwargs_defaults(const char *json, char *why, size_t why_len)
+{
+    yyjson_doc *d = json ? yyjson_read(json, strlen(json), 0) : NULL;
+    if (!d || !yyjson_is_obj(yyjson_doc_get_root(d))) {
+        yyjson_doc_free(d);
+        snprintf(why, why_len,
+                 "--chat-template-kwargs: a JSON object of the chat "
+                 "template's variables");
+        return -1;
+    }
+    yyjson_doc_free(kw_defaults);
+    kw_defaults = d;
+    return 0;
+}
+
+/*
+ * The chat template's keywords of a request: the server's, the request's
+ * chat_template_kwargs over them (every member, as Hugging Face hands them
+ * to the template), and OpenAI's reasoning_effort for a template that
+ * reads it when they do not say; the request's own template, if it gives
+ * one (chat_template, as vLLM takes it).
+ */
+int srv_template_opts(yyjson_val *root, yyjson_val *kw, const char *effort,
+                      struct srv_job *j)
+{
+    yyjson_val *t = yyjson_obj_get(root, "chat_template");
+    if (t && !yyjson_is_null(t)) {
+        if (!yyjson_is_str(t) || !yyjson_get_len(t))
+            return -1;
+        free(j->tmpl);
+        if (!(j->tmpl = strdup(yyjson_get_str(t))))
+            return -1;
+    }
+    yyjson_mut_doc *m = yyjson_mut_doc_new(NULL);
+    yyjson_mut_val *o = m ? yyjson_mut_obj(m) : NULL;
+    if (!o) {
+        yyjson_mut_doc_free(m);
+        return -1;
+    }
+    yyjson_mut_doc_set_root(m, o);
+    yyjson_val *src[2] = {kw_defaults ? yyjson_doc_get_root(kw_defaults) : NULL,
+                          kw};
+    for (int s = 0; s < 2; s++) {
+        size_t i, n;
+        yyjson_val *k, *v;
+        if (!src[s])
+            continue;
+        yyjson_obj_foreach(src[s], i, n, k, v)
+        {
+            yyjson_mut_obj_remove_str(o, yyjson_get_str(k));
+            yyjson_mut_obj_add(o, yyjson_mut_strcpy(m, yyjson_get_str(k)),
+                               yyjson_val_mut_copy(m, v));
+        }
+    }
+    if (effort && !yyjson_mut_obj_get(o, "reasoning_effort"))
+        yyjson_mut_obj_add_strcpy(m, o, "reasoning_effort", effort);
+    free(j->kwargs);
+    j->kwargs = yyjson_mut_obj_size(o) ? yyjson_mut_write(m, 0, NULL) : NULL;
+    yyjson_mut_doc_free(m);
+    return 0;
+}
+
+/* --sampling: the sampling of the requests that do not say, read once at
+   the start; each request's own fields over it */
+static yyjson_doc *defaults;
+
+int srv_sampling_defaults(const char *json, char *why, size_t why_len)
+{
+    yyjson_doc *d = json ? yyjson_read(json, strlen(json), 0) : NULL;
+    if (!d || !yyjson_is_obj(yyjson_doc_get_root(d))) {
+        yyjson_doc_free(d);
+        snprintf(why, why_len,
+                 "--sampling: a JSON object of the requests' "
+                 "sampling fields");
+        return -1;
+    }
+    /* tried on a request of its own: what it would refuse, refused now */
+    struct srv_job *j = srv_job_new();
+    struct srv_perr pe = {0};
+    struct srv_parsed pr = {0};
+    int bad = !j || read_sampling(&pe, &pr, yyjson_doc_get_root(d), j) != 0;
+    if (bad)
+        snprintf(why, why_len, "--sampling: %s", pe.msg);
+    if (j)
+        srv_job_release(j);
+    srv_parsed_free(&pr);
+    if (bad) {
+        yyjson_doc_free(d);
+        return -1;
+    }
+    yyjson_doc_free(defaults);
+    defaults = d;
+    return 0;
+}
+
+void srv_sampling_apply(struct srv_job *j)
+{
+    struct srv_perr pe = {0};
+    struct srv_parsed pr = {0};
+    if (defaults)
+        read_sampling(&pe, &pr, yyjson_doc_get_root(defaults), j);
+    srv_parsed_free(&pr);
+}
+
+/* The sampling as the request (or else the defaults) says, then the rest. */
+int srv_read_params(struct srv_perr *e, struct srv_parsed *pr, yyjson_val *root,
+                    struct srv_job *j, int chat)
+{
+    double x;
+    int got;
+    if (defaults && read_sampling(e, pr, yyjson_doc_get_root(defaults), j) != 0)
+        return -1;
+    if (read_sampling(e, pr, root, j) != 0)
+        return -1;
     /*
      * max_completion_tokens counts the reasoning, as OpenAI defines it. The
      * older max_tokens of a chat is taken for the answer alone: OpenAI does
@@ -358,6 +605,14 @@ int srv_read_chat_opts(struct srv_perr *e, struct srv_parsed *pr,
     yyjson_val *et = kw ? yyjson_obj_get(kw, "enable_thinking") : NULL;
     if (et && yyjson_is_bool(et))
         j->p.thinking = yyjson_get_bool(et) ? 1 : 0;
+    if (kw && !yyjson_is_obj(kw))
+        return srv_pfail(pr, BAD("invalid_value",
+                                 "'chat_template_kwargs' is an object of the "
+                                 "chat template's variables."));
+    if (srv_template_opts(root, kw, eff, j) != 0)
+        return srv_pfail(pr, BAD("invalid_value",
+                                 "'chat_template' is the text of a chat "
+                                 "template."));
     if (srv_reasoning_budget(root, &j->p) != 0)
         return srv_pfail(
             pr, BAD("invalid_value",

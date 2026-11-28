@@ -1,0 +1,197 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Earthquakes</title>
+<style>
+<!--include base.css-->
+h1 { font-size: 15px; margin: 0 0 6px; font-weight: 600; }
+.legend { display: flex; flex-wrap: wrap; gap: 10px; margin: 6px 0; }
+.legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; background: var(--c); vertical-align: -1px; }
+ol { list-style: none; margin: 8px 0 0; padding: 0; max-height: 260px; overflow: auto; border-top: 1px solid var(--color-border-primary); }
+li { padding: 5px 4px; border-bottom: 1px solid var(--color-border-primary); cursor: pointer; display: flex; gap: 8px; align-items: baseline; }
+li:hover, li.on { background: var(--color-background-secondary); }
+li b { min-width: 3.2em; font-variant-numeric: tabular-nums; }
+#card { margin-top: 8px; padding: 8px; border-radius: 8px; background: var(--color-background-secondary); }
+#card[hidden] { display: none; }
+#card dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 10px; margin: 4px 0; }
+#card dt { color: var(--color-text-secondary); }
+#card dd { margin: 0; }
+</style></head>
+<body>
+<h1 id="title"></h1>
+<div class="mapbox" id="mapbox"></div>
+<div class="legend note" id="legend"></div>
+<div id="card" hidden></div>
+<div class="vtools" id="tools"></div>
+<ol id="list"></ol>
+<p class="note" id="credit"></p>
+<script>
+<!--include world.js-->
+<!--include map.js-->
+<!--include app.js-->
+<!--include float.js-->
+<!--include export.js-->
+<!--include live.js-->
+const W = {
+  near: {en: "Earthquakes within {r} km of {p}, the last {d} days, magnitude {m} and more", it: "Terremoti entro {r} km da {p}, ultimi {d} giorni, magnitudo {m} e oltre", fr: "Séismes à moins de {r} km de {p}, {d} derniers jours, magnitude {m} et plus", es: "Terremotos a menos de {r} km de {p}, últimos {d} días, magnitud {m} o más", de: "Erdbeben im Umkreis von {r} km um {p}, letzte {d} Tage, Magnitude ab {m}", pt: "Sismos a menos de {r} km de {p}, últimos {d} dias, magnitude {m} ou mais"},
+  strong: {en: "The strongest earthquakes in the world, the last {d} days", it: "I terremoti più forti nel mondo, ultimi {d} giorni", fr: "Les séismes les plus forts du monde, {d} derniers jours", es: "Los terremotos más fuertes del mundo, últimos {d} días", de: "Die stärksten Erdbeben der Welt, letzte {d} Tage", pt: "Os sismos mais fortes do mundo, últimos {d} dias"},
+  nearpt: {en: "Earthquakes within {r} km of the point chosen, the last {d} days, magnitude {m} and more: {n}", it: "Terremoti entro {r} km dal punto scelto, ultimi {d} giorni, magnitudo {m} e oltre: {n}", fr: "Séismes à moins de {r} km du point choisi, {d} derniers jours, magnitude {m} et plus : {n}", es: "Terremotos a menos de {r} km del punto elegido, últimos {d} días, magnitud {m} o más: {n}", de: "Erdbeben im Umkreis von {r} km um den gewählten Punkt, letzte {d} Tage, Magnitude ab {m}: {n}", pt: "Sismos a menos de {r} km do ponto escolhido, últimos {d} dias, magnitude {m} ou mais: {n}"},
+  sight: {en: "Earthquakes in sight, the last {d} days, magnitude {m} and more: {n}", it: "Terremoti in vista, ultimi {d} giorni, magnitudo {m} e oltre: {n}", fr: "Séismes en vue, {d} derniers jours, magnitude {m} et plus : {n}", es: "Terremotos a la vista, últimos {d} días, magnitud {m} o más: {n}", de: "Erdbeben in Sicht, letzte {d} Tage, Magnitude ab {m}: {n}", pt: "Sismos à vista, últimos {d} dias, magnitude {m} ou mais: {n}"},
+  one: {en: "An earthquake", it: "Un terremoto", fr: "Un séisme", es: "Un terremoto", de: "Ein Erdbeben", pt: "Um sismo"},
+  none: {en: "None in this time.", it: "Nessuno in questo periodo.", fr: "Aucun pendant cette période.", es: "Ninguno en este periodo.", de: "Keines in dieser Zeit.", pt: "Nenhum neste período."},
+  depth: {en: "Depth", it: "Profondità", fr: "Profondeur", es: "Profundidad", de: "Tiefe", pt: "Profundidade"},
+  mag: {en: "Magnitude", it: "Magnitudo", fr: "Magnitude", es: "Magnitud", de: "Magnitude", pt: "Magnitude"},
+  when: {en: "When", it: "Quando", fr: "Quand", es: "Cuándo", de: "Wann", pt: "Quando"},
+  where: {en: "Where", it: "Dove", fr: "Où", es: "Dónde", de: "Wo", pt: "Onde"},
+  felt: {en: "Felt by", it: "Avvertito da", fr: "Ressenti par", es: "Sentido por", de: "Verspürt von", pt: "Sentido por"},
+  people: {en: "{n} people who told the USGS", it: "{n} persone che l'hanno detto all'USGS", fr: "{n} personnes qui l'ont dit à l'USGS", es: "{n} personas que lo dijeron al USGS", de: "{n} Menschen, die es dem USGS meldeten", pt: "{n} pessoas que o disseram ao USGS"},
+  alert: {en: "Alert", it: "Allerta", fr: "Alerte", es: "Alerta", de: "Warnstufe", pt: "Alerta"},
+  tsunami: {en: "a tsunami is possible: follow the authorities", it: "possibile tsunami: segui le autorità", fr: "tsunami possible : suivez les autorités", es: "posible tsunami: sigue a las autoridades", de: "Tsunami möglich: folge den Behörden", pt: "possível tsunami: siga as autoridades"},
+  source: {en: "Open it at the source", it: "Aprilo alla fonte", fr: "L'ouvrir à la source", es: "Abrirlo en la fuente", de: "An der Quelle öffnen", pt: "Abrir na fonte"},
+  ago: {en: "{t} ago", it: "{t} fa", fr: "il y a {t}", es: "hace {t}", de: "vor {t}", pt: "há {t}"},
+  credit: {en: "Data: {s}. Map: Natural Earth (public domain), drawn here, nothing fetched.", it: "Dati: {s}. Mappa: Natural Earth (pubblico dominio), disegnata qui, senza scaricare nulla.", fr: "Données : {s}. Carte : Natural Earth (domaine public), dessinée ici, rien n'est téléchargé.", es: "Datos: {s}. Mapa: Natural Earth (dominio público), dibujado aquí, sin descargar nada.", de: "Daten: {s}. Karte: Natural Earth (gemeinfrei), hier gezeichnet, nichts geladen.", pt: "Dados: {s}. Mapa: Natural Earth (domínio público), desenhado aqui, sem descarregar nada."},
+  shallow: {en: "shallow (under 10 km)", it: "superficiale (meno di 10 km)", fr: "superficiel (moins de 10 km)", es: "superficial (menos de 10 km)", de: "flach (unter 10 km)", pt: "superficial (menos de 10 km)"},
+  mid: {en: "10 to 70 km", it: "da 10 a 70 km", fr: "de 10 à 70 km", es: "de 10 a 70 km", de: "10 bis 70 km", pt: "de 10 a 70 km"},
+  deep: {en: "70 to 300 km", it: "da 70 a 300 km", fr: "de 70 à 300 km", es: "de 70 a 300 km", de: "70 bis 300 km", pt: "de 70 a 300 km"},
+  deeper: {en: "deeper", it: "più profondo", fr: "plus profond", es: "más profundo", de: "tiefer", pt: "mais profundo"},
+};
+const t = (k, v) => App.t(W[k]).replace(/\{(\w+)\}/g, (_, n) => v && v[n] !== undefined ? v[n] : "");
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => "&#" + c.charCodeAt(0) + ";");
+const color = (km) => km < 10 ? "#e4572e" : km < 70 ? "#f3a712" : km < 300 ? "#4c9be8" : "#7b5ea7";
+const radius = (m) => 3 + Math.max(0, m) ** 1.5 * 1.1;
+const num = (x, d) => new Intl.NumberFormat(App.ctx.locale, {minimumFractionDigits: d || 0, maximumFractionDigits: d || 0}).format(x);
+function ago(a) {
+  if (!a) return "";
+  const rel = new Intl.RelativeTimeFormat(App.ctx.locale, {numeric: "auto"});
+  return a.d ? rel.format(-a.d, "day") : a.h ? rel.format(-a.h, "hour") : rel.format(-a.m, "minute");
+}
+const whereOf = (e) => e.place || (e.where && (e.where.text || e.where.name)) || "";
+let items = [], pick = -1, data = {};
+let credit = () => {};
+const map = MapView(document.getElementById("mapbox"), {onpick: (p) => p && choose(items.indexOf(p), true), onlayer: () => credit(),
+  /* without a circle, the list is of those in sight */
+  onmove: () => { if (!circle && items.length) listing(); },
+  /* a circle drawn: the earthquakes around it asked; removed: those in sight */
+  oncircle: (c) => {
+    if (!c) { circle = null; map.circled(false); listing(); paint(); return; }
+    circle = {lat: c.lat, lon: c.lon, km: Math.max(10, Math.min(1000, c.km)), place: ""};
+    map.circled(true);
+    asking = ["quakes_near", {place: circle.lat.toFixed(4) + "," + circle.lon.toFixed(4), radius: Math.round(circle.km), days: data.days || 7, min_mag: data.min_mag ?? 2.5}];
+    ask().catch(() => {}); listing(); paint();
+  }});
+Floats.init();
+function paint() {
+  map.set(items, (g, at) => {
+    /* the weakest first, the strongest over them */
+    const order = items.map((e, i) => i).sort((a, b) => items[a].mag - items[b].mag);
+    for (const i of order) {
+      const e = items[i], [x, y] = at(e.lon, e.lat), r = radius(e.mag);
+      g.beginPath(); g.arc(x, y, r, 0, 2 * Math.PI);
+      g.fillStyle = color(e.depth) + "cc"; g.fill();
+      g.lineWidth = i === pick ? 3 : 1;
+      g.strokeStyle = i === pick ? getComputedStyle(document.documentElement).getPropertyValue("--color-text-primary") : "#00000055";
+      g.stroke();
+    }
+    if (circle) drawCircle(g, at, circle); /* the circle of interest: the place asked about, or one drawn */
+  });
+}
+function choose(i, fromMap) {
+  pick = i;
+  for (const li of document.querySelectorAll("#list li")) li.classList.toggle("on", +li.dataset.i === i);
+  const card = document.getElementById("card");
+  if (i < 0) { card.hidden = true; paint(); App.size(); return; }
+  const e = items[i];
+  const rows = [
+    [t("mag"), `${num(e.mag, 1)}${e.magtype ? " " + esc(e.magtype) : ""}`],
+    [t("depth"), `${num(e.depth)} km`],
+    [t("when"), `${e.when ? `${e.when.day}/${e.when.mon} ${esc(e.when.at)}` : ""} (${esc(ago(e.ago))})`],
+    [t("where"), esc(whereOf(e)) + (e.km ? ` · ${num(e.km)} km ${esc(e.dir)}` : "")]];
+  if (e.has_felt) rows.push([t("felt"), t("people", {n: num(e.felt)})]);
+  if (e.alert) rows.push([t("alert"), esc(e.alert)]);
+  if (e.tsunami) rows.push(["", "<b>" + esc(t("tsunami")) + "</b>"]);
+  card.innerHTML = `<dl>${rows.map(([a, b]) => `<dt>${esc(a)}</dt><dd>${b}</dd>`).join("")}</dl>` +
+    (e.url ? `<button class="link" id="src">${esc(t("source"))}</button>` : "");
+  App.closer(card, () => choose(-1));
+  card.hidden = false;
+  const s = document.getElementById("src");
+  if (s) s.onclick = () => App.openLink(e.url);
+  if (!fromMap) map.center(e.lon, e.lat);
+  paint(); App.size();
+}
+let xbtn = null, live = null;
+/* the circle of interest: the place asked about, one drawn, or none (the
+   strongest in the world; removed): the list is of the earthquakes inside
+   it, or of those in sight. asking: the tool and arguments asked again
+   (the first answer's, or the circle drawn's) */
+let circle = null, listed = [], asking = null, focus = {}, asks = 0;
+async function ask() {
+  const n = ++asks, r = await App.callTool(asking[0], asking[1]);
+  if (!r || !r.structuredContent || r.isError) throw new Error((r && r.content && r.content[0] && r.content[0].text || "").slice(0, 80));
+  if (n === asks) show(r, true);
+  return true;
+}
+/* the title and the list, from the earthquakes and the circle */
+function listing() {
+  for (const e of items)
+    if (circle) { const [d, dir] = geoFar(circle.lat, circle.lon, e.lat, e.lon); e.km = Math.round(d); e.dir = dir; e.cd = d; }
+    else if (!focus.e) { delete e.km; delete e.dir; }
+  const b = map.bounds();
+  listed = items.map((e, i) => i).filter((i) => circle ? items[i].cd <= circle.km : focus.e || geoIn(b, items[i].lat, items[i].lon));
+  const n = num(listed.length), d = data.days || focus.days || 7, m = num(data.min_mag ?? focus.min_mag ?? 2.5, 1);
+  document.getElementById("title").textContent = circle
+    ? (circle.place ? t("near", {r: num(circle.km), p: circle.place, d, m}) + ": " + n : t("nearpt", {r: num(circle.km), d, m, n}))
+    : focus.e ? t("one") : focus.radius === undefined && !(asking[1] || {}).place ? t("strong", {d}) + ": " + n : t("sight", {d, m, n});
+  const list = document.getElementById("list"), scroll = list.scrollTop;
+  list.innerHTML = listed.length ? listed.map((i) => { const e = items[i];
+    return `<li data-i="${i}"${i === pick ? ' class="on"' : ""}><b>M ${num(e.mag, 1)}</b><span>${esc(whereOf(e))}${e.km ? ` · ${num(e.km)} km ${esc(e.dir)}` : ""}</span>` +
+      `<span class="note">${esc(ago(e.ago))}</span></li>`; }).join("") : `<li>${esc(t("none"))}</li>`;
+  for (const li of document.querySelectorAll("#list li[data-i]")) li.onclick = () => choose(+li.dataset.i);
+  list.scrollTop = scroll;
+}
+/* a quake told from the others: its page, else where and when */
+const qid = (e) => e.url || [e.lat, e.lon, e.when && e.when.at].join(",");
+function show(r, keep) {
+  /* updating by itself: the sources publish within minutes */
+  if (!asking) asking = [App.toolName(), App.input()];
+  if (!live) live = Live.control(document.getElementById("tools"), {choices: [60, 120, 300, 600], dflt: 120, ask: () => ask()});
+  const chosen = keep && pick >= 0 && items[pick] ? qid(items[pick]) : null;
+  data = r.structuredContent || {};
+  /* its table, to export: each quake a row */
+  if (!xbtn) xbtn = Exporter.button(document.getElementById("tools"), () => ({
+    name: document.getElementById("title").textContent,
+    columns: [{key: "mag", label: t("mag")}, {key: "magtype", label: "ML/Mw"},
+      {key: "depth", label: t("depth") + " (km)"}, {key: "when", label: t("when")}, {key: "place", label: t("where")},
+      {key: "km", label: Exporter.label("km")}, {key: "dir", label: Exporter.label("dir")},
+      {key: "lat", label: Exporter.label("lat")}, {key: "lon", label: Exporter.label("lon")}, {key: "felt", label: t("felt")}, {key: "url", label: Exporter.label("url")}],
+    rows: listed.map((i) => items[i]).map((e) => ({mag: e.mag, magtype: e.magtype || "", depth: e.depth, when: e.when ? `${e.when.day}/${e.when.mon} ${e.when.at}` : "",
+      place: whereOf(e), km: e.km ?? "", dir: e.dir || "", lat: e.lat, lon: e.lon, felt: e.has_felt ? e.felt : "", url: e.url || ""})),
+  }));
+  items = data.items || (data.e ? [data.e] : []);
+  if (!keep) {
+    focus = data;
+    circle = data.radius !== undefined && data.lat !== undefined ? {lat: data.lat, lon: data.lon, km: data.radius, place: data.name || ""} : null;
+    map.circled(!!circle);
+  }
+  document.getElementById("legend").innerHTML = [["#e4572e", "shallow"], ["#f3a712", "mid"], ["#4c9be8", "deep"], ["#7b5ea7", "deeper"]]
+    .map(([c, k]) => `<span style="--c:${c}">${esc(t(k))}</span>`).join("");
+  const src = (data.source || (data.e && data.e.src) || "") === "ingv" ? "INGV (CC BY 4.0)" : "USGS (public domain)";
+  credit = () => { document.getElementById("credit").textContent = mapCredit(t("credit", {s: src}), map.layer()); };
+  credit();
+  /* asked again by itself: the zoom and the quake chosen kept */
+  if (keep) {
+    listing();
+    const i = chosen ? items.findIndex((e) => qid(e) === chosen) : -1;
+    if (i >= 0 && !document.getElementById("card").hidden) choose(i, true);
+    else { pick = i; for (const li of document.querySelectorAll("#list li")) li.classList.toggle("on", +li.dataset.i === i); paint(); }
+    return;
+  }
+  const pts = items.map((e) => [e.lon, e.lat]);
+  if (data.lat !== undefined) pts.push([data.lon, data.lat]);
+  map.fit(pts);
+  listing();
+  choose(data.e ? 0 : -1);
+}
+App.on("result", show);
+App.on("context", () => paint());
+App.start("janas-quakes");
+</script>
+</body></html>

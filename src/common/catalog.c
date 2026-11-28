@@ -328,6 +328,23 @@ const struct janas_model_entry janas_catalog[] = {
      .extra_sha =
          "8d46e88068b98e520b6ccc0f463d8b4cf53597dd16f72d8a5f665cfd92ec765c",
      .ram_gb = 32},
+    /* Thinking Machines' looped mixture of experts, unsloth's GGUF (its
+       experts NVFP4 with a scale an expert), in one step; Apache 2.0 with
+       Thinking Machines' Model Acceptable Use Policy (MODELS.md) */
+    {.name = "inkling-2-mini",
+     .what = "Thinking Machines Inkling-2-Mini, 26.4B, 3.4B active, its "
+             "middle layers run three times",
+     .repo = "unsloth/Inkling-2-Mini-GGUF",
+     .parts = {"Inkling-2-Mini-UD-Q4_K_M.gguf"},
+     .part_sha =
+         {"78fcedcf93c5d1bfe83e225513b71392bb52259be0eaa5f8899c856a2e5834ae"},
+     .gguf_gb = 16.61,
+     .out = "inkling-2-mini-ud-q4km.jns",
+     .jns_repo = "prabanta-dev/Inkling-2-Mini-JNS",
+     .jns_gb = 18.25,
+     .flat_sha =
+         "82456e0707c6e02b0a331a014de2fb53e0a6b57dae611116b81207ff9ac11a07",
+     .ram_gb = 16},
     /* NVIDIA's own 24GB GGUF, in one step (no planes: its experts are
        IQ2_XXS); under NVIDIA's OpenMDW-1.1, which lets it be passed on
        with the licence and NVIDIA's notices (MODELS.md) */

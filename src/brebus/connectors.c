@@ -24,6 +24,7 @@
 
 #include "brebus.h"
 #include "common/catalog.h"
+#include "common/mcp_services.h"
 #include "common/mcp_tls.h"
 #include "common/zip.h"
 #include "janas/mcp.h"
@@ -468,7 +469,7 @@ static int set_entry(const char *cfg, const char *name, const char *entry)
     return bad ? -1 : 0;
 }
 
-static int remove_tree(const char *dir, int depth)
+int brebus_remove_tree(const char *dir, int depth)
 {
     if (depth > 12)
         return -1;
@@ -484,7 +485,7 @@ static int remove_tree(const char *dir, int depth)
         snprintf(p, sizeof p, "%s/%s", dir, e->d_name);
         /* a link is removed, never followed */
         if (lstat(p, &st) == 0 && S_ISDIR(st.st_mode))
-            remove_tree(p, depth + 1);
+            brebus_remove_tree(p, depth + 1);
         else
             remove(p);
     }
@@ -547,7 +548,7 @@ int brebus_connector_install(struct brebus *b, const char *body, size_t n,
     char fin[4400];
     snprintf(fin, sizeof fin, "%s/%s", root, id);
     snprintf(dir, sizeof dir, "%s/.%s.new", root, id);
-    remove_tree(dir, 0);
+    brebus_remove_tree(dir, 0);
     if (janas_mkdirs(dir) != 0) {
         snprintf(why, sizeof why, "cannot make the connector's folder");
         goto out;
@@ -560,7 +561,7 @@ int brebus_connector_install(struct brebus *b, const char *body, size_t n,
             snprintf(why, sizeof why,
                      "a file of the bundle would land "
                      "outside its folder: not installed");
-        remove_tree(dir, 0);
+        brebus_remove_tree(dir, 0);
         goto out;
     }
     /* its entry: the command, its arguments and its environment, the
@@ -575,7 +576,7 @@ int brebus_connector_install(struct brebus *b, const char *body, size_t n,
     char exe[4200], rwhy[300];
     if (runtime(cmd, exe, sizeof exe, rwhy, sizeof rwhy) != 0) {
         snprintf(why, sizeof why, "%s", rwhy);
-        remove_tree(dir, 0);
+        brebus_remove_tree(dir, 0);
         goto out;
     }
     struct janas_buf x = {0};
@@ -620,22 +621,22 @@ int brebus_connector_install(struct brebus *b, const char *body, size_t n,
     {
         char old[4500];
         snprintf(old, sizeof old, "%s/.%s.old", root, id);
-        remove_tree(old, 0);
+        brebus_remove_tree(old, 0);
         struct stat st;
         int had = stat(fin, &st) == 0;
         if ((had && rename(fin, old) != 0) || rename(dir, fin) != 0) {
             if (had)
                 rename(old, fin);
             snprintf(why, sizeof why, "cannot put the connector in place");
-            remove_tree(dir, 0);
+            brebus_remove_tree(dir, 0);
             goto out;
         }
-        remove_tree(old, 0);
+        brebus_remove_tree(old, 0);
         snprintf(dir, sizeof dir, "%s", fin);
     }
     if (entry.oom || set_entry(cfg, id, entry.p) != 0) {
         snprintf(why, sizeof why, "cannot write mcp.json");
-        remove_tree(dir, 0);
+        brebus_remove_tree(dir, 0);
         goto out;
     }
     rc = 0;
@@ -707,7 +708,7 @@ int brebus_connector_remove(struct brebus *b, const char *body, size_t n,
         struct stat st;
         int had = id[0] && stat(dir, &st) == 0;
         if (had)
-            remove_tree(dir, 0);
+            brebus_remove_tree(dir, 0);
         if (id[0] && (set_entry(cfg, id, NULL) == 0 || had))
             rc = 0;
     }
@@ -858,6 +859,207 @@ int brebus_connector_drop(struct brebus *b, const char *body, size_t n,
         if (!strcmp(REMOTE[i].id, id) &&
             paths(cfg, sizeof cfg, root, sizeof root) == 0)
             rc = set_entry(cfg, id, NULL);
+    janas_json_free(d);
+    janas_buf_puts(out, rc ? "{\"error\": \"not removed\"}" : "{}");
+    return rc;
+}
+
+/* ---- the user's MCP servers, edited here instead of by hand in mcp.json:
+   an entry read, written (added, changed, renamed) or removed ---- */
+
+/* a name mcp.json may give a server: letters, digits, '-', '_', '.', not
+   one of Janas's services' (their tools' prefixes would mix) */
+static int entry_name_ok(const char *n)
+{
+    size_t k = n ? strlen(n) : 0;
+    if (!k || k > 64 || n[0] == '.')
+        return 0;
+    for (size_t i = 0; i < k; i++)
+        if (!((n[i] >= 'a' && n[i] <= 'z') || (n[i] >= 'A' && n[i] <= 'Z') ||
+              (n[i] >= '0' && n[i] <= '9') || n[i] == '-' || n[i] == '_' ||
+              n[i] == '.'))
+            return 0;
+    for (size_t i = 0; i < JANAS_N_SERVICES; i++)
+        if (!strcmp(JANAS_SERVICES[i].name, n))
+            return 0;
+    return strcmp(n, "janas") != 0;
+}
+
+/* an object whose members are all strings */
+static int strings_object(const struct janas_json *o)
+{
+    if (!o || o->type != JANAS_JSON_OBJECT)
+        return 0;
+    for (const struct janas_json *e = o->child; e; e = e->next)
+        if (e->type != JANAS_JSON_STRING)
+            return 0;
+    return 1;
+}
+
+/* an entry as mcp.json takes it: a command (its args and env) or an
+   address over HTTP (its headers); why when it is not */
+static int entry_ok(struct brebus *b, const struct janas_json *e, char *why,
+                    size_t wn)
+{
+    if (!e || e->type != JANAS_JSON_OBJECT) {
+        snprintf(why, wn, "not a server's entry");
+        return 0;
+    }
+    const struct janas_json *url = janas_json_get(e, "url"),
+                            *cmd = janas_json_get(e, "command"),
+                            *args = janas_json_get(e, "args");
+    for (const struct janas_json *k = e->child; k; k = k->next) {
+        static const char *const KEYS[] = {"command", "args",    "env",
+                                           "url",     "headers", "disabled"};
+        int known = 0;
+        for (size_t i = 0; i < sizeof KEYS / sizeof *KEYS; i++)
+            known |= k->key_n == strlen(KEYS[i]) &&
+                     !memcmp(k->key, KEYS[i], k->key_n);
+        if (!known) {
+            snprintf(why, wn, "%.*s is not a member mcp.json takes",
+                     (int)(k->key_n > 40 ? 40 : k->key_n), k->key);
+            return 0;
+        }
+    }
+    if (!url == !cmd) {
+        snprintf(why, wn, "an address or a command, one of the two");
+        return 0;
+    }
+    if (url) {
+        const char *u = janas_json_str(url);
+        if (!u || (strncmp(u, "https://", 8) && strncmp(u, "http://", 7))) {
+            snprintf(why, wn, "the address starts with https://");
+            return 0;
+        }
+        if (!strings_object(janas_json_get(e, "headers")) &&
+            janas_json_get(e, "headers")) {
+            snprintf(why, wn, "the headers are names and values");
+            return 0;
+        }
+        return 1;
+    }
+    /* a program on this computer: an administrator's on a Brebus of users */
+    if (b->root[0]) {
+        snprintf(why, wn, "a server over HTTP alone, on this Brebus");
+        return 0;
+    }
+    const char *c = janas_json_str(cmd);
+    if (!c || !*c) {
+        snprintf(why, wn, "no command");
+        return 0;
+    }
+    if (args) {
+        if (args->type != JANAS_JSON_ARRAY) {
+            snprintf(why, wn, "the arguments are a list");
+            return 0;
+        }
+        for (const struct janas_json *a = args->child; a; a = a->next)
+            if (a->type != JANAS_JSON_STRING) {
+                snprintf(why, wn, "each argument is a text");
+                return 0;
+            }
+    }
+    if (janas_json_get(e, "env") && !strings_object(janas_json_get(e, "env"))) {
+        snprintf(why, wn, "the environment is names and values");
+        return 0;
+    }
+    return 1;
+}
+
+int brebus_mcp_entry_get(struct brebus *b, const char *body, size_t n,
+                         struct janas_buf *out)
+{
+    (void)b;
+    char why[200], cfg[4096], root[4200], ext[4400];
+    struct janas_json_doc *d =
+        n ? janas_json_parse(body, n, why, sizeof why) : NULL;
+    const char *name =
+        d ? janas_json_str(janas_json_get(janas_json_root(d), "name")) : NULL;
+    size_t fn = 0;
+    uint8_t *t = name && paths(cfg, sizeof cfg, root, sizeof root) == 0
+                     ? slurp(cfg, 4 << 20, &fn)
+                     : NULL;
+    struct janas_json_doc *c =
+        t ? janas_json_parse((char *)t, fn, why, sizeof why) : NULL;
+    const struct janas_json *ms =
+        c ? janas_json_get(janas_json_root(c), "mcpServers") : NULL;
+    const struct janas_json *e = ms && name ? janas_json_get(ms, name) : NULL;
+    int rc = e ? 0 : -1;
+    if (e) {
+        struct stat st;
+        snprintf(ext, sizeof ext, "%s/%s", root, name);
+        janas_buf_puts(out, "{\"name\": ");
+        str(out, name);
+        /* a desktop extension's: its folder is Brebus's, not to edit */
+        janas_buf_printf(out, ", \"extension\": %s, \"entry\": ",
+                         stat(ext, &st) == 0 && S_ISDIR(st.st_mode) ? "true"
+                                                                    : "false");
+        janas_json_write(out, e);
+        janas_buf_puts(out, "}");
+    } else
+        janas_buf_puts(out, "{\"error\": \"no such server\"}");
+    janas_json_free(c);
+    free(t);
+    janas_json_free(d);
+    return rc;
+}
+
+int brebus_mcp_entry_set(struct brebus *b, const char *body, size_t n,
+                         struct janas_buf *out)
+{
+    char why[200] = "", cfg[4096], root[4200];
+    struct janas_json_doc *d =
+        n ? janas_json_parse(body, n, why, sizeof why) : NULL;
+    const struct janas_json *r = d ? janas_json_root(d) : NULL;
+    const char *name = r ? janas_json_str(janas_json_get(r, "name")) : NULL;
+    const char *old = r ? janas_json_str(janas_json_get(r, "old")) : NULL;
+    const struct janas_json *e = r ? janas_json_get(r, "entry") : NULL;
+    int rc = -1;
+    if (!entry_name_ok(name))
+        snprintf(why, sizeof why,
+                 "a name of letters, digits, '-', '_' or '.', not one of "
+                 "Janas's services");
+    else if (!entry_ok(b, e, why, sizeof why))
+        ;
+    else if (paths(cfg, sizeof cfg, root, sizeof root) != 0)
+        snprintf(why, sizeof why, "no mcp.json for this user");
+    else {
+        struct janas_buf w = {0};
+        janas_json_write(&w, e);
+        rc = w.oom ? -1 : set_entry(cfg, name, w.p);
+        janas_buf_free(&w);
+        /* renamed: the old name goes */
+        if (rc == 0 && old && *old && strcmp(old, name))
+            set_entry(cfg, old, NULL);
+        if (rc)
+            snprintf(why, sizeof why, "mcp.json could not be written");
+    }
+    janas_json_free(d);
+    janas_buf_puts(out, rc ? "{\"error\": " : "{\"name\": ");
+    str(out, rc ? why : name);
+    janas_buf_puts(out, "}");
+    return rc;
+}
+
+int brebus_mcp_entry_remove(struct brebus *b, const char *body, size_t n,
+                            struct janas_buf *out)
+{
+    (void)b;
+    char why[200], cfg[4096], root[4200], ext[4400];
+    struct janas_json_doc *d =
+        n ? janas_json_parse(body, n, why, sizeof why) : NULL;
+    const char *name =
+        d ? janas_json_str(janas_json_get(janas_json_root(d), "name")) : NULL;
+    int rc = -1;
+    if (name && *name && !strpbrk(name, "/\\") && name[0] != '.' &&
+        paths(cfg, sizeof cfg, root, sizeof root) == 0) {
+        rc = set_entry(cfg, name, NULL);
+        /* a desktop extension's folder too, which Brebus installed */
+        struct stat st;
+        snprintf(ext, sizeof ext, "%s/%s", root, name);
+        if (rc == 0 && stat(ext, &st) == 0 && S_ISDIR(st.st_mode))
+            brebus_remove_tree(ext, 0);
+    }
     janas_json_free(d);
     janas_buf_puts(out, rc ? "{\"error\": \"not removed\"}" : "{}");
     return rc;

@@ -103,7 +103,8 @@ static int is_free(const struct brebus *b, const char *path)
 
 /* the recent ones, newest first, with path put first; never the free
    chats' own */
-static void recent_add(struct brebus *b, const char *path)
+/* path put first among the recent ones, or, drop, taken out of them */
+static void recent_set(struct brebus *b, const char *path, int drop)
 {
     char rp[4200], err[160];
     if (is_free(b, path))
@@ -123,15 +124,18 @@ static void recent_add(struct brebus *b, const char *path)
     const struct janas_json *list =
         d ? janas_json_get(janas_json_root(d), "recent") : NULL;
     janas_buf_puts(&o, "{\"recent\": [");
-    str(&o, path);
-    int k = 1;
+    int k = 0;
+    if (!drop) {
+        str(&o, path);
+        k = 1;
+    }
     for (const struct janas_json *e =
              list && list->type == JANAS_JSON_ARRAY ? list->child : NULL;
          e && k < MAX_RECENT; e = e->next) {
         const char *p = janas_json_str(e);
         if (!p || !strcmp(p, path))
             continue;
-        janas_buf_puts(&o, ", ");
+        janas_buf_puts(&o, k ? ", " : "");
         str(&o, p);
         k++;
     }
@@ -226,7 +230,7 @@ int brebus_ws_open(struct brebus *b, const char *path, int create, char *why,
     snprintf(b->ws, sizeof b->ws, "%s", real);
     pthread_mutex_unlock(&b->mu);
     move_old_chats(b, real);
-    recent_add(b, real);
+    recent_set(b, real, 0);
     brebus_tools_start(b); /* its documents and files for the chat */
     return 0;
 }
@@ -236,6 +240,41 @@ int brebus_ws_free(struct brebus *b, char *why, size_t wn)
     char f[4200];
     brebus_free_path(b, f, sizeof f);
     return brebus_ws_open(b, f, 1, why, wn);
+}
+
+int brebus_ws_forget(struct brebus *b, const char *body, size_t n, char *why,
+                     size_t wn)
+{
+    char err[160], real[4096], open_now[4096], f[4200], fr[4096], p[4300];
+    struct janas_json_doc *d =
+        body && n ? janas_json_parse(body, n, err, sizeof err) : NULL;
+    const struct janas_json *o = d ? janas_json_root(d) : NULL;
+    const char *path = o ? janas_json_str(janas_json_get(o, "path")) : NULL;
+    const struct janas_json *pg = o ? janas_json_get(o, "purge") : NULL;
+    int purge = pg && pg->type == JANAS_JSON_TRUE;
+    /* a project Brebus lists, never the free chats' place */
+    brebus_free_path(b, f, sizeof f);
+    if (!path || brebus_ws_known(b, path, real, sizeof real) != 0 ||
+        (janas_path_real(f, fr) && !strcmp(real, fr))) {
+        snprintf(why, wn, "not a project of Brebus");
+        janas_json_free(d);
+        return -1;
+    }
+    janas_json_free(d);
+    /* the one open: Brebus goes to the free chats first */
+    if (brebus_ws_path(b, open_now, sizeof open_now) == 0 &&
+        !strcmp(open_now, real) && brebus_ws_free(b, why, wn) != 0)
+        return -1;
+    recent_set(b, real, 1);
+    /* what Brebus made there, asked: its chats and settings (.brebus) and
+       its artifacts (artifact/); the user's own files never */
+    if (purge) {
+        snprintf(p, sizeof p, "%s/.brebus", real);
+        brebus_remove_tree(p, 0);
+        snprintf(p, sizeof p, "%s/artifact", real);
+        brebus_remove_tree(p, 0);
+    }
+    return 0;
 }
 
 int brebus_ws_new(struct brebus *b, char *why, size_t wn)

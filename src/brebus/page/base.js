@@ -4,6 +4,9 @@
    the page where app.html includes it. */
 "use strict";
 const $ = (s) => document.querySelector(s);
+/* the theme the page is drawn in: theme.js and the page's first script
+   keep the class (auto, light or dark) */
+const isDark = () => document.documentElement.classList.contains("dark");
 
 /* Brebus's own dialogs, in place of the browser's alert, confirm and
    prompt: a title, a text (or HTML), a field when asked, buttons, a box
@@ -15,8 +18,8 @@ function dialog(o) {
   return new Promise((done) => {
     const box = document.createElement("div");
     box.className = "dlg";
-    const btns = o.buttons || [{label: "OK", value: "ok", primary: true}];
-    const button = (b, i) => `<button class="act${b.primary ? "" : " quiet"}" data-i="${i}" title="${esc(b.title || (b.primary ? b.label + " (Enter)" : i === btns.length - 1 ? b.label + " (Esc)" : b.label))}">${esc(b.label)}</button>`;
+    const btns = o.buttons || [{label: T("OK"), value: "ok", primary: true}];
+    const button = (b, i) => `<button class="act${b.primary ? "" : " quiet"}" data-i="${i}" title="${esc(b.title || (b.primary ? T("{label} (Enter)", {label: b.label}) : i === btns.length - 1 ? T("{label} (Esc)", {label: b.label}) : b.label))}">${esc(b.label)}</button>`;
     /* a button "beside" goes next to the field (Browse…), the others at the
        foot */
     const beside = btns.map((b, i) => b.beside && o.input !== undefined ? button(b, i) : "").join("");
@@ -61,7 +64,7 @@ function dialog(o) {
 }
 /* Prabanta's five dots, lit in turn (app.css): Brebus working */
 const PINTA = '<svg class="pinta" viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><circle cx="12.00" cy="4.00" r="2.3"/><circle cx="19.61" cy="9.53" r="2.3"/><circle cx="16.70" cy="18.47" r="2.3"/><circle cx="7.30" cy="18.47" r="2.3"/><circle cx="4.39" cy="9.53" r="2.3"/></svg>';
-window.markdownAsk = (text) => yes(text, "A link the model wrote", "Open it");
+window.markdownAsk = (text) => yes(text, T("A link the model wrote"), T("Open it"));
 /* Brebus's window closing in order (main.c): what it is doing, over the
    page, which can no longer be used; the reply waited for stopped here */
 window.brebusClosing = (step) => {
@@ -71,18 +74,19 @@ window.brebusClosing = (step) => {
     box = document.createElement("div");
     box.id = "closing";
     box.className = "dlg";
-    box.innerHTML = `<div class="box" role="alertdialog" aria-live="polite"><h2>Closing Brebus</h2>
+    box.innerHTML = `<div class="box" role="alertdialog" aria-live="polite"><h2>${T("Closing Brebus")}</h2>
       <p class="dtext"><span class="working">${PINTA}</span> <span id="closingstep"></span></p></div>`;
     document.body.append(box);
   }
-  document.getElementById("closingstep").textContent = step;
+  /* the step as main.c says it (close_say), in the page's language */
+  document.getElementById("closingstep").textContent = T(step);
 };
-const say = (text, title) => dialog({title, text, buttons: [{label: "OK", value: "ok", primary: true}]});
-const yes = async (text, title, ok = "OK") => (await dialog({title, text,
-  buttons: [{label: ok, value: "yes", primary: true}, {label: "Cancel", value: "no"}]})).button === "yes";
+const say = (text, title) => dialog({title, text, buttons: [{label: T("OK"), value: "ok", primary: true}]});
+const yes = async (text, title, ok = T("OK")) => (await dialog({title, text,
+  buttons: [{label: ok, value: "yes", primary: true}, {label: T("Cancel"), value: "no"}]})).button === "yes";
 const input = async (title, value, text, multiline) => {
   const r = await dialog({title, text, input: value || "", multiline,
-    buttons: [{label: "OK", value: "ok", primary: true}, {label: "Cancel", value: "no"}]});
+    buttons: [{label: T("OK"), value: "ok", primary: true}, {label: T("Cancel"), value: "no"}]});
   return r.button === "ok" ? r.value : null;
 };
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
@@ -110,7 +114,7 @@ async function account() {
   if (!me || !me.user) return;
   $("#acct").hidden = false;
   $("#navout").hidden = false;
-  $("#acctme").innerHTML = `<dt>Logged in as</dt><dd>${esc(me.user)}${me.admin ? " (administrator)" : ""}</dd>`;
+  $("#acctme").innerHTML = `<dt>${T("Logged in as")}</dt><dd>${me.admin ? T("{user} (administrator)", {user: esc(me.user)}) : esc(me.user)}</dd>`;
   try {
     const l = (await ask("auth/logins")).logins || [];
     $("#logins").innerHTML = l.slice(0, 10).map((x) => `<li class="mono">${esc(x)}</li>`).join("");
@@ -123,22 +127,22 @@ $("#logout").onclick = async () => {
 };
 $("#endall").onclick = async () => {
   const r = await fetch("/brebus/auth/end", {method: "POST", body: "{}"});
-  say(r.ok ? "Your other sessions are ended." : "Not done.");
+  say(r.ok ? T("Your other sessions are ended.") : T("Not done."));
   account();
 };
 $("#newpw").onclick = async () => {
-  const d = await dialog({title: "Change the password",
-    html: `<label>The password now <input type="password" class="pw0" autocomplete="current-password"></label>
-           <label>The new one, 12 characters or more <input type="password" class="pw1" autocomplete="new-password"></label>
-           <label>The new one again <input type="password" class="pw2" autocomplete="new-password"></label>
-           <p class="note">Your sessions in other browsers end.</p>`,
+  const d = await dialog({title: T("Change the password"),
+    html: `<label>${T("The password now")} <input type="password" class="pw0" autocomplete="current-password"></label>
+           <label>${T("The new one, 12 characters or more")} <input type="password" class="pw1" autocomplete="new-password"></label>
+           <label>${T("The new one again")} <input type="password" class="pw2" autocomplete="new-password"></label>
+           <p class="note">${T("Your sessions in other browsers end.")}</p>`,
     read: (box) => ({old: box.querySelector(".pw0").value, a: box.querySelector(".pw1").value, b: box.querySelector(".pw2").value}),
-    buttons: [{label: "Change it", value: "ok", primary: true}, {label: "Cancel", value: "no"}]});
+    buttons: [{label: T("Change it"), value: "ok", primary: true}, {label: T("Cancel"), value: "no"}]});
   if (d.button !== "ok") return;
-  if (d.form.a !== d.form.b) { say("The two new passwords differ."); return; }
+  if (d.form.a !== d.form.b) { say(T("The two new passwords differ.")); return; }
   const r = await fetch("/brebus/auth/password", {method: "POST", body: JSON.stringify({old: d.form.old, new: d.form.a})});
   const j = await r.json().catch(() => ({}));
-  say(r.ok ? "Password changed." : j.error || "Not changed.");
+  say(r.ok ? T("Password changed.") : j.error || T("Not changed."));
   account();
 };
 /* Info's live lines: the memory free now, the model loaded */
@@ -151,12 +155,12 @@ async function machineNow() {
     let chose = "";
     if (server.running) try { chose = (await ask("server/choices")).choices; } catch (e) {}
     $("#mach").innerHTML = [
-      ["Processor", m.cpu || "unknown"],
-      ["Instructions", m.features || "none known"],
-      ["Memory", gib(m.memory_total) + ", " + gib(m.memory_available) + " free now"],
-      ["Power", m.mains === 1 ? "mains" : m.mains === 0 ? "battery" : "unknown"],
-      ["Model loaded", server.running ? server.model : "none"],
-      ...(chose ? [["How it runs", chose]] : []),
+      [T("Processor"), m.cpu || T("unknown")],
+      [T("Instructions"), m.features || T("none known")],
+      [T("Memory"), T("{total}, {free} free now", {total: gib(m.memory_total), free: gib(m.memory_available)})],
+      [T("Power"), m.mains === 1 ? T("mains") : m.mains === 0 ? T("battery") : T("unknown")],
+      [T("Model loaded"), server.running ? server.model : T("none")],
+      ...(chose ? [[T("How it runs"), chose]] : []),
     ].map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("");
   } catch (e) {}
 }
@@ -166,12 +170,12 @@ setInterval(() => { if (!document.hidden && !busy && !modelLoading) status().cat
 /* a dialog in front: the page's own keys (Ctrl+B, Ctrl+K, Ctrl+Shift+O)
    wait for it */
 const dialogOpen = () => !!document.querySelector('[role="dialog"][aria-modal="true"]') ||
-                         !$("#wsdlg").hidden;
+                         !$("#wsdlg").hidden || !$("#psdlg").hidden;
 /* the side bar: whole, or a strip of icons (its button, Ctrl+B), as left */
 let navAuto = false; /* hidden by an artifact opened, shown again when it closes */
 function navMini(on, remember) {
   $("#side").classList.toggle("mini", on);
-  $("#navtog").title = (on ? "Show" : "Hide") + " the side bar (Ctrl+B)";
+  $("#navtog").title = on ? T("Show the side bar (Ctrl+B)") : T("Hide the side bar (Ctrl+B)");
   $("#navtog").setAttribute("aria-label", $("#navtog").title);
   if (remember) { navAuto = false; try { localStorage.setItem("brebus.mini", on ? "1" : ""); } catch (e) {} }
 }
@@ -196,20 +200,20 @@ async function load() {
   const m = await ask("machine");
   machineMem = m.memory_total;
   $("#aboutver").textContent = m.version;
-  $("#mem").textContent = "This computer: " + gib(m.memory_total) + ".";
+  $("#mem").textContent = T("This computer: {mem}.", {mem: gib(m.memory_total)});
   try { pyState = await ask("python"); } catch (e) {}
   $("#mach").innerHTML = [
-    ["Processor", m.cpu || "unknown"],
-    ["Instructions", m.features || "none known"],
-    ["Memory", gib(m.memory_total) + ", " + gib(m.memory_available) + " available"],
-    ["Power", m.mains === 1 ? "mains" : m.mains === 0 ? "battery" : "unknown"],
+    [T("Processor"), m.cpu || T("unknown")],
+    [T("Instructions"), m.features || T("none known")],
+    [T("Memory"), T("{total}, {free} available", {total: gib(m.memory_total), free: gib(m.memory_available)})],
+    [T("Power"), m.mains === 1 ? T("mains") : m.mains === 0 ? T("battery") : T("unknown")],
   ].map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("");
   /* Settings: the start with the computer, Python where it is downloaded */
   $("#autost").checked = !!m.autostart;
   $("#pyset").hidden = !pyState.needed;
   $("#pyline").innerHTML = pyState.installed
-    ? `<span class="btnline"><span>Python ${esc(pyState.version)} is installed for Run code, downloaded from python.org with numpy and matplotlib.</span> <button class="act quiet" id="pyrm" title="Delete the downloaded Python; Run code offers it again">Remove it</button></span>`
-    : "Not installed: turning on Run code offers to download it (about 45 MB, from python.org and PyPI), and asks first.";
+    ? `<span class="btnline"><span>${T("Python {v} is installed for Run code, downloaded from python.org with numpy and matplotlib.", {v: esc(pyState.version)})}</span> <button class="act quiet" id="pyrm" title="${esc(T("Delete the downloaded Python; Run code offers it again"))}">${T("Remove it")}</button></span>`
+    : T("Not installed: turning on Run code offers to download it (about 45 MB, from python.org and PyPI), and asks first.");
   if ($("#pyrm")) $("#pyrm").onclick = async () => {
     const r = await fetch("/brebus/python/remove", {method: "POST", body: "{}"});
     pyState = await r.json();
@@ -251,43 +255,48 @@ async function mine() {
   if (typeof drawVoice === "function") drawVoice();
     try { settings = await ask("settings"); } catch (e) { settings = {}; }
   srvForm();
-  if (typeof drawSkills === "function") drawSkills();
-  if (typeof drawConnectors === "function") drawConnectors();
+  if (typeof drawExt === "function") drawExt();
   const have = new Set(my.models.map((x) => x.path.split("/").pop()));
   $("#cat").innerHTML = c.models.filter((x) => !x.test_only).map((x) =>
     `<tr><td><b>${esc(x.name)}</b><br><span class="mono" style="color:var(--dim)">${esc(x.file)}</span></td>
      <td>${esc(x.what)}</td><td class="num">${x.download_gb.toFixed(1)} GB</td>
      <td class="num">${x.ram_gb} GB</td>
-     <td class="tag">${x.fits ? '<span class="badge fits">fits</span>' : '<span class="badge big">needs more</span>'}</td>
-     <td class="tag">${have.has(x.file) ? '<span class="badge">installed</span>'
-       : `<button class="act quiet get" data-m="${esc(x.name)}" title="Download it into the models' folder, checked against its published fingerprint">Get</button>`}</td></tr>`
-  ).join("") || '<tr><td colspan="6" class="empty">None.</td></tr>';
+     <td class="tag">${x.fits ? '<span class="badge fits">' + T("fits") + '</span>' : '<span class="badge big">' + T("needs more") + '</span>'}</td>
+     <td class="tag">${have.has(x.file) ? '<span class="badge">' + T("installed") + '</span>'
+       : `<button class="act quiet get" data-m="${esc(x.name)}" title="${esc(T("Download it into the models' folder, checked against its published fingerprint"))}">${T("Get")}</button>`}</td></tr>`
+  ).join("") || '<tr><td colspan="6" class="empty">' + T("None.") + '</td></tr>';
   for (const b of document.querySelectorAll("button.get"))
     b.onclick = () => getModel(b.dataset.m);
   $("#dir").value = my.dir;
   $("#mine").innerHTML = my.models.map((x) =>
     `<tr><td><b>${esc(x.name)}</b></td>
-     <td>${esc(x.arch)}${x.recurrent ? " · recurrent" : ""}${x.fim ? " · fills in the middle" : ""}${x.vision ? " · sees pictures" : ""}</td>
-     <td class="num">${gib(x.bytes)}</td><td class="num">${x.context ? x.context.toLocaleString() : "—"}</td>
-     <td class="row-acts"><button class="act load" data-m="${esc(x.name)}" title="Load it: the chat and other programs use it">Load</button>
-       <button class="act quiet opts" data-m="${esc(x.name)}" title="How it runs: how much it remembers, whether it thinks first" aria-pressed="false">Settings</button>
-       <button class="act quiet rmm" data-m="${esc(x.name)}" title="Delete it from this computer">Remove</button></td></tr>
+     <td>${esc(x.arch)}${x.recurrent ? " · " + T("recurrent") : ""}${x.fim ? " · " + T("fills in the middle") : ""}${x.vision ? " · " + T("sees pictures") : ""}</td>
+     <td class="num">${gib(x.bytes)}</td><td class="num">${x.context ? num(x.context) : "—"}</td>
+     <td class="row-acts"><button class="act load" data-m="${esc(x.name)}" title="${esc(T("Load it: the chat and other programs use it"))}">${T("Load")}</button>
+       <button class="act quiet opts" data-m="${esc(x.name)}" title="${esc(T("How it runs: how much it remembers, whether it thinks first"))}" aria-pressed="false">${T("Settings")}</button>
+       <button class="act quiet rep" data-m="${esc(x.name)}" title="${esc(T("Tell Janas's makers that this model does not work fully with Janas"))}">${T("Report")}</button>
+       <button class="act quiet rmm" data-m="${esc(x.name)}" title="${esc(T("Delete it from this computer"))}">${T("Remove")}</button></td></tr>
      <tr class="set" data-m="${esc(x.name)}" hidden><td colspan="5">${setForm(x)}</td></tr>`
-  ).join("") || '<tr><td colspan="5" class="empty">None yet: get one in Discover, or with <code>janas-get</code>.</td></tr>';
+  ).join("") || '<tr><td colspan="5" class="empty">' + T("None yet: get one in Discover, or with <code>janas-get</code>.") + '</td></tr>';
   for (const b of document.querySelectorAll("button.load"))
     b.onclick = () => loadModel(b.dataset.m, b);
+  for (const b of document.querySelectorAll("button.rep"))
+    b.onclick = () => reportModel(b.dataset.m);
   for (const b of document.querySelectorAll("button.rmm"))
     b.onclick = async () => {
       const x = modelInfo[b.dataset.m];
       if (server.running && server.model === b.dataset.m) {
-        say(`${b.dataset.m} is the model in use: choose another one under the chat's field first.`);
+        say(T("{name} is the model in use: choose another one under the chat's field first.", {name: b.dataset.m}));
         return;
       }
-      const ld = isLoaded(b.dataset.m) ? " It is loaded now: it is unloaded first." : "";
-      if (!await yes(`${b.dataset.m} (${gib(x.bytes)}) is deleted from this computer; it can be got again in Discover.${ld}`, "Remove this model?", "Remove")) return;
+      const v = {name: b.dataset.m, size: gib(x.bytes)};
+      const q = isLoaded(b.dataset.m)
+        ? T("{name} ({size}) is deleted from this computer; it can be got again in Discover. It is loaded now: it is unloaded first.", v)
+        : T("{name} ({size}) is deleted from this computer; it can be got again in Discover.", v);
+      if (!await yes(q, T("Remove this model?"), T("Remove"))) return;
       const r = await fetch("/brebus/models/remove", {method: "POST", body: JSON.stringify({name: b.dataset.m})});
       const j = await r.json();
-      if (!r.ok) say(j.error || "not removed");
+      if (!r.ok) say(j.error || T("not removed"));
       await mine(); await status();
     };
   for (const b of document.querySelectorAll("button.opts"))
@@ -296,8 +305,8 @@ async function mine() {
       t.hidden = !t.hidden;
       /* open: the button says so, and how to close them */
       b.setAttribute("aria-pressed", t.hidden ? "false" : "true");
-      b.textContent = t.hidden ? "Settings" : "Close";
-      b.title = t.hidden ? "How it runs: how much it remembers, whether it thinks first" : "Close this model's settings";
+      b.textContent = t.hidden ? T("Settings") : T("Close");
+      b.title = t.hidden ? T("How it runs: how much it remembers, whether it thinks first") : T("Close this model's settings");
     };
   for (const f of document.querySelectorAll("tr.set form"))
     f.onchange = () => saveSettings(f);
@@ -305,3 +314,42 @@ async function mine() {
 
 /* the account, when Brebus is served: its Log out in the side bar at once */
 account().catch(() => {});
+
+/* a model that does not work fully with Janas, reported: the report
+   written here, shown whole, and opened on GitHub's page for a new issue,
+   where the user reads it again and sends it, or not. Brebus sends
+   nothing itself */
+async function reportModel(name) {
+  const x = modelInfo[name] || {};
+  const m = await ask("machine").catch(() => ({}));
+  /* what Janas found it cannot do, when the model is the one loaded */
+  let limits = null;
+  if (server.running && server.model === name) {
+    const r = await fetch("/v1/models").then((r) => r.json()).catch(() => ({}));
+    const d = (r.data || []).find((d) => d.limits);
+    if (d) limits = d.limits;
+  }
+  const facts = [
+    "Model: " + name,
+    "File: " + (x.path || "").split(/[\\/]/).pop(),
+    "Architecture: " + (x.arch || "?") + (x.recurrent ? " (recurrent)" : ""),
+    "Size: " + gib(x.bytes || 0) + ", context " + (x.context || "?"),
+    "Brebus: " + (m.version || "?") + ", " + navigator.platform,
+    "CPU: " + (m.cpu || "?"),
+    limits === null ? "What Janas found: (the model was not loaded)"
+      : limits.length ? "What Janas found:\n" + limits.map((l) => "- " + l).join("\n")
+      : "What Janas found: nothing"].join("\n");
+  const d = await dialog({title: T("Report a problem with {name}", {name}),
+    html: `<div class="srvset plainset">
+      <label>${T("What does not work")}
+        <textarea class="what" rows="5" placeholder="${T("For example: it answers in the wrong language; its tool calls show as text; it never stops.")}"></textarea></label>
+      <label>${T("Sent with it")}<textarea class="facts mono" rows="8" readonly>${esc(facts)}</textarea>
+        <span class="note">${T("Nothing is sent from here: GitHub's page for a new issue opens with this written in it, and you send it there, after reading it again, with your GitHub account.")}</span></label></div>`,
+    read: (box) => ({what: box.querySelector(".what").value.trim()}),
+    buttons: [{label: T("Open it on GitHub"), value: "ok", primary: true}, {label: T("Cancel"), value: "no"}]});
+  if (d.button !== "ok") return;
+  const body = (d.form.what || "(describe what does not work)") + "\n\n```\n" + facts + "\n```\n";
+  const url = "https://github.com/prabanta-dev/janas/issues/new?title=" +
+    encodeURIComponent("[model] " + name + ": ") + "&body=" + encodeURIComponent(body);
+  window.open(url, "_blank", "noopener");
+}

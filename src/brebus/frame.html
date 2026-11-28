@@ -160,17 +160,30 @@ function bridge() {
   /* its own zoom, the page's to keep: drawn larger it keeps the layout it
      has at 100% and scrolls, smaller it takes the room; Ctrl+wheel and
      Ctrl+plus, minus or 0 over it ask the page for a step */
-  let zoom = +window.__janasZoom || 1;
+  let zoom = +window.__janasZoom || 1, fitting = false;
   const fitZoom = () => {
     const h = document.documentElement;
     h.style.zoom = zoom === 1 ? "" : zoom;
     h.style.minWidth = zoom > 1 ? innerWidth + "px" : "";
   };
+  /* fitted to the pane: the page's own width at 100% brought to the
+     pane's, from 25% to 400%, and told to Brebus's bar */
+  const fitToPane = () => {
+    const h = document.documentElement;
+    h.style.zoom = "";
+    h.style.minWidth = "";
+    const w = Math.max(h.scrollWidth, document.body ? document.body.scrollWidth : 0);
+    zoom = Math.min(4, Math.max(0.25, w ? innerWidth / w : 1));
+    fitZoom();
+    parent.postMessage({janasZoomIs: zoom}, "*");
+  };
   fitZoom();
-  addEventListener("resize", () => { if (zoom > 1) fitZoom(); });
+  addEventListener("resize", () => { if (fitting) fitToPane(); else if (zoom > 1) fitZoom(); });
   addEventListener("message", (e) => {
-    const z = e.source === parent && e.data && e.data.janasZoom;
-    if (z > 0) { zoom = z; fitZoom(); }
+    const d = e.source === parent && e.data;
+    if (!d) return;
+    if (d.janasZoomFit) { fitting = true; fitToPane(); }
+    else if (d.janasZoom > 0) { fitting = false; zoom = d.janasZoom; fitZoom(); }
   });
   let acc = 0, last = 0;
   addEventListener("wheel", (e) => {

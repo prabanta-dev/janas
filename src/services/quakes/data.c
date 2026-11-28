@@ -107,8 +107,10 @@ void qk_near_data(struct janas_buf *b, const struct qk_place *p,
     jstr(b, "how", p->how);
     janas_buf_printf(b,
                      ", \"sea\": %s, \"radius\": %.0f, \"days\": %d, "
-                     "\"min_mag\": %.1f, \"source\": \"%s\"",
-                     tf(p->is_sea), radius_km, days, min_mag, src);
+                     "\"min_mag\": %.1f, \"source\": \"%s\", \"lat\": %.3f, "
+                     "\"lon\": %.3f",
+                     tf(p->is_sea), radius_km, days, min_mag, src, p->lat,
+                     p->lon);
     list(b, l, p);
     janas_buf_puts(b, "}");
 }

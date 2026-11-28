@@ -937,6 +937,14 @@ int janas_llm_model_recurrent(const struct janas_llm_model *m)
     return m->a->rec != JANAS_REC_NONE;
 }
 
+int janas_llm_model_has_rings(const struct janas_llm_model *m)
+{
+    for (uint32_t sl = 0; sl < m->n_attn; sl++)
+        if (m->kv_ring[sl])
+            return 1;
+    return 0;
+}
+
 int janas_llm_model_rewind_ok(const struct janas_llm_model *m, uint32_t n)
 {
     /* a ring keeps the window before n only while nothing past n + (its

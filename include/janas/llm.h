@@ -315,12 +315,20 @@ JANAS_LLM_API int32_t janas_llm_token_text(const janas_llm *llm, int32_t id,
                                            char *buf, int32_t cap,
                                            int32_t *len);
 
+/*
+ * A conversation's parameters. The sampling's, where negative (the
+ * default, -1), are the model's own: what its makers recommend, as its
+ * file says (general.sampling.*, which llama.cpp's converter takes from
+ * the model's generation_config.json), and Janas's where it says nothing
+ * - temperature 0.7, top_k 20, top_p 0.8, min_p 0, no repetition penalty,
+ * no mirostat. janas_llm_chat_sampling says what a chat samples with.
+ */
 struct janas_llm_chat_params {
     uint32_t size;     /* sizeof(struct janas_llm_chat_params) */
-    float temperature; /* 0: always the most likely token (default 0.7) */
-    int32_t top_k;     /* 0: no limit (default 20) */
-    float top_p;       /* default 0.8 */
-    float min_p;       /* default 0 */
+    float temperature; /* 0: always the most likely token */
+    int32_t top_k;     /* 0: no limit */
+    float top_p;       /* 1: no limit */
+    float min_p;       /* 0: no limit */
     uint64_t seed;     /* 0: a new one each chat (default) */
     int32_t speculate; /* 1: draft tokens ahead when it pays, with the
                           MTP block if open, else from the context
@@ -361,10 +369,59 @@ struct janas_llm_chat_params {
        max_answer and max_reply still limit; the sentence is reasoning, a
        dozen tokens past the limit. 0: no limit (default) */
     int32_t max_reasoning;
+    /*
+     * llama.cpp's sampling, with its names and meanings, all off unless
+     * set (or the model's, where negative and its file says).
+     * repeat_penalty: a token among the last repeat_last_n has its logit
+     * divided by it when positive, multiplied when not (1: off);
+     * repeat_last_n: that window, which presence_penalty and
+     * frequency_penalty then count in too (0: the whole reply).
+     */
+    float repeat_penalty;
+    int32_t repeat_last_n;
+    float typical_p;   /* locally typical sampling (1: off) */
+    float top_n_sigma; /* the logits within n standard deviations of the
+                          best (0: off) */
+    /* XTC: with this probability, every choice more likely than the
+       threshold but the least likely of them is left out (0: off) */
+    float xtc_probability, xtc_threshold; /* threshold: default 0.1 */
+    /* DRY: a token that would go on repeating a run of the last
+       dry_last_n tokens (0: the whole reply) longer than
+       dry_allowed_length loses dry_multiplier x dry_base^(length -
+       allowed) of its logit; runs stop at dry_breakers' tokens, a JSON
+       array of strings ("": llama.cpp's ["\n", ":", "\"", "*"]) */
+    float dry_multiplier;                   /* 0: off */
+    float dry_base;                         /* default 1.75 */
+    int32_t dry_allowed_length, dry_last_n; /* default 2, 0 */
+    char dry_breakers[256];
+    /* mirostat 1 or 2 in place of top_k, top_p...: the surprise tau
+       aimed at, learned at the rate eta (0: off; default 5, 0.1) */
+    int32_t mirostat;
+    float mirostat_tau, mirostat_eta;
+    /* the temperature +- dynatemp_range, hotter where the model is unsure
+       (the entropy, to dynatemp_exponent: default 1); 0: off */
+    float dynatemp_range, dynatemp_exponent;
+    /* the order of the stages, llama.cpp's names separated by ';'
+       ("penalties;dry;top_n_sigma;top_k;typ_p;top_p;min_p;xtc;temperature",
+       llama.cpp's own order) or its letters ("edskypmxt"); penalties and
+       dry change the whole row first wherever they stand. "": the model's
+       (general.sampling.sequence), or Janas's, top_n_sigma, top_k, typ_p,
+       temperature, top_p, min_p, xtc. */
+    char samplers[128];
 };
 
 JANAS_LLM_API void
 janas_llm_chat_params_default(struct janas_llm_chat_params *p);
+/* What c samples with: its parameters with the model's own in place of
+   the negative ones, and Janas's where the model says nothing; samplers
+   holds the order in llama.cpp's names. */
+JANAS_LLM_API int32_t janas_llm_chat_sampling(
+    const janas_llm_chat *c, struct janas_llm_chat_params *out);
+/* The same for parameters p of a chat on this model (NULL: the defaults,
+   which are the model's recommendation itself). */
+JANAS_LLM_API int32_t janas_llm_sampling(const janas_llm *llm,
+                                         const struct janas_llm_chat_params *p,
+                                         struct janas_llm_chat_params *out);
 
 /* A conversation with the model (one at a time per model). p may be NULL. */
 JANAS_LLM_API int32_t
@@ -681,6 +738,49 @@ JANAS_LLM_API int32_t janas_llm_chat_tools(janas_llm_chat *c, const char *json,
  */
 JANAS_LLM_API int32_t janas_llm_chat_tools_add(janas_llm_chat *c,
                                                const char *json, int32_t len);
+
+/*
+ * The chat template. Every conversation is written as the model's chat
+ * template writes it (the one in its file, run by Janas's own Jinja
+ * interpreter), its special tokens read only where the template writes
+ * them; a model whose file has none is written in Janas's format for its
+ * family.
+ *
+ * janas_llm_template: the template's text, the one in use
+ * (JANAS_LLM_TEMPLATE_USED: the model's, or the one put in its place) or
+ * the file's (JANAS_LLM_TEMPLATE_FILE); JANAS_LLM_EMODEL when there is
+ * none, with why. janas_llm_set_template: a template of the caller's in
+ * place of the model's for every chat (NULL: the model's again), before
+ * the chats begin; JANAS_LLM_EINVAL, with the line, when it cannot be
+ * read. janas_llm_chat_template: the same for one chat, over the model's.
+ * janas_llm_chat_template_kwargs: what the template is given besides the
+ * conversation (Hugging Face's chat_template_kwargs), a JSON object whose
+ * members become its variables (NULL: none): {"enable_thinking": false},
+ * {"reasoning_effort": "high"}... over Janas's own (add_generation_prompt,
+ * bos_token, eos_token, and the reasoning's switch as the template names
+ * it when the chat's thinking says on or off).
+ */
+/*
+ * What Janas cannot do of what the model can, said rather than worked
+ * around in silence: one line each (a file with no chat template, a
+ * template that writes tool calls or reasoning in a form Janas does not
+ * read in replies), empty when there is nothing; for a program to show,
+ * and its user to report (Brebus does both).
+ */
+JANAS_LLM_API int32_t janas_llm_limits(const janas_llm *llm, char *buf,
+                                       int32_t cap, int32_t *len);
+
+#define JANAS_LLM_TEMPLATE_USED 0
+#define JANAS_LLM_TEMPLATE_FILE 1
+JANAS_LLM_API int32_t janas_llm_template(const janas_llm *llm, int32_t which,
+                                         char *buf, int32_t cap, int32_t *len);
+JANAS_LLM_API int32_t janas_llm_set_template(janas_llm *llm, const char *text,
+                                             int32_t len);
+JANAS_LLM_API int32_t janas_llm_chat_template(janas_llm_chat *c,
+                                              const char *text, int32_t len);
+JANAS_LLM_API int32_t janas_llm_chat_template_kwargs(janas_llm_chat *c,
+                                                     const char *json,
+                                                     int32_t len);
 
 /*
  * A request on the side, between two replies: a system message (NULL:

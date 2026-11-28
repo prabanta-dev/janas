@@ -50,10 +50,24 @@ enum chat_format {
        <|content_thinking|> and <|content_text|>, im_end the stop. No tools
        yet (its JSON calls) */
     FORMAT_INKLING,
+    /* a family Janas has no format of its own for: its chats are written
+       by its chat template alone (api_template.c), its replies end at its
+       end-of-turn tokens (tokenizer.ggml.eos_token_id, eot_token_id,
+       eom_token_id); reasoning read where the template writes <think> and
+       the vocabulary has it as a token of its own, no tools */
+    FORMAT_OTHER,
 };
 
 /* a picture read by the vision encoder (api_image.c): its embeddings and
    its grid of tokens; and where one is in the prompt being built */
+struct janas_jinja;
+/* a chat template parsed, its text, and how it is told to reason or not:
+   enable_thinking (1), reasoning_effort (2), neither (0) */
+struct janas_tmpl {
+    struct janas_jinja *t;
+    char *src;
+    int think_var;
+};
 struct cpic {
     float *embd;
     uint32_t nx, ny;
@@ -90,6 +104,17 @@ struct janas_llm {
        those after the user's last question (Qwen3.5 and 3.6) */
     int think_kept;
     int empty_thought; /* Gemma 4: an empty channel when not reasoning */
+    /* its chat template, parsed when the model is opened (t NULL: the file
+       has none, or it could not be read: tmpl_err says why), and the one
+       its user put in its place for every chat (janas_llm_set_template) */
+    struct janas_tmpl tfile, tover;
+    struct janas_tspecials *tsp; /* its special tokens, by their text */
+    char tmpl_err[256];
+    int32_t bos_tok; /* tokenizer.ggml.bos_token_id, or -1 */
+    /* tokenizer.ggml.clean_spaces: its decoding takes the spaces before
+       punctuation away (Hugging Face's clean_up_tokenization_spaces),
+       which Janas does not do: said by janas_llm_limits */
+    int clean_spaces;
     enum janas_tool_dialect tools; /* how its template writes tool calls */
     int32_t call_open, call_close; /* <tool_call>, </tool_call>, or -1;
                                       DeepSeek's ｜DSML｜, -1 */
@@ -98,6 +123,9 @@ struct janas_llm {
     uint32_t pooling; /* embeddings: 1 mean, 2 first, 3 last; 0 none */
     int add_eos;      /* the tokenizer ends every text with eos_id */
     int32_t eos_id;
+    /* what its makers recommend to sample with (general.sampling.*), the
+       parameters' negative values where the file says nothing */
+    struct janas_llm_chat_params rec;
     int32_t stop[JANAS_GEN_MAX_STOP];
     int n_stop;
     int has_mtp;
@@ -132,6 +160,10 @@ struct janas_llm_chat {
     struct janas_seq *seq; /* a parallel chat's own; NULL: the model's */
     struct janas_llm_chat_params p;
     char *system;
+    /* DRY's breakers for this vocabulary (api_sampling.c), made for
+       breakers_of */
+    uint8_t *breakers;
+    char breakers_of[256];
     int replying;   /* a reply is being read */
     int closed;     /* the last reply ended with a stop token */
     int ended;      /* the reply is over: the next call says DONE */
@@ -166,6 +198,14 @@ struct janas_llm_chat {
     size_t n_pics;
     struct ppic *idpics;
     size_t n_idpics;
+    /* the pictures the session holds, where (template's way: a picture
+       read before is not read again) */
+    struct ppic *media_done;
+    size_t n_media_done;
+    /* a template of this chat's own (janas_llm_chat_template), and the
+       keywords given to whichever it uses (a JSON object, or NULL) */
+    struct janas_tmpl town;
+    char *kwargs;
     char *text;
     size_t n_text, cap_text;
     int text_special; /* the model's special tokens in it are tokens */
@@ -233,6 +273,9 @@ struct janas_llm_chat {
         size_t n_calls;
         struct cpic *pics; /* a user message's pictures, owned here */
         size_t n_pics;
+        int pics_lent; /* pics are the transcript's (api_transcript.c) */
+        char *reason;  /* an assistant's reasoning, or NULL */
+        size_t n_reason;
     } *msgs;
     size_t n_msgs, cap_msgs;
 
@@ -313,10 +356,17 @@ struct janas_llm_chat {
             char *name, *args;
         } *calls;
         size_t n_calls;
+        struct cpic *pics; /* a question's pictures, kept for the template */
+        size_t n_pics;
         int64_t at; /* seconds since 1970 */
     } *tr;
     size_t n_tr, cap_tr;
     char *tr_title;
+    /* the template's way, when the conversation outgrew the context: the
+       exchanges loaded from tr[tr_from] on, those before summed up by the
+       model in tr_recap (NULL: not asked, or recap off) */
+    size_t tr_from;
+    char *tr_recap;
     int tr_titled;
     int64_t tr_created;
     char *tr_dir, *tr_path;
@@ -360,6 +410,8 @@ uint32_t janas_api_media_first(const janas_llm_chat *c);
 uint32_t janas_api_picture_block(const char *path);
 int janas_api_media_register(janas_llm_chat *c, uint32_t base, uint32_t from);
 void janas_api_pics_free(struct cpic *p, size_t n);
+/* the pictures the session holds that will be the same next turn */
+void janas_api_media_held(janas_llm_chat *c);
 int janas_api_add_message(janas_llm_chat *c, const char *role, const char *text,
                           size_t n);
 int janas_api_add_system(janas_llm_chat *c, const char *sys, size_t n);
@@ -490,5 +542,40 @@ void janas_api_disk_put(janas_llm_chat *c, const struct janas_llm_saved *sv,
                         int prefix);
 void janas_api_disk_close(janas_llm_chat *c);
 void janas_api_keep_free(janas_llm_chat *c);
+
+/* api_sampling.c: the model's recommended sampling read from its file;
+   a chat's parameters with the model's and Janas's in place of the
+   negative ones, checked (0, or JANAS_LLM_EINVAL), and into the
+   generation's options; DRY's breakers freed */
+struct janas_jns;
+void janas_api_read_rec(janas_llm *llm, const struct janas_jns *j);
+int32_t janas_api_sampling(const janas_llm_chat *c,
+                           struct janas_llm_chat_params *out);
+int32_t janas_api_sampling_options(janas_llm_chat *c,
+                                   struct janas_gen_options *o);
+void janas_api_sampling_free(janas_llm_chat *c);
+
+/* api_template.c: a conversation through a chat template (NULL: the
+   model's own): its variables as JSON (Janas's, and the conversation's,
+   whose strings the interpreter marks), the text it writes with the marks,
+   and a text into c->ids with the special tokens read only where unmarked.
+   api_load.c: the tokens the model's format in C gives it, a copy. */
+void janas_api_template_open(janas_llm *llm, const char *src);
+void janas_api_template_close(janas_llm *llm);
+void janas_api_template_chat_free(janas_llm_chat *c);
+int janas_api_template_on(const janas_llm_chat *c);
+int janas_api_template_vars(const janas_llm_chat *c, size_t upto, int gen,
+                            int tools, const char *kwargs,
+                            struct janas_buf *vars, struct janas_buf *data);
+int janas_api_template_text(const janas_llm_chat *c, size_t upto, int gen,
+                            int tools, struct janas_buf *out,
+                            struct janas_buf *marks);
+int janas_api_template_tokens(janas_llm_chat *c, const char *text, size_t n,
+                              const char *marks);
+int32_t janas_api_template_build(janas_llm_chat *c, uint32_t *reply_off);
+int32_t janas_api_template_system(janas_llm_chat *c);
+const struct memo *janas_api_memo_find(const janas_llm_chat *c,
+                                       const struct cmsg *m);
+int32_t janas_api_format_ids(janas_llm_chat *c, int32_t **out, size_t *n);
 
 #endif

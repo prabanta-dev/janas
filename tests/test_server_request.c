@@ -103,6 +103,35 @@ static void valid(void)
           j->n_stop);
     srv_job_release(j);
 
+    /* llama.cpp's sampling, by its server's names; what is left out the
+       model's own (negative) */
+    j = NULL;
+    err = parse(
+        "{\"messages\":[{\"role\":\"user\",\"content\":\"Hi\"}],"
+        "\"repeat_penalty\":1.1,\"repeat_last_n\":-1,"
+        "\"dry_multiplier\":0.8,\"dry_sequence_breakers\":[\"\\n\",\"*\"],"
+        "\"mirostat\":2,\"samplers\":[\"top_k\",\"temperature\"]}",
+        1, &j);
+    CHECK(!err, "llama.cpp's sampling refused: %s", err);
+    if (j) {
+        CHECK(j->p.repeat_penalty > 1.09f && j->p.repeat_penalty < 1.11f &&
+                  j->p.repeat_last_n == 0 && j->p.dry_multiplier > 0.79f &&
+                  j->p.mirostat == 2 &&
+                  !strcmp(j->p.samplers, "top_k;temperature") &&
+                  !strcmp(j->p.dry_breakers, "[\"\\n\",\"*\"]") &&
+                  j->p.temperature < 0 && j->p.top_k < 0,
+              "llama.cpp's sampling not taken: %s %s", j->p.samplers,
+              j->p.dry_breakers);
+        srv_job_release(j);
+    }
+    j = NULL;
+    err = parse("{\"messages\":[{\"role\":\"user\",\"content\":\"Hi\"}],"
+                "\"mirostat\":3}",
+                1, &j);
+    CHECK(err != NULL, "mirostat 3 taken");
+    if (j)
+        srv_job_release(j);
+
     /* max_completion_tokens counts the reasoning too, as OpenAI has it */
     j = NULL;
     err = parse("{\"messages\":[{\"role\":\"user\",\"content\":\"Hi\"}],"

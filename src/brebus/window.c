@@ -9,7 +9,7 @@
  * opens the page in the browser instead. Links to other sites open in
  * the browser; the window closed, Brebus ends.
  */
-#ifndef _WIN32 /* window_win.c there */
+#if !defined(_WIN32) && !defined(__APPLE__) /* window_win.c, window_mac.m */
 #include <dlfcn.h>
 #include <pthread.h>
 #include <locale.h>
@@ -22,7 +22,6 @@
 #include <unistd.h>
 
 #include "brebus.h"
-#include "common/proc.h"
 
 typedef void *P;
 typedef int (*source_fn)(P);
@@ -114,26 +113,6 @@ static int permission(P view, P req, P data)
 static const char *own; /* the page's address, "http://127.0.0.1:port/" */
 static volatile sig_atomic_t *stop;
 
-/* this machine's own addresses: never handed to the browser (it would
-   reach Brebus, or a server of this machine, as a page of its own) */
-static int loopback(const char *url)
-{
-    const char *h = strstr(url, "://");
-    h = h ? h + 3 : url;
-    static const char *const lo[] = {"127.", "localhost",    "[::1]",
-                                     "0.",   "[::ffff:127.", "[0:"};
-    for (size_t i = 0; i < sizeof lo / sizeof *lo; i++)
-        if (!strncasecmp(h, lo[i], strlen(lo[i])))
-            return 1;
-    return 0;
-}
-
-static void open_outside(const char *url)
-{
-    if (!loopback(url))
-        janas_open_url(url);
-}
-
 /* WEBKIT_POLICY_DECISION_TYPE_NAVIGATION_ACTION 0, NEW_WINDOW_ACTION 1:
    what is not Brebus's own page goes to the browser */
 static int decide(P view, P decision, int type, P data)
@@ -154,7 +133,7 @@ static int decide(P view, P decision, int type, P data)
     if (type == 1 &&
         (!strncmp(uri, "https://", 8) || !strncmp(uri, "http://", 7)) &&
         w.webkit_navigation_action_is_user_gesture(action))
-        open_outside(uri);
+        brebus_open_outside(uri);
     w.webkit_policy_decision_ignore(decision);
     return 1;
 }
@@ -172,9 +151,10 @@ static char pick_title[200], pick_path[4096];
 static int pick_run(P data)
 {
     (void)data;
-    /* GTK_FILE_CHOOSER_ACTION_OPEN 0, SELECT_FOLDER 2; ACCEPT -3 */
+    /* GTK_FILE_CHOOSER_ACTION_OPEN 0, SELECT_FOLDER 2; ACCEPT -3; the
+       buttons GTK's own, in the system's language */
     P d = w.gtk_file_chooser_native_new(pick_title, main_win, pick_kind ? 0 : 2,
-                                        "Choose", "Cancel");
+                                        NULL, NULL);
     char path[4096] = "";
     if (d) {
         if (w.gtk_native_dialog_run(d) == -3) {
@@ -252,7 +232,7 @@ static P create(P view, P action, P data)
         return NULL;
     if (strncmp(uri, own, strlen(own))) {
         if (!strncmp(uri, "https://", 8) || !strncmp(uri, "http://", 7))
-            open_outside(uri);
+            brebus_open_outside(uri);
         return NULL;
     }
     P win = w.gtk_window_new(0);
@@ -326,7 +306,7 @@ static int zoom_idle(P data)
 
 int brebus_window_zoom(double z)
 {
-    if (!(z >= 0.5 && z <= 3))
+    if (!(z >= 0.25 && z <= 4))
         return -1;
     pthread_mutex_lock(&pick_mu);
     int on = window_on && w.webkit_web_view_set_zoom_level;
@@ -505,9 +485,11 @@ int brebus_window(const char *url, volatile sig_atomic_t *quit, char *why,
                             0);
     main_view = view;
     w.gtk_container_add(win, view);
-    /* "?window": the page knows it is the window's, its zoom its own */
-    char start[200];
-    snprintf(start, sizeof start, "%s?window", url);
+    /* "?window": the page knows it is the window's, its zoom its own;
+       lang= the system's languages, which the page speaks */
+    char start[400], langs[160];
+    brebus_sys_langs(langs, sizeof langs);
+    snprintf(start, sizeof start, "%s?window&lang=%s", url, langs);
     w.webkit_web_view_load_uri(view, start);
     /* where it was when it closed, or maximized the first time (on Wayland
        the compositor places it: only the size and the maximized state

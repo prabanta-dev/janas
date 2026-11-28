@@ -31,8 +31,10 @@
 #define DEG(x) ((x) * 1e-5)
 #define KM_PER_NM 1.852
 #define MAX_LIST 40
-#define ROUTES_ASKED 12 /* adsbdb calls in a list, at most */
-#define LIVE_ASKED 8    /* ADS-B calls in a list of flights, at most */
+#define MAX_BOX 300        /* a map's box: the aircraft in it, for the view */
+#define ROUTES_ASKED 12    /* adsbdb calls in a list, at most */
+#define ROUTES_ASKED_BOX 4 /* in a map's box, asked as often as each second */
+#define LIVE_ASKED 8       /* ADS-B calls in a list of flights, at most */
 #define MAX_BETWEEN 20
 #define MAX_OVER 80
 #define MAX_TILES 6    /* ADS-B calls for a sea, at most */
@@ -47,11 +49,17 @@ static void schema_str(struct janas_buf *b, const char *name, const char *what)
 }
 
 /* The model reads all of it before it can use a tool: every word costs. */
+/* every tool here only reads, and says so: a client may run it without
+   asking, and a view may ask it again (MCP Apps) */
+#define READS                                                                  \
+    "\"annotations\": {\"readOnlyHint\": true, \"openWorldHint\": true}, "
+
 void fl_tools_list(void *ctx, struct janas_buf *b)
 {
     (void)ctx;
     janas_buf_puts(
-        b, "\"tools\": [{\"name\": \"flight_status\", \"title\": \"Status "
+        b, "\"tools\": [{\"name\": \"flight_status\", " READS
+           "\"title\": \"Status "
            "of a flight\", \"description\": \"A flight's times, gate and "
            "delay today (with an AviationStack key), and where it is now "
            "(ADS-B): on the ground or in the air, where in words, an "
@@ -60,7 +68,7 @@ void fl_tools_list(void *ctx, struct janas_buf *b)
     schema_str(b, "flight", "Flight number (AZ1631) or callsign (VLG1595).");
     janas_buf_puts(
         b, "}, \"required\": [\"flight\"], \"additionalProperties\": false}}, "
-           "{\"name\": \"flights_between\", \"title\": \"Flights of a "
+           "{\"name\": \"flights_between\", " READS "\"title\": \"Flights of a "
            "route\", \"description\": \"Today's flights from one airport to "
            "another, with their times and where those flying are (needs an "
            "AviationStack key).\", \"inputSchema\": {\"type\": \"object\", "
@@ -71,20 +79,23 @@ void fl_tools_list(void *ctx, struct janas_buf *b)
     janas_buf_puts(
         b, "}, \"required\": [\"from\", \"to\"], \"additionalProperties\": "
            "false}}, "
-           "{\"name\": \"flights_over\", \"title\": \"Flights over a "
+           "{\"name\": \"flights_over\", " READS "\"title\": \"Flights over a "
            "sea\", \"description\": \"The aircraft flying now over a sea "
            "(ADS-B, open data), with where each is and its route.\", "
+           "\"_meta\": {\"ui\": {\"resourceUri\": \"ui://flights/map\"}}, "
            "\"inputSchema\": {\"type\": \"object\", \"properties\": {");
     schema_str(b, "area", "A sea in English (Tyrrhenian Sea, North Sea).");
     janas_buf_puts(
-        b, ", \"limit\": {\"type\": \"integer\", \"minimum\": 1, "
-           "\"maximum\": 80, \"description\": \"At most this many listed "
-           "(default 40).\"}}, \"required\": [\"area\"], "
-           "\"additionalProperties\": false}}, "
-           "{\"name\": \"flights_nearby\", \"title\": \"Flights near a "
-           "place\", \"description\": \"The aircraft flying now near an "
-           "airport, a city or a point (ADS-B, open data).\", "
-           "\"inputSchema\": {\"type\": \"object\", \"properties\": {");
+        b,
+        ", \"limit\": {\"type\": \"integer\", \"minimum\": 1, "
+        "\"maximum\": 80, \"description\": \"At most this many listed "
+        "(default 40).\"}}, \"required\": [\"area\"], "
+        "\"additionalProperties\": false}}, "
+        "{\"name\": \"flights_nearby\", " READS "\"title\": \"Flights near a "
+        "place\", \"description\": \"The aircraft flying now near an "
+        "airport, a city or a point (ADS-B, open data).\", "
+        "\"_meta\": {\"ui\": {\"resourceUri\": \"ui://flights/map\"}}, "
+        "\"inputSchema\": {\"type\": \"object\", \"properties\": {");
     schema_str(b, "place",
                "Airport code (TRN) or city in English. Leave out place and "
                "coordinates only when the user names no place: then where "
@@ -94,9 +105,60 @@ void fl_tools_list(void *ctx, struct janas_buf *b)
            "\"maximum\": 90}, \"longitude\": {\"type\": \"number\", "
            "\"minimum\": -180, \"maximum\": 180}, \"radius_km\": {\"type\": "
            "\"number\", \"minimum\": 1, \"maximum\": 460, \"description\": "
-           "\"Default 50.\"}, \"limit\": {\"type\": \"integer\", "
+           "\"Default 50.\"}, \"box\": {\"type\": \"array\", \"items\": "
+           "{\"type\": \"number\"}, \"minItems\": 4, \"maxItems\": 4, "
+           "\"description\": \"For a map: [south, west, north, east] in "
+           "degrees; every aircraft inside it, not only within the "
+           "radius.\"}, \"limit\": {\"type\": \"integer\", "
            "\"minimum\": 1, \"maximum\": 40, \"description\": \"Nearest "
-           "first (default 15).\"}}, \"additionalProperties\": false}}]");
+           "first (default 15).\"}}, \"additionalProperties\": false}}, "
+           /* for the map's view alone: the trail of the plane chosen */
+           "{\"name\": \"flight_track\", " READS
+           "\"title\": \"Way flown\", \"description\": \"The way an "
+           "aircraft has flown so far (OpenSky Network): time, place and "
+           "height of each point.\", \"_meta\": {\"ui\": {\"visibility\": "
+           "[\"app\"]}}, \"inputSchema\": {\"type\": \"object\", "
+           "\"properties\": {");
+    schema_str(b, "hex", "The aircraft's ICAO address (4d224e).");
+    janas_buf_puts(b, "}, \"required\": [\"hex\"], "
+                      "\"additionalProperties\": false}}]");
+}
+
+/* the way an aircraft has flown, for the map's view: its points as data,
+   a line of text for a client that reads text alone */
+static int flight_track(const struct janas_json *args, struct janas_buf *b)
+{
+    const char *h = janas_json_str(janas_json_get(args, "hex"));
+    char hex[8] = "", err[200];
+    for (size_t i = 0; h && h[i] && i < 7; i++)
+        hex[i] = (char)tolower((unsigned char)h[i]);
+    struct janas_buf d = {0};
+    janas_buf_puts(&d, "{\"hex\": ");
+    janas_json_write_str(&d, hex, strlen(hex));
+    janas_buf_puts(&d, ", \"path\": ");
+    if (fl_track(hex, &d, err, sizeof err) != 0) {
+        janas_buf_free(&d);
+        char msg[300];
+        snprintf(msg, sizeof msg, "The way flown is not available: %s.", err);
+        janas_mcps_text_result(b, msg, strlen(msg), 1);
+        return 0;
+    }
+    janas_buf_puts(&d, ", \"net\": \"OpenSky Network\", \"net_url\": "
+                       "\"https://opensky-network.org\"}");
+    if (d.oom) {
+        janas_buf_free(&d);
+        janas_mcps_text_result(b, "Out of memory.", 14, 1);
+        return 0;
+    }
+    char msg[96];
+    snprintf(msg, sizeof msg,
+             "The way aircraft %s has flown, from the "
+             "OpenSky Network.",
+             hex);
+    janas_mcps_split_result_data(b, msg, strlen(msg), msg, strlen(msg), d.p,
+                                 d.n);
+    janas_buf_free(&d);
+    return 0;
 }
 
 /* ---- words ---- */
@@ -927,6 +989,14 @@ static void ac_json(const struct fl_ac *a, const struct fl_route *r,
     }
     janas_buf_puts(b, ", \"where\": ");
     geo_describe_json(a->lat, a->lon, b);
+    /* the numbers a view draws with (a map): where, which way, how high */
+    if (a->has_pos)
+        janas_buf_printf(b, ", \"lat\": %.4f, \"lon\": %.4f, \"age\": %.1f",
+                         a->lat, a->lon, a->seen_pos > 0 ? a->seen_pos : 0);
+    if (a->track >= 0)
+        janas_buf_printf(b, ", \"track\": %.0f", a->track);
+    if (!a->ground && a->has_alt)
+        janas_buf_printf(b, ", \"alt_ft\": %ld", lround(a->alt));
     if (squawk_meaning(a->squawk)) {
         janas_buf_puts(b, ", ");
         jstr(b, "emergency", a->squawk);
@@ -1062,6 +1132,10 @@ static int flights_over(const struct janas_json *args, struct janas_buf *b)
     }
     janas_buf_printf(&d, "{\"time\": \"%s\", ", utc);
     jstr(&d, "sea", area.name);
+    /* its box, for a view's map: south, west, north, east */
+    janas_buf_printf(&d, ", \"box\": [%.3f, %.3f, %.3f, %.3f]",
+                     DEG(area.s_lat_min), DEG(area.s_lon_min),
+                     DEG(area.s_lat_max), DEG(area.s_lon_max));
     janas_buf_printf(&d, ", \"count\": %zu, \"airborne\": %zu", n_all,
                      airborne);
     if (failed)
@@ -1176,26 +1250,81 @@ static int flights_nearby(const struct janas_json *args, struct janas_buf *b)
     } else {
         snprintf(where, sizeof where, "%.3f, %.3f", lat, lon);
     }
+    /* a map's box (a view asks it): every aircraft in it, asked within the
+       circle around it (460 km at most, the sources' limit) */
+    double box[4];
+    int inbox = 0;
+    const struct janas_json *bx = janas_json_get(args, "box");
+    if (bx && bx->type == JANAS_JSON_ARRAY && bx->n == 4) {
+        int k = 0;
+        for (const struct janas_json *e = bx->child; e && k < 4; e = e->next)
+            box[k++] = janas_json_num(e, 1000);
+        inbox = k == 4 && box[0] >= -90 && box[2] <= 90 && box[0] < box[2] &&
+                box[1] >= -180 && box[1] <= 180 && box[3] >= -180 &&
+                box[3] <= 180;
+    }
+    double ask = radius;
+    if (inbox) {
+        ask = 1;
+        for (int c = 0; c < 4; c++) {
+            double d = geo_km(lat, lon, box[c < 2 ? 0 : 2], box[c % 2 ? 1 : 3]);
+            if (d > ask)
+                ask = d;
+        }
+        if (ask > 460)
+            ask = 460;
+        limit = MAX_BOX;
+    }
     struct fl_ac *ac = NULL;
     size_t n = 0;
     const char *net = "";
     char query[96], err[400];
     snprintf(query, sizeof query, "lat/%.4f/lon/%.4f/dist/%.0f", lat, lon,
-             ceil(radius / KM_PER_NM));
+             ceil(ask / KM_PER_NM));
     if (fl_adsb(query, &ac, &n, &net, err, sizeof err) != 0) {
         janas_mcps_text_result(b, err, strlen(err), 1);
         return 0;
     }
-    struct near *v = n ? malloc(n * sizeof(*v)) : NULL;
+    /* the plane a view follows (its args' follow, a hex): kept in its
+       answer wherever it has flown, out of the box or of the circle asked */
+    const char *fw =
+        inbox ? janas_json_str(janas_json_get(args, "follow")) : NULL;
+    struct fl_ac far = {0};
+    size_t fi = (size_t)-1;
+    int follow = 0;
+    if (fw && strlen(fw) == 6 && strspn(fw, "0123456789abcdef") == 6) {
+        for (size_t i = 0; i < n && fi == (size_t)-1; i++)
+            if (!strcmp(ac[i].hex, fw))
+                fi = i;
+        if (fi == (size_t)-1) {
+            const char *net2 = "";
+            follow = live_by_hex(fw, &far, &net2) && far.has_pos;
+        } else
+            follow = ac[fi].has_pos;
+    }
+    struct near *v = malloc((n + 1) * sizeof(*v));
     size_t m = 0;
     for (size_t i = 0; v && i < n; i++)
         if (ac[i].has_pos) {
             double d = geo_km(lat, lon, ac[i].lat, ac[i].lon);
-            if (d <= radius)
+            int in =
+                inbox ? ac[i].lat >= box[0] && ac[i].lat <= box[2] &&
+                            (box[1] <= box[3]
+                                 ? ac[i].lon >= box[1] && ac[i].lon <= box[3]
+                                 : ac[i].lon >= box[1] || ac[i].lon <= box[3])
+                      : d <= radius;
+            if (in && i != fi)
                 v[m++] = (struct near){&ac[i], d};
         }
     if (m)
         qsort(v, m, sizeof(*v), by_km);
+    /* the plane followed first, within the limit whatever its distance */
+    if (v && follow) {
+        const struct fl_ac *f = fi == (size_t)-1 ? &far : &ac[fi];
+        memmove(v + 1, v, m * sizeof(*v));
+        v[0] = (struct near){f, geo_km(lat, lon, f->lat, f->lon)};
+        m++;
+    }
     /* the data, for the layout (layouts.c) */
     struct janas_buf d = {0};
     char utc[16];
@@ -1210,17 +1339,26 @@ static int flights_nearby(const struct janas_json *args, struct janas_buf *b)
         janas_buf_puts(&d, ", \"point\": ");
         geo_describe_json(lat, lon, &d);
     }
-    janas_buf_printf(&d, ", \"radius\": %.0f, \"count\": %zu", radius, m);
+    janas_buf_printf(&d,
+                     ", \"lat\": %.4f, \"lon\": %.4f, \"radius\": %.0f, "
+                     "\"count\": %zu",
+                     lat, lon, radius, m);
     if (m > (size_t)limit)
         janas_buf_printf(&d, ", \"listed\": %d", limit);
     janas_buf_puts(&d, ", \"aircraft\": [");
-    int routes = 0;
+    int routes = 0, asked = 0;
     for (size_t i = 0; i < m && i < (size_t)limit; i++) {
         const struct fl_ac *a = v[i].a;
         struct fl_route r = {0};
         int have = 0;
-        if (a->flight[0] && i < ROUTES_ASKED) {
-            have = fl_route(a->flight, &r) == 1;
+        /* the routes known in the last hour, and a few more asked */
+        if (a->flight[0]) {
+            int k = fl_route_kept(a->flight, &r);
+            if (k == -2 && asked < (inbox ? ROUTES_ASKED_BOX : ROUTES_ASKED)) {
+                k = fl_route(a->flight, &r);
+                asked++;
+            }
+            have = k == 1;
             routes |= have && route_fits(a, &r);
         }
         janas_buf_puts(&d, i ? ", " : "");
@@ -1270,5 +1408,7 @@ int fl_tools_call(void *ctx, const struct janas_json *params,
         return flights_over(args, b);
     if (janas_json_is(name, "flights_nearby"))
         return flights_nearby(args, b);
+    if (janas_json_is(name, "flight_track"))
+        return flight_track(args, b);
     return -1;
 }

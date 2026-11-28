@@ -8,6 +8,16 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Brebus</title>
+<script>
+/* the theme before anything is drawn (theme.js keeps it): auto follows
+   the system, light and dark are the user's */
+(function () {
+  var t = "auto";
+  try { t = localStorage.getItem("brebus.theme") || "auto"; } catch (e) {}
+  var dark = t === "dark" || (t !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
+  document.documentElement.classList.toggle("dark", dark);
+})();
+</script>
 <style>
 <!--#include brebus/page/app.css-->
 </style>
@@ -35,14 +45,20 @@
     <button data-s="discover" title="Discover: the models to get"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/></svg><span class="lbl">Discover</span></button>
     <button data-s="models" title="My models: those on this computer"><svg viewBox="0 0 24 24"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/></svg><span class="lbl">My models</span></button>
     <button data-s="server" title="Server: the model for other programs"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="7" rx="1.5"/><rect x="4" y="13" width="16" height="7" rx="1.5"/><path d="M8 7.5h.01M8 16.5h.01"/></svg><span class="lbl">Server</span></button>
+    <button data-s="ext" title="Extensions: services, MCP servers and skills the model can use"><svg viewBox="0 0 24 24"><path d="M9 4h4v3a2 2 0 1 0 4 0V4h3v6h-3a2 2 0 1 0 0 4h3v6h-6v-3a2 2 0 1 0-4 0v3H4v-6h3a2 2 0 1 0 0-4H4V4z"/></svg><span class="lbl">Extensions</span></button>
     <button data-s="prefs" title="Settings: what the chat may do"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg><span class="lbl">Settings</span></button>
     <button data-s="machine" title="Info: Brebus, this computer, the engine"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5h.01"/></svg><span class="lbl">Info</span></button>
-    <div id="uizoom" class="uizoom" hidden title="The size of the whole interface: also Ctrl+wheel, Ctrl+plus, Ctrl+minus, and Ctrl+0 for 100%. An artifact has a zoom of its own, in its bar"><svg viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="15" rx="2"/><path d="M3 8.5h18M8 12.5v4M6 14.5h4M14 14.5h4"/></svg><span class="lbl">Interface</span>
-      <span class="seg zoomseg"><button data-z="-1" class="lbl" title="The whole interface smaller (Ctrl+minus)">−</button><button data-z="0" title="The whole interface back to 100% (Ctrl+0)"><b>100%</b></button><button data-z="1" class="lbl" title="The whole interface larger (Ctrl+plus)">+</button></span></div>
+    <button type="button" id="updbtn" class="updbtn" hidden title="A new version of Brebus is downloaded and checked: restart Brebus to finish the update"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 4v5h-5"/></svg><span class="lbl">Update ready: restart</span></button>
+    <hr class="footsep">
+    <div class="footrow">
+      <button type="button" id="uizoom" class="zmenu" hidden title="The size of the whole interface: also Ctrl+wheel, Ctrl+plus, Ctrl+minus, and Ctrl+0 for 100%. An artifact has a zoom of its own, in its bar" aria-haspopup="menu"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5M8 10.5h5M10.5 8v5"/></svg><b>100%</b><span class="caret"></span></button>
+      <button type="button" id="themebtn" class="zmenu" title="Theme: as the system, light or dark" aria-haspopup="menu"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor"/></svg><b>Auto</b><span class="caret"></span></button>
+    </div>
     <button id="navout" hidden title="Log out of this Brebus"><svg viewBox="0 0 24 24"><path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4"/><path d="M10 16l-4-4 4-4M6 12h10"/></svg><span class="lbl">Log out</span></button>
   </div>
 </nav>
 <main>
+  <p id="updnote" class="updnote" role="status" hidden></p>
   <section id="chat">
     <div id="talk">
       <div id="bar"><button id="ctitle" class="ctitle" title="This chat: rename, export, move, archive, delete">New chat<span class="caret"></span></button>
@@ -66,12 +82,12 @@
       <div class="arthead"><b id="arttitle"></b>
         <select id="artver" title="Its versions"></select>
         <span class="artbtns"><span class="seg" id="artview"><button data-v="preview" class="on" title="The artifact as it looks and works">Preview</button><button data-v="code" title="The artifact's source, as the model wrote it">Code</button></span>
-          <span class="seg zoomseg" id="artzoom" title="The artifact's own zoom, not the interface's: Ctrl+wheel over it too"><button data-z="-1" title="The artifact smaller">−</button><button data-z="0" id="artzpct" title="The artifact back to 100%">100%</button><button data-z="1" title="The artifact larger">+</button></span>
-          <button class="act quiet" id="artfull" title="Wide, over the chat" aria-label="Wide" aria-pressed="false">⤢</button>
-          <button class="act quiet" id="artcopy" title="Copy its source to the clipboard">Copy</button>
-          <button class="act quiet" id="artdown" title="Save it as a file of its own">Download</button>
-          <button class="act quiet" id="artopen" title="Open the saved file with this computer's own program for it">Open</button>
-          <button class="act quiet" id="artclose" title="Close">×</button></span></div>
+          <button type="button" class="zmenu" id="artzoom" title="The artifact's own zoom, not the interface's: Ctrl+wheel over it too" aria-haspopup="menu"><b id="artzpct">100%</b><span class="caret"></span></button>
+          <button type="button" class="aico" id="artcopy" title="Copy its source to the clipboard" aria-label="Copy"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg></button>
+          <button type="button" class="aico" id="artdown" title="Save it as a file of its own" aria-label="Download"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7.5 10.5L12 15l4.5-4.5M5 19h14"/></svg></button>
+          <button type="button" class="aico" id="artopen" title="Open the saved file with this computer's own program for it" aria-label="Open"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/></svg></button>
+          <button type="button" class="aico" id="artfull" title="Wide, over the chat" aria-label="Wide" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+          <button type="button" class="aico" id="artclose" title="Close" aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></span></div>
       <div id="arterr" hidden><pre></pre><span><button class="act" id="artfix" title="The error goes to the model, which writes the artifact again">Ask the model to fix it</button>
         <button class="act quiet" id="arterrx" title="Hide this error">Dismiss</button></span></div>
       <div id="artbody"></div>
@@ -132,6 +148,50 @@
       </form>
     </div>
   </section>
+  <section id="ext">
+    <h2>Extensions</h2>
+    <p class="lead">What the model can use beyond what it knows: services and MCP servers, whose tools it calls, and skills, instructions for particular tasks. The model opens one when a question needs it.</p>
+    <div class="seg exttabs" role="tablist"><button type="button" role="tab" data-t="inst" class="on">My extensions</button><button type="button" role="tab" data-t="conn">Connectors</button><button type="button" role="tab" data-t="skill">Skills</button></div>
+    <div class="exttab" data-t="inst">
+      <h3>Janas's services</h3>
+      <div class="card prefs" id="extjanas"></div>
+      <h3>Your MCP servers</h3>
+      <p class="note" id="extcfg"></p>
+      <div class="card prefs" id="extmine"></div>
+      <p><button type="button" class="act" id="extadd">Add a server…</button></p>
+      <h3>Desktop extensions</h3>
+      <p class="note" id="extmcpbnote"></p>
+      <form class="hfget" id="cnadd" onsubmit="return false"><input name="path" spellcheck="false" placeholder="an extension's .mcpb file">
+        <button class="act quiet browse" type="button" id="cnbrowse" title="Choose the file in the system's window">Browse…</button>
+        <button class="act" type="submit" title="Look at it, then install it">Install</button></form>
+    </div>
+    <div class="exttab" data-t="conn" hidden>
+      <input type="search" id="connq" class="exsearch" spellcheck="false" placeholder="Search: github, notion, calendar…" aria-label="Search the connectors">
+      <h3>Janas's list</h3>
+      <p class="note">Services on the web that speak MCP, their addresses read from each maker's own documentation.</p>
+      <div class="card prefs" id="connrec"></div>
+      <h3>MCP's registry</h3>
+      <p class="note">The servers their makers published in MCP's official registry (registry.modelcontextprotocol.io): many more, not checked by Janas. Those of Russian or Chinese makers are left out where their name or address shows it.</p>
+      <div class="card prefs" id="connreg"></div>
+    </div>
+    <div class="exttab" data-t="skill" hidden>
+      <p class="note" id="skdir"></p>
+      <h3>Installed skills</h3>
+      <div class="card prefs" id="sklist"></div>
+      <h3>To install</h3>
+      <input type="search" id="skq" class="exsearch" spellcheck="false" placeholder="Search: pdf, design, slides…" aria-label="Search the skills">
+      <div class="card prefs" id="skrec"></div>
+      <h3>From GitHub</h3>
+      <p class="note">A repository, or one of its folders: the skills in it are listed, each to install.</p>
+      <form class="hfget" id="skgh" onsubmit="return false"><input name="url" spellcheck="false" placeholder="https://github.com/owner/repository">
+        <button class="act" type="submit">Look</button></form>
+      <div id="skghres"></div>
+      <h3>From a folder</h3>
+      <form class="hfget" id="skadd" onsubmit="return false"><input name="path" spellcheck="false" placeholder="a folder with SKILL.md, to copy among every chat's skills">
+        <button class="act quiet browse" type="button" id="skbrowse" title="Choose the folder in the system's window">Browse…</button>
+        <button class="act" type="submit" title="Copy the skill's folder among every chat's skills">Add</button></form>
+    </div>
+  </section>
   <section id="prefs">
     <h2>Settings</h2>
     <p class="lead">What the chat may do. Each choice holds for every chat until you change it.</p>
@@ -147,16 +207,30 @@
     </div>
         <h3>Voice</h3>
     <div class="card prefs" id="voicecard"></div>
-    <h3>Connectors</h3>
-    <div class="card prefs" id="conncard"></div>
-    <h3>Skills</h3>
-    <div class="card prefs" id="skillcard"></div>
+    <p class="note">Services, MCP servers, connectors and skills: <a href="#ext" id="prefsext">Extensions</a>.</p>
     <h3>Appearance</h3>
     <div class="card prefs" id="zoomcard"></div>
+    <h3>Language</h3>
+    <div class="card prefs">
+      <p><label>Brebus's language <select id="langsel"></select></label></p>
+      <p class="note">As the system: the language of this computer, or in a browser the browser's, when Brebus speaks it; English otherwise. The models answer in the language you write to them in.</p>
+    </div>
     <h3>When the computer starts</h3>
     <div class="card prefs">
       <label class="tog"><input type="checkbox" id="autost"> Start Brebus in the background
         <span class="note">When you log in, Brebus starts without its window and loads the model the chat used last, with its settings, so that other programs (an editor, a script, another chat app) can use it at once through its server. Brebus's own window opens onto it when you start it.</span></label>
+    </div>
+    <h3>Updates</h3>
+    <div class="card prefs" id="updcard">
+      <p><label>New versions of Brebus and Janas
+        <select id="updmode">
+          <option value="auto">are installed by themselves</option>
+          <option value="notify">are only announced here</option>
+          <option value="off">are not looked for</option></select></label></p>
+      <p class="note">Brebus asks GitHub for its latest release when it starts and once a day, and installs only a release signed by the project's key. A new version downloaded is put in place as Brebus closes, or, without its window, once nobody has used it for a while; if it does not start, the version before comes back.</p>
+      <p class="note" id="updline"></p>
+      <p><span class="btnline"><button type="button" class="act quiet" id="updcheck">Check now</button>
+        <button type="button" class="act" id="updinst" hidden>Install now and restart</button></span></p>
     </div>
     <div id="pyset" hidden>
       <h3>Python, for Run code</h3>
@@ -189,7 +263,7 @@
   </section>
 </main>
 <div id="wsdlg" class="dlg" hidden><div class="box">
-  <h2>A project</h2>
+  <h2>Open or make a project</h2>
   <p class="lead">A folder of yours, for work that goes on: the model reads its documents and files, writes there what it makes for you, and its chats stay with it. One of the recent ones, a folder you choose, or a new one.</p>
   <div id="wsrecent"></div>
   <form id="wsform" class="hfget" onsubmit="return false">
@@ -198,20 +272,24 @@
     <button class="act quiet" type="submit" title="Open the folder written in the field as a project">Open</button>
   </form>
   <p><button class="act" id="wsnew" title="A new project, in a new folder named by today's date">New folder</button> <span class="note" id="wsnewin"></span></p>
-  <div id="wsemb" hidden><h3>Search by meaning</h3>
+  <p class="right"><button class="act quiet" id="wsclose" title="Close, changing nothing">Cancel</button></p>
+</div></div>
+<div id="psdlg" class="dlg" hidden><div class="box wide" role="dialog" aria-labelledby="pstitle">
+  <div class="pshead"><h2 id="pstitle"></h2>
+    <button type="button" class="aico" id="psx" title="Close (Esc)" aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+  <div class="seg pstabs" role="tablist">
+    <button type="button" role="tab" data-t="gen" class="on">General</button><button type="button" role="tab" data-t="docs">Documents</button><button type="button" role="tab" data-t="svc">Services</button><button type="button" role="tab" data-t="perm">Permissions</button></div>
+  <div class="psbody">
+  <div class="pstab" data-t="gen">
+    <dl class="cardl"><dt>Folder</dt><dd id="pspath"></dd><dt>Chats</dt><dd id="pschats"></dd></dl>
+    <p class="note">The project is this folder: its chats and settings are kept in it, in <code>.brebus</code>, and what the model makes in <code>artifact</code>. Opening the folder again brings it all back.</p>
+    <h3>Remove the project</h3>
+    <p class="note">Brebus stops listing it. Your files stay where they are; its chats and artifacts too, unless you ask to delete them.</p>
+    <p><button type="button" class="act danger" id="psdel">Remove the project…</button></p>
+  </div>
+  <div class="pstab" data-t="docs" hidden><div id="wsemb" hidden><h3>Search by meaning</h3>
     <p class="note" id="embnote"></p>
     <select id="embsel"></select></div>
-  <div id="wssvc" hidden><h3>Services</h3>
-    <p class="note" id="svcnote"></p>
-    <div id="svclist"></div>
-    <p><label>A tool of your servers allowed always in a chat stays allowed, when the chat is taken up again,
-      <select id="apprage">
-        <option value="3600">for an hour</option><option value="28800">for 8 hours</option>
-        <option value="86400">for a day</option><option value="604800">for a week</option>
-        <option value="2592000">for 30 days</option><option value="-1">for good</option>
-        <option value="0">never</option></select> after its last use.</label>
-      <span class="note">It holds for the server it was given to: a new command, address or version asks again. Janas's own tools that change something ask every time.</span></p>
-    <p><button type="button" class="act quiet" id="apprclear" title="The tools allowed always in this chat ask again">Ask again in this chat</button></p></div>
   <div id="wsro" hidden><h3>Read only, beside it</h3>
     <p class="note">Folders and files the model may search and read, never write: documents, code, pictures, audio. Video is not read by Janas yet.</p>
     <div id="rolist"></div>
@@ -220,23 +298,60 @@
       <button class="act quiet browse" type="button" id="robrowse" title="Choose the folder in the system's window">Browse…</button>
       <button class="act quiet" type="submit" title="Let the model read this folder too, never write in it">Add</button>
     </form></div>
-  <p class="right"><button class="act quiet" id="wsclose" title="Close, changing nothing">Cancel</button></p>
+  </div>
+  <div class="pstab" data-t="svc" hidden><div id="wssvc" hidden>
+    <p class="note" id="svcnote"></p>
+    <div id="svclist"></div>
+    <p><button type="button" class="act quiet" id="psext" title="Add, change or remove services and your MCP servers">Manage the extensions</button></p></div>
+  </div>
+  <div class="pstab" data-t="perm" hidden>
+    <p><label>A tool of your servers allowed always in a chat stays allowed, when the chat is taken up again,
+      <select id="apprage">
+        <option value="3600">for an hour</option><option value="28800">for 8 hours</option>
+        <option value="86400">for a day</option><option value="604800">for a week</option>
+        <option value="2592000">for 30 days</option><option value="-1">for good</option>
+        <option value="0">never</option></select> after its last use.</label>
+      <span class="note">It holds for the server it was given to: a new command, address or version asks again. Janas's own tools that change something ask every time.</span></p>
+    <p><button type="button" class="act quiet" id="apprclear" title="The tools allowed always in this chat ask again">Ask again in this chat</button></p>
+  </div>
+  </div>
 </div></div>
+<script>
+<!--#include brebus/page/i18n.js-->
+</script>
+<script>
+i18nTree(document.body);
+</script>
 <script>
 <!--#include web/md_entities.js-->
 <!--#include web/md_parse.js-->
 <!--#include web/markdown.js-->
 </script>
 <script>
+/* Janas's lists as this Brebus was built with them, for when GitHub's are
+   out of reach (ext.js) */
+const EXT_FALLBACK = {connectors:
+<!--#include brebus/catalog/connectors.json-->
+, skills:
+<!--#include brebus/catalog/skills.json-->
+};
+</script>
+<script>
 <!--#include brebus/page/base.js-->
+<!--#include brebus/page/sampling.js-->
 <!--#include brebus/page/models.js-->
 <!--#include brebus/page/chats.js-->
 <!--#include brebus/page/artifacts.js-->
+<!--#include brebus/page/apps.js-->
+<!--#include brebus/page/ext.js-->
 <!--#include brebus/page/turn.js-->
 <!--#include brebus/page/compact.js-->
 <!--#include brebus/page/side.js-->
 <!--#include brebus/page/more.js-->
 <!--#include brebus/page/zoom.js-->
+<!--#include brebus/page/theme.js-->
+<!--#include brebus/page/update.js-->
+<!--#include brebus/page/language.js-->
 </script>
 </body>
 </html>

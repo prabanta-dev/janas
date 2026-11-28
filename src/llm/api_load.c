@@ -21,7 +21,9 @@ static void free_msgs(janas_llm_chat *c)
             free((char *)m->calls[k].args);
         }
         free(m->calls);
-        janas_api_pics_free(m->pics, m->n_pics);
+        if (!m->pics_lent)
+            janas_api_pics_free(m->pics, m->n_pics);
+        free(m->reason);
     }
     c->n_msgs = 0;
 }
@@ -117,8 +119,8 @@ int32_t janas_llm_chat_add_call(janas_llm_chat *c, const char *name,
     return JANAS_LLM_OK;
 }
 
-static const struct memo *memo_find(const janas_llm_chat *c,
-                                    const struct cmsg *msg)
+const struct memo *janas_api_memo_find(const janas_llm_chat *c,
+                                       const struct cmsg *msg)
 {
     struct janas_buf key = {0};
     janas_api_memo_key(&key, msg->text, msg->n, msg->calls, msg->n_calls);
@@ -313,8 +315,9 @@ static int render(janas_llm_chat *c, uint32_t *reply_off)
             }
             /* DeepSeek gives no reasoning back: its replies as written
                would carry theirs */
-            const struct memo *mm =
-                llm->format == FORMAT_DEEPSEEK ? NULL : memo_find(c, m);
+            const struct memo *mm = llm->format == FORMAT_DEEPSEEK
+                                        ? NULL
+                                        : janas_api_memo_find(c, m);
             if (mm) { /* one of the last replies: as the model wrote it */
                 err |= add_ids(c, mm->ids, mm->n);
                 if (!mm->closed)
@@ -389,6 +392,18 @@ static int render(janas_llm_chat *c, uint32_t *reply_off)
     return err ? -1 : 0;
 }
 
+/* The messages into c->ids: through the model's chat template, which is
+   how its makers say a conversation is written; Janas's format in C only
+   for a model whose file has none */
+static int build(janas_llm_chat *c, uint32_t *reply_off, int32_t *rc)
+{
+    *rc = JANAS_LLM_OK;
+    if (!janas_api_template_on(c))
+        return render(c, reply_off);
+    *rc = janas_api_template_build(c, reply_off);
+    return *rc != JANAS_LLM_OK;
+}
+
 /*
  * The sequence built in c->ids replaces the session's, reusing the longest
  * part they share: when it continues the conversation already computed
@@ -417,7 +432,16 @@ static int32_t load_ids(janas_llm_chat *c, uint32_t reply_off)
     /* a picture's tokens are the same whatever the picture: nothing
        computed is taken past the first one, nor kept */
     uint32_t media = janas_api_media_first(c);
-    if (media == UINT32_MAX)
+    /* but a picture the session holds where it is now, the transcript's
+       own, is the same one */
+    size_t held = 0;
+    while (held < c->n_idpics && held < c->n_media_done &&
+           c->idpics[held].off == c->media_done[held].off &&
+           c->idpics[held].pic == c->media_done[held].pic)
+        held++;
+    if (held)
+        media = held < c->n_idpics ? c->idpics[held].off : UINT32_MAX;
+    if (media == UINT32_MAX && !c->n_idpics)
         janas_api_keep_pick(c);
     const int32_t *h;
     uint32_t hn = janas_llm_session_tokens(c->s, &h), same = 0;
@@ -430,6 +454,12 @@ static int32_t load_ids(janas_llm_chat *c, uint32_t reply_off)
     if (same == c->n_ids && same > 0 &&
         janas_llm_session_computed(c->s) >= same)
         same--;
+    /* not inside a picture: it goes whole, or stays whole */
+    for (size_t i = 0; i < c->n_idpics; i++) {
+        const struct ppic *p = &c->idpics[i];
+        if (same > p->off && same < p->off + p->pic->nx * p->pic->ny)
+            same = p->off;
+    }
     if (janas_llm_session_truncate(c->s, same) != 0) {
         janas_llm_session_reset(c->s); /* a recurrent state: from the start */
         same = 0;
@@ -450,8 +480,15 @@ static int32_t load_ids(janas_llm_chat *c, uint32_t reply_off)
         return janas_api_fail(JANAS_LLM_EFULL,
                               "the context is full (%u tokens)", c->llm->n_ctx);
     }
-    if (media != UINT32_MAX && janas_api_media_register(c, 0, 0) != 0)
+    /* where the reply's turn starts: the next turn's template may write
+       what follows differently (Qwen3.5 leaves the reasoning out of the
+       replies before the last question), and the model goes back there
+       rather than to the start when it cannot by itself */
+    if (reply_off != UINT32_MAX)
+        janas_llm_session_want_checkpoint(c->s, reply_off);
+    if (c->n_idpics && janas_api_media_register(c, 0, same) != 0)
         return janas_api_fail(JANAS_LLM_ENOMEM, "out of memory");
+    janas_api_media_held(c);
     c->dropped = 0;
     c->loaded = (uint32_t)c->n_ids;
     if (janas_api_begin_reply(c, reply_off, (uint32_t)c->n_ids, cached) != 0)
@@ -459,7 +496,7 @@ static int32_t load_ids(janas_llm_chat *c, uint32_t reply_off)
     /* the prompt is kept once read, which janas_llm_chat_next does a block
        at a time: reading it here would leave the caller without word for
        as long as it takes */
-    c->keep_prompt = media == UINT32_MAX;
+    c->keep_prompt = !c->n_idpics;
     return JANAS_LLM_OK;
 }
 
@@ -485,8 +522,11 @@ int32_t janas_api_run(janas_llm_chat *c)
     free(c->system);
     c->system = NULL;
     uint32_t reply_off;
-    if (render(c, &reply_off) != 0)
-        return janas_api_fail(JANAS_LLM_ENOMEM, "out of memory");
+    int32_t rc;
+    if (build(c, &reply_off, &rc) != 0)
+        return rc != JANAS_LLM_OK
+                   ? rc
+                   : janas_api_fail(JANAS_LLM_ENOMEM, "out of memory");
     return load_ids(c, reply_off);
 }
 
@@ -526,7 +566,8 @@ int32_t janas_llm_chat_count(janas_llm_chat *c, int32_t *n)
     c->n_idpics = 0;
     c->n_turn = 0;
     uint32_t reply_off;
-    int err = render(c, &reply_off) || janas_api_flush_text(c);
+    int32_t rc;
+    int err = build(c, &reply_off, &rc) || janas_api_flush_text(c);
     *n = (int32_t)c->n_ids;
     c->n_ids = c->n_text = 0;
     c->n_idpics = 0;
@@ -535,9 +576,51 @@ int32_t janas_llm_chat_count(janas_llm_chat *c, int32_t *n)
     for (size_t i = 0; i < turns && !err; i++)
         err = janas_api_note_turn(c, saved[i]);
     free(saved);
+    if (rc != JANAS_LLM_OK)
+        return rc;
     if (err)
         return janas_api_fail(JANAS_LLM_ENOMEM, "out of memory");
     return JANAS_LLM_OK;
+}
+
+/* The tokens the model's format gives the conversation, its reply's turn
+   started, without reading them (as janas_llm_chat_count): a copy in *out
+   for the caller to free, for comparing with what its template writes
+   (api_template.c). */
+int32_t janas_api_format_ids(janas_llm_chat *c, int32_t **out, size_t *n)
+{
+    int32_t k;
+    *out = NULL;
+    *n = 0;
+    uint32_t sys = c->sys_tokens;
+    size_t turns = c->n_turn;
+    uint32_t *saved = turns ? malloc(turns * sizeof(*saved)) : NULL;
+    if (turns && !saved)
+        return janas_api_fail(JANAS_LLM_ENOMEM, "out of memory");
+    if (turns)
+        memcpy(saved, c->turn, turns * sizeof(*saved));
+    c->n_ids = c->n_text = 0;
+    c->n_idpics = 0;
+    c->n_turn = 0;
+    uint32_t reply_off;
+    int err = render(c, &reply_off) || janas_api_flush_text(c);
+    if (!err && c->n_ids) {
+        *out = malloc(c->n_ids * sizeof(**out));
+        if (*out) {
+            memcpy(*out, c->ids, c->n_ids * sizeof(**out));
+            *n = c->n_ids;
+        } else
+            err = 1;
+    }
+    c->n_ids = c->n_text = 0;
+    c->n_idpics = 0;
+    c->sys_tokens = sys;
+    c->n_turn = 0;
+    for (size_t i = 0; i < turns && !err; i++)
+        err = janas_api_note_turn(c, saved[i]);
+    free(saved);
+    k = err ? janas_api_fail(JANAS_LLM_ENOMEM, "out of memory") : JANAS_LLM_OK;
+    return k;
 }
 
 int32_t janas_llm_chat_load(janas_llm_chat *c, int32_t n, const int32_t *roles,

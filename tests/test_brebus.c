@@ -128,6 +128,37 @@ int main(void)
        daemon stopped while its thread polls, as with janas-server) are not
        Brebus's; any other one still fails */
     char supp[4300], env_t[4400], env_h[4300], env_c[4300];
+    /* languages of its own (lang.c): two of the same language, one
+       written to harm the page */
+    char langs[4200], env_l[4300], lf[4300];
+    snprintf(langs, sizeof langs, "%s/lang", dir);
+    janas_mkdirs(langs);
+    snprintf(env_l, sizeof env_l, "BREBUS_LANG_DIR=%s", langs);
+    static const char *const LF[][2] = {
+        {"pt", "{\"name\": \"Português\", \"locale\": \"pt-PT\", "
+               "\"texts\": {\"Settings\": \"Definições\"}}"},
+        {"pt-BR", "{\"name\": \"Português (Brasil)\", \"locale\": "
+                  "\"pt-BR\", \"texts\": {\"Settings\": "
+                  "\"Configurações\"}}"},
+        {"zz", "{\"name\": \"Zz\", \"locale\": \"zz\", \"texts\": {"
+               "\"Settings\": \"Zettings\", "
+               "\"New chat\": \"<img src=x onerror=alert(1)>\", "
+               "\"Search\": \"S\\\" onmouseover=\\\"alert(1)\", "
+               "\"<b>Hi</b> {v}\": \"<b onclick=alert(1)>Zi</b> {v}\", "
+               "\"<b>Ho</b> {v}\": \"{v} <b>Zo</b>\", "
+               "\"{n} chats found\": [\"{n} zat\", \"{n} zats {secret}\"], "
+               "\"__proto__\": \"x\"}}"},
+        {"evil", "{\"name\": \"Evil\", \"texts\": {}}"},
+        {"yy", "{\"name\": \"<script>\", \"texts\": {}}"},
+    };
+    for (size_t i = 0; i < sizeof LF / sizeof *LF; i++) {
+        snprintf(lf, sizeof lf, "%s/%s.json", langs, LF[i][0]);
+        FILE *f = fopen(lf, "w");
+        if (f) {
+            fputs(LF[i][1], f);
+            fclose(f);
+        }
+    }
     /* a home of its own: an export goes to its home, which has no
        Downloads folder, and not to the user's */
     snprintf(env_h, sizeof env_h, "HOME=%s", dir);
@@ -142,7 +173,7 @@ int main(void)
     port = free_port();
     snprintf(port_s, sizeof port_s, "%d", port);
     const char *argv[] = {brebus, "--no-open", "--port", port_s, NULL};
-    const char *env[] = {env_m, env_d, env_t, env_h, env_c, NULL};
+    const char *env[] = {env_m, env_d, env_t, env_h, env_c, env_l, NULL};
     int quiet = janas_null_fd(1);
     struct janas_proc p;
     char err[256];
@@ -166,6 +197,31 @@ int main(void)
           o.p);
     st = ask("GET", "/brebus/models", NULL, NULL, &o);
     CHECK(st == 200 && strstr(o.p, "\"models\": []"), "models: %d %s", st, o.p);
+    /* the page's language: the first of those asked there is, its texts
+       as safe as their English alone */
+    st = ask("GET", "/brebus/lang.js?want=pt-AO,en", NULL, NULL, &o);
+    CHECK(st == 200 && strstr(o.p, "LANG = \"pt\";") &&
+              strstr(o.p, "LOCALE = \"pt-PT\";") &&
+              strstr(o.p, "\"Definições\"") &&
+              strstr(o.p, "[\"pt-BR\", \"Português (Brasil)\"]") &&
+              strstr(o.p, "[\"zz\", \"Zz\"]") && !strstr(o.p, "Evil") &&
+              !strstr(o.p, "\"yy\""),
+          "language pt-AO: %d %s", st, o.p);
+    st = ask("GET", "/brebus/lang.js?want=pt_BR.UTF-8", NULL, NULL, &o);
+    CHECK(st == 200 && strstr(o.p, "LANG = \"pt-BR\";") &&
+              strstr(o.p, "\"Configurações\""),
+          "language pt_BR: %d %s", st, o.p);
+    st = ask("GET", "/brebus/lang.js?want=de-DE,en-US,zz", NULL, NULL, &o);
+    CHECK(st == 200 && strstr(o.p, "LANG = LOCALE = \"en\";") &&
+              !strstr(o.p, "Zettings"),
+          "language de, en: %d %s", st, o.p);
+    st = ask("GET", "/brebus/lang.js?want=zz", NULL, NULL, &o);
+    CHECK(st == 200 && strstr(o.p, "\"Zettings\"") &&
+              strstr(o.p, "\"{v} <b>Zo</b>\"") &&
+              strstr(o.p, "\"{n} chats found\"") == NULL &&
+              !strstr(o.p, "onerror") && !strstr(o.p, "onmouseover") &&
+              !strstr(o.p, "onclick") && !strstr(o.p, "__proto__"),
+          "language zz, its harm left out: %d %s", st, o.p);
     st = ask("GET", "/brebus/catalog", NULL, NULL, &o);
     CHECK(st == 200 && strstr(o.p, "\"fits\""), "catalog: %d", st);
     st = ask("GET", "/brebus/nothing", NULL, NULL, &o);

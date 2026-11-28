@@ -88,7 +88,7 @@ async function compactChat(upto, why) {
     const j = await r.json().catch(() => ({}));
     let text = (j.choices?.[0]?.message?.content || "").replace(/<think>[\s\S]*?<\/think>\s*/g, "").trim();
     if (!r.ok || !text) {
-      await say(`The earlier messages could not be summarized: ${j.error?.message || j.error || "the model wrote nothing"}. The chat goes on as it was.`, "Not summarized");
+      await say(T("The earlier messages could not be summarized: {why}. The chat goes on as it was.", {why: j.error?.message || j.error || T("the model wrote nothing")}), T("Not summarized"));
       return false;
     }
     c.summary = {upto, text, t: Date.now(), after: c.messages.length - 1};
@@ -113,14 +113,15 @@ async function compactChat(upto, why) {
 async function compactIfFull() {
   const size = ctxSize();
   if (!size || ctxUsed() / size < COMPACT_AT) return;
-  const k = compactPoint(KEEP_TURNS);
-  if (k) await compactChat(k, "The chat fills the model's memory: summarizing the earlier messages…");
+  /* the question just sent is the last: the KEEP_TURNS before it kept too */
+  const k = compactPoint(KEEP_TURNS + 1);
+  if (k) await compactChat(k, T("The chat fills the model's memory: summarizing the earlier messages…"));
 }
 /* Compact now, from the chat's menu */
 async function compactNow() {
   const k = compactPoint(1);
-  if (!k) { await say("There is nothing earlier to summarize yet: the last question and its reply are always kept whole.", "Compact"); return; }
-  await compactChat(k, "Summarizing the earlier messages…");
+  if (!k) { await say(T("There is nothing earlier to summarize yet: the last question and its reply are always kept whole."), T("Compact")); return; }
+  await compactChat(k, T("Summarizing the earlier messages…"));
 }
 /* Summarize up to here, under a reply: everything up to it and its tools'
    rounds, to the next question */
@@ -129,7 +130,7 @@ async function summarizeTo(k) {
   let upto = k + 1;
   while (upto < ms.length && ms[upto].role !== "user") upto++;
   if (summaryNow() && upto <= cur.summary.upto) return;
-  await compactChat(upto, "Summarizing up to here…");
+  await compactChat(upto, T("Summarizing up to here…"));
 }
 /* the line in the chat where the summary ends, opened to read it */
 function summaryLine() {
@@ -137,7 +138,7 @@ function summaryLine() {
   if (!s) return null;
   const d = document.createElement("details");
   d.className = "sumline";
-  d.innerHTML = `<summary>Summarized up to here: the model reads the summary in their place</summary><div class="sumtext text"></div>`;
+  d.innerHTML = `<summary>${T("Summarized up to here: the model reads the summary in their place")}</summary><div class="sumtext text"></div>`;
   renderText(d.querySelector(".sumtext"), s.text); /* Markdown, as the model writes it */
   return d;
 }

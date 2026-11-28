@@ -7,6 +7,9 @@ let convs = [], cur = null;
 const newId = () => Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
 /* what a chat is doing now, never kept: a summary being written */
 const CONV_NOW = new Set(["compacting"]);
+/* a chat's title as shown: "New chat", the one kept for a chat with no
+   words to name it (provisionalTitle), in the page's language */
+const chatTitle = (t) => !t || t === "New chat" ? T("New chat") : t;
 async function saveConv(c) {
   c.updated = Date.now();
   await fetch("/brebus/chats/" + c.id, {method: "POST",
@@ -53,13 +56,13 @@ async function searchChats() {
   if (!q) return;
   const j = await ask("chats/search?q=" + encodeURIComponent(q));
   if (!j.chats.length) {
-    const n = document.createElement("div"); n.className = "hitnote note"; n.textContent = "Nothing found.";
+    const n = document.createElement("div"); n.className = "hitnote note"; n.textContent = T("Nothing found.");
     box.appendChild(n); return;
   }
   for (const h of j.chats) {
     const d = document.createElement("div");
     d.className = "hit";
-    d.innerHTML = `${esc(h.title || "New chat")}<small>📁 ${esc(h.workspace_name)}${h.snippet ? " · " + esc(h.snippet) : ""}</small>`;
+    d.innerHTML = `${esc(chatTitle(h.title))}<small>📁 ${esc(h.workspace_name)}${h.snippet ? " · " + esc(h.snippet) : ""}</small>`;
     d.title = h.workspace;
     d.onclick = async () => {
       $("#csearch").value = ""; searchChats();
@@ -69,7 +72,7 @@ async function searchChats() {
   }
   if (j.more) {
     const n = document.createElement("div"); n.className = "hitnote note";
-    n.textContent = `and ${j.more} more: say more words`; box.appendChild(n);
+    n.textContent = Tn(j.more, "and {n} more: say more words", "and {n} more: say more words"); box.appendChild(n);
   }
 }
 $("#csearch").addEventListener("input", () => {
@@ -94,7 +97,7 @@ async function newFree() {
   newConv();
 }
 async function renameConv() {
-  const t = await input("A title for this chat", cur.title || "");
+  const t = await input(T("A title for this chat"), cur.title || "");
   if (t === null) return;
   cur.title = t.trim();
   delete cur.autoTitle; /* the user's: no title of the model's over it */
@@ -103,7 +106,7 @@ async function renameConv() {
   listConvs(); refreshTree();
 }
 async function deleteConv() {
-  if (!await yes(`"${cur.title || "New chat"}" and its messages are deleted from the workspace.`, "Delete this chat?", "Delete")) return;
+  if (!await yes(T('"{title}" and its messages are deleted from the workspace.', {title: chatTitle(cur.title)}), T("Delete this chat?"), T("Delete"))) return;
   await fetch("/brebus/chats/" + cur.id, {method: "DELETE"});
   convs = convs.filter((c) => c.id !== cur.id);
   cur = null;
@@ -116,30 +119,31 @@ async function exportConv(c) {
   /* a PDF is printed from the page that shows the chat: offered for the
      chat open only */
   const open = c === cur;
-  const how = await dialog({title: "Export this chat", text: open
-      ? "As a Markdown or plain text file in the project's exports/, or as a PDF through the system's print dialog (Print to file)."
-      : "As a Markdown or plain text file in the project's exports/. A PDF: open the chat, then Export in its menu.",
-    buttons: [{label: "Markdown", value: "md", primary: true}, {label: "Text", value: "txt"},
-              ...(open ? [{label: "PDF", value: "pdf"}] : []), {label: "Cancel", value: "no"}]});
+  const how = await dialog({title: T("Export this chat"), text: open
+      ? T("As a Markdown or plain text file in the project's exports/, or as a PDF through the system's print dialog (Print to file).")
+      : T("As a Markdown or plain text file in the project's exports/. A PDF: open the chat, then Export in its menu."),
+    buttons: [{label: "Markdown", value: "md", primary: true}, {label: T("Text"), value: "txt"},
+              ...(open ? [{label: "PDF", value: "pdf"}] : []), {label: T("Cancel"), value: "no"}]});
   if (how.button === "no") return;
   if (how.button === "pdf") {
-    document.title = cur.title || "Chat"; window.print(); document.title = "Brebus"; return;
+    document.title = chatTitle(cur.title); window.print(); document.title = "Brebus"; return;
   }
   /* the words said, not the tools' calls and answers */
   const said = c.messages.filter((m) => (m.role === "user" || m.role === "assistant") && m.content);
-  const title = c.title || "Chat", out = [];
+  /* the file in the page's language: its headings, who said what */
+  const title = chatTitle(c.title), out = [];
   if (how.button === "txt") {
     out.push(title, "=".repeat(Math.min(title.length, 72)), "");
-    for (const m of said) out.push(m.role === "user" ? "You:" : "Assistant:", m.content, "");
+    for (const m of said) out.push(m.role === "user" ? T("You:") : T("Assistant:"), m.content, "");
   } else {
     out.push(`# ${title}`, "");
-    for (const m of said) out.push(`## ${m.role === "user" ? "You" : "Assistant"}`, "", m.content, "");
+    for (const m of said) out.push(`## ${m.role === "user" ? T("You") : T("Assistant")}`, "", m.content, "");
   }
   /* saved by Brebus where the chat is kept: a window has no downloads */
   const r = await fetch("/brebus/export", {method: "POST",
     body: JSON.stringify({name: c.title || "chat", ext: how.button, text: out.join("\n")})});
   const j = await r.json();
-  say(r.ok ? j.path : j.error || "not saved", r.ok ? "Exported" : "Not exported");
+  say(r.ok ? j.path : j.error || T("not saved"), r.ok ? T("Exported") : T("Not exported"));
 }
 
 /* a copy of a chat, whole or up to one of its replies, beside it: to take
@@ -151,11 +155,12 @@ async function branchConv(c, upto, where) {
   const ms = upto === undefined ? c.messages : c.messages.slice(0, upto + 1);
   const n = {...JSON.parse(JSON.stringify(c)), id: newId(), messages: JSON.parse(JSON.stringify(ms)),
     /* named first by what it is: the side bar shows a title's beginning */
-    title: `${upto === undefined ? "Copy" : "Branch"} of ${c.title || "New chat"}`, archived: false, updated: Date.now()};
+    /* in the page's language, as a title the user gave: kept so */
+    title: upto === undefined ? T("Copy of {title}", {title: chatTitle(c.title)}) : T("Branch of {title}", {title: chatTitle(c.title)}), archived: false, updated: Date.now()};
   delete n.approvals; /* a new chat: its tools ask again */
   if (where !== undefined && where !== ws.path) {
     await fetch(`/brebus/chats/${n.id}?ws=${encodeURIComponent(where)}`, {method: "POST", body: JSON.stringify(n)});
-    refreshTree(); say(`"${n.title}" is beside it.`);
+    refreshTree(); say(T('"{title}" is beside it.', {title: n.title}));
     return;
   }
   await saveConv(n);
@@ -197,7 +202,8 @@ function wsFile(name) {
    the picture it is, its SVG's text under Code, the file kept where it is */
 let fileShown = null;
 async function artShowFile(path, title) {
-  artShown = null; artFrame = null; fileShown = {path, title};
+  artShown = null; artFrame = null; fileShown = {path, title}; viewShown = null;
+  $("#artzoom").hidden = false;
   /* the file is in the workspace already: nothing to download or copy */
   $("#artdown").hidden = $("#artcopy").hidden = true;
   if ($("#artpane").hidden && innerWidth < 1500 && !$("#side").classList.contains("mini")) {
@@ -229,7 +235,7 @@ async function artShowFile(path, title) {
     }
   } catch (e) {
     const p = document.createElement("p"); p.className = "note";
-    p.textContent = `${title}: not found in the workspace (${path})`; body.append(p);
+    p.textContent = T("{title}: not found in the workspace ({path})", {title, path}); body.append(p);
   }
   artZoomApply();
 }
@@ -252,8 +258,8 @@ function renderText(el, text) {
     const title = alt || src.split(/[\\/]/).pop();
     const c = document.createElement("button");
     c.className = "artcard";
-    c.innerHTML = `<span>🖼</span><span><b>${esc(title)}</b><br><small>${esc(src)} · open it beside the chat</small></span>`;
-    c.title = "Open it beside the chat";
+    c.innerHTML = `<span>🖼</span><span><b>${esc(title)}</b><br><small>${esc(src)} · ${T("open it beside the chat")}</small></span>`;
+    c.title = T("Open it beside the chat");
     c.onclick = () => artShowFile(path, title);
     return c;
   }});
@@ -266,7 +272,7 @@ function bubble(m) {
     const t = document.createElement("details");
     t.className = "think";
     /* Markdown, as the model writes it there too */
-    t.innerHTML = "<summary>Reasoning</summary><div class=\"thinktext text\"></div>";
+    t.innerHTML = `<summary>${T("Reasoning")}</summary><div class="thinktext text"></div>`;
     renderText(t.lastChild, busy && cur && m === cur.messages.at(-1) ? mdStreaming(m.think) : m.think);
     keepOpen(t, m);
     d.append(t);
@@ -274,10 +280,19 @@ function bubble(m) {
   if (m.role === "tool") {
     const t = document.createElement("details");
     keepOpen(t, m);
-    t.innerHTML = `<summary>${esc(m.name)}${m.denied ? " (not allowed)" : ""}</summary>`;
+    t.innerHTML = `<summary>${esc(toolLabel(m))}${m.denied ? " " + T("(not allowed)") : ""}</summary>`;
     const pre = document.createElement("pre");
-    pre.textContent = (m.args ? "arguments: " + m.args + "\n\n" : "") + (m.content || "");
+    pre.textContent = (m.args ? T("arguments:") + " " + m.args + "\n\n" : "") + (m.content || "");
     t.append(pre); d.append(t);
+    /* its server's view (MCP Apps): beside the chat, a card here opens it */
+    if (m.view && m.raw) {
+      const c = document.createElement("button");
+      c.className = "artcard";
+      c.innerHTML = `<span>🗺</span><span><b>${esc(svcLabel(toolService(m.name)) || toolLabel(m))}</b><br><small>${T("open it beside the chat")}</small></span>`;
+      c.title = T("Open it beside the chat");
+      c.onclick = () => artShowView(m);
+      d.append(c);
+    }
     return d;
   }
   const body = document.createElement("div");
@@ -294,8 +309,8 @@ function bubble(m) {
       } else {
         const c = document.createElement("button");
         c.className = "artcard";
-        c.innerHTML = `<span>📄</span><span><b>${esc(p.art.title)}</b><br><small>${esc(p.art.type)}${p.art.open ? " · being written…" : " · open it beside the chat"}</small></span>`;
-        c.title = p.art.open ? "Being written" : "Open it beside the chat";
+        c.innerHTML = `<span>📄</span><span><b>${esc(p.art.title)}</b><br><small>${esc(p.art.type)}${p.art.open ? " · " + T("being written…") : " · " + T("open it beside the chat")}</small></span>`;
+        c.title = p.art.open ? T("Being written") : T("Open it beside the chat");
         if (!p.art.open) c.onclick = () => artShow(p.art.title);
         body.append(c);
       }
@@ -308,13 +323,13 @@ function bubble(m) {
       const line = m.think.trim().split("\n").filter((x) => x.trim()).at(-1) || "";
       const s = Math.max(0, Math.round((Date.now() - (m.thinkAt || m.t)) / 1000));
       body.className = "reasoning";
-      body.title = "Open the reasoning";
-      body.innerHTML = `<span class="working" role="status" aria-label="Reasoning">${PINTA}</span><span class="reading">Reasoning… ${s} s</span><span class="thinkline"></span>`;
+      body.title = T("Open the reasoning");
+      body.innerHTML = `<span class="working" role="status" aria-label="${T("Reasoning")}">${PINTA}</span><span class="reading">${T("Reasoning… {s} s", {s: num(s)})}</span><span class="thinkline"></span>`;
       body.lastChild.textContent = line.length > 160 ? "…" + line.slice(-160) : line;
       body.onclick = () => { const t = d.querySelector("details.think"); if (t) t.open = true; };
     } else if (!parts.length && busy && cur && m === cur.messages.at(-1))
       /* the five points of Prabanta's pintadera, swelling in turn */
-      body.innerHTML = `<span class="working" role="status" aria-label="Thinking" title="Thinking">${PINTA}</span>${m.reading && m.reading.total ? `<span class="reading">Reading your message… ${Math.floor(100 * m.reading.done / m.reading.total)}%</span>` : ""}`;
+      body.innerHTML = `<span class="working" role="status" aria-label="${T("Thinking")}" title="${T("Thinking")}">${PINTA}</span>${m.reading && m.reading.total ? `<span class="reading">${T("Reading your message… {p}%", {p: num(Math.floor(100 * m.reading.done / m.reading.total))})}</span>` : ""}`;
   } else body.textContent = m.content || "";
   d.append(body);
   if (m.attached && m.attached.length) {
@@ -326,7 +341,7 @@ function bubble(m) {
   if (m.found) {
     const f = document.createElement("details");
     f.className = "att";
-    f.innerHTML = "<summary>Passages found in the documents</summary>";
+    f.innerHTML = `<summary>${T("Passages found in the documents")}</summary>`;
     const pre = document.createElement("pre");
     pre.style.whiteSpace = "pre-wrap"; pre.textContent = m.found;
     f.append(pre); d.append(f);
@@ -393,11 +408,11 @@ function drawLog() {
       if (!busy) {
         const bar = document.createElement("div");
         bar.className = "msgacts";
-        const c = act("copy", "Copy this message", () => copy(c));
+        const c = act("copy", T("Copy this message"), () => copy(c));
         bar.append(c);
         if (!cur.archived) {
-          bar.append(act("pencil", "Change this message and ask again from it", () => editMessage(k)));
-          bar.append(act("restore", "Go back to here: this message and what follows are taken away, its words put back in the field", () => rewindTo(k)));
+          bar.append(act("pencil", T("Change this message and ask again from it"), () => editMessage(k)));
+          bar.append(act("restore", T("Go back to here: this message and what follows are taken away, its words put back in the field"), () => rewindTo(k)));
         }
         d.append(bar);
       }
@@ -405,13 +420,13 @@ function drawLog() {
     if (m.role === "assistant" && m.content && !busy) {
       const bar = document.createElement("div");
       bar.className = "msgacts";
-      const c = act("copy", "Copy this reply", () => copy(c));
+      const c = act("copy", T("Copy this reply"), () => copy(c));
       bar.append(c);
-      if (!cur.archived) bar.append(act("branch", "A new chat with the conversation up to this reply, to go on another way", () => branchConv(cur, k)));
+      if (!cur.archived) bar.append(act("branch", T("A new chat with the conversation up to this reply, to go on another way"), () => branchConv(cur, k)));
       if (!cur.archived && server.running && !(summaryNow() && k < cur.summary.upto))
-        bar.append(act("fold", "Summarize up to here: the model reads a summary in place of these messages, to make room", () => summarizeTo(k)));
+        bar.append(act("fold", T("Summarize up to here: the model reads a summary in place of these messages, to make room"), () => summarizeTo(k)));
       if ("speechSynthesis" in window)
-        bar.append(act("speakLoud", "Read this reply aloud (again: stop)", () => {
+        bar.append(act("speakLoud", T("Read this reply aloud (again: stop)"), () => {
           if (speechSynthesis.speaking) { speechSynthesis.cancel(); return; }
           speakReply(m, true);
         }));
@@ -423,7 +438,7 @@ function drawLog() {
         const prev = document.createElement("button"), next = document.createElement("button");
         prev.className = next.className = "msgact";
         prev.textContent = "‹"; next.textContent = "›";
-        prev.title = "The earlier version of this reply"; next.title = "The later version of this reply";
+        prev.title = T("The earlier version of this reply"); next.title = T("The later version of this reply");
         prev.disabled = m.vi === 0; next.disabled = m.vi === m.variants.length - 1;
         prev.onclick = () => showVariant(m, m.vi - 1);
         next.onclick = () => showVariant(m, m.vi + 1);
@@ -453,18 +468,17 @@ function drawLog() {
    the date and time); the words kept up to date every half minute */
 function agoText(t) {
   const s = Math.max(0, (Date.now() - t) / 1000);
-  if (s < 45) return "now";
-  if (s < 3600) return Math.round(s / 60) + " min ago";
-  if (s < 86400) return Math.round(s / 3600) + " h ago";
-  const d = Math.round(s / 86400);
-  return d === 1 ? "1 day ago" : d + " days ago";
+  if (s < 45) return T("now");
+  if (s < 3600) return T("{n} min ago", {n: num(Math.round(s / 60))});
+  if (s < 86400) return T("{n} h ago", {n: num(Math.round(s / 3600))});
+  return Tn(Math.round(s / 86400), "{n} day ago", "{n} days ago");
 }
 function when(t) {
   const e = document.createElement("span");
   e.className = "msgwhen";
   e.dataset.t = t;
   e.textContent = agoText(t);
-  e.title = new Date(t).toLocaleString();
+  e.title = dateTime(t);
   return e;
 }
 setInterval(() => {
@@ -475,7 +489,11 @@ async function rewindTo(k) {
   if (busy) return;
   const m = cur.messages[k];
   const after = cur.messages.length - k;
-  if (!await yes(`This message and the ${after - 1} after it are taken away; its words go back in the field. A branch first keeps them, if you want them.`, "Go back to here?", "Go back")) return;
+  if (!await yes(after === 1
+      ? T("This message is taken away; its words go back in the field.")
+      : Tn(after - 1, "This message and the one after it are taken away; its words go back in the field. A branch first keeps them, if you want them.",
+           "This message and the {n} after it are taken away; its words go back in the field. A branch first keeps them, if you want them."),
+    T("Go back to here?"), T("Go back"))) return;
   cur.messages = cur.messages.slice(0, k);
   await saveConv(cur);
   /* its artifacts' saved data as they were then */
@@ -505,15 +523,15 @@ function sendButton() {
   const mic = !busy && !$("#ask").value.trim();
   b.innerHTML = busy || rec ? ICON_STOP : mic ? icon("mic") : ICON_SEND;
   b.classList.toggle("rec", !!rec);
-  b.title = busy ? "Stop (Esc)" : rec ? "Stop recording: what you said is written in the field"
-    : mic ? "Dictate: speak, then click again" : "Send (Enter)";
-  b.setAttribute("aria-label", busy ? "Stop" : mic ? "Dictate" : "Send");
+  b.title = busy ? T("Stop (Esc)") : rec ? T("Stop recording: what you said is written in the field")
+    : mic ? T("Dictate: speak, then click again") : T("Send (Enter)");
+  b.setAttribute("aria-label", busy ? T("Stop") : mic ? T("Dictate") : T("Send"));
   /* a model being loaded, with no reply under way: nothing to send to yet */
   const loading = !!modelLoading && !busy;
   const ask = $("#ask");
   if (!ask.dataset.hint) ask.dataset.hint = ask.placeholder;
   ask.disabled = loading;
-  ask.placeholder = loading ? $("#loaded").textContent || "Loading the model…" : ask.dataset.hint;
+  ask.placeholder = loading ? $("#loaded").textContent || T("Loading the model…") : ask.dataset.hint;
   b.disabled = loading;
 }
 function growAsk() {
@@ -542,11 +560,11 @@ async function readTools() {
   const em = tools.embedding_models || [];
   $("#wsemb").hidden = !ws.path;
   $("#embnote").textContent = em.length
-    ? "The documents are searched by their words, and by their meaning with an embedding model, which finds what is said in other words. It indexes them again when changed."
-    : "The documents are searched by their words alone: get qwen3-embedding-0.6b in Discover to search them by their meaning too.";
+    ? T("The documents are searched by their words, and by their meaning with an embedding model, which finds what is said in other words. It indexes them again when changed.")
+    : T("The documents are searched by their words alone: get qwen3-embedding-0.6b in Discover to search them by their meaning too.");
   $("#embsel").hidden = !em.length;
   $("#embsel").innerHTML = em.map((n) => `<option value="${esc(n)}"${n === tools.embedding ? " selected" : ""}>${esc(n)}</option>`).join("") +
-    `<option value="none"${tools.embedding ? "" : " selected"}>words only</option>`;
+    `<option value="none"${tools.embedding ? "" : " selected"}>${T("words only")}</option>`;
 }
 const pref = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : v === "1"; } catch (e) { return d; } };
 $("#usedocs").checked = pref("brebus.usedocs", true);
@@ -561,9 +579,9 @@ const mb = (n) => (n / 1e6).toFixed(0) + " MB";
 $("#usecode").addEventListener("change", async (e) => {
   if (!e.target.checked || !pyState.needed || pyState.installed) return;
   e.target.checked = false;
-  const d = await dialog({title: "Install Python for Run code?",
-    text: `To run the model's code Brebus needs Python, which Janas does not carry. It downloads Python ${pyState.version} from python.org and numpy and matplotlib from PyPI (${mb(pyState.total)} in all), checks each file against the fingerprint written in Brebus, and installs them in your AppData folder, for Brebus alone. Nothing is downloaded unless you say so; you can remove it from Settings, Python for Run code.`,
-    buttons: [{label: "Install", value: "ok", primary: true}, {label: "Cancel", value: "no"}]});
+  const d = await dialog({title: T("Install Python for Run code?"),
+    text: T("To run the model's code Brebus needs Python, which Janas does not carry. It downloads Python {version} from python.org and numpy and matplotlib from PyPI ({size} in all), checks each file against the fingerprint written in Brebus, and installs them in your AppData folder, for Brebus alone. Nothing is downloaded unless you say so; you can remove it from Settings, Python for Run code.", {version: pyState.version, size: mb(pyState.total)}),
+    buttons: [{label: T("Install"), value: "ok", primary: true}, {label: T("Cancel"), value: "no"}]});
   if (d.button !== "ok") return;
   await installPython();
   if (pyState.installed) { e.target.checked = true; try { localStorage.setItem("brebus.usecode", "1"); } catch (x) {} }
@@ -573,12 +591,12 @@ async function installPython() {
   for (;;) {
     pyState = await ask("python");
     $("#loaded").textContent = pyState.running
-      ? `Installing Python: ${pyState.step} - ${mb(pyState.done)} of ${mb(pyState.total)}`
-      : pyState.error ? "Python not installed: " + pyState.error : "Python installed.";
+      ? T("Installing Python: {step} - {done} of {total}", {step: pyState.step, done: mb(pyState.done), total: mb(pyState.total)})
+      : pyState.error ? T("Python not installed: {error}", {error: pyState.error}) : T("Python installed.");
     if (!pyState.running) break;
     await new Promise((r) => setTimeout(r, 1000));
   }
-  if (pyState.error) say("Python was not installed: " + pyState.error);
+  if (pyState.error) say(T("Python was not installed: {error}", {error: pyState.error}));
   await readTools();
   status();
 }
@@ -594,7 +612,7 @@ async function callTool(name, args) {
 let pending = [];
 function drawChips() {
   $("#chips").innerHTML = pending.map((a, i) =>
-    `<span>📎 ${esc(a.name)} <button data-i="${i}" title="Remove">×</button></span>`).join("");
+    `<span>📎 ${esc(a.name)} <button data-i="${i}" title="${T("Remove")}">×</button></span>`).join("");
   for (const b of document.querySelectorAll("#chips button"))
     b.onclick = () => { pending.splice(+b.dataset.i, 1); drawChips(); };
 }
@@ -608,7 +626,7 @@ async function uploadFiles(files) {
     const r = await fetch("/brebus/upload?name=" + encodeURIComponent(f.name), {method: "POST", body: f});
     const j = await r.json().catch(() => ({}));
     $("#attach").textContent = "+";
-    if (!r.ok) { say((j.error || "not sent") + ": " + f.name); continue; }
+    if (!r.ok) { say((j.error || T("not sent")) + ": " + f.name); continue; }
     pending.push(j); drawChips();
   }
 }
@@ -628,16 +646,16 @@ async function attach() {
   if (!ws.window) {
     /* from a browser: a file of this computer is sent; one of the machine
        Brebus runs on is chosen there, or a web address given */
-    const d = await dialog({title: "Attach", text: "A file of this computer is sent to Brebus and kept in the workspace's sources/. Or one of the computer Brebus runs on, by its path or chosen there, or a web address.",
-      input: "", buttons: [{label: "Send a file…", value: "up", primary: true}, {label: "OK", value: "ok"}, {label: "Choose there…", value: "browse", beside: true}, {label: "Cancel", value: "no"}]});
+    const d = await dialog({title: T("Attach"), text: T("A file of this computer is sent to Brebus and kept in the workspace's sources/. Or one of the computer Brebus runs on, by its path or chosen there, or a web address."),
+      input: "", buttons: [{label: T("Send a file…"), value: "up", primary: true}, {label: T("OK"), value: "ok"}, {label: T("Choose there…"), value: "browse", beside: true}, {label: T("Cancel"), value: "no"}]});
     if (d.button === "no") return;
     if (d.button === "up") { $("#upfile").click(); return; }
-    src = d.button === "browse" ? await pick(true, "Attach a file") : d.value;
+    src = d.button === "browse" ? await pick(true, T("Attach a file")) : d.value;
   } else if (ws.window) {
-    const d = await dialog({title: "Attach", text: "A file of this computer, by its full path, or a web address (downloaded into the workspace's sources/).",
-      input: "", buttons: [{label: "OK", value: "ok", primary: true}, {label: "Browse…", value: "browse", beside: true}, {label: "Cancel", value: "no"}]});
+    const d = await dialog({title: T("Attach"), text: T("A file of this computer, by its full path, or a web address (downloaded into the workspace's sources/)."),
+      input: "", buttons: [{label: T("OK"), value: "ok", primary: true}, {label: T("Browse…"), value: "browse", beside: true}, {label: T("Cancel"), value: "no"}]});
     if (d.button === "no") return;
-    src = d.button === "browse" ? await pick(true, "Attach a file") : d.value;
+    src = d.button === "browse" ? await pick(true, T("Attach a file")) : d.value;
   }
   src = (src || "").trim();
   if (!src) return;
@@ -654,12 +672,12 @@ async function attach() {
       try { kept = localStorage.getItem(key); } catch (e) {}
       if (kept === "copy" || kept === "place") mode = kept;
       else {
-        const copy = {label: "Copy into the workspace", value: "copy", primary: !big};
-        const place = {label: "Read it where it is", value: "place", primary: big};
-        const d = await dialog({title: "Attach " + src.split("/").pop(),
-          text: `${kb(i.bytes)}. A copy keeps the workspace whole and is read again as it is now; read where it is, it is added to the folders read only and follows its changes.`,
-          buttons: big ? [place, copy, {label: "Cancel", value: "no"}] : [copy, place, {label: "Cancel", value: "no"}],
-          remember: `Do the same for files ${big ? "over" : "up to"} 100 MB`});
+        const copy = {label: T("Copy into the workspace"), value: "copy", primary: !big};
+        const place = {label: T("Read it where it is"), value: "place", primary: big};
+        const d = await dialog({title: T("Attach {name}", {name: src.split("/").pop()}),
+          text: T("{size}. A copy keeps the workspace whole and is read again as it is now; read where it is, it is added to the folders read only and follows its changes.", {size: kb(i.bytes)}),
+          buttons: big ? [place, copy, {label: T("Cancel"), value: "no"}] : [copy, place, {label: T("Cancel"), value: "no"}],
+          remember: big ? T("Do the same for files over 100 MB") : T("Do the same for files up to 100 MB")});
         if (d.button === "no") return;
         mode = d.button;
         if (d.remember) try { localStorage.setItem(key, mode); } catch (e) {}
@@ -670,7 +688,7 @@ async function attach() {
   const r = await fetch("/brebus/attach", {method: "POST", body: JSON.stringify({source: src, mode})});
   const j = await r.json();
   $("#attach").textContent = "+";
-  if (!r.ok) { say(j.error || "not attached"); return; }
+  if (!r.ok) { say(j.error || T("not attached")); return; }
   pending.push(j); drawChips();
   if (mode === "place") readFolders();
 }

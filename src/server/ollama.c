@@ -13,6 +13,7 @@
  * are the files the server was started with.
  */
 #include "ollama.h"
+#include "request.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -210,8 +211,45 @@ static int ol_show(struct srv_req *r)
     yyjson_mut_val *o = yyjson_mut_obj(d);
     yyjson_mut_doc_set_root(d, o);
     yyjson_mut_obj_add_str(d, o, "modelfile", "");
-    yyjson_mut_obj_add_str(d, o, "parameters", "");
-    yyjson_mut_obj_add_str(d, o, "template", "");
+    /* what the model samples with when a request leaves it: its makers'
+       recommendation (its file's general.sampling.*), as Ollama's
+       Modelfile writes the parameters */
+    char pm[512] = "";
+    struct janas_llm_chat_params sp;
+    janas_llm *llm = kind == 1 ? srv_engine_llm(r->srv->engine) : NULL;
+    /* with --sampling over it, as a request that says nothing gets */
+    struct srv_job *dj = llm ? srv_job_new() : NULL;
+    if (dj)
+        srv_sampling_apply(dj);
+    if (dj && janas_llm_sampling(llm, &dj->p, &sp) == JANAS_LLM_OK)
+        snprintf(pm, sizeof pm,
+                 "temperature %g\ntop_k %d\ntop_p %g\nmin_p %g\n"
+                 "repeat_penalty %g\nrepeat_last_n %d\nmirostat %d\n"
+                 "mirostat_tau %g\nmirostat_eta %g\nsamplers %s",
+                 (double)sp.temperature, sp.top_k, (double)sp.top_p,
+                 (double)sp.min_p, (double)sp.repeat_penalty, sp.repeat_last_n,
+                 sp.mirostat, (double)sp.mirostat_tau, (double)sp.mirostat_eta,
+                 sp.samplers);
+    if (dj)
+        srv_job_release(dj);
+    yyjson_mut_obj_add_strcpy(d, o, "parameters", pm);
+    /* the chat template every conversation is written with: Jinja, as
+       the model's file has it (or the one --chat-template put in its
+       place), where Ollama writes its own Go template */
+    char *tp = NULL;
+    int32_t tn = 0;
+    if (llm &&
+        janas_llm_template(llm, JANAS_LLM_TEMPLATE_USED, NULL, 0, &tn) ==
+            JANAS_LLM_ESMALL &&
+        tn > 0 && (tp = malloc((size_t)tn + 1)) &&
+        janas_llm_template(llm, JANAS_LLM_TEMPLATE_USED, tp, tn + 1, &tn) !=
+            JANAS_LLM_OK) {
+        free(tp);
+        tp = NULL;
+    }
+    yyjson_mut_obj_add_strncpy(d, o, "template", tp ? tp : "",
+                               tp ? (size_t)tn : 0);
+    free(tp);
     details(d, o, arch);
     yyjson_mut_val *info = yyjson_mut_obj_add_obj(d, o, "model_info");
     yyjson_mut_obj_add_strcpy(d, info, "general.architecture", arch);

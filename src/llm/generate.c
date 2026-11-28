@@ -263,6 +263,8 @@ static int mtp_step(struct janas_llm_model *m, const int32_t *hist,
 /* What was learned of the tokens generated lately, by position (a ring:
    a pass generates at most MAX_SPEC_K + 1, and they are read soon after) */
 #define LP_RING 64
+#define CK_MAX 8 /* checkpoints kept: a reply and the tools' turns before it   \
+                  */
 
 struct janas_llm_session {
     struct janas_llm_model *m;
@@ -300,7 +302,70 @@ struct janas_llm_session {
        block of its prompt, which prefill_step then does not read again */
     struct janas_seq *seq;
     int held;
+    /* checkpoints (janas_llm_session_want_checkpoint), the last CK_MAX
+       taken, in the order of their positions: ck[i] of positions 0 ..
+       ck_n[i] - 1 as hist has them */
+    struct janas_llm_state *ck[CK_MAX];
+    uint32_t ck_n[CK_MAX];
+    int n_ck;
+    uint32_t ck_want; /* where the prompt's reading stops to take one, or 0 */
 };
+
+static void on_seq(const struct janas_llm_session *s);
+
+/* the checkpoints from position `from` on dropped (0: all) */
+static void ck_drop_from(struct janas_llm_session *s, uint32_t from)
+{
+    while (s->n_ck > 0 && s->ck_n[s->n_ck - 1] > from) {
+        s->n_ck--;
+        janas_llm_state_free(s->ck[s->n_ck]);
+        s->ck[s->n_ck] = NULL;
+    }
+}
+
+static void ck_drop(struct janas_llm_session *s)
+{
+    ck_drop_from(s, 0);
+}
+
+/* a call of n tokens from pos, ended where a checkpoint is wanted */
+static uint32_t ck_cut(const struct janas_llm_session *s, uint32_t pos,
+                       uint32_t n)
+{
+    return s->ck_want > pos && s->ck_want < pos + n ? s->ck_want - pos : n;
+}
+
+/* the checkpoint taken, standing where it is wanted */
+static void ck_take(struct janas_llm_session *s)
+{
+    if (!s->ck_want || s->n_kv != s->ck_want)
+        return;
+    s->ck_want = 0;
+    on_seq(s);
+    struct janas_llm_state *st = janas_llm_model_checkpoint(s->m, s->n_kv);
+    if (!st)
+        return;                   /* without it, as before */
+    ck_drop_from(s, s->n_kv - 1); /* one there already, or past it */
+    if (s->n_ck == CK_MAX) {      /* the oldest goes */
+        janas_llm_state_free(s->ck[0]);
+        memmove(s->ck, s->ck + 1, (CK_MAX - 1) * sizeof(s->ck[0]));
+        memmove(s->ck_n, s->ck_n + 1, (CK_MAX - 1) * sizeof(s->ck_n[0]));
+        s->n_ck--;
+    }
+    s->ck[s->n_ck] = st;
+    s->ck_n[s->n_ck++] = s->n_kv;
+}
+
+int janas_llm_session_want_checkpoint(struct janas_llm_session *s, uint32_t pos)
+{
+    /* only where going back needs one: a recurrent state, or a ring */
+    if (!janas_llm_model_recurrent(s->m) && !janas_llm_model_has_rings(s->m))
+        return 0;
+    if (pos == 0 || pos <= s->n_kv || pos >= s->n)
+        return -1;
+    s->ck_want = pos;
+    return 0;
+}
 
 /* the session's sequence made the model's current one, before any call */
 static void on_seq(const struct janas_llm_session *s)
@@ -314,6 +379,8 @@ static int valid_options(const struct janas_llm_model *m,
     return o->spec_k >= 1 && o->spec_k <= MAX_SPEC_K && o->n_stop >= 0 &&
            o->n_stop <= JANAS_GEN_MAX_STOP && o->temperature >= 0 &&
            o->top_k >= 0 && o->top_p >= 0 && o->min_p >= 0 &&
+           o->more.n_stage >= 0 && o->more.n_stage <= JANAS_SAMPLE_MAX_STAGES &&
+           o->more.mirostat >= 0 && o->more.mirostat <= 2 &&
            (o->spec_mode != JANAS_SPEC_MTP || janas_llm_model_has_mtp(m)) &&
            (o->spec_mode != JANAS_SPEC_DRAFT ||
             (o->draft &&
@@ -375,6 +442,7 @@ int janas_llm_session_slide(struct janas_llm_session *s, uint32_t keep,
     on_seq(s);
     if (!drop || keep + drop > s->n_kv || s->n_kv > s->n)
         return -1;
+    ck_drop(s); /* the positions move */
     if (janas_llm_model_shift(s->m, keep, drop, s->n_kv) != 0)
         return -1;
     memmove(s->hist + keep, s->hist + keep + drop,
@@ -399,7 +467,9 @@ static int sampler_setup(struct janas_llm_session *s)
         .presence = o->presence_penalty,
         .frequency = o->frequency_penalty,
         .logprobs = o->logprobs ? o->top_logprobs : -1,
+        .more = o->more,
     };
+    janas_sampler_breakers(s->smp, o->breakers);
     if (o->logprobs && !s->lp) {
         s->lp = malloc(LP_RING * sizeof(*s->lp));
         if (!s->lp)
@@ -481,6 +551,7 @@ void janas_llm_session_destroy(struct janas_llm_session *s)
     if (!s)
         return;
     planner_save(s);
+    ck_drop(s);
     free(s->hist);
     free(s->logits);
     free(s->hrow);
@@ -492,6 +563,8 @@ void janas_llm_session_destroy(struct janas_llm_session *s)
 void janas_llm_session_reset(struct janas_llm_session *s)
 {
     on_seq(s);
+    ck_drop(s);
+    s->ck_want = 0;
     janas_llm_model_media_drop(s->m, 0); /* the pictures go with it */
     s->dpos_set = 0;
     s->held = 0;
@@ -549,6 +622,7 @@ int janas_llm_session_restore(struct janas_llm_session *s,
     if (!sv->st || sv->n > s->cap ||
         janas_llm_model_state_load(s->m, sv->st) != 0)
         return -1;
+    ck_drop(s); /* the cache is another sequence's now */
     memcpy(s->hist, sv->hist, sv->n * sizeof(int32_t));
     s->n = s->ret = sv->n;
     s->n_kv = s->call_start = sv->n_kv;
@@ -666,12 +740,22 @@ int janas_llm_session_truncate(struct janas_llm_session *s, uint32_t n)
     /* the last kept token is the one the next pass starts from: it must not
        count as computed, or its logits would be missing */
     uint32_t kv = n > 0 ? n - 1 : 0;
-    if (kv < s->n_kv && janas_llm_model_recurrent(s->m))
-        return -1;
-    /* a sliding layer's ring that no longer holds the window before kv:
-       the whole sequence again (model.c, ring_written) */
-    if (kv < s->n_kv && !janas_llm_model_rewind_ok(s->m, kv))
-        kv = 0;
+    int rec = janas_llm_model_recurrent(s->m);
+    if (kv < s->n_kv && (rec || !janas_llm_model_rewind_ok(s->m, kv))) {
+        /* a recurrent state cannot go back, nor a ring past what it still
+           holds: from the checkpoint, when there is one before kv (the
+           tokens from it on read again), or for a ring from the start */
+        int k = s->n_ck - 1;
+        while (k >= 0 && s->ck_n[k] > kv)
+            k--;
+        if (k >= 0 && janas_llm_model_state_load(s->m, s->ck[k]) == 0)
+            kv = s->ck_n[k];
+        else if (rec)
+            return -1;
+        else
+            kv = 0;
+    }
+    ck_drop_from(s, kv); /* what they stand on is no longer there */
     janas_sampler_rewind(s->smp, s->n - s->ret); /* drawn, never returned */
     s->n = s->ret = n;
     janas_llm_model_media_drop(s->m, n); /* pictures past the cut */
@@ -756,6 +840,7 @@ int janas_llm_session_prefill_step(struct janas_llm_session *s)
         if (b > most)
             b = most;
         b = janas_llm_model_media_cut(m, p, b);
+        b = ck_cut(s, p, b);
         if (janas_llm_model_forward(m, s->hist + p, b, p, s->logits, 0) != 0)
             return -1;
         s->call_start = p;
@@ -767,6 +852,7 @@ int janas_llm_session_prefill_step(struct janas_llm_session *s)
             return -1;
         s->n_kv += b;
         s->st.prompt_tokens += b;
+        ck_take(s);
     }
     s->st.prefill_seconds += now() - t0;
     return s->n_kv + 1 < s->n ? 1 : 0;
@@ -1196,14 +1282,15 @@ static int step(struct janas_llm_session **ss, int n, int32_t *tokens,
             status[i] = 2; /* its turn in the next step */
             continue;
         }
+        uint32_t take = ck_cut(s, s->n_kv, rest <= left ? rest : left);
         p[np] = (struct janas_llm_part){
             .seq = s->seq ? s->seq : janas_llm_model_seq_own(m),
             .tokens = s->hist + s->n_kv,
-            .n = rest <= left ? rest : left,
+            .n = take,
             .pos0 = s->n_kv};
         rows += p[np].n;
         which[np] = i;
-        which[n + np++] = rest <= left; /* its token comes out of it */
+        which[n + np++] = take == rest; /* its token comes out of it */
     }
     if (np) {
         lg = malloc((size_t)np * ss[0]->nv * sizeof(float));
@@ -1222,6 +1309,7 @@ static int step(struct janas_llm_session **ss, int n, int32_t *tokens,
         if (!which[n + k]) { /* a block of its prompt */
             s->st.prompt_tokens += p[k].n;
             s->st.prefill_seconds += dt;
+            ck_take(s);
             s->held = !give;
             status[i] = 2;
             continue;

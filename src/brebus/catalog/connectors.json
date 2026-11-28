@@ -1,0 +1,97 @@
+{
+ "about": "Services on the web that speak MCP, which Brebus offers to add: each address read from its maker's own documentation.",
+ "updated": "2026-11-18",
+ "items": [
+  {
+   "id": "notion",
+   "title": "Notion",
+   "url": "https://mcp.notion.com/mcp",
+   "about": "your pages and databases",
+   "sign_in": "oauth"
+  },
+  {
+   "id": "linear",
+   "title": "Linear",
+   "url": "https://mcp.linear.app/mcp",
+   "about": "issues, projects and cycles",
+   "sign_in": "oauth"
+  },
+  {
+   "id": "atlassian",
+   "title": "Atlassian",
+   "url": "https://mcp.atlassian.com/v2/mcp",
+   "about": "Jira and Confluence",
+   "sign_in": "oauth"
+  },
+  {
+   "id": "sentry",
+   "title": "Sentry",
+   "url": "https://mcp.sentry.dev/mcp",
+   "about": "errors and issues of your projects",
+   "sign_in": "oauth"
+  },
+  {
+   "id": "stripe",
+   "title": "Stripe",
+   "url": "https://mcp.stripe.com",
+   "about": "payments, customers and the docs",
+   "sign_in": "oauth"
+  },
+  {
+   "id": "huggingface",
+   "title": "Hugging Face",
+   "url": "https://huggingface.co/mcp",
+   "about": "models, datasets, papers and Spaces",
+   "sign_in": "oauth"
+  },
+  {
+   "id": "cloudflare",
+   "title": "Cloudflare",
+   "url": "https://mcp.cloudflare.com/mcp",
+   "about": "your account's resources",
+   "sign_in": "oauth"
+  },
+  {
+   "id": "cloudflare-docs",
+   "title": "Cloudflare Docs",
+   "url": "https://docs.mcp.cloudflare.com/mcp",
+   "about": "Cloudflare's documentation",
+   "sign_in": "none"
+  },
+  {
+   "id": "zapier",
+   "title": "Zapier",
+   "url": "https://mcp.zapier.com/api/v1/connect",
+   "about": "the actions of the apps you connected there",
+   "sign_in": "oauth"
+  },
+  {
+   "id": "intercom",
+   "title": "Intercom",
+   "url": "https://mcp.intercom.com/mcp",
+   "about": "conversations and contacts",
+   "sign_in": "oauth"
+  },
+  {
+   "id": "supabase",
+   "title": "Supabase",
+   "url": "https://mcp.supabase.com/mcp",
+   "about": "your projects' databases",
+   "sign_in": "oauth"
+  },
+  {
+   "id": "netlify",
+   "title": "Netlify",
+   "url": "https://mcp.netlify.com/mcp",
+   "about": "your sites and their deploys",
+   "sign_in": "oauth"
+  },
+  {
+   "id": "microsoft-learn",
+   "title": "Microsoft Learn",
+   "url": "https://learn.microsoft.com/api/mcp",
+   "about": "Microsoft's documentation",
+   "sign_in": "none"
+  }
+ ]
+}

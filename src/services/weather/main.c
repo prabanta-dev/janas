@@ -18,6 +18,14 @@
 
 /* INSTRUCTIONS, from SKILL.md beside this file (build.sh) */
 #include "skill.h"
+/* VIEW_forecast, from views/forecast.html (build.sh): the forecast's days
+   and hours, for a client that shows MCP Apps' views */
+#include "views.h"
+
+static const struct janas_mcps_view views[] = {{.uri = "ui://weather/forecast",
+                                                .name = "The forecast",
+                                                .html = VIEW_forecast,
+                                                .csp = NULL}};
 
 static void usage(void)
 {
@@ -52,7 +60,9 @@ int main(int argc, char **argv)
                              .version = JANAS_VERSION,
                              .instructions = INSTRUCTIONS,
                              .tools_list = wx_tools_list,
-                             .tools_call = wx_tools_call};
+                             .tools_call = wx_tools_call,
+                             .views = views,
+                             .n_views = 1};
     if (janas_mcps_open(&srv) != 0) {
         fprintf(stderr, "janas-weather: cannot set its output aside\n");
         return 1;

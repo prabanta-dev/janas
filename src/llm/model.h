@@ -81,6 +81,9 @@ uint32_t janas_llm_model_n_ctx(const struct janas_llm_model *m);
    context never goes past it: without a rope scaling the file carries, text
    beyond that length falls apart. */
 uint32_t janas_llm_model_n_ctx_train(const struct janas_llm_model *m);
+/* The rope scaling the file asks for that the engine does not apply ("yarn",
+   "linear"), or "": the context is then held to the length before it. */
+const char *janas_llm_model_rope_unread(const struct janas_llm_model *m);
 /* The memory the model holds: its resident weights as read (a table read
    from the file a row at a time, Gemma 4's per-layer embeddings or
    Qwen3.8-Flash-Next's n-grams, is not held unless read into memory), its
@@ -253,6 +256,14 @@ struct janas_llm_state *janas_llm_model_state_save(struct janas_llm_model *m,
                                                    uint32_t n);
 int janas_llm_model_state_load(struct janas_llm_model *m,
                                const struct janas_llm_state *st);
+/* A checkpoint of position n: the same, but of the attention layers only
+   their rings (the last window), the other layers' keys and values left
+   where they are; loaded (janas_llm_model_state_load) only while the cache
+   still holds positions 0 .. n - 1 as they were, which is the caller's to
+   know. A model with a recurrent state goes back to n with it, which it
+   cannot do otherwise, at the cost of its state and its rings alone. */
+struct janas_llm_state *janas_llm_model_checkpoint(struct janas_llm_model *m,
+                                                   uint32_t n);
 uint32_t janas_llm_state_length(const struct janas_llm_state *st);
 size_t janas_llm_state_bytes(const struct janas_llm_state *st);
 void janas_llm_state_free(struct janas_llm_state *st);
@@ -326,6 +337,8 @@ int janas_llm_mtp_chain_fixed(const struct janas_llm_model *m);
 /* 1 when the model carries a recurrent state (qwen3next, qwen35moe): it can
    go back no further than the start of its last forward call. */
 int janas_llm_model_recurrent(const struct janas_llm_model *m);
+/* Whether any attention layer keeps a ring (a sliding window). */
+int janas_llm_model_has_rings(const struct janas_llm_model *m);
 /* Whether the state can go back to position n: a sliding-window layer's
    ring still holds the window before it */
 int janas_llm_model_rewind_ok(const struct janas_llm_model *m, uint32_t n);

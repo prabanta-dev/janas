@@ -14,6 +14,7 @@
 
 #include "services/common/tz.h"
 #include "services/common/geo.h"
+#include "common/mcp_server.h"
 #include "maps.h"
 
 /* A field is written even when empty: a layout looks a name up in the
@@ -111,6 +112,11 @@ static void jroute(struct janas_buf *b, const struct mp_route *r)
     janas_buf_printf(b, ", \"toll\": %s, \"ferry\": %s",
                      r->toll ? "true" : "false", r->ferry ? "true" : "false");
     mp_jstr(b, "roads", r->roads);
+    /* its way, for a client that shows it on a map */
+    if (janas_mcps_client_views() && r->shape.n && !r->shape.oom) {
+        janas_buf_printf(b, ", \"prec\": %d, \"shape\": ", r->prec);
+        janas_buf_put(b, r->shape.p, r->shape.n);
+    }
 }
 
 void mp_route_data(struct janas_buf *d, const struct mp_place *from,
@@ -143,6 +149,9 @@ void mp_route_data(struct janas_buf *d, const struct mp_place *from,
             janas_buf_puts(d, i ? ", {\"text\": " : "{\"text\": ");
             janas_json_write_str(d, r->step[i].text, strlen(r->step[i].text));
             jdist(d, r->step[i].km);
+            if (janas_mcps_client_views() && r->step[i].at >= 0)
+                janas_buf_printf(d, ", \"leg\": %d, \"at\": %d", r->step[i].leg,
+                                 r->step[i].at);
             janas_buf_puts(d, "}");
         }
         janas_buf_puts(d, "]");
@@ -209,6 +218,18 @@ void mp_transit_data(struct janas_buf *d, const struct mp_place *from,
             mp_jclock(d, "dep", g->dep, tr->tz);
             mp_jstr(d, "to", stop_name(g->to, from, to));
             mp_jclock(d, "arr", g->arr, tr->tz);
+            /* for a map: its ends and its way */
+            if (janas_mcps_client_views()) {
+                if (!isnan(g->flat) && !isnan(g->tlat))
+                    janas_buf_printf(d,
+                                     ", \"flat\": %.6f, \"flon\": %.6f, "
+                                     "\"tlat\": %.6f, \"tlon\": %.6f",
+                                     g->flat, g->flon, g->tlat, g->tlon);
+                if (g->geom) {
+                    janas_buf_printf(d, ", \"prec\": %d, \"geom\": ", g->prec);
+                    janas_json_write_str(d, g->geom, strlen(g->geom));
+                }
+            }
             janas_buf_puts(d, "}");
         }
         janas_buf_puts(d, "]");
@@ -245,6 +266,8 @@ void mp_near_data(struct janas_buf *d, const struct mp_place *at,
         mp_jstr(d, "hours", p->hours);
         mp_jstr(d, "phone", p->phone);
         mp_jstr(d, "osm", p->osm);
+        mp_jnum(d, "lat", p->lat, 6);
+        mp_jnum(d, "lon", p->lon, 6);
         close_obj(d, o);
     }
     janas_buf_puts(d, "]}");

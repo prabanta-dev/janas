@@ -410,9 +410,15 @@ static int make_echo(struct srv_req *r, struct resp *x, yyjson_val *root)
     }
     struct srv_job *j = x->j;
     yyjson_mut_obj_remove_key(o, "temperature");
-    yyjson_mut_obj_add_real(d, o, "temperature", j->p.temperature);
+    /* the model's own when the request left them: null */
+    yyjson_mut_obj_add_val(d, o, "temperature",
+                           j->p.temperature >= 0
+                               ? yyjson_mut_real(d, j->p.temperature)
+                               : yyjson_mut_null(d));
     yyjson_mut_obj_remove_key(o, "top_p");
-    yyjson_mut_obj_add_real(d, o, "top_p", j->p.top_p);
+    yyjson_mut_obj_add_val(d, o, "top_p",
+                           j->p.top_p >= 0 ? yyjson_mut_real(d, j->p.top_p)
+                                           : yyjson_mut_null(d));
     if (!yyjson_obj_get(root, "tools")) {
         yyjson_mut_obj_remove_key(o, "tools");
         yyjson_mut_obj_add_arr(d, o, "tools");

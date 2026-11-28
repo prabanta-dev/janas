@@ -70,6 +70,8 @@ int mp_read_photon(const char *text, size_t n, struct mp_place *p);
 struct mp_step {
     char text[200]; /* the source's, in its language */
     double km;
+    int leg, at; /* where it begins: its leg's shape and the point in it;
+                    -1 when not known */
 };
 
 struct mp_route {
@@ -78,6 +80,10 @@ struct mp_route {
     char roads[160];      /* the longest roads, "A29, SS113" */
     struct mp_step *step; /* the first route's only; NULL for the others */
     int n_step, cut;      /* cut: steps left out (more than MP_STEPS) */
+    /* the way it goes, for a map: a JSON array of the source's encoded
+       polylines, one a leg (Google's encoding, prec decimals) */
+    struct janas_buf shape;
+    int prec;
 };
 
 struct mp_routes {
@@ -106,6 +112,9 @@ struct mp_leg {
     time_t dep, arr;
     double walk_m;
     int real_time;
+    double flat, flon, tlat, tlon; /* its ends; NAN when not known */
+    char *geom;                    /* its way, an encoded polyline; NULL */
+    int prec;
 };
 
 struct mp_trip {
@@ -124,6 +133,7 @@ struct mp_transit {
 /* Transitous' /api/v1/plan answer: 0, or -1 with the reason in err. */
 int mp_read_transit(const char *text, size_t n, struct mp_transit *tr,
                     char *err, size_t err_len);
+void mp_transit_free(struct mp_transit *tr);
 
 #define MP_NEAR 20
 

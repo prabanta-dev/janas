@@ -95,8 +95,31 @@ int janas_skill_info(const char *dir, const char *folder, char *name,
                 size_t kn = (size_t)(c - line);
                 if (kn == 4 && !strncmp(line, "name", 4))
                     value(c + 1, ln - kn - 1, name, name_n);
-                else if (kn == 11 && !strncmp(line, "description", 11))
+                else if (kn == 11 && !strncmp(line, "description", 11)) {
                     value(c + 1, ln - kn - 1, about, about_n);
+                    /* YAML's block (> or |, -, +): the indented lines
+                       after it, joined by a space */
+                    if ((about[0] == '>' || about[0] == '|') &&
+                        strspn(about + 1, "-+0123456789") ==
+                            strlen(about + 1)) {
+                        size_t k = 0;
+                        about[0] = 0;
+                        while (nl && (nl[1] == ' ' || nl[1] == '\t' ||
+                                      nl[1] == '\r' || nl[1] == '\n')) {
+                            char *b = nl + 1, *e = strchr(b, '\n');
+                            size_t bn = e ? (size_t)(e - b) : strlen(b);
+                            char part[1024];
+                            value(b, bn, part, sizeof part);
+                            if (*part && k + 2 < about_n)
+                                k += (size_t)snprintf(about + k, about_n - k,
+                                                      "%s%s", k ? " " : "",
+                                                      part);
+                            if (k >= about_n)
+                                k = about_n - 1;
+                            nl = e;
+                        }
+                    }
+                }
             }
             line = nl;
         }

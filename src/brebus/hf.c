@@ -126,6 +126,24 @@ int brebus_hf_files(struct brebus *b, const char *repo, struct janas_buf *out)
         d ? janas_json_get(janas_json_root(d), "siblings") : NULL;
     janas_buf_puts(out, "{\"repo\": ");
     str(out, repo);
+    /* the licence its card declares, and whether it asks to agree first
+       (gated), for the page to show before a download */
+    const struct janas_json *root = d ? janas_json_root(d) : NULL;
+    const struct janas_json *card = janas_json_get(root, "cardData");
+    static const char *const LK[][2] = {{"license", "license"},
+                                        {"license_name", "license_name"},
+                                        {"license_link", "license_link"}};
+    for (int i = 0; i < 3; i++) {
+        const char *v = janas_json_str(janas_json_get(card, LK[i][0]));
+        if (v && strlen(v) < 512) {
+            janas_buf_printf(out, ", \"%s\": ", LK[i][1]);
+            str(out, v);
+        }
+    }
+    const struct janas_json *gated = janas_json_get(root, "gated");
+    if (gated && gated->type != JANAS_JSON_FALSE &&
+        gated->type != JANAS_JSON_NULL)
+        janas_buf_puts(out, ", \"gated\": true");
     janas_buf_puts(out, ", \"files\": [");
     int k = 0;
     for (const struct janas_json *e =

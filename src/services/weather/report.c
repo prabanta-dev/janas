@@ -18,6 +18,7 @@
 
 #include "services/common/geo.h"
 #include "services/common/template.h"
+#include "common/mcp_server.h"
 #include "weather.h"
 
 #define STATION_KM 40 /* the nearest station, within this */
@@ -403,6 +404,26 @@ int wx_tool_forecast(const struct janas_json *args, struct janas_buf *b)
     }
     janas_buf_puts(&d, "]");
     jmodel(&d, &p, f);
+    /* every hour of the next two days, for a view's chart alone (MCP
+       Apps): not in the layout, so the text read stays as it was */
+    if (janas_mcps_client_views()) {
+        janas_buf_puts(&d, ", \"chart\": [");
+        for (int i = 0; i < f->n_hour && i < WX_HOURS; i++) {
+            const struct wx_hour *h = &f->hour[i];
+            janas_buf_printf(&d, "%s{\"t\": ", i ? ", " : "");
+            janas_json_write_str(&d, h->time, strlen(h->time));
+            if (h->code >= 0)
+                janas_buf_printf(&d, ", \"code\": %d", h->code);
+            wx_jnum(&d, "temp", h->temp, 1);
+            wx_jnum(&d, "rain", h->rain, 1);
+            wx_jnum(&d, "prob", h->rain_prob, 0);
+            wx_jnum(&d, "wind", h->wind, 0);
+            wx_jnum(&d, "gust", h->gust, 0);
+            wx_jnum(&d, "wind_deg", h->wind_dir, 0);
+            janas_buf_puts(&d, "}");
+        }
+        janas_buf_puts(&d, "]");
+    }
     janas_buf_puts(&d, "}");
     free(f);
     return wx_answer(b, "weather_forecast", &d, WX_FORECAST_LAYOUT,

@@ -366,10 +366,11 @@ int janas_tls_private(const char *path)
     return r == ERROR_SUCCESS ? 0 : -1;
 }
 #else
+#include <sys/stat.h>
+/* the owner's alone, whatever the umask made it */
 int janas_tls_private(const char *path)
 {
-    (void)path;
-    return 0;
+    return chmod(path, 0600) == 0 ? 0 : -1;
 }
 #endif
 

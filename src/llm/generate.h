@@ -53,6 +53,11 @@ struct janas_gen_options {
     /* OpenAI's penalties, over the tokens generated since the last
        janas_llm_session_mark */
     float presence_penalty, frequency_penalty;
+    /* llama.cpp's chain (sample.h: repetition penalty, DRY, typical...),
+       and DRY's breakers: for each token of the vocabulary, 1 when its
+       text holds one (NULL: none), kept by the caller while in use */
+    struct janas_sample_more more;
+    const uint8_t *breakers;
     /* the log-probability of every generated token, and that many of the
        most likely alternatives (janas_llm_session_logprob) */
     int logprobs, top_logprobs;
@@ -205,6 +210,22 @@ int janas_llm_session_logprob(const struct janas_llm_session *s, uint32_t pos,
 
 /* Back to an empty sequence. */
 void janas_llm_session_reset(struct janas_llm_session *s);
+
+/*
+ * A checkpoint wanted at position pos of the prompt appended (past what is
+ * computed, before its end): its reading stops there for a call, and the
+ * model's state is taken (janas_llm_model_checkpoint), so that a later
+ * truncate to a position past it can go back there where the model could
+ * not go back by itself - a recurrent state, a ring written over - and
+ * read on from it rather than from the start. The last eight are kept (a
+ * template that rewrites every turn since the last question needs the
+ * oldest of them); one goes with a truncate before it, all with a slide, a
+ * restore, a reset. 0, or -1 when
+ * pos is not in what is left to read; 0 and nothing done for a model that
+ * goes back without one.
+ */
+int janas_llm_session_want_checkpoint(struct janas_llm_session *s,
+                                      uint32_t pos);
 
 /*
  * A copy of the sequence and of what the model has computed of it, so that

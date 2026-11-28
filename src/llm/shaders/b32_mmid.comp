@@ -6,7 +6,10 @@
 // each invocation 2 rows by 4, groups of 32 staged 4 at a time), the
 // weights read as iq4nl_mmq.comp reads them, KIND as there: 0 IQ4_NL, 1
 // MXFP4, 2 Q5_0 (q - 16), 3 Q2_0 (each half of a block of 64 a group,
-// q - 1, the block's d); the activations in blocks of 32, each group with
+// q - 1, the block's d), 4 NVFP4 (each half of a block of 64 a group: its
+// two sub-blocks of 16, each with its UE4M3 scale, through MXFP4's table;
+// sub-block s's codes in bytes 8s to 8s + 7, low nibbles its first eight
+// weights, high ones the next eight); the activations in blocks of 32, each group with
 // its own scale. A row may end inside a group of 256 (qwen4exp's experts'
 // down matrices, 640 wide): ngroups groups of 32 a row, the stages past
 // its end empty, the activations nb blocks a vector (the last group whole,
@@ -23,7 +26,7 @@ layout(constant_id = 1) const uint SG = 8;
 layout(constant_id = 2) const uint KIND = 0;
 
 /* bytes a group of 32 weights (Q2_0: half a block) */
-const uint S = KIND == 3u ? 9u : KIND == 2u ? 22u : KIND == 1u ? 17u : 18u;
+const uint S = KIND == 4u ? 18u : KIND == 3u ? 9u : KIND == 2u ? 22u : KIND == 1u ? 17u : 18u;
 const uint BM = 64u, BN = 16u, KS = 4u, XB = 20u;
 
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer U4 { uvec4 v[]; };
@@ -34,7 +37,7 @@ layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer F 
 // from uvec4 tiles on, one a workgroup's z: (expert, first vector)
 layout(push_constant) uniform P { uvec2 t; uint rows, nb, tiles, ngroups; } p;
 
-struct ACache { int qs[8]; float d; }; // a group: its 32 levels, its scale
+struct ACache { int qs[8]; float d, d2; }; // a group: its 32 levels, its scale (NVFP4: d2 the second sub-block's)
 struct BCache { int qs[8]; float d; }; // a group: quants, its d32
 shared ACache sa[BM * KS];
 shared BCache sb[BN * KS];
@@ -80,6 +83,16 @@ uint sub_bytes(uint v, uint c)
     return ((v | 0x80808080u) - c) ^ 0x80808080u;
 }
 
+/* a UE4M3 byte as NVFP4's scale, times one half (quant.c
+   janas_ue4m3_half): exact */
+float ue4m3_half(uint x)
+{
+    if (x == 0u || x == 0x7fu)
+        return 0.0;
+    int e = int((x >> 3) & 15u), man = int(x & 7u);
+    return e == 0 ? ldexp(float(man), -10) : ldexp(float(8 + man), e - 11);
+}
+
 /* the scale of the block at byte off */
 float scale(U1 W, uint off)
 {
@@ -93,7 +106,7 @@ void main()
 {
     if (gl_LocalInvocationID.x < 16u)
         T[gl_LocalInvocationID.x] =
-            uint(KIND == 1u ? MX[gl_LocalInvocationID.x] : IQ4[gl_LocalInvocationID.x]) & 0xffu;
+            uint(KIND == 1u || KIND == 4u ? MX[gl_LocalInvocationID.x] : IQ4[gl_LocalInvocationID.x]) & 0xffu;
     barrier();
     U4 TB = U4(p.t);
     uvec4 tl = TB.v[p.tiles + gl_WorkGroupID.z];
@@ -121,7 +134,7 @@ void main()
                         [[unroll]] for (uint t = 0; t < 2u; t++)
                             sa[k * BM + rl + l].qs[2u * iqs + t] = 0;
                         if (iqs == 0u)
-                            sa[k * BM + rl + l].d = 0.0;
+                            sa[k * BM + rl + l].d = sa[k * BM + rl + l].d2 = 0.0;
                         continue;
                     }
                     uint off = (r * ngroups + g) * S;
@@ -136,6 +149,25 @@ void main()
                         }
                         if (iqs == 0u)
                             sa[k * BM + rl + l].d = scale(W1, bo);
+                        continue;
+                    }
+                    if (KIND == 4u) {
+                        /* the block's first byte; the group's two
+                           sub-blocks' codes from byte 4 + 16 (g % 2): word
+                           kw of the group's 8 is sub-block kw / 4's, its
+                           bytes' low nibbles (kw % 4 < 2) or high ones */
+                        uint bo = off - (g % 2u) * S, qo = bo + 4u + 16u * (g % 2u);
+                        [[unroll]] for (uint t = 0; t < 2u; t++) {
+                            uint kw = 2u * iqs + t, j = kw % 4u;
+                            uint q = bword(W1, qo, 2u * (kw / 4u) + (j & 1u));
+                            sa[k * BM + rl + l].qs[kw] =
+                                int(lv(j < 2u ? q & 0x0f0f0f0fu : (q >> 4) & 0x0f0f0f0fu));
+                        }
+                        if (iqs == 0u) {
+                            uint sw = bword(W1, bo + 2u * (g % 2u), 0u);
+                            sa[k * BM + rl + l].d = ue4m3_half(sw & 0xffu);
+                            sa[k * BM + rl + l].d2 = ue4m3_half((sw >> 8) & 0xffu);
+                        }
                         continue;
                     }
                     uint qh = KIND == 2u ? bword(W1, off + 2u, 0u) : 0u;
@@ -178,6 +210,15 @@ void main()
             [[unroll]] for (uint c = 0; c < 4u; c++) {
                 BCache cb = sb[k * BN + vq + c];
                 [[unroll]] for (uint r = 0; r < 2u; r++) {
+                    if (KIND == 4u) { /* a scale a sub-block of 16 */
+                        int q0 = 0, q1 = 0;
+                        [[unroll]] for (uint i = 0; i < 4u; i++) {
+                            q0 += dotPacked4x8EXT(ca[r].qs[i], cb.qs[i]);
+                            q1 += dotPacked4x8EXT(ca[r].qs[i + 4u], cb.qs[i + 4u]);
+                        }
+                        sums[c * 2u + r] += cb.d * (ca[r].d * float(q0) + ca[r].d2 * float(q1));
+                        continue;
+                    }
                     int q = 0;
                     [[unroll]] for (uint i = 0; i < 8u; i++)
                         q += dotPacked4x8EXT(ca[r].qs[i], cb.qs[i]);

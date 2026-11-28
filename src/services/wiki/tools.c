@@ -202,6 +202,53 @@ static size_t words(const char *s, size_t n)
 }
 
 /*
+ * For a client that shows views (MCP Apps): the page as Wikipedia writes
+ * it, its HTML (action=parse: the infobox, the tables, the pictures), into
+ * data: {"title", "lang", "url", "desc", "section", "html"}. Nothing when
+ * it cannot be had or is too long: the view shows the text then.
+ */
+#define HTML_MAX (3u << 20)
+static void page_html(const struct wiki_page *p, const char *lang,
+                      const char *section, struct janas_buf *data)
+{
+    struct janas_buf url = {0}, body = {0};
+    janas_buf_printf(&url,
+                     "https://%s.wikipedia.org/w/api.php?action=parse&"
+                     "format=json&formatversion=2&prop=text&redirects=1&"
+                     "disableeditsection=1&disablelimitreport=1&page=",
+                     lang);
+    url_put(&url, p->title);
+    char err[256];
+    if (ask(&url, &body, err, sizeof err) != 0) {
+        janas_buf_free(&body);
+        return;
+    }
+    struct janas_json_doc *d =
+        janas_json_parse(body.p, body.n, err, sizeof err);
+    const struct janas_json *t =
+        d ? janas_json_get(janas_json_get(janas_json_root(d), "parse"), "text")
+          : NULL;
+    if (janas_json_str(t) && t->n <= HTML_MAX) {
+        janas_buf_puts(data, "{\"title\": ");
+        janas_json_write_str(data, p->title, strlen(p->title));
+        janas_buf_puts(data, ", \"lang\": ");
+        janas_json_write_str(data, lang, strlen(lang));
+        janas_buf_puts(data, ", \"url\": ");
+        janas_json_write_str(data, p->url, strlen(p->url));
+        janas_buf_puts(data, ", \"desc\": ");
+        janas_json_write_str(data, p->desc, strlen(p->desc));
+        janas_buf_puts(data, ", \"section\": ");
+        janas_json_write_str(data, section ? section : "",
+                             section ? strlen(section) : 0);
+        janas_buf_puts(data, ", \"html\": ");
+        janas_json_write_str(data, t->s, t->n);
+        janas_buf_puts(data, "}");
+    }
+    janas_json_free(d);
+    janas_buf_free(&body);
+}
+
+/*
  * The page goes to the user as it is, and the model gets a note of it: a
  * page is thousands of tokens, which a model reads before it can answer -
  * over a minute of a large one for a page, and a few pages fill its
@@ -301,15 +348,22 @@ static int tool_page(const struct janas_json *args, struct janas_buf *b)
                           "language, that the page is above, with its "
                           "address.");
     janas_buf_free(&list);
+    /* the page as Wikipedia writes it, for a view */
+    struct janas_buf data = {0};
+    if (janas_mcps_client_views() && !p.disamb)
+        page_html(&p, lang, section, &data);
     wiki_page_free(&p);
-    if (out.oom || note.oom) {
+    if (out.oom || note.oom || data.oom) {
         janas_buf_free(&out);
         janas_buf_free(&note);
+        janas_buf_free(&data);
         return fail(b, "out of memory");
     }
-    janas_mcps_split_result(b, note.p, note.n, out.p, out.n);
+    janas_mcps_split_result_data(b, note.p, note.n, out.p, out.n, data.p,
+                                 data.n);
     janas_buf_free(&out);
     janas_buf_free(&note);
+    janas_buf_free(&data);
     return 0;
 }
 
@@ -504,6 +558,43 @@ static int tool_nearby(const struct janas_json *args, struct janas_buf *b)
                          "may be off: they can name theirs.",
                          how);
     janas_buf_puts(&out, "\n" LICENSE);
+    /* the places as data, for a view's map (MCP Apps) */
+    if (janas_mcps_client_views()) {
+        struct janas_buf d = {0};
+        janas_buf_printf(&d, "{\"lat\": %.5f, \"lon\": %.5f, \"km\": %.1f, ",
+                         lat, lon, km);
+        janas_buf_puts(&d, "\"name\": ");
+        janas_json_write_str(&d, name, strlen(name));
+        janas_buf_puts(&d, ", \"lang\": ");
+        janas_json_write_str(&d, lang, strlen(lang));
+        janas_buf_puts(&d, ", \"places\": [");
+        int k = 0;
+        for (int i = 0; i < n; i++) {
+            const struct wiki_hit *h = &hits[i];
+            if (isnan(h->lat))
+                continue;
+            janas_buf_puts(&d, k++ ? ", {\"title\": " : "{\"title\": ");
+            janas_json_write_str(&d, h->title, strlen(h->title));
+            janas_buf_puts(&d, ", \"desc\": ");
+            janas_json_write_str(&d, h->desc, strlen(h->desc));
+            janas_buf_printf(&d,
+                             ", \"lat\": %.5f, \"lon\": %.5f, \"km\": %.2f}",
+                             h->lat, h->lon, h->km);
+        }
+        janas_buf_puts(&d, "]}");
+        free(hits);
+        if (out.oom || d.oom) {
+            janas_buf_free(&out);
+            janas_buf_free(&d);
+            return fail(b, "out of memory");
+        }
+        janas_mcps_text_result(b, out.p, out.n, 0);
+        janas_buf_puts(b, ", \"structuredContent\": ");
+        janas_buf_put(b, d.p, d.n);
+        janas_buf_free(&out);
+        janas_buf_free(&d);
+        return 0;
+    }
     free(hits);
     return result(&out, b, 0);
 }
@@ -537,28 +628,34 @@ void wiki_tools_list(void *ctx, struct janas_buf *b)
     janas_buf_puts(b, ", ");
     lang_prop(b);
     janas_buf_puts(
-        b, ", \"limit\": {\"type\": \"integer\", \"minimum\": 1, "
-           "\"maximum\": 20, \"description\": \"How many pages (default "
-           "8).\"}}, \"required\": [\"query\"], \"additionalProperties\": "
-           "false}}, {\"name\": \"wiki_page\", \"title\": \"A page of "
-           "Wikipedia\", \"description\": \"Shows the user a page of "
-           "Wikipedia as it is: a short one whole, a long one its "
-           "introduction, or the section asked for. You get a note of it "
-           "(its address, its sections), not the text.\", "
-           "\"inputSchema\": {\"type\": \"object\", \"properties\": {");
+        b,
+        ", \"limit\": {\"type\": \"integer\", \"minimum\": 1, "
+        "\"maximum\": 20, \"description\": \"How many pages (default "
+        "8).\"}}, \"required\": [\"query\"], \"additionalProperties\": "
+        "false}, \"annotations\": {\"readOnlyHint\": true, "
+        "\"openWorldHint\": true}}, {\"name\": \"wiki_page\", \"title\": \"A page of "
+        "Wikipedia\", \"description\": \"Shows the user a page of "
+        "Wikipedia as it is: a short one whole, a long one its "
+        "introduction, or the section asked for. You get a note of it "
+        "(its address, its sections), not the text.\", "
+        "\"_meta\": {\"ui\": {\"resourceUri\": \"ui://wiki/page\"}}, "
+        "\"inputSchema\": {\"type\": \"object\", \"properties\": {");
     schema_str(b, "title", "The page's title, as a search gives it.");
     janas_buf_puts(b, ", ");
     schema_str(b, "section", "A section, by the name the note lists.");
     janas_buf_puts(b, ", ");
     lang_prop(b);
     janas_buf_puts(
-        b, "}, \"required\": [\"title\"], \"additionalProperties\": "
-           "false}}, {\"name\": \"wiki_nearby\", \"title\": \"Wikipedia "
-           "around a place\", \"description\": \"The pages of Wikipedia "
-           "about what lies around a place - monuments, churches, "
-           "museums, stations, villages - nearest first, with how far and "
-           "which way.\", \"inputSchema\": {\"type\": \"object\", "
-           "\"properties\": {");
+        b,
+        "}, \"required\": [\"title\"], \"additionalProperties\": "
+        "false}, \"annotations\": {\"readOnlyHint\": true, "
+        "\"openWorldHint\": true}}, {\"name\": \"wiki_nearby\", \"_meta\": "
+        "{\"ui\": {\"resourceUri\": \"ui://wiki/nearby\"}}, \"title\": \"Wikipedia "
+        "around a place\", \"description\": \"The pages of Wikipedia "
+        "about what lies around a place - monuments, churches, "
+        "museums, stations, villages - nearest first, with how far and "
+        "which way.\", \"inputSchema\": {\"type\": \"object\", "
+        "\"properties\": {");
     schema_str(b, "place",
                "A place, as its page is titled, or \"lat,lon\". Leave out "
                "place and coordinates only when the user names no place: "
@@ -573,7 +670,9 @@ void wiki_tools_list(void *ctx, struct janas_buf *b)
            "\"maximum\": 30, \"description\": \"How many pages (default "
            "15).\"}, ");
     lang_prop(b);
-    janas_buf_puts(b, "}, \"additionalProperties\": false}}]");
+    /* they only read, and say so: a client need not ask before each */
+    janas_buf_puts(b, "}, \"additionalProperties\": false}, \"annotations\": "
+                      "{\"readOnlyHint\": true, \"openWorldHint\": true}}]");
 }
 
 int wiki_tools_call(void *ctx, const struct janas_json *params,

@@ -18,13 +18,13 @@
 /* The options OpenAI's request has under the same names. */
 static void add_options(yyjson_mut_doc *q, yyjson_mut_val *qo, yyjson_val *opts)
 {
-    static const char *const same[] = {"top_p",
-                                       "top_k",
-                                       "min_p",
-                                       "seed",
-                                       "stop",
-                                       "presence_penalty",
-                                       "frequency_penalty"};
+    static const char *const same[] = {
+        "top_p", "top_k", "min_p", "seed", "stop", "presence_penalty",
+        "frequency_penalty",
+        /* and llama.cpp's, which Ollama
+           takes too */
+        "repeat_penalty", "repeat_last_n", "typical_p", "mirostat",
+        "mirostat_tau", "mirostat_eta"};
     if (!yyjson_is_obj(opts))
         return;
     for (size_t i = 0; i < sizeof same / sizeof same[0]; i++) {

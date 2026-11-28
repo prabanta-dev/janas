@@ -78,7 +78,10 @@ struct brebus {
     unsigned short front_port;
     char child_token[65];
     char root[4096];
-    int ws_given;    /* a project given by --workspace: the page opens it */
+    int ws_given; /* a project given by --workspace: the page opens it */
+    int windowed; /* in a window, or a browser's page, of this user's */
+    int argc;     /* how it was started: an update starts it again so */
+    char **argv;
     char cert[4300]; /* the certificate served (a child trusts it) */
     struct brebus_user users[BREBUS_USERS];
     int n_users;
@@ -321,8 +324,26 @@ int brebus_export(struct brebus *b, const char *body, size_t n,
 /* window.c: the page at url in a window of its own, until it is closed
    or *quit is set: 0 then, or -1 at once, with the reason, where there
    can be no window (no WebKitGTK, no display) */
+/* the languages of this computer, best first, for the window's address:
+   "it-IT,en" ("" none known) (lang.c) */
+void brebus_sys_langs(char *out, size_t len);
+/* lang.c: the page's language as a script (/brebus/lang.js): LANGS, those
+   there are, LANG and LOCALE, the first of want (codes, comma-separated)
+   there is a file of, and I18N[LANG], its texts that are safe; 0, -1 out
+   of memory */
+int brebus_lang_js(const char *bin_dir, const char *want,
+                   struct janas_buf *out);
+/* whether a translation v of the English k is as safe as k (forms: one of
+   a number's) */
+int brebus_lang_text_ok(const char *k, size_t kn, const char *v, size_t vn,
+                        int forms);
+
 int brebus_window(const char *url, volatile sig_atomic_t *quit, char *why,
                   size_t wn);
+/* outside.c: another site's page, a click in the window, opened in the
+   user's browser: only http and https, never this machine's own addresses
+   (127., localhost...): 0, or -1 when refused or not opened */
+int brebus_open_outside(const char *url);
 /* What the window does when asked to close: steps(say) runs on a thread
    of its own while the window stays open, say(text) showing each step on
    the page (window.brebusClosing), and the window closes when it returns.
@@ -334,7 +355,8 @@ void brebus_window_set_closer(void (*steps)(void (*say)(const char *)));
 int brebus_pick(int file, const char *title, char *out, size_t n);
 /* 1 while Brebus shows its page in its own window */
 int brebus_window_on(void);
-/* the window's page drawn at zoom z (0.5-3, 1 its size): -1 with no window */
+/* the window's page drawn at zoom z (0.25-4, 1 its size: the page's menu
+   goes by 25% from 25% to 400%): -1 with no window */
 int brebus_window_zoom(double z);
 /* window_place.c: the window's place and size (its normal ones, and
    whether it was maximized), kept in data_dir/window.json; read: 0, or -1
@@ -380,6 +402,11 @@ int brebus_ws_free(struct brebus *b, char *why, size_t wn);
 /* path, when it is the free chats' place or a recent project, into real:
    0, or -1 (no other folder is ever a chat's) */
 int brebus_ws_known(struct brebus *b, const char *path, char *real, size_t n);
+/* a project taken out of Brebus's list ({"path", "purge"}): with purge its
+   chats, settings and artifacts deleted, the user's files never; the free
+   chats opened if it was the one open. 0, or -1 with why */
+int brebus_ws_forget(struct brebus *b, const char *body, size_t n, char *why,
+                     size_t wn);
 /* a chat of another project than the one open (ws), read, saved or
    deleted, as brebus_chat_get, _put and _delete do for the open one */
 int brebus_chat_get_in(const char *ws, const char *id, struct janas_buf *out);
@@ -451,6 +478,32 @@ void brebus_skills_tool(struct brebus *b, struct janas_buf *tool,
                         struct janas_buf *catalog);
 int brebus_skills_call(struct brebus *b, const char *args, size_t n,
                        struct janas_buf *out);
+/* a skill's folder (src, named folder) copied among every chat's skills,
+   its name into name: 0, or -1 with err */
+int brebus_skills_install(const char *src, const char *folder, char *name,
+                          size_t name_n, char *err, size_t en);
+/* skills of a repository on GitHub ({"url"}): the folders with a SKILL.md,
+   their name and description (skills_get.c) */
+int brebus_skills_scan(struct brebus *b, const char *body, size_t n,
+                       struct janas_buf *out);
+/* one of them ({"repo", "ref", "path"}) downloaded and installed */
+int brebus_skills_fetch(struct brebus *b, const char *body, size_t n,
+                        struct janas_buf *out);
+/* Janas's list of connectors or skills (kind), from GitHub, kept a day
+   (ext.c): 0, or -1 when there is none */
+int brebus_ext_catalog(struct brebus *b, const char *kind,
+                       struct janas_buf *out);
+/* a search in MCP's registry of servers, its answer as it is: 0, or -1 */
+int brebus_ext_registry(struct brebus *b, const char *q, const char *cursor,
+                        struct janas_buf *out);
+/* the user's MCP servers in mcp.json: an entry read ({"name"}), written
+   ({"name", "old", "entry"}), removed ({"name"}) */
+int brebus_mcp_entry_get(struct brebus *b, const char *body, size_t n,
+                         struct janas_buf *out);
+int brebus_mcp_entry_set(struct brebus *b, const char *body, size_t n,
+                         struct janas_buf *out);
+int brebus_mcp_entry_remove(struct brebus *b, const char *body, size_t n,
+                            struct janas_buf *out);
 int brebus_skills_add(struct brebus *b, const char *body, size_t n,
                       struct janas_buf *out);
 int brebus_skills_remove(struct brebus *b, const char *body, size_t n,
@@ -518,7 +571,41 @@ int brebus_hf_check(struct brebus *b, const char *repo, const char *file,
    its own; the folder of the models changed (settings.json's _models_dir,
    a folder there is): 0, or -1 */
 void brebus_idle_start(struct brebus *b);
+
+/* a folder and all in it, its links removed, never followed, depth levels
+   deep at most (connectors.c): 0, or -1 */
+int brebus_remove_tree(const char *dir, int depth);
+
+/* Brebus's updates (update.c, update.h): the thread that looks for them
+   and installs them; as Brebus ends, the one downloaded installed; the
+   page's state (GET /brebus/update) and its requests (POST
+   /brebus/update: {"mode": "auto"|"notify"|"off"}, {"check": true},
+   {"install": true}, {"seen": true}) */
+/* Brebus asked to end, as by a signal (main.c) */
+void brebus_quit(void);
+void brebus_update_start(struct brebus *b);
+void brebus_update_at_exit(struct brebus *b);
+void brebus_update_status(struct brebus *b, struct janas_buf *out);
+int brebus_update_action(struct brebus *b, const char *body, size_t n,
+                         struct janas_buf *out);
 int brebus_models_dir_set(struct brebus *b, const char *path, int save);
+/* MCP Apps: a view of a server's tool, its page and the policy it is
+   served with; 0, or -1 with why */
+/* tiles: Brebus's own address of OpenStreetMap's tiles (".../brebus/tile/"),
+   the one other place its pictures may come from; NULL for none */
+int brebus_view(struct brebus *b, const char *server, const char *uri,
+                const char *tiles, struct janas_buf *html,
+                struct janas_buf *csp, char *why, size_t wn);
+/* OpenStreetMap's tile of a path /brebus/tile/<z>/<x>/<y>.png, asked of it
+   by Brebus, kept a week (tiles.c): 0, or -1 with why */
+int brebus_tile(struct brebus *b, const char *path, struct janas_buf *png,
+                char *why, size_t wn);
+/* a model's card from its file (general.*), as JSON; the HTTP status */
+int brebus_model_card(struct brebus *b, const char *name,
+                      struct janas_buf *out);
+/* a model's chat template from its file, as JSON; the HTTP status */
+int brebus_model_template(struct brebus *b, const char *name,
+                          struct janas_buf *out);
 /* a model of the models' folder deleted, its companions (MTP head, vision
    encoder) with it when no other model needs them; never the one loaded */
 int brebus_model_remove(struct brebus *b, const char *name, char *why,

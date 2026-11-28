@@ -491,3 +491,73 @@ KATTR static void K(q8_0_dotn)(const struct janas_block_q8_0 *w,
             ((a[0] + a[4]) + (a[2] + a[6])) + ((a[1] + a[5]) + (a[3] + a[7]));
     }
 }
+
+/* NVFP4: blocks of 64 weights (two blocks of 32 activations), each 16 of
+   them with a UE4M3 scale. A lane of 32 activations takes its two sub-blocks
+   in turn, each its exact sum times the two scales, as the reference: the
+   same bits. Sub-block s of a block holds its 16 codes in 8 bytes, the low
+   nibbles the first eight activations, the high ones the next eight. */
+KATTR static inline int8x16_t K(nvfp4_codes)(const uint8_t *q, int8x16_t lv)
+{
+    uint8x8_t b = vld1_u8(q);
+    int8x8_t lo = vqtbl1_s8(lv, vand_u8(b, vdup_n_u8(15)));
+    int8x8_t hi = vqtbl1_s8(lv, vshr_n_u8(b, 4));
+    return vcombine_s8(lo, hi);
+}
+
+KATTR static float K(nvfp4_dot)(const struct janas_block_nvfp4 *w,
+                                const struct janas_block_q8k *x, size_t nb)
+{
+    const int8x16_t lv = vld1q_s8(janas_mxfp4_values);
+    float acc[8] = {0};
+    for (size_t b = 0; b < nb; b++)
+        for (int k = 0; k < 8; k++) {
+            const struct janas_block_nvfp4 *wk = w + 4 * b + k / 2;
+            const int8_t *a = x[b].qs32 + 32 * k;
+            for (int h = 0; h < 2; h++) {
+                int s = 2 * (k % 2) + h;
+                int32_t dot = KSUM16(K(nvfp4_codes)(wk->qs + 8 * s, lv),
+                                     vld1q_s8(a + 16 * h));
+                acc[k] =
+                    fmaf(x[b].d32[k] * ue4m3_tab[wk->d[s]], (float)dot, acc[k]);
+            }
+        }
+    return ((acc[0] + acc[4]) + (acc[2] + acc[6])) +
+           ((acc[1] + acc[5]) + (acc[3] + acc[7]));
+}
+
+/* The same on nv vectors (1 to 8): the codes and scales of a block read
+   once for all of them, each vector's arithmetic as above. */
+KATTR static void K(nvfp4_dotn)(const struct janas_block_nvfp4 *w,
+                                const struct janas_block_q8k *x, size_t xs,
+                                int nv, size_t nb, float *out)
+{
+    const int8x16_t lv = vld1q_s8(janas_mxfp4_values);
+    float acc[8][8] = {{0}};
+    for (size_t b = 0; b < nb; b++) {
+        int8x16_t c[16];
+        float sc[16];
+        for (int k = 0; k < 8; k++)
+            for (int h = 0; h < 2; h++) {
+                const struct janas_block_nvfp4 *wk = w + 4 * b + k / 2;
+                int s = 2 * (k % 2) + h;
+                c[2 * k + h] = K(nvfp4_codes)(wk->qs + 8 * s, lv);
+                sc[2 * k + h] = ue4m3_tab[wk->d[s]];
+            }
+        for (int v = 0; v < nv; v++) {
+            const struct janas_block_q8k *xb = x + (size_t)v * xs + b;
+            for (int k = 0; k < 8; k++)
+                for (int h = 0; h < 2; h++) {
+                    int32_t dot = KSUM16(c[2 * k + h],
+                                         vld1q_s8(xb->qs32 + 32 * k + 16 * h));
+                    acc[v][k] =
+                        fmaf(xb->d32[k] * sc[2 * k + h], (float)dot, acc[v][k]);
+                }
+        }
+    }
+    for (int v = 0; v < nv; v++) {
+        const float *a = acc[v];
+        out[v] =
+            ((a[0] + a[4]) + (a[2] + a[6])) + ((a[1] + a[5]) + (a[3] + a[7]));
+    }
+}

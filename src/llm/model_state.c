@@ -49,6 +49,9 @@ struct janas_llm_state {
     float *ng_hist;
     uint16_t *ix;
     size_t bytes;
+    /* a checkpoint (janas_llm_model_checkpoint): of the attention layers
+       only the rings, the others' rows being where they are */
+    int rings_only;
 };
 
 /* qwen4exp: the bytes of a position's conv inputs, and of a slot's raw
@@ -162,10 +165,12 @@ static size_t slot_rows(const struct janas_llm_model *m, uint32_t sl, size_t n)
 /* The bytes of keys (or values) and the number of scales of n positions
    of the first n_slots slots. */
 static void kv_lengths(const struct janas_llm_model *m, uint32_t n_slots,
-                       size_t n, size_t *kv, size_t *rows)
+                       int rings_only, size_t n, size_t *kv, size_t *rows)
 {
     *kv = *rows = 0;
     for (uint32_t sl = 0; sl < n_slots; sl++) {
+        if (rings_only && !m->kv_ring[sl])
+            continue;
         size_t r = slot_rows(m, sl, n);
         *rows += (size_t)m->kv_heads[sl] * r;
         *kv += ((size_t)m->kv_heads[sl] * r * m->kv_hd[sl]) << m->kv16;
@@ -201,6 +206,8 @@ static void copy_kv(struct janas_llm_model *m, struct janas_llm_state *st,
                 }
             continue;
         }
+        if (st->rings_only)
+            continue;
         for (uint32_t h = 0; h < m->kv_heads[sl]; h++, sb += n * hd, ss += n) {
             size_t cb = m->kv_off[sl] + h * cap * hd;
             size_t cs = m->ks_off[sl] + h * cap;
@@ -227,8 +234,8 @@ static void *dup_mem(const void *p, size_t len)
     return d;
 }
 
-struct janas_llm_state *janas_llm_model_state_save(struct janas_llm_model *m,
-                                                   uint32_t n)
+static struct janas_llm_state *save(struct janas_llm_model *m, uint32_t n,
+                                    int ck)
 {
     /* DeepSeek-V4's state (model_ds4.c) is not saved yet */
     if (n > m->n_ctx || m->a->ds4 || m->a->ink)
@@ -252,8 +259,9 @@ struct janas_llm_state *janas_llm_model_state_save(struct janas_llm_model *m,
     st->exp_level = m->exp_level;
     st->n_slots = m->n_attn + (m->mtp ? 1u : 0u);
     st->nbuf = nbuf;
+    st->rings_only = ck;
     size_t rows, kv;
-    kv_lengths(m, st->n_slots, n, &kv, &rows);
+    kv_lengths(m, st->n_slots, ck, n, &kv, &rows);
     st->k = malloc(kv ? kv : 1);
     st->v = malloc(kv ? kv : 1);
     st->ks = malloc((rows ? rows : 1) * sizeof(float));
@@ -298,7 +306,7 @@ struct janas_llm_state *janas_llm_model_state_save(struct janas_llm_model *m,
         bad |= !st->ng_tok || !st->ng_hist;
         st->bytes += st->ng_n * (sizeof(int32_t) + ng_row(m));
     }
-    if (m->ix_heads) {
+    if (m->ix_heads && !ck) {
         st->ix = malloc(ix_len(m, n) ? ix_len(m, n) : 1);
         bad |= !st->ix;
         st->bytes += ix_len(m, n);
@@ -310,6 +318,18 @@ struct janas_llm_state *janas_llm_model_state_save(struct janas_llm_model *m,
     return st;
 }
 
+struct janas_llm_state *janas_llm_model_state_save(struct janas_llm_model *m,
+                                                   uint32_t n)
+{
+    return save(m, n, 0);
+}
+
+struct janas_llm_state *janas_llm_model_checkpoint(struct janas_llm_model *m,
+                                                   uint32_t n)
+{
+    return save(m, n, 1);
+}
+
 int janas_llm_model_state_load(struct janas_llm_model *m,
                                const struct janas_llm_state *st)
 {
@@ -319,7 +339,7 @@ int janas_llm_model_state_load(struct janas_llm_model *m,
     if (st->n > m->n_ctx || st->n_slots != m->n_attn + (m->mtp ? 1u : 0u) ||
         st->k_use != m->k_use || st->exp_level != m->exp_level ||
         (m->a->rec != 0) != (st->nbuf != 0) || st->ng_n != ng_keep(m, st->n) ||
-        (m->ix_heads != 0) != (st->ix != 0))
+        (!st->rings_only && (m->ix_heads != 0) != (st->ix != 0)))
         return -1;
     copy_kv(m, (struct janas_llm_state *)st, 0);
     m->cur->ring_hi = st->n;
@@ -346,6 +366,8 @@ int janas_llm_model_state_load(struct janas_llm_model *m,
         m->cur->log_n = st->log_n;
     }
     copy_hc(m, (struct janas_llm_state *)st, 0);
+    if (st->rings_only && m->ix_heads)
+        janas_m_qsa_restore(m, st->n); /* its raw keys are where they were */
     return 0;
 }
 
@@ -411,7 +433,7 @@ static void lengths(const struct janas_llm_model *m, const uint32_t *h,
                     size_t *lm, size_t *lb)
 {
     size_t B = JANAS_LLM_MAX_BLOCK, nb = h[H_NBUF];
-    kv_lengths(m, h[H_SLOTS], h[H_N], kv, rows);
+    kv_lengths(m, h[H_SLOTS], 0, h[H_N], kv, rows);
     *ssm = nb ? nb * ssm_len(m) * sizeof(uint16_t) : 0;
     *conv = nb ? nb * conv_len(m) * sizeof(float) : 0;
     *lm = nb == 2 ? (size_t)m->n_rec * B * m->conv_ch * sizeof(float) : 0;
@@ -423,8 +445,8 @@ int janas_llm_state_write(const struct janas_llm_model *m,
 {
     uint32_t h[H_COUNT] = {0};
     shape(m, h);
-    if (h[H_SLOTS] != st->n_slots)
-        return -1;
+    if (h[H_SLOTS] != st->n_slots || st->rings_only)
+        return -1; /* a checkpoint is of the cache it was taken from */
     h[H_N] = st->n;
     h[H_NBUF] = (uint32_t)st->nbuf;
     h[H_BASE] = (uint32_t)st->base;

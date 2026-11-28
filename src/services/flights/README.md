@@ -17,6 +17,7 @@ Airports are found by IATA or ICAO code, by city, or by the names people use ("T
 |---|---|---|
 | positions, altitude, speed | [adsb.lol](https://adsb.lol) (Open Database License), [adsb.fi](https://adsb.fi) when it does not answer | none |
 | a callsign's route, without a key | [adsbdb.com](https://www.adsbdb.com) | none |
+| the way a plane chosen on the map has flown (its trail) | [The OpenSky Network](https://opensky-network.org) (for research and non-commercial use), asked by the map's view alone (`flight_track`, not offered to the model) | none |
 | schedules and times | [AviationStack](https://aviationstack.com) | yours, free: 100 calls a month |
 | airports, cities, seas | [OurAirports](https://ourairports.com) (public domain), [GeoNames](https://www.geonames.org) (CC BY 4.0), [Natural Earth](https://www.naturalearthdata.com) (public domain), built into the program by `tools/gen_geo` | - |
 
@@ -40,6 +41,10 @@ or in another file named by `--config FILE` or `JANAS_FLIGHTS_CONFIG`, or in the
 - AviationStack's status of a flight lags (a flight still "active" an hour after landing, another "active" an hour before leaving): the state reported comes from the actual times.
 - An aircraft flies several flights a day: a live position is given to a flight only when the aircraft with its transponder is on its route and heading for its destination, or on the ground at the right airport.
 - A question about a number brings its codeshares too (AZ1731 and Volotea's V76064, the same flight): the number asked is the one answered, and in a list the others show as "also sold as".
+
+## On a map
+
+In Brebus, and in any client that shows MCP Apps' views, `flights_over` and `flights_nearby` show the aircraft on a map (`ui://flights/map`, `views/map.html`): each a small plane turned along its track, coloured by its height (on the ground, below 10,000 ft, up to 30,000, higher; an emergency code in red), the sea or the circle asked about in sight, the list under the map; a click on a plane or a line shows its type, registration, route, height and speed. The map is drawn in the page from Natural Earth's land (public domain), fetched from nowhere.
 
 ## Running it
 

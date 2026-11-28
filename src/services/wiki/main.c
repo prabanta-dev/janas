@@ -18,6 +18,22 @@
 
 /* INSTRUCTIONS, from SKILL.md beside this file (build.sh) */
 #include "skill.h"
+/* VIEW_page, from views/page.html (build.sh): a page of Wikipedia as it
+   is written there, for a client that shows MCP Apps' views */
+#include "views.h"
+
+static const struct janas_mcps_view views[] = {
+    {.uri = "ui://wiki/page",
+     .name = "A page of Wikipedia",
+     .html = VIEW_page,
+     /* its pictures, from Wikimedia's own server of files */
+     .csp = "\"resourceDomains\": [\"https://upload.wikimedia.org\", "
+            "\"https://thumb.wikimedia.org\"]"},
+    /* the pages around a place on a map */
+    {.uri = "ui://wiki/nearby",
+     .name = "Wikipedia around a place",
+     .html = VIEW_nearby,
+     .csp = NULL}};
 
 static void usage(void)
 {
@@ -47,7 +63,9 @@ int main(int argc, char **argv)
                              .version = JANAS_VERSION,
                              .instructions = INSTRUCTIONS,
                              .tools_list = wiki_tools_list,
-                             .tools_call = wiki_tools_call};
+                             .tools_call = wiki_tools_call,
+                             .views = views,
+                             .n_views = 2};
     if (janas_mcps_open(&srv) != 0) {
         fprintf(stderr, "janas-wiki: cannot set its output aside\n");
         return 1;

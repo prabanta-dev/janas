@@ -291,9 +291,40 @@ static int32_t find_format_in(janas_llm *llm, const struct janas_jns *j,
         if (llm->call_open < 0 || llm->call_close < 0 || llm->resp_open < 0 ||
             llm->resp_close < 0)
             llm->tools = JANAS_TOOLS_NONE;
+    } else if (tmpl[0]) {
+        /* a family of its own: its template writes its chats, its end of
+           turn ends its replies (below) */
+        llm->format = FORMAT_OTHER;
+        llm->im_start = llm->im_end = -1;
+        llm->think_open = strstr(tmpl, "<think>")
+                              ? janas_tokenizer_find(llm->tok, "<think>")
+                              : -1;
+        llm->think_close = strstr(tmpl, "</think>")
+                               ? janas_tokenizer_find(llm->tok, "</think>")
+                               : -1;
+        llm->thinker = llm->think_open >= 0 && llm->think_close >= 0 &&
+                       (strstr(tmpl, "enable_thinking") ||
+                        strstr(tmpl, "reasoning_effort"));
+        llm->call_open = llm->call_close = -1;
+        llm->resp_open = llm->resp_close = -1;
+        llm->tools = JANAS_TOOLS_NONE;
     } else {
-        return janas_api_fail(JANAS_LLM_EMODEL, "chat format not supported");
+        return janas_api_fail(JANAS_LLM_EMODEL,
+                              "chat format not supported, and the model's "
+                              "file has no chat template");
     }
+    uint32_t cs;
+    llm->clean_spaces =
+        janas_jns_meta_u32(j, "tokenizer.ggml.clean_spaces", &cs) == 0 && cs;
+    /* the ends of a turn the file names (llama.cpp's converter writes them
+       from the tokenizer's config): the reply stops at them too */
+    uint32_t endt;
+    if (janas_jns_meta_u32(j, "tokenizer.ggml.eot_token_id", &endt) == 0 &&
+        endt <= INT32_MAX)
+        add_stop(llm, (int32_t)endt);
+    if (janas_jns_meta_u32(j, "tokenizer.ggml.eom_token_id", &endt) == 0 &&
+        endt <= INT32_MAX)
+        add_stop(llm, (int32_t)endt);
     /* an embedding model: how its states make one vector */
     char arch[32] = "", key[96];
     uint32_t v;
@@ -324,6 +355,14 @@ static int32_t find_format(janas_llm *llm, const struct janas_jns *j)
     if (janas_jns_meta_str(j, "tokenizer.chat_template", tmpl, cap) != 0)
         tmpl[0] = 0;
     int32_t rc = find_format_in(llm, j, tmpl);
+    uint32_t bos;
+    llm->bos_tok =
+        janas_jns_meta_u32(j, "tokenizer.ggml.bos_token_id", &bos) == 0 &&
+                bos <= INT32_MAX
+            ? (int32_t)bos
+            : -1;
+    if (rc == 0)
+        janas_api_template_open(llm, tmpl);
     free(tmpl);
     return rc;
 }
@@ -656,6 +695,8 @@ int32_t janas_llm_open(const char *path, const struct janas_llm_params *pp,
         rc = janas_api_fail(JANAS_LLM_EMODEL, "tokenizer: %s", err);
     else
         rc = find_format(llm, &j);
+    if (rc == 0)
+        janas_api_read_rec(llm, &j);
     struct mem_need e;
     /* a vision encoder beside it whose pictures attend both ways: the
        prefill block holds a picture whole */
@@ -663,6 +704,7 @@ int32_t janas_llm_open(const char *path, const struct janas_llm_params *pp,
     mem_need(&j, p.n_ctx, p.mtp_path != NULL, pic_block, &e);
     janas_jns_close(&j);
     if (rc != 0) {
+        janas_api_template_close(llm);
         janas_tokenizer_destroy(llm->tok);
         free(llm);
         return rc;
@@ -766,6 +808,7 @@ int32_t janas_llm_open(const char *path, const struct janas_llm_params *pp,
     llm->path = strdup(path);
     llm->m = janas_llm_model_load(path, &mo, err, sizeof(err));
     if (!llm->m) {
+        janas_api_template_close(llm);
         janas_tokenizer_destroy(llm->tok);
         free(llm);
         return janas_api_fail(JANAS_LLM_EOPEN, "%s: %s", path, err);
@@ -783,6 +826,7 @@ int32_t janas_llm_open(const char *path, const struct janas_llm_params *pp,
         llm->draft = janas_llm_model_load(p.draft_path, &dmo, err, sizeof(err));
         if (!llm->draft) {
             janas_llm_model_free(llm->m);
+            janas_api_template_close(llm);
             janas_tokenizer_destroy(llm->tok);
             free(llm);
             return janas_api_fail(JANAS_LLM_EOPEN, "%s: %s", p.draft_path, err);
@@ -793,6 +837,7 @@ int32_t janas_llm_open(const char *path, const struct janas_llm_params *pp,
             uint32_t b = janas_llm_model_n_vocab(llm->draft);
             janas_llm_model_free(llm->draft);
             janas_llm_model_free(llm->m);
+            janas_api_template_close(llm);
             janas_tokenizer_destroy(llm->tok);
             free(llm);
             return janas_api_fail(
@@ -915,6 +960,7 @@ void janas_llm_close(janas_llm *llm)
     /* the drafting model first: it borrowed the target's threads */
     janas_llm_model_free(llm->draft);
     janas_llm_model_free(llm->m);
+    janas_api_template_close(llm);
     janas_tokenizer_destroy(llm->tok);
     janas_vision_close(llm->vis);
     janas_api_monitor_free(llm);

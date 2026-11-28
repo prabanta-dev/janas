@@ -9,6 +9,7 @@
  */
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 #include "flights.h"
 
@@ -64,7 +65,53 @@ static void place(const struct janas_json *p, struct fl_place *o)
     o->lon = janas_json_num(janas_json_get(p, "longitude"), 0);
 }
 
+/* the answers kept an hour, by callsign: a view that updates by itself
+   asks for the same aircraft every few seconds, and adsbdb is the
+   community's; "none" kept too (k 0), not a failure (-1) */
+#define KEEP 256
+#define KEEP_S 3600
+static struct kept {
+    char callsign[24];
+    time_t at;
+    int k;
+    struct fl_route r;
+} kept[KEEP];
+static int kept_next;
+
+static int route_ask(const char *callsign, struct fl_route *r);
+
+int fl_route_kept(const char *callsign, struct fl_route *r)
+{
+    time_t now = time(NULL);
+    for (int i = 0; i < KEEP; i++)
+        if (kept[i].callsign[0] && !strcmp(kept[i].callsign, callsign) &&
+            now - kept[i].at < KEEP_S) {
+            *r = kept[i].r;
+            return kept[i].k;
+        }
+    memset(r, 0, sizeof(*r));
+    return -2;
+}
+
 int fl_route(const char *callsign, struct fl_route *r)
+{
+    time_t now = time(NULL);
+    int k0 = fl_route_kept(callsign, r);
+    if (k0 != -2)
+        return k0;
+    int k = route_ask(callsign, r);
+    if (k >= 0 && strlen(callsign) < sizeof kept[0].callsign) {
+        struct kept *e = &kept[kept_next];
+        kept_next = (kept_next + 1) % KEEP;
+        snprintf(e->callsign, sizeof e->callsign, "%s", callsign);
+        e->at = now;
+        e->k = k;
+        e->r = *r;
+    }
+    return k;
+}
+
+static int route_ask(const char *callsign, struct fl_route *r)
 {
     memset(r, 0, sizeof(*r));
     char path[64];

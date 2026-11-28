@@ -406,7 +406,7 @@ int brebus_server_start(struct brebus *b, const char *body, size_t n,
     snprintf(exe, sizeof exe, "%s/janas-server%s", b->bin_dir, b->suffix);
     v->port = (unsigned short)(b->port + 1 + slot);
     snprintf(port, sizeof port, "%u", v->port);
-    const char *argv[40 + 2 * MAX_ORIGINS];
+    const char *argv[48 + 2 * MAX_ORIGINS];
     int k = 0;
     argv[k++] = exe;
     argv[k++] = m[at].path;
@@ -475,6 +475,48 @@ int brebus_server_start(struct brebus *b, const char *body, size_t n,
     if (th && (th->type == JANAS_JSON_FALSE || th->type == JANAS_JSON_TRUE)) {
         argv[k++] = "--think";
         argv[k++] = th->type == JANAS_JSON_TRUE ? "on" : "off";
+    }
+    /* the model's sampling as the user set it in My models: the server's
+       for every request that does not say (janas-server checks it) */
+    const struct janas_json *smp = o ? janas_json_get(o, "sampling") : NULL;
+    static struct janas_buf smp_s;
+    smp_s.n = 0;
+    if (smp && smp->type == JANAS_JSON_OBJECT && smp->n) {
+        janas_json_write(&smp_s, smp);
+        janas_buf_put(&smp_s, "", 1);
+        if (!smp_s.oom) {
+            argv[k++] = "--sampling";
+            argv[k++] = smp_s.p;
+        }
+    }
+    /* the chat template the user wrote for the model, in a file of its
+       own for janas-server (--chat-template), and the template's
+       variables (--chat-template-kwargs) */
+    const struct janas_json *tp = o ? janas_json_get(o, "template") : NULL;
+    static char tp_path[4400];
+    if (tp && tp->type == JANAS_JSON_STRING && janas_json_str(tp)[0]) {
+        snprintf(tp_path, sizeof tp_path, "%s/template%s%.0d.jinja",
+                 b->data_dir, slot ? "-" : "", slot);
+        int tf = open(tp_path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+        const char *tt = janas_json_str(tp);
+        size_t tn = strlen(tt);
+        if (tf >= 0 && write(tf, tt, tn) == (ssize_t)tn) {
+            argv[k++] = "--chat-template";
+            argv[k++] = tp_path;
+        }
+        if (tf >= 0)
+            close(tf);
+    }
+    const struct janas_json *kw = o ? janas_json_get(o, "kwargs") : NULL;
+    static struct janas_buf kw_s;
+    kw_s.n = 0;
+    if (kw && kw->type == JANAS_JSON_OBJECT && kw->n) {
+        janas_json_write(&kw_s, kw);
+        janas_buf_put(&kw_s, "", 1);
+        if (!kw_s.oom) {
+            argv[k++] = "--chat-template-kwargs";
+            argv[k++] = kw_s.p;
+        }
     }
     /* where each kind of pass runs, when the user chose it: else Janas
        chooses, measuring this computer */
@@ -1012,6 +1054,21 @@ void brebus_server_start_last(struct brebus *b)
     if (th && (th->type == JANAS_JSON_TRUE || th->type == JANAS_JSON_FALSE))
         janas_buf_printf(&body, ", \"think\": %s",
                          th->type == JANAS_JSON_TRUE ? "true" : "false");
+    const struct janas_json *smp = s ? janas_json_get(s, "sampling") : NULL;
+    if (smp && smp->type == JANAS_JSON_OBJECT) {
+        janas_buf_puts(&body, ", \"sampling\": ");
+        janas_json_write(&body, smp);
+    }
+    const struct janas_json *kw = s ? janas_json_get(s, "kwargs") : NULL;
+    if (kw && kw->type == JANAS_JSON_OBJECT) {
+        janas_buf_puts(&body, ", \"kwargs\": ");
+        janas_json_write(&body, kw);
+    }
+    const struct janas_json *tp = s ? janas_json_get(s, "template") : NULL;
+    if (tp && tp->type == JANAS_JSON_STRING) {
+        janas_buf_puts(&body, ", \"template\": ");
+        janas_json_write(&body, tp);
+    }
     static const char *const STR[] = {"prompt_on", "drafts_on", "reply_on",
                                       "gpu_api"};
     for (size_t i = 0; s && i < sizeof STR / sizeof *STR; i++) {

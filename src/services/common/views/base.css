@@ -1,0 +1,135 @@
+/* base.css - the views' look: the host's colours (MCP Apps' variables) where
+   it gives them, these where it does not, light and dark */
+:root {
+  --color-background-primary: #ffffff; --color-background-secondary: #f5f5f4;
+  --color-text-primary: #1c1917; --color-text-secondary: #57534e;
+  --color-border-primary: #e7e5e4; --color-ring-primary: #2563eb;
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --map-sea: #dce9f2; --map-land: #f6f3ec; --map-coast: #b8b0a2;
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  --color-background-primary: #1c1b1a; --color-background-secondary: #262523;
+  --color-text-primary: #ecebe9; --color-text-secondary: #a8a29e;
+  --color-border-primary: #3a3835; --color-ring-primary: #60a5fa;
+  --map-sea: #17222c; --map-land: #2b2a27; --map-coast: #4a4741;
+  color-scheme: dark;
+}
+html, body { margin: 0; background: var(--color-background-primary); color: var(--color-text-primary);
+  font: 14px/1.4 var(--font-sans); }
+body { padding: 8px; box-sizing: border-box; }
+.mapbox { position: relative; border-radius: 8px; overflow: hidden; border: 1px solid var(--color-border-primary); }
+canvas.map { display: block; touch-action: none; cursor: grab; }
+canvas.map:active { cursor: grabbing; }
+.mapbar { position: absolute; right: 8px; top: 8px; display: flex; flex-direction: column; gap: 4px; }
+.mapbar button { width: 28px; height: 28px; border-radius: 6px; border: 1px solid var(--color-border-primary);
+  background: var(--color-background-primary); color: var(--color-text-primary); font-size: 16px; line-height: 1; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; padding: 0; box-sizing: border-box; }
+.mapbar button svg { display: block; flex: none; }
+.mapbar button[hidden] { display: none; }
+.mapbar button.on { border-color: var(--color-ring-primary); color: var(--color-ring-primary); }
+canvas.map.lens { cursor: crosshair; }
+/* the maps' menu, beside the bar */
+.maplayers { position: absolute; right: 44px; top: 8px; z-index: 5; display: flex; flex-direction: column; min-width: 220px; max-width: 70%;
+  background: var(--color-background-primary); border: 1px solid var(--color-border-primary); border-radius: 8px; box-shadow: 0 4px 14px #0003; overflow: hidden; }
+.maplayers[hidden] { display: none; }
+.maplayers button { all: unset; cursor: pointer; padding: 7px 10px; font: 13px var(--font-sans, sans-serif); color: var(--color-text-primary); }
+.maplayers button:hover { background: var(--color-background-secondary); }
+.maplayers button.on { box-shadow: inset 3px 0 0 var(--color-ring-primary); font-weight: 600; }
+.maplayers small { display: block; color: var(--color-text-secondary); font-size: 11px; font-weight: 400; }
+.maplayers small:empty { display: none; }
+.mapattr { position: absolute; right: 4px; bottom: 4px; max-width: calc(100% - 8px); text-align: right; font: 10px var(--font-sans, sans-serif); padding: 1px 5px; border: 0; border-radius: 4px;
+  background: #fffc; color: #333; cursor: pointer; }
+.mapattr[hidden] { display: none; }
+.mapgrip { height: 10px; margin: 0 0 4px; cursor: ns-resize; touch-action: none; position: relative; }
+.mapgrip::after { content: ""; position: absolute; left: 50%; top: 3px; width: 40px; height: 4px; margin-left: -20px; border-radius: 2px;
+  background: var(--color-border-primary); }
+.mapgrip:hover::after { background: var(--color-text-secondary); }
+.note { color: var(--color-text-secondary); font-size: 12px; }
+button.link { background: none; border: 0; padding: 0; color: var(--color-ring-primary); cursor: pointer; font: inherit; text-decoration: underline; }
+/* a card of details a view opens (a quake, a plane, a place): its × at the
+   top right closes it (App.closer) */
+.vclose { position: absolute; top: 4px; right: 4px; width: 24px; height: 24px; border: 0; border-radius: 6px; background: none;
+  color: var(--color-text-secondary); font: 18px/24px var(--font-sans, sans-serif); cursor: pointer; padding: 0; }
+.vclose:hover { background: var(--color-background-primary); color: var(--color-text-primary); }
+.hasclose { position: relative; padding-right: 32px !important; }
+/* Export (export.js): a small button, a panel under it */
+.vtools { display: flex; gap: 8px; align-items: center; margin: 6px 0; flex-wrap: wrap; }
+.vtools:empty { display: none; }
+.xbtn { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 6px; cursor: pointer; font: 12px var(--font-sans, sans-serif);
+  border: 1px solid var(--color-border-primary); background: var(--color-background-primary); color: var(--color-text-primary); }
+.xbtn:hover { border-color: var(--color-ring-primary); }
+.xpanel { margin: 6px 0; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--color-border-primary); background: var(--color-background-secondary);
+  font: 13px var(--font-sans, sans-serif); color: var(--color-text-primary); }
+.xpanel .xtitle { display: block; margin-bottom: 6px; }
+.xpanel .xrow { margin: 6px 0; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.xpanel .xlbl { color: var(--color-text-secondary); }
+.xpanel .xcols { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 2px 12px; }
+.xpanel .xcols label { display: flex; gap: 6px; align-items: center; cursor: pointer; }
+.xpanel select { font: inherit; padding: 2px 6px; border-radius: 6px; border: 1px solid var(--color-border-primary); background: var(--color-background-primary); color: var(--color-text-primary); }
+.xpanel .xbtns { display: flex; gap: 8px; margin-top: 8px; }
+.xpanel .xbtns button { padding: 4px 14px; border-radius: 6px; cursor: pointer; font: inherit; border: 1px solid var(--color-border-primary);
+  background: var(--color-background-primary); color: var(--color-text-primary); }
+.xpanel .xbtns .xsave { border-color: var(--color-ring-primary); color: var(--color-ring-primary); font-weight: 600; }
+.xpanel .xmsg:empty { display: none; }
+.xdone { margin-left: 8px; }
+/* Update by itself (live.js) */
+.live { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 2px; font: 12px var(--font-sans, sans-serif); color: var(--color-text-primary); }
+.live .lrow { display: inline-flex; gap: 6px; align-items: center; }
+.live .lwhen { font-size: 11px; white-space: nowrap; }
+.vtools:has(> .live) { align-items: flex-start; }
+.live label { display: inline-flex; gap: 5px; align-items: center; cursor: pointer; }
+.live select { font: inherit; padding: 2px 4px; border-radius: 6px; border: 1px solid var(--color-border-primary); background: var(--color-background-primary); color: var(--color-text-primary); }
+.live .lnow { padding: 3px 6px; }
+.live .lnow svg { display: block; }
+.live .lnow.busy svg { animation: lspin 0.9s linear infinite; }
+@keyframes lspin { to { transform: rotate(360deg); } }
+/* on: coloured, not bolder, so that nothing beside it moves */
+.live.on label { color: var(--color-ring-primary); }
+/* a choice on or off: a switch, as Brebus draws them, never a box */
+input[type=checkbox] { appearance: none; -webkit-appearance: none; flex: none; position: relative;
+  width: 34px; height: 20px; margin: 0; border: 1.5px solid var(--color-text-secondary); border-radius: 10px;
+  background: var(--color-border-primary); cursor: pointer; vertical-align: -5px;
+  transition: background .15s ease, border-color .15s ease; }
+input[type=checkbox]::after { content: ""; position: absolute; top: 2px; left: 2px; width: 13px;
+  height: 13px; border-radius: 50%; background: var(--color-background-primary); box-shadow: 0 1px 2px rgba(0,0,0,.25);
+  transition: transform .15s ease; }
+input[type=checkbox]:checked { background: var(--color-ring-primary); border-color: var(--color-ring-primary); }
+input[type=checkbox]:checked::after { transform: translateX(14px); background: #fff; }
+input[type=checkbox]:focus-visible { outline: 2px solid var(--color-ring-primary); outline-offset: 2px; }
+/* the view filling the host's room (displayMode fullscreen: Brebus's pane):
+   nothing scrolls but its list, which takes what the rest leaves; the
+   map's grip shares the room between them */
+html.fill:has(body > ol#list), html.fill body:has(> ol#list) { height: 100%; overflow: hidden; }
+html.fill body:has(> ol#list) { display: flex; flex-direction: column; }
+html.fill body:has(> ol#list) > * { flex: none; }
+html.fill body > ol#list { flex: 1 1 auto; min-height: 60px; max-height: none !important; overflow: auto; }
+/* a map's view over the whole room (float.js): the map fills it, the rest
+   floats over it in panels moved by dragging; the list's panel folds */
+html.float, html.float body { height: 100%; overflow: hidden; }
+html.float body { padding: 0; }
+html.float .mapbox { position: fixed; inset: 0; border: 0; border-radius: 0; }
+html.float .mapgrip { display: none; }
+.fpanel { position: fixed; z-index: 3; box-sizing: border-box; border: 1px solid var(--color-border-primary); border-radius: 10px;
+  background: color-mix(in srgb, var(--color-background-primary) 94%, transparent); backdrop-filter: blur(4px); box-shadow: 0 6px 20px #0003; }
+.fpanel.moving { cursor: grabbing; user-select: none; box-shadow: 0 10px 28px #0004; }
+.fside { left: 8px; top: 8px; width: min(380px, calc(100% - 60px)); max-height: calc(100% - 16px); display: flex; flex-direction: column; overflow: hidden; }
+.fhead { display: flex; align-items: flex-start; gap: 6px; padding: 8px 6px 6px 10px; cursor: grab; user-select: none; touch-action: none; }
+.fhead h1 { flex: 1; margin: 0 !important; font-size: 13px !important; }
+.ffold { flex: none; width: 24px; height: 24px; border: 0; border-radius: 6px; background: none; color: var(--color-text-secondary); cursor: pointer;
+  display: flex; align-items: center; justify-content: center; padding: 0; }
+.ffold:hover { background: var(--color-background-secondary); color: var(--color-text-primary); }
+.ffold svg { display: block; transition: transform 0.15s; }
+.fside.folded .ffold svg { transform: rotate(180deg); }
+.fside.folded .fbody { display: none; }
+/* the card of details, in the panel between the commands and the list:
+   the list gives it room down to a few rows */
+html.float #card.fcard { flex: none; margin: 4px 0 6px; padding: 8px; max-height: 45vh; overflow: auto; }
+html.float #card.fcard[hidden] { display: none; }
+.fbody { display: flex; flex-direction: column; min-height: 0; flex: 0 1 auto; padding: 0 10px 8px; overflow: auto; }
+.fbody > * { flex: none; }
+.fbody > ol { flex: 1 1 auto; min-height: 48px; max-height: none !important; overflow: auto; }
+.fbody > .note:last-child { margin: 6px 0 0; font-size: 11px; }
+@media (max-width: 620px) {
+  .fside { width: calc(100% - 56px); max-height: 48%; }
+}

@@ -21,6 +21,7 @@
 #endif
 
 #include "brebus.h"
+#include "update.h"
 #include "common/catalog.h"
 #include "common/mcp_tls.h"
 #include "common/proc.h"
@@ -38,6 +39,11 @@ static volatile sig_atomic_t quit;
 static void on_signal(int s)
 {
     (void)s;
+    quit = 1;
+}
+
+void brebus_quit(void)
+{
     quit = 1;
 }
 
@@ -305,7 +311,15 @@ static int serve_setup(struct brebus *b, const char *cert, const char *key)
 int main(int argc, char **argv)
 {
     janas_sandbox_main(argc, argv); /* a cage for python.c being built */
-    struct brebus b = {.port = 41414};
+    /* an update being put in place (update_apply.c), and the check that
+       a new version runs at all */
+    if (argc == 3 && !strcmp(argv[1], "--update-finish"))
+        return brebus_update_finish(argv[2]);
+    if (argc == 2 && !strcmp(argv[1], "--update-check")) {
+        printf("brebus %s\n", JANAS_VERSION);
+        return 0;
+    }
+    struct brebus b = {.port = 41414, .argc = argc, .argv = argv};
     int open = 1, browser = 0, background = 0;
     const char *workspace = NULL, *add_user = NULL, *cert = NULL, *key = NULL;
     const char *enroll_user = NULL;
@@ -500,6 +514,8 @@ int main(int argc, char **argv)
     if (background && !b.child && !b.serve)
         brebus_server_start_last(&b);
     brebus_idle_start(&b);
+    b.windowed = open;
+    brebus_update_start(&b); /* looks for a new version, and installs it */
     char url[128];
     snprintf(url, sizeof url, "%s://%s%s%s:%u/", b.tls ? "https" : "http",
              strchr(b.listen, ':') ? "[" : "",
@@ -541,5 +557,6 @@ int main(int argc, char **argv)
     brebus_get_stop(&b, NULL); /* a download too, to go on next time */
     brebus_tools_stop(&b);
     janas_buf_free(&o);
+    brebus_update_at_exit(&b); /* a new version downloaded: in place now */
     return 0;
 }

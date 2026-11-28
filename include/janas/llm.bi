@@ -77,10 +77,15 @@ end type
 
 type janas_llm_chat_params
     size        as ulong
+    '' the sampling fields left negative (janas_llm_chat_params_default
+    '' leaves temperature, top_k, top_p, min_p, repeat_penalty,
+    '' repeat_last_n, xtc_probability, xtc_threshold, mirostat, mirostat_tau
+    '' and mirostat_eta at -1): the model's own, as its file recommends, else
+    '' Janas's 0.7, 20, 0.8, 0...; janas_llm_chat_sampling says the result
     temperature as single    '' 0: always the most likely token
-    top_k       as long
-    top_p       as single
-    min_p       as single
+    top_k       as long      '' 0: no limit
+    top_p       as single    '' 1: no limit
+    min_p       as single    '' 0: no limit
     seed        as ulongint  '' 0: a new one each chat
     speculate   as long      '' 1: draft ahead when it pays
     max_reply   as long      '' tokens per reply; 0: no limit
@@ -97,6 +102,31 @@ type janas_llm_chat_params
     max_reasoning as long    '' the longest reasoning, closed for the model
                              '' there with a sentence and the mark, the
                              '' answer following (0: none)
+    '' llama.cpp's sampling, with its names and meanings (llm.h), all off
+    '' unless set, or the model's where negative and its file says
+    repeat_penalty as single '' a token among the last repeat_last_n: its
+                             '' logit divided by it when positive,
+                             '' multiplied when not (1: off)
+    repeat_last_n  as long   '' that window, the penalties' too (0: the reply)
+    typical_p      as single '' locally typical sampling (1: off)
+    top_n_sigma    as single '' within n standard deviations of the best
+                             '' (0: off)
+    xtc_probability as single '' XTC: with this probability the choices
+    xtc_threshold   as single '' above the threshold but the least likely
+                              '' left out (0: off; threshold 0.1)
+    dry_multiplier as single '' DRY: a run repeated longer than
+    dry_base       as single '' dry_allowed_length loses multiplier x
+    dry_allowed_length as long '' base^(length - allowed) (0: off; 1.75, 2)
+    dry_last_n     as long   '' tokens looked back at (0: the whole reply)
+    dry_breakers   as zstring * 256 '' JSON array of strings ("": llama.cpp's)
+    mirostat       as long   '' 1 or 2 in place of top_k, top_p... (0: off)
+    mirostat_tau   as single '' the surprise aimed at (5)
+    mirostat_eta   as single '' learned at this rate (0.1)
+    dynatemp_range    as single '' temperature +- this where unsure (0: off)
+    dynatemp_exponent as single '' the entropy to this power (1)
+    samplers       as zstring * 128 '' the stages' order, llama.cpp's names
+                                    '' by ';' or letters ("": the model's,
+                                    '' else Janas's)
 end type
 
 type janas_llm_chat_stats
@@ -275,6 +305,15 @@ declare function janas_llm_token_text(byval llm as const janas_llm ptr, _
                                       byval length as long ptr) as long
 
 declare sub janas_llm_chat_params_default(byval p as janas_llm_chat_params ptr)
+'' What c samples with: its parameters, the model's own in place of the
+'' negative ones and Janas's where the model says nothing; samplers holds
+'' the order in llama.cpp's names.
+declare function janas_llm_chat_sampling(byval c as const janas_llm_chat ptr, _
+                                         byval out as janas_llm_chat_params ptr) as long
+'' the same for parameters p of a chat on this model (NULL: the defaults)
+declare function janas_llm_sampling(byval llm as const janas_llm ptr, _
+                                    byval p as const janas_llm_chat_params ptr, _
+                                    byval out as janas_llm_chat_params ptr) as long
 declare function janas_llm_chat_create(byval llm as janas_llm ptr, _
                                        byval p as const janas_llm_chat_params ptr, _
                                        byval out as janas_llm_chat ptr ptr) as long
@@ -433,6 +472,25 @@ declare function janas_llm_chat_keep_disk(byval c as janas_llm_chat ptr, _
 declare function janas_llm_chat_kept_disk(byval c as const janas_llm_chat ptr, _
                                           byval n as long ptr, _
                                           byval bytes as ulongint ptr) as long
+
+'' The chat template (see llm.h): the one in use or the file's, one in the
+'' model's place for every chat, one for a chat, the keywords it is given.
+#define JANAS_LLM_TEMPLATE_USED 0
+#define JANAS_LLM_TEMPLATE_FILE 1
+declare function janas_llm_template(byval llm as const janas_llm ptr, _
+                                    byval which as long, _
+                                    byval buf as zstring ptr, _
+                                    byval cap as long, _
+                                    byval length as long ptr) as long
+declare function janas_llm_set_template(byval llm as janas_llm ptr, _
+                                        byval text as const zstring ptr, _
+                                        byval length as long) as long
+declare function janas_llm_chat_template(byval c as janas_llm_chat ptr, _
+                                         byval text as const zstring ptr, _
+                                         byval length as long) as long
+declare function janas_llm_chat_template_kwargs(byval c as janas_llm_chat ptr, _
+                                                byval json as const zstring ptr, _
+                                                byval length as long) as long
 
 '' Tools as OpenAI's JSON array (NULL: none), whether the model calls them,
 '' and the form of the answer (text, a JSON object, or a JSON Schema).

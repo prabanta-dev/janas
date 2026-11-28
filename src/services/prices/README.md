@@ -16,6 +16,10 @@ Prices and finance for `janas-chat` or any other MCP client (see [the services](
 
 Every answer is data with a layout (see [the services](../README.md)): `janas-chat` shows the user the whole of it in the user's language - every rate, month, hour or station - and gives the model only a brief, from which it answers in a line or two. Every answer says where its figures come from, their date, and that they are for information only, not advice to buy or sell.
 
+## Over time
+
+In Brebus, and in any client that shows MCP Apps' views, `prices_currency`, `prices_crypto` and `prices_stock` show a chart of the last days (`ui://prices/chart`, `views/chart.html`): the currencies asked for as their change in percent, a crypto-asset or a share in its own currency, the first and last value of the period and its change, and a value under the pointer; the periods (7, 30, 90, 365 days) ask the tool again. The days are asked only of a client that shows views, or when a request gives `days`: the ECB's reference rates through Frankfurter, CoinGecko's market chart (a point a day), Alpha Vantage's daily closes, which is **one call of your key's more** for each share shown this way (its free key allows 25 a day; at most 100 days back).
+
 ## Where the data comes from
 
 | Data | Source | Countries | Key |

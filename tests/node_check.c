@@ -113,7 +113,7 @@ static const char script[] =
     "  assert.throws(() => chat.load([{ role: 'robot', content: 'x' }]), "
     "/message 0/);\n"
     "  assert.throws(() => chat.send(7), TypeError);\n"
-    "  assert.throws(() => chat.set({ temperature: -1 }), TypeError);\n"
+    "  assert.throws(() => chat.set({ temperature: -2 }), TypeError);\n"
     "  assert.throws(() => chat.send('x', { signal: {} }), "
     "/AbortSignal/);\n"
     /* the chat closed, another */

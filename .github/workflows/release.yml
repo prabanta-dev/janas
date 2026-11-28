@@ -306,7 +306,8 @@ jobs:
             "$WDIAG.zip" "$WDIAG.zip.sha256"
 
   # macOS on Apple Silicon: built, tested and packed on a Mac of GitHub's,
-  # the CPU alone for now; its package added to the release once made, so
+  # Apple's GPU through Metal checked against the CPU bit for bit
+  # (gpu_check); its package added to the release once made, so
   # that GitHub's Macs, often kept waiting, never hold the others' release
   # back. build.sh wants bash 4 and GNU's tools: Homebrew's, ahead in PATH.
   macos:
@@ -322,18 +323,24 @@ jobs:
       - name: bash 4 and GNU's tools
         run: |
           set -euo pipefail
-          brew install bash coreutils gnu-sed findutils gawk grep
+          brew install bash coreutils gnu-sed findutils gawk grep glslang vulkan-headers
           P=$(brew --prefix)
           for d in coreutils gnu-sed findutils gawk grep; do
             echo "$P/opt/$d/libexec/gnubin" >> "$GITHUB_PATH"
           done
           echo "$P/bin" >> "$GITHUB_PATH"
+          # the GPU's code is built with Vulkan's headers (gpu.c), Metal
+          # being what macOS runs: Homebrew's headers for Apple's clang
+          echo "CPATH=$P/include" >> "$GITHUB_ENV"
 
       - name: Build
         run: bash ./build.sh release build
 
       - name: Test
         run: bash ./build.sh release test
+
+      - name: Metal against the CPU
+        run: JANAS_GPU=1 bin/arm64-darwin/gpu_check
 
       - name: Pack
         run: bash dist/pack.sh darwin arm64
