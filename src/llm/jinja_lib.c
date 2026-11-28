@@ -1632,7 +1632,7 @@ int jinja_test(struct jrun *r, struct jstr name, const struct jval *v,
                const struct jval *args, size_t n, int line)
 {
     const struct jval *a = n ? &args[0] : NULL;
-    double x;
+    double x = 0;
     if (js_eq(name, "defined"))
         return v->t != J_UNDEF;
     if (js_eq(name, "undefined"))
@@ -2010,7 +2010,7 @@ struct jval jinja_filter(struct jrun *r, struct jstr name, const struct jval *v,
     if (js_eq(name, "int") || js_eq(name, "float")) {
         int fl = js_eq(name, "float");
         if (v->t == J_INT || v->t == J_FLOAT || v->t == J_BOOL) {
-            double x;
+            double x = 0; /* set by numeric(): older GCCs cannot tell */
             numeric(v, &x);
             return fl ? jv_float(x) : jv_int((int64_t)x);
         }
@@ -2033,7 +2033,7 @@ struct jval jinja_filter(struct jrun *r, struct jstr name, const struct jval *v,
             return jv_float(fabs(v->u.f));
     }
     if (js_eq(name, "round")) {
-        double x;
+        double x = 0;
         if (numeric(v, &x)) {
             int p = a0 ? (int)as_int(a0) : 0;
             double k = pow(10, p);
